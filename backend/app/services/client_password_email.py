@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
-from uuid import uuid4
 
+from app.services.email_delivery import send_email
 from app.services.professor_activation import generate_temporary_password
 
 logger = logging.getLogger(__name__)
@@ -61,15 +61,13 @@ def _render_template(template: str, context: dict[str, str]) -> str:
 
 
 def send_client_password_email(*, to_email: str, subject: str, body: str) -> str:
-    message_id = f"client-password-{uuid4()}"
-    logger.info(
-        "Client password email sent | id=%s | to=%s | subject=%s | body=%s",
-        message_id,
-        to_email,
-        subject,
-        body,
+    return send_email(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        body_format="TEXT",
+        context="CLIENT_PASSWORD",
     )
-    return message_id
 
 
 __all__ = [

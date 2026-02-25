@@ -33,5 +33,22 @@ class Settings:
     mollie_live_api_key: str = os.getenv("MOLLIE_LIVE_API_KEY", "")
     payment_webhook_secret: str = os.getenv("PAYMENT_WEBHOOK_SECRET", "")
 
+    # Outbound email delivery
+    # Providers:
+    # - LOG: no real send (dev fallback)
+    # - SMTP: generic SMTP relay
+    # - BREVO: SMTP with Brevo defaults when host is omitted
+    email_provider: str = os.getenv("EMAIL_PROVIDER", "LOG").upper()
+    email_from: str = os.getenv("EMAIL_FROM", "no-reply@piano-academie.com")
+    email_reply_to: str | None = os.getenv("EMAIL_REPLY_TO")
+    email_subject_prefix: str = os.getenv("EMAIL_SUBJECT_PREFIX", "")
+    smtp_host: str = os.getenv("SMTP_HOST", "")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username: str = os.getenv("SMTP_USERNAME", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    smtp_use_tls: bool = _as_bool(os.getenv("SMTP_USE_TLS"), True)
+    smtp_use_ssl: bool = _as_bool(os.getenv("SMTP_USE_SSL"), False)
+    smtp_timeout_seconds: int = int(os.getenv("SMTP_TIMEOUT_SECONDS", "15"))
+
 
 settings = Settings()

@@ -25,6 +25,17 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: "60"
       LOG_LEVEL: INFO
       LOG_JSON: "true"
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-LOG}
+      EMAIL_FROM: ${EMAIL_FROM:-no-reply@piano-academie.com}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO:-}
+      EMAIL_SUBJECT_PREFIX: ${EMAIL_SUBJECT_PREFIX:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-15}
     ports:
       - "8000:8000"
     depends_on:

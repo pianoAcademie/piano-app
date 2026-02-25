@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import logging
 import secrets
 import string
-from uuid import uuid4
 
-logger = logging.getLogger(__name__)
+from app.services.email_delivery import send_email
 
 
 def generate_temporary_password(length: int = 14) -> str:
@@ -15,7 +13,6 @@ def generate_temporary_password(length: int = 14) -> str:
 
 
 def send_professor_activation_email(*, to_email: str, full_name: str, temporary_password: str) -> str:
-    message_id = f"prof-activation-{uuid4()}"
     subject = "Activation de votre compte professeur Piano Academie"
     body = (
         f"Bonjour {full_name},\n\n"
@@ -26,11 +23,10 @@ def send_professor_activation_email(*, to_email: str, full_name: str, temporary_
         "Piano Academie"
     )
 
-    logger.info(
-        "Professor activation email sent | id=%s | to=%s | subject=%s | body=%s",
-        message_id,
-        to_email,
-        subject,
-        body,
+    return send_email(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        body_format="TEXT",
+        context="PROFESSOR_ACTIVATION",
     )
-    return message_id

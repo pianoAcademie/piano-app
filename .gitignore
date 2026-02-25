@@ -2,4 +2,6 @@ welcome-to-docker/
 
 .DS_Store
 **/.DS_Store
-welcome-to-docker/
+.env
+.env.*
+!.env.example

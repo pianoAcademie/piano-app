@@ -131,3 +131,41 @@ Etapes du workflow:
 - `docker compose up -d --build`
 - healthchecks backend/frontend en local serveur (`127.0.0.1:8000` et `127.0.0.1:3000`)
 - dump des logs docker en cas d echec
+
+## Email prod avec Brevo (prod uniquement)
+Le backend supporte desormais un provider email reel via SMTP (Brevo recommande).
+
+### 1) Configurer la prod sur le VPS
+Sur le serveur, dans `~/piano-app`, creez un fichier `.env`:
+
+```bash
+cd ~/piano-app
+cp .env.example .env
+nano .env
+```
+
+Valeurs minimales a renseigner:
+- `EMAIL_PROVIDER=BREVO`
+- `EMAIL_FROM=no-reply@app.piano-academie.com`
+- `SMTP_HOST=smtp-relay.brevo.com`
+- `SMTP_PORT=587`
+- `SMTP_USERNAME=<login SMTP Brevo>`
+- `SMTP_PASSWORD=<cle SMTP Brevo>`
+- `SMTP_USE_TLS=true`
+
+Puis redeployer:
+
+```bash
+docker compose up -d --build
+docker compose logs --tail=100 backend
+```
+
+### 2) Important DNS domaine
+Pour eviter les emails en spam:
+- SPF (Brevo)
+- DKIM (Brevo)
+- DMARC (votre domaine)
+
+### 3) Note de securite
+- Le workflow de deploiement n ecrase plus `.env`/`.env.*` sur le VPS.
+- Ne jamais commiter les secrets SMTP dans Git.

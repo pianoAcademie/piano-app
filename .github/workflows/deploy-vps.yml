@@ -61,6 +61,8 @@ jobs:
             --exclude ".git" \
             --exclude ".github" \
             --exclude ".DS_Store" \
+            --exclude ".env" \
+            --exclude ".env.*" \
             --exclude "backend/.venv" \
             --exclude "backend/__pycache__" \
             --exclude "frontend/.next" \
