@@ -11,20 +11,23 @@ import {
   duplicateAdminFormulaAction,
   updateAdminActivityAction,
   updateAdminCreditTypeAction,
-  updateAdminClientPasswordEmailTemplateAction,
   updateAdminConfigAccountAction,
+  updateAdminConfigMessagingSettingsAction,
   updateAdminConfigProfessorDefaultGridAction,
   updateAdminConfigPaymentMethodsAction,
   updateAdminConfigPaymentProviderAction,
   updateAdminConfigSubscriptionsAction,
+  deleteAdminConfigMessagingTemplateAction,
+  saveAdminConfigMessagingTemplateAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import type {
   AdminActivityOut,
   AdminCreditTypeOut,
-  AdminClientPasswordEmailTemplateOut,
   AdminConfigAccountOut,
   AdminFormulaOut,
+  AdminMessagingSettingsOut,
+  AdminMessagingTemplateOut,
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProfessorDefaultGridOut,
@@ -49,7 +52,7 @@ type ConfigSection =
   | "params-subscriptions"
   | "params-payments"
   | "params-professor-default-grid"
-  | "params-client-password-email"
+  | "params-messaging"
   | "formulas"
   | "activities"
   | "promo"
@@ -66,7 +69,12 @@ type MainNavItem = {
 };
 
 type SubNavItem = {
-  key: "params-account" | "params-subscriptions" | "params-payments" | "params-professor-default-grid" | "params-client-password-email";
+  key:
+    | "params-account"
+    | "params-subscriptions"
+    | "params-payments"
+    | "params-professor-default-grid"
+    | "params-messaging";
   label: string;
 };
 
@@ -87,7 +95,7 @@ const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
   { key: "params-subscriptions", label: "Parametrage des abonnements" },
   { key: "params-professor-default-grid", label: "Grille salaire professeurs" },
   { key: "params-payments", label: "Moyens de paiement" },
-  { key: "params-client-password-email", label: "Emails clients" },
+  { key: "params-messaging", label: "Messagerie" },
 ];
 
 function readParam(params: SearchParams, key: string): string {
@@ -105,7 +113,7 @@ function parseSection(raw: string): ConfigSection {
     value === "params-subscriptions" ||
     value === "params-payments" ||
     value === "params-professor-default-grid" ||
-    value === "params-client-password-email" ||
+    value === "params-messaging" ||
     value === "formulas" ||
     value === "activities" ||
     value === "promo" ||
@@ -126,7 +134,7 @@ function toMainSection(section: ConfigSection): ConfigMainSection {
     case "params-subscriptions":
     case "params-payments":
     case "params-professor-default-grid":
-    case "params-client-password-email":
+    case "params-messaging":
       return "params";
     case "formulas":
     case "activities":
@@ -246,14 +254,38 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     ? "/api/v1/admin/formulas?include_inactive=true"
     : "/api/v1/admin/formulas";
 
-  const [accountResult, subscriptionsResult, paymentMethodsResult, paymentProviderResult, defaultProfessorGridResult, clientPasswordEmailResult, formulasResult, activitiesResult, creditTypesResult] =
+  const [
+    accountResult,
+    subscriptionsResult,
+    paymentMethodsResult,
+    paymentProviderResult,
+    messagingSettingsResult,
+    emailPredefinedTemplatesResult,
+    smsPredefinedTemplatesResult,
+    customTemplatesResult,
+    defaultProfessorGridResult,
+    formulasResult,
+    activitiesResult,
+    creditTypesResult,
+  ] =
     await Promise.all([
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
     backendRequest<AdminSubscriptionSettingsOut>("/api/v1/admin/config/subscriptions", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
     backendRequest<AdminPaymentProviderOut>("/api/v1/admin/config/payment-provider", {}, token),
+    backendRequest<AdminMessagingSettingsOut>("/api/v1/admin/config/messaging-settings", {}, token),
+    backendRequest<AdminMessagingTemplateOut[]>(
+      "/api/v1/admin/config/messaging-templates?channel=EMAIL&kind=PREDEFINED",
+      {},
+      token,
+    ),
+    backendRequest<AdminMessagingTemplateOut[]>(
+      "/api/v1/admin/config/messaging-templates?channel=SMS&kind=PREDEFINED",
+      {},
+      token,
+    ),
+    backendRequest<AdminMessagingTemplateOut[]>("/api/v1/admin/config/messaging-templates?kind=CUSTOM", {}, token),
     backendRequest<AdminProfessorDefaultGridOut>("/api/v1/admin/config/professor-default-grid", {}, token),
-    backendRequest<AdminClientPasswordEmailTemplateOut>("/api/v1/admin/clients/password-email-template", {}, token),
     backendRequest<AdminFormulaOut[]>(formulasEndpoint, {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminCreditTypeOut[]>("/api/v1/admin/credit-types?include_inactive=true", {}, token),
@@ -288,18 +320,35 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
         loadErrors.push(`PSP: ${paymentProviderResult.message}`);
         return null;
       })();
+  const messagingSettings = messagingSettingsResult.ok
+    ? messagingSettingsResult.data
+    : (() => {
+        loadErrors.push(`Messagerie: ${messagingSettingsResult.message}`);
+        return null;
+      })();
+  const emailPredefinedTemplates = emailPredefinedTemplatesResult.ok
+    ? emailPredefinedTemplatesResult.data
+    : (() => {
+        loadErrors.push(`Modeles email predefinis: ${emailPredefinedTemplatesResult.message}`);
+        return [] as AdminMessagingTemplateOut[];
+      })();
+  const smsPredefinedTemplates = smsPredefinedTemplatesResult.ok
+    ? smsPredefinedTemplatesResult.data
+    : (() => {
+        loadErrors.push(`Modeles SMS predefinis: ${smsPredefinedTemplatesResult.message}`);
+        return [] as AdminMessagingTemplateOut[];
+      })();
+  const customTemplates = customTemplatesResult.ok
+    ? customTemplatesResult.data
+    : (() => {
+        loadErrors.push(`Modeles personnalises: ${customTemplatesResult.message}`);
+        return [] as AdminMessagingTemplateOut[];
+      })();
   const defaultProfessorGrid = defaultProfessorGridResult.ok
     ? defaultProfessorGridResult.data
     : (() => {
         loadErrors.push(`Grille salaire professeurs: ${defaultProfessorGridResult.message}`);
         return { lines: [], updated_at: null } as AdminProfessorDefaultGridOut;
-      })();
-
-  const clientPasswordEmailTemplate = clientPasswordEmailResult.ok
-    ? clientPasswordEmailResult.data
-    : (() => {
-        loadErrors.push(`Template email client: ${clientPasswordEmailResult.message}`);
-        return null;
       })();
 
   const formulas = formulasResult.ok
@@ -331,6 +380,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const selectedCreditTypeId = readParam(params, "credit_type_id");
   const selectedCreditType = creditTypes.find((creditType) => creditType.id === selectedCreditTypeId) ?? null;
   const activeCreditTypes = creditTypes.filter((creditType) => creditType.active);
+  const messagingModalMode = readParam(params, "messaging_modal");
+  const editingTemplateKind = readParam(params, "template_kind").toUpperCase();
+  const editingTemplateCode = readParam(params, "template_code").toUpperCase();
+  const editingTemplateId = readParam(params, "template_id");
+  const editingTemplate =
+    editingTemplateKind === "PREDEFINED"
+      ? [...emailPredefinedTemplates, ...smsPredefinedTemplates].find((row) => row.code === editingTemplateCode) ?? null
+      : editingTemplateKind === "CUSTOM"
+      ? customTemplates.find((row) => row.id === editingTemplateId) ?? null
+      : null;
+  const createCustomMessagingTemplate = messagingModalMode === "new-custom";
 
   const paymentMethodLabelByCode = new Map(paymentMethods.map((method) => [method.code, method.label]));
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
@@ -344,6 +404,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     formulaBaseParams.show_inactive = "1";
   }
   const formulasListPath = buildConfigHref("formulas", formulaBaseParams);
+  const messagingListPath = buildConfigHref("params-messaging");
 
   const placeholderTitleBySection: Record<
     Exclude<
@@ -352,7 +413,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       | "params-subscriptions"
       | "params-payments"
       | "params-professor-default-grid"
-      | "params-client-password-email"
+      | "params-messaging"
       | "formulas"
       | "activities"
       | "credit-types"
@@ -794,38 +855,336 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
             </>
           ) : null}
 
-          {section === "params-client-password-email" ? (
-            <section className="card">
-              <h3>Email client: generation de mot de passe</h3>
-              {!clientPasswordEmailTemplate ? (
-                <p className="muted">Impossible de charger le template email client.</p>
-              ) : (
-                <form action={updateAdminClientPasswordEmailTemplateAction} className="grid">
-                  <p className="muted">
-                    Variables disponibles: {"{first_name}"}, {"{last_name}"}, {"{full_name}"}, {"{email}"}, {"{temporary_password}"},{" "}
-                    {"{login_url}"}.
-                  </p>
+          {section === "params-messaging" ? (
+            <>
+              <section className="card">
+                <h3>Parametres de messagerie</h3>
+                {!messagingSettings ? (
+                  <p className="muted">Impossible de charger les parametres de messagerie.</p>
+                ) : (
+                  <form action={updateAdminConfigMessagingSettingsAction} className="grid cols-2 config-form-grid">
+                    <label className="span-2">
+                      Courriel du studio
+                      <input type="email" name="studio_email" defaultValue={messagingSettings.studio_email} maxLength={255} />
+                    </label>
 
-                  <label>
-                    Objet
-                    <input type="text" name="subject" defaultValue={clientPasswordEmailTemplate.subject} maxLength={255} required />
-                  </label>
+                    <label>
+                      Expediteur studio (nom affiche)
+                      <input
+                        type="text"
+                        name="studio_sender_name"
+                        defaultValue={messagingSettings.studio_sender_name}
+                        maxLength={120}
+                      />
+                    </label>
+                    <label>
+                      Expediteur enseignant (nom affiche)
+                      <input
+                        type="text"
+                        name="teacher_sender_name"
+                        defaultValue={messagingSettings.teacher_sender_name}
+                        maxLength={120}
+                      />
+                    </label>
 
-                  <label>
-                    Corps du mail
-                    <textarea name="body" defaultValue={clientPasswordEmailTemplate.body} rows={12} required />
-                  </label>
+                    <label className="checkline span-2">
+                      <input
+                        type="checkbox"
+                        name="use_studio_name_as_default_sender"
+                        defaultChecked={messagingSettings.use_studio_name_as_default_sender}
+                      />
+                      Utiliser le nom du studio comme expediteur par defaut
+                    </label>
+                    <label className="checkline span-2">
+                      <input
+                        type="checkbox"
+                        name="use_studio_email_for_reminders"
+                        defaultChecked={messagingSettings.use_studio_email_for_reminders}
+                      />
+                      Utiliser le courriel du studio pour les rappels
+                    </label>
+                    <label className="checkline span-2">
+                      <input
+                        type="checkbox"
+                        name="use_studio_email_for_lesson_notes"
+                        defaultChecked={messagingSettings.use_studio_email_for_lesson_notes}
+                      />
+                      Utiliser le courriel du studio pour les notes de lecons
+                    </label>
+                    <label className="checkline span-2">
+                      <input type="checkbox" name="send_birthday_emails" defaultChecked={messagingSettings.send_birthday_emails} />
+                      Envoyer les courriels d anniversaire automatiques
+                    </label>
 
-                  {clientPasswordEmailTemplate.updated_at ? (
-                    <p className="muted">Derniere mise a jour: {new Date(clientPasswordEmailTemplate.updated_at).toLocaleString("fr-FR")}</p>
-                  ) : null}
+                    <div className="span-2 config-note-box">
+                      <strong>Etat technique</strong>
+                      <p className="muted">
+                        SPF/DKIM se valident dans Brevo (ou votre SMTP). Ici, vous pilotez les adresses et modeles utilises par
+                        l application.
+                      </p>
+                      <p className="muted">
+                        De: <strong>{messagingSettings.studio_sender_name || "Studio"}</strong> &lt;{messagingSettings.studio_email}&gt;
+                      </p>
+                      <p className="muted">
+                        De (enseignant): <strong>{messagingSettings.teacher_sender_name || "Enseignant"}</strong> &lt;
+                        {messagingSettings.studio_email}&gt;
+                      </p>
+                      {messagingSettings.updated_at ? (
+                        <p className="muted">
+                          Derniere mise a jour: {new Date(messagingSettings.updated_at).toLocaleString("fr-FR")}
+                        </p>
+                      ) : null}
+                    </div>
 
-                  <div className="row">
-                    <button type="submit">Enregistrer le template</button>
+                    <div className="row span-2">
+                      <button type="submit">Sauvegarder les modifications</button>
+                    </div>
+                  </form>
+                )}
+              </section>
+
+              <section className="card">
+                <h3>Modeles de courriels predefinis</h3>
+                {emailPredefinedTemplates.length === 0 ? (
+                  <p className="muted">Aucun modele predefini.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Nom</th>
+                          <th>Objet</th>
+                          <th>Actif</th>
+                          <th aria-label="Actions" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {emailPredefinedTemplates.map((template) => (
+                          <tr key={template.id}>
+                            <td>{template.name}</td>
+                            <td>{template.subject || "-"}</td>
+                            <td>{template.active ? "Oui" : "Non"}</td>
+                            <td>
+                              <Link
+                                className="icon-link"
+                                title="Modifier"
+                                href={buildConfigHref("params-messaging", {
+                                  messaging_modal: "edit",
+                                  template_kind: "PREDEFINED",
+                                  template_code: template.code || "",
+                                })}
+                              >
+                                ✎
+                              </Link>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                </form>
-              )}
-            </section>
+                )}
+              </section>
+
+              <section className="card">
+                <h3>Modeles de SMS predefinis</h3>
+                {smsPredefinedTemplates.length === 0 ? (
+                  <p className="muted">Aucun modele predefini.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Nom</th>
+                          <th>Contenu</th>
+                          <th>Actif</th>
+                          <th aria-label="Actions" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {smsPredefinedTemplates.map((template) => (
+                          <tr key={template.id}>
+                            <td>{template.name}</td>
+                            <td>{template.body.slice(0, 90)}{template.body.length > 90 ? "..." : ""}</td>
+                            <td>{template.active ? "Oui" : "Non"}</td>
+                            <td>
+                              <Link
+                                className="icon-link"
+                                title="Modifier"
+                                href={buildConfigHref("params-messaging", {
+                                  messaging_modal: "edit",
+                                  template_kind: "PREDEFINED",
+                                  template_code: template.code || "",
+                                })}
+                              >
+                                ✎
+                              </Link>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="card">
+                <div className="row spread">
+                  <h3>Modeles des courriels personnalises</h3>
+                  <Link
+                    className="mode-link"
+                    href={buildConfigHref("params-messaging", {
+                      messaging_modal: "new-custom",
+                    })}
+                  >
+                    + Ajouter nouveau
+                  </Link>
+                </div>
+                {customTemplates.length === 0 ? (
+                  <p className="muted">Aucun modele personnalise.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Nom</th>
+                          <th>Canal</th>
+                          <th>Actif</th>
+                          <th aria-label="Actions" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {customTemplates.map((template) => (
+                          <tr key={template.id}>
+                            <td>{template.name}</td>
+                            <td>{template.channel}</td>
+                            <td>{template.active ? "Oui" : "Non"}</td>
+                            <td>
+                              <div className="row">
+                                <Link
+                                  className="icon-link"
+                                  title="Modifier"
+                                  href={buildConfigHref("params-messaging", {
+                                    messaging_modal: "edit",
+                                    template_kind: "CUSTOM",
+                                    template_id: template.id,
+                                  })}
+                                >
+                                  ✎
+                                </Link>
+                                <form action={deleteAdminConfigMessagingTemplateAction}>
+                                  <input type="hidden" name="template_id" value={template.id} />
+                                  <button type="submit" className="icon-link danger-link" title="Supprimer">
+                                    🗑
+                                  </button>
+                                </form>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              {editingTemplate || createCustomMessagingTemplate ? (
+                <section className="modal-overlay">
+                  <article className="modal-panel activity-modal-panel">
+                    <Link className="modal-close-x" href={messagingListPath} aria-label="Fermer">
+                      ×
+                    </Link>
+                    <header className="activity-modal-header">
+                      <div>
+                        <h3>
+                          {editingTemplate
+                            ? `Modifier le modele: ${editingTemplate.name}`
+                            : "Nouveau modele personnalise"}
+                        </h3>
+                        <p className="muted">Configurez l objet et le contenu de vos messages.</p>
+                      </div>
+                    </header>
+
+                    <section className="card modal-card">
+                      <form action={saveAdminConfigMessagingTemplateAction} className="grid config-form-grid">
+                        {editingTemplate ? (
+                          <>
+                            <input type="hidden" name="template_kind" value={editingTemplate.kind} />
+                            <input type="hidden" name="template_channel" value={editingTemplate.channel} />
+                            {editingTemplate.code ? <input type="hidden" name="template_code" value={editingTemplate.code} /> : null}
+                            {editingTemplate.kind === "CUSTOM" ? (
+                              <input type="hidden" name="template_id" value={editingTemplate.id} />
+                            ) : null}
+
+                            {editingTemplate.kind === "CUSTOM" ? (
+                              <label>
+                                Nom
+                                <input type="text" name="name" defaultValue={editingTemplate.name} maxLength={180} required />
+                              </label>
+                            ) : (
+                              <p className="muted">
+                                Modele systeme: <strong>{editingTemplate.name}</strong>
+                              </p>
+                            )}
+
+                            {editingTemplate.channel === "EMAIL" ? (
+                              <label>
+                                Objet
+                                <input type="text" name="subject" defaultValue={editingTemplate.subject ?? ""} maxLength={255} required />
+                              </label>
+                            ) : null}
+
+                            <label>
+                              Corps du message
+                              <textarea name="body" defaultValue={editingTemplate.body} rows={12} required />
+                            </label>
+
+                            <label className="checkline">
+                              <input type="checkbox" name="active" defaultChecked={editingTemplate.active} />
+                              Modele actif
+                            </label>
+                          </>
+                        ) : (
+                          <>
+                            <input type="hidden" name="template_kind" value="CUSTOM" />
+                            <label>
+                              Nom
+                              <input type="text" name="name" maxLength={180} required />
+                            </label>
+                            <label>
+                              Canal
+                              <select name="template_channel" defaultValue="EMAIL">
+                                <option value="EMAIL">Email</option>
+                                <option value="SMS">SMS</option>
+                              </select>
+                            </label>
+                            <label>
+                              Objet (email uniquement)
+                              <input type="text" name="subject" maxLength={255} />
+                            </label>
+                            <label>
+                              Corps du message
+                              <textarea name="body" rows={12} required />
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="active" defaultChecked />
+                              Modele actif
+                            </label>
+                          </>
+                        )}
+
+                        {editingTemplate?.variables_hint ? (
+                          <p className="muted">Variables: {editingTemplate.variables_hint}</p>
+                        ) : null}
+
+                        <div className="row">
+                          <button type="submit">Sauvegarder</button>
+                        </div>
+                      </form>
+                    </section>
+                  </article>
+                </section>
+              ) : null}
+            </>
           ) : null}
 
           {section === "formulas" ? (
@@ -1458,7 +1817,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           section !== "params-subscriptions" &&
           section !== "params-payments" &&
           section !== "params-professor-default-grid" &&
-          section !== "params-client-password-email" &&
+          section !== "params-messaging" &&
           section !== "formulas" &&
           section !== "activities" &&
           section !== "credit-types" ? (

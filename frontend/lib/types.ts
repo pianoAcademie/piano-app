@@ -862,6 +862,35 @@ export type AdminPaymentProviderOut = {
   webhook_secret_masked: string;
 };
 
+export type AdminMessagingSettingsOut = {
+  studio_email: string;
+  studio_sender_name: string;
+  teacher_sender_name: string;
+  use_studio_name_as_default_sender: boolean;
+  use_studio_email_for_reminders: boolean;
+  use_studio_email_for_lesson_notes: boolean;
+  send_birthday_emails: boolean;
+  updated_at: string | null;
+};
+
+export type AdminMessagingChannel = "EMAIL" | "SMS";
+export type AdminMessagingTemplateKind = "PREDEFINED" | "CUSTOM";
+
+export type AdminMessagingTemplateOut = {
+  id: string;
+  code: string | null;
+  name: string;
+  channel: AdminMessagingChannel;
+  kind: AdminMessagingTemplateKind;
+  subject: string | null;
+  body: string;
+  active: boolean;
+  description: string | null;
+  variables_hint: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
 export type AdminProfessorDefaultGridRuleOut = {
   min_students: number;
   max_students: number | null;

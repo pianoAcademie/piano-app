@@ -46,7 +46,12 @@ from app.schemas.admin import (
     ProfessorPermissionOut,
     ProfessorPermissionUpdateRequest,
 )
-from app.services.professor_activation import generate_temporary_password, send_professor_activation_email
+from app.services.professor_activation import (
+    DEFAULT_PROFESSOR_ACTIVATION_BODY,
+    DEFAULT_PROFESSOR_ACTIVATION_SUBJECT,
+    generate_temporary_password,
+    send_professor_activation_email,
+)
 from app.services.professor_contracts import (
     CONTRACT_LOCATION_OPTIONS,
     contract_mode_from_course_type,
@@ -54,6 +59,11 @@ from app.services.professor_contracts import (
     normalize_contract_location_code,
 )
 from app.services.professor_default_grid import load_default_professor_grid
+from app.services.messaging_templates import (
+    PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD,
+    resolve_predefined_template,
+    resolve_sender_profile,
+)
 from app.services.professor_permissions import (
     DEFAULT_PROFESSOR_PERMISSIONS,
     PERMISSION_FIELDS,
@@ -148,6 +158,47 @@ def _currency_settings(db: Session) -> tuple[list[str], str]:
         default_code = allowed_codes[0]
 
     return allowed_codes, default_code
+
+
+def _setting_value(db: Session, key: str, default: str) -> str:
+    value = db.scalar(select(AppSetting.value).where(AppSetting.key == key))
+    if value is None:
+        return default
+    candidate = value.strip()
+    return candidate or default
+
+
+def _activation_login_url(db: Session) -> str:
+    website = _setting_value(db, "config_account_website", "")
+    if not website:
+        return "http://localhost:3000/login"
+    if website.startswith("http://") or website.startswith("https://"):
+        return website.rstrip("/") + "/login"
+    return f"https://{website.rstrip('/')}/login"
+
+
+def _send_professor_activation(db: Session, *, to_email: str, first_name: str, last_name: str, temporary_password: str) -> str:
+    try:
+        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD)
+    except KeyError:
+        template = {
+            "subject": DEFAULT_PROFESSOR_ACTIVATION_SUBJECT,
+            "body": DEFAULT_PROFESSOR_ACTIVATION_BODY,
+        }
+
+    sender = resolve_sender_profile(db, sender_kind="TEACHER")
+    return send_professor_activation_email(
+        to_email=to_email,
+        full_name=f"{first_name} {last_name}".strip(),
+        temporary_password=temporary_password,
+        login_url=_activation_login_url(db),
+        subject_template=str(template.get("subject") or DEFAULT_PROFESSOR_ACTIVATION_SUBJECT),
+        body_template=str(template.get("body") or DEFAULT_PROFESSOR_ACTIVATION_BODY),
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
+    )
 
 
 def _validate_currency(code: str, *, allowed_codes: list[str]) -> str:
@@ -831,9 +882,11 @@ def create_collaborator(
     seed_permissions["can_edit_planning"] = True
     permission_row = ensure_permissions_row(db, professor_id=professor.id, defaults=seed_permissions)
 
-    activation_email_message_id = send_professor_activation_email(
+    activation_email_message_id = _send_professor_activation(
+        db,
         to_email=professor.email,
-        full_name=f"{professor.first_name} {professor.last_name}".strip(),
+        first_name=professor.first_name,
+        last_name=professor.last_name,
         temporary_password=temporary_password,
     )
 
@@ -1061,9 +1114,11 @@ def patch_collaborator(
             linked_user.hashed_password = hash_password(str(activation_password))
             linked_user.is_active = True
             professor.last_activation_email_sent_at = now
-            activation_email_message_id = send_professor_activation_email(
+            activation_email_message_id = _send_professor_activation(
+                db,
                 to_email=professor.email,
-                full_name=f"{professor.first_name} {professor.last_name}".strip(),
+                first_name=professor.first_name,
+                last_name=professor.last_name,
                 temporary_password=str(activation_password),
             )
             activation_email_sent = True

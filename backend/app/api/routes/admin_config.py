@@ -43,6 +43,14 @@ from app.schemas.admin import (
     AdminPaymentMethodsUpdateRequest,
     AdminPaymentProviderOut,
     AdminPaymentProviderUpdateRequest,
+    AdminMessagingChannel,
+    AdminMessagingCustomTemplateCreateRequest,
+    AdminMessagingCustomTemplateUpdateRequest,
+    AdminMessagingSettingsOut,
+    AdminMessagingSettingsUpdateRequest,
+    AdminMessagingTemplateKind,
+    AdminMessagingTemplateOut,
+    AdminMessagingPredefinedTemplateUpdateRequest,
     AdminProfessorDefaultGridLineInput,
     AdminProfessorDefaultGridLineOut,
     AdminProfessorDefaultGridOut,
@@ -76,6 +84,15 @@ from app.services.payment_provider import (
     resolve_provider as resolve_payment_provider,
     resolve_secret_values as resolve_payment_secret_values,
     set_setting_value as set_payment_setting_value,
+)
+from app.services.messaging_templates import (
+    create_custom_template,
+    delete_custom_template,
+    list_messaging_templates,
+    load_messaging_settings,
+    save_messaging_settings,
+    update_custom_template,
+    upsert_predefined_template,
 )
 
 router = APIRouter(prefix="/admin")
@@ -864,6 +881,23 @@ def _course_name_map(db: Session) -> dict[UUID, str]:
     return {course_type_id: name for course_type_id, name in rows}
 
 
+def _serialize_messaging_template(raw: dict[str, object]) -> AdminMessagingTemplateOut:
+    return AdminMessagingTemplateOut(
+        id=str(raw.get("id") or ""),
+        code=(str(raw["code"]) if raw.get("code") is not None else None),
+        name=str(raw.get("name") or ""),
+        channel=AdminMessagingChannel(str(raw.get("channel") or "EMAIL")),
+        kind=AdminMessagingTemplateKind(str(raw.get("kind") or "CUSTOM")),
+        subject=(str(raw["subject"]) if raw.get("subject") is not None else None),
+        body=str(raw.get("body") or ""),
+        active=bool(raw.get("active", True)),
+        description=(str(raw["description"]) if raw.get("description") is not None else None),
+        variables_hint=(str(raw["variables_hint"]) if raw.get("variables_hint") is not None else None),
+        created_at=raw.get("created_at") if isinstance(raw.get("created_at"), datetime) else None,
+        updated_at=raw.get("updated_at") if isinstance(raw.get("updated_at"), datetime) else None,
+    )
+
+
 @router.get("/activities", response_model=list[AdminActivityOut])
 def list_admin_activities(
     include_inactive: bool = Query(default=False),
@@ -1303,6 +1337,131 @@ def update_admin_payment_provider(
     set_payment_setting_value(db, PAYMENT_WEBHOOK_SECRET_SETTING_KEY, webhook_secret)
     db.commit()
     return get_admin_payment_provider(db=db)
+
+
+@router.get("/config/messaging-settings", response_model=AdminMessagingSettingsOut)
+def get_admin_messaging_settings(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMessagingSettingsOut:
+    payload, _ = load_messaging_settings(db)
+    return AdminMessagingSettingsOut(**payload)
+
+
+@router.put("/config/messaging-settings", response_model=AdminMessagingSettingsOut)
+def update_admin_messaging_settings(
+    payload: AdminMessagingSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMessagingSettingsOut:
+    updated_payload = save_messaging_settings(
+        db,
+        studio_email=payload.studio_email,
+        studio_sender_name=payload.studio_sender_name,
+        teacher_sender_name=payload.teacher_sender_name,
+        use_studio_name_as_default_sender=payload.use_studio_name_as_default_sender,
+        use_studio_email_for_reminders=payload.use_studio_email_for_reminders,
+        use_studio_email_for_lesson_notes=payload.use_studio_email_for_lesson_notes,
+        send_birthday_emails=payload.send_birthday_emails,
+    )
+    db.commit()
+    return AdminMessagingSettingsOut(**updated_payload)
+
+
+@router.get("/config/messaging-templates", response_model=list[AdminMessagingTemplateOut])
+def get_admin_messaging_templates(
+    channel: AdminMessagingChannel | None = Query(default=None),
+    kind: AdminMessagingTemplateKind | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminMessagingTemplateOut]:
+    items = list_messaging_templates(
+        db,
+        channel=channel.value if channel is not None else None,
+        kind=kind.value if kind is not None else None,
+    )
+    return [_serialize_messaging_template(item) for item in items]
+
+
+@router.put("/config/messaging-templates/predefined/{template_code}", response_model=AdminMessagingTemplateOut)
+def update_admin_predefined_messaging_template(
+    template_code: str,
+    payload: AdminMessagingPredefinedTemplateUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMessagingTemplateOut:
+    try:
+        item = upsert_predefined_template(
+            db,
+            code=template_code,
+            subject=payload.subject,
+            body=payload.body,
+            active=payload.active,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    return _serialize_messaging_template(item)
+
+
+@router.post("/config/messaging-templates/custom", response_model=AdminMessagingTemplateOut, status_code=status.HTTP_201_CREATED)
+def create_admin_custom_messaging_template(
+    payload: AdminMessagingCustomTemplateCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMessagingTemplateOut:
+    try:
+        item = create_custom_template(
+            db,
+            channel=payload.channel.value,
+            name=payload.name,
+            subject=payload.subject,
+            body=payload.body,
+            active=payload.active,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    return _serialize_messaging_template(item)
+
+
+@router.patch("/config/messaging-templates/custom/{template_id}", response_model=AdminMessagingTemplateOut)
+def update_admin_custom_messaging_template(
+    template_id: str,
+    payload: AdminMessagingCustomTemplateUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMessagingTemplateOut:
+    try:
+        item = update_custom_template(
+            db,
+            template_id=template_id,
+            name=payload.name,
+            subject=payload.subject,
+            body=payload.body,
+            active=payload.active,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    return _serialize_messaging_template(item)
+
+
+@router.delete("/config/messaging-templates/custom/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_admin_custom_messaging_template(
+    template_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    deleted = delete_custom_template(db, template_id=template_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Custom template not found")
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/config/professor-default-grid", response_model=AdminProfessorDefaultGridOut)

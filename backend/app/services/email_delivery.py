@@ -4,6 +4,7 @@ import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
+from email.utils import formataddr
 from uuid import uuid4
 
 from app.core.config import settings
@@ -29,8 +30,8 @@ def _smtp_host_port(provider: str) -> tuple[str, int]:
     return host, port
 
 
-def _subject_with_prefix(subject: str) -> str:
-    prefix = (settings.email_subject_prefix or "").strip()
+def _subject_with_prefix(subject: str, *, subject_prefix: str | None = None) -> str:
+    prefix = (subject_prefix if subject_prefix is not None else settings.email_subject_prefix or "").strip()
     if not prefix:
         return subject
     if subject.startswith(prefix):
@@ -38,13 +39,26 @@ def _subject_with_prefix(subject: str) -> str:
     return f"{prefix} {subject}".strip()
 
 
-def _build_message(*, to_email: str, subject: str, body: str, body_format: str) -> EmailMessage:
+def _build_message(
+    *,
+    to_email: str,
+    subject: str,
+    body: str,
+    body_format: str,
+    from_email: str | None = None,
+    from_name: str | None = None,
+    reply_to: str | None = None,
+    subject_prefix: str | None = None,
+) -> EmailMessage:
     message = EmailMessage()
-    message["From"] = settings.email_from
+    sender_email = (from_email or settings.email_from).strip()
+    sender_name = (from_name or "").strip()
+    message["From"] = formataddr((sender_name, sender_email)) if sender_name else sender_email
     message["To"] = to_email
-    message["Subject"] = _subject_with_prefix(subject)
-    if settings.email_reply_to:
-        message["Reply-To"] = settings.email_reply_to
+    message["Subject"] = _subject_with_prefix(subject, subject_prefix=subject_prefix)
+    message_reply_to = (reply_to if reply_to is not None else settings.email_reply_to) or ""
+    if message_reply_to.strip():
+        message["Reply-To"] = message_reply_to.strip()
 
     normalized_format = (body_format or "TEXT").strip().lower()
     if normalized_format == "html":
@@ -63,6 +77,10 @@ def send_email(
     body: str,
     body_format: str = "TEXT",
     context: str = "GENERIC",
+    from_email: str | None = None,
+    from_name: str | None = None,
+    reply_to: str | None = None,
+    subject_prefix: str | None = None,
 ) -> str:
     message_id = f"mail-{uuid4()}"
     provider = _normalized_provider()
@@ -101,7 +119,16 @@ def send_email(
         )
         return message_id
 
-    message = _build_message(to_email=to_email, subject=subject, body=body, body_format=body_format)
+    message = _build_message(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        body_format=body_format,
+        from_email=from_email,
+        from_name=from_name,
+        reply_to=reply_to,
+        subject_prefix=subject_prefix,
+    )
 
     try:
         if settings.smtp_use_ssl:
@@ -140,4 +167,3 @@ def send_email(
         subject,
     )
     return message_id
-

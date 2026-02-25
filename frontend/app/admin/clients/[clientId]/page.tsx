@@ -385,6 +385,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         return [] as AdminClientNoteOut[];
       })();
 
+  const messageRows = [
+    ...messages.map((msg) => ({
+      id: `reminder:${msg.id}`,
+      occurredAt: msg.sent_at ?? msg.scheduled_for_utc,
+      subject: msg.subject_preview,
+      status: msg.status,
+      session: msg.session_title,
+    })),
+    ...notes
+      .filter((note) => (note.entry_type || "").toUpperCase() === "EMAIL")
+      .map((note) => ({
+        id: `email-note:${note.id}`,
+        occurredAt: note.created_at,
+        subject: note.message,
+        status: "SENT",
+        session: "-",
+      })),
+  ].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+
   const selectedPlanForPurchase = purchasePlanId ? plans.find((plan) => plan.id === purchasePlanId) ?? null : null;
   const discountedTotalForPurchase = purchaseDiscountedTotalRaw ? Number(purchaseDiscountedTotalRaw) : Number.NaN;
   const hasDiscountedTotalForPurchase = Number.isFinite(discountedTotalForPurchase) && discountedTotalForPurchase >= 0;
@@ -1813,7 +1832,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
           <article className="card">
             <h3>Messages envoyes</h3>
-            {messages.length === 0 ? (
+            {messageRows.length === 0 ? (
               <p className="muted">Aucun message pour ce client.</p>
             ) : (
               <div className="table-wrap">
@@ -1827,14 +1846,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </tr>
                   </thead>
                   <tbody>
-                    {messages.map((msg) => (
+                    {messageRows.map((msg) => (
                       <tr key={msg.id}>
-                        <td>{formatDate(msg.sent_at ?? msg.scheduled_for_utc)}</td>
-                        <td>{msg.subject_preview}</td>
+                        <td>{formatDate(msg.occurredAt)}</td>
+                        <td>{msg.subject}</td>
                         <td>
                           <span className={`status-pill ${statusClass(msg.status)}`}>{msg.status}</span>
                         </td>
-                        <td>{msg.session_title}</td>
+                        <td>{msg.session}</td>
                       </tr>
                     ))}
                   </tbody>

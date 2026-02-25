@@ -60,13 +60,26 @@ def _render_template(template: str, context: dict[str, str]) -> str:
         return normalized.strip()
 
 
-def send_client_password_email(*, to_email: str, subject: str, body: str) -> str:
+def send_client_password_email(
+    *,
+    to_email: str,
+    subject: str,
+    body: str,
+    from_email: str | None = None,
+    from_name: str | None = None,
+    reply_to: str | None = None,
+    subject_prefix: str | None = None,
+) -> str:
     return send_email(
         to_email=to_email,
         subject=subject,
         body=body,
         body_format="TEXT",
         context="CLIENT_PASSWORD",
+        from_email=from_email,
+        from_name=from_name,
+        reply_to=reply_to,
+        subject_prefix=subject_prefix,
     )
 
 

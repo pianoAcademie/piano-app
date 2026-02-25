@@ -65,13 +65,17 @@ from app.schemas.admin import (
 )
 from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut
 from app.services.client_password_email import (
-    DEFAULT_CLIENT_PASSWORD_EMAIL_BODY,
-    DEFAULT_CLIENT_PASSWORD_EMAIL_SUBJECT,
     generate_temporary_password,
     render_client_password_email,
     send_client_password_email,
 )
 from app.services.family_billing import resolve_billing_profile
+from app.services.messaging_templates import (
+    PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
+    resolve_predefined_template,
+    resolve_sender_profile,
+    upsert_predefined_template,
+)
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.security import hash_password
 from app.services.subscriptions import (
@@ -83,8 +87,6 @@ from app.services.subscriptions import (
 
 router = APIRouter(prefix="/admin/clients")
 
-CLIENT_PASSWORD_EMAIL_SUBJECT_KEY = "config_client_password_email_subject"
-CLIENT_PASSWORD_EMAIL_BODY_KEY = "config_client_password_email_body"
 PAID_PAYMENT_STATUSES = {"ACTIVE", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE", "PAID"}
 PENDING_PAYMENT_STATUSES = {"PENDING", "WAITLISTED", "TRIAL"}
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
@@ -199,17 +201,6 @@ def _get_setting_value(db: Session, key: str, default: str) -> str:
     if setting is None:
         return default
     return setting.value
-
-
-def _set_setting_value(db: Session, key: str, value: str) -> datetime:
-    now = _utcnow()
-    setting = db.scalar(select(AppSetting).where(AppSetting.key == key).with_for_update())
-    if setting is None:
-        db.add(AppSetting(key=key, value=value, updated_at=now))
-        return now
-    setting.value = value
-    setting.updated_at = now
-    return now
 
 
 def _fallback_login_url(raw_website: str) -> str:
@@ -764,18 +755,14 @@ def get_admin_client_password_email_template(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientPasswordEmailTemplateOut:
-    subject_setting = db.scalar(select(AppSetting).where(AppSetting.key == CLIENT_PASSWORD_EMAIL_SUBJECT_KEY))
-    body_setting = db.scalar(select(AppSetting).where(AppSetting.key == CLIENT_PASSWORD_EMAIL_BODY_KEY))
-    updated_at = None
-    if subject_setting is not None:
-        updated_at = subject_setting.updated_at
-    if body_setting is not None and (updated_at is None or body_setting.updated_at > updated_at):
-        updated_at = body_setting.updated_at
-
+    try:
+        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return AdminClientPasswordEmailTemplateOut(
-        subject=subject_setting.value if subject_setting is not None else DEFAULT_CLIENT_PASSWORD_EMAIL_SUBJECT,
-        body=body_setting.value if body_setting is not None else DEFAULT_CLIENT_PASSWORD_EMAIL_BODY,
-        updated_at=updated_at,
+        subject=str(template.get("subject") or ""),
+        body=str(template.get("body") or ""),
+        updated_at=template.get("updated_at") if isinstance(template.get("updated_at"), datetime) else None,
     )
 
 
@@ -787,11 +774,22 @@ def update_admin_client_password_email_template(
 ) -> AdminClientPasswordEmailTemplateOut:
     subject = _normalize_required(payload.subject, "subject")
     body = _normalize_required(payload.body, "body")
-    updated_subject_at = _set_setting_value(db, CLIENT_PASSWORD_EMAIL_SUBJECT_KEY, subject)
-    updated_body_at = _set_setting_value(db, CLIENT_PASSWORD_EMAIL_BODY_KEY, body)
+    try:
+        template = upsert_predefined_template(
+            db,
+            code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
+            subject=subject,
+            body=body,
+            active=True,
+        )
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     db.commit()
-    updated_at = updated_subject_at if updated_subject_at >= updated_body_at else updated_body_at
-    return AdminClientPasswordEmailTemplateOut(subject=subject, body=body, updated_at=updated_at)
+    return AdminClientPasswordEmailTemplateOut(
+        subject=str(template.get("subject") or ""),
+        body=str(template.get("body") or ""),
+        updated_at=template.get("updated_at") if isinstance(template.get("updated_at"), datetime) else None,
+    )
 
 
 @router.get("/groups", response_model=list[AdminClientGroupOut])
@@ -1465,15 +1463,24 @@ def patch_admin_client(
 def send_admin_client_password_email(
     client_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientPasswordResetOut:
     client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT).with_for_update())
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
     temporary_password = generate_temporary_password()
-    subject_template = _get_setting_value(db, CLIENT_PASSWORD_EMAIL_SUBJECT_KEY, DEFAULT_CLIENT_PASSWORD_EMAIL_SUBJECT)
-    body_template = _get_setting_value(db, CLIENT_PASSWORD_EMAIL_BODY_KEY, DEFAULT_CLIENT_PASSWORD_EMAIL_BODY)
+    try:
+        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    subject_template = str(template.get("subject") or "")
+    body_template = str(template.get("body") or "")
+    if not subject_template or not body_template:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Client password email template is incomplete",
+        )
     website = _get_setting_value(db, "config_account_website", "")
     login_url = _fallback_login_url(website)
     subject, body = render_client_password_email(
@@ -1485,9 +1492,25 @@ def send_admin_client_password_email(
         temporary_password=temporary_password,
         login_url=login_url,
     )
-    message_id = send_client_password_email(to_email=client.email, subject=subject, body=body)
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    message_id = send_client_password_email(
+        to_email=client.email,
+        subject=subject,
+        body=body,
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
+    )
 
     now = _utcnow()
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="EMAIL",
+        message=f"Email d'activation envoye a {client.email} (message id: {message_id}).",
+    )
     client.hashed_password = hash_password(temporary_password)
     client.client_status = ClientStatus.ACTIVE
     client.is_active = True

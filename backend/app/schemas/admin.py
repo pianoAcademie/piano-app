@@ -129,6 +129,73 @@ class AdminPaymentProviderUpdateRequest(BaseModel):
     webhook_secret: str | None = Field(default=None, max_length=255)
 
 
+class AdminMessagingSettingsOut(BaseModel):
+    studio_email: str
+    studio_sender_name: str
+    teacher_sender_name: str
+    use_studio_name_as_default_sender: bool
+    use_studio_email_for_reminders: bool
+    use_studio_email_for_lesson_notes: bool
+    send_birthday_emails: bool
+    updated_at: datetime | None = None
+
+
+class AdminMessagingSettingsUpdateRequest(BaseModel):
+    studio_email: str = Field(default="", max_length=255)
+    studio_sender_name: str = Field(default="", max_length=120)
+    teacher_sender_name: str = Field(default="", max_length=120)
+    use_studio_name_as_default_sender: bool = True
+    use_studio_email_for_reminders: bool = True
+    use_studio_email_for_lesson_notes: bool = True
+    send_birthday_emails: bool = False
+
+
+class AdminMessagingChannel(str, enum.Enum):
+    EMAIL = "EMAIL"
+    SMS = "SMS"
+
+
+class AdminMessagingTemplateKind(str, enum.Enum):
+    PREDEFINED = "PREDEFINED"
+    CUSTOM = "CUSTOM"
+
+
+class AdminMessagingTemplateOut(BaseModel):
+    id: str
+    code: str | None = None
+    name: str
+    channel: AdminMessagingChannel
+    kind: AdminMessagingTemplateKind
+    subject: str | None = None
+    body: str
+    active: bool = True
+    description: str | None = None
+    variables_hint: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class AdminMessagingPredefinedTemplateUpdateRequest(BaseModel):
+    subject: str | None = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=12000)
+    active: bool = True
+
+
+class AdminMessagingCustomTemplateCreateRequest(BaseModel):
+    channel: AdminMessagingChannel
+    name: str = Field(min_length=1, max_length=180)
+    subject: str | None = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=12000)
+    active: bool = True
+
+
+class AdminMessagingCustomTemplateUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    subject: str | None = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=12000)
+    active: bool = True
+
+
 class AdminProfessorDefaultGridRuleInput(BaseModel):
     min_students: int = Field(ge=0)
     max_students: int | None = Field(default=None, ge=0)

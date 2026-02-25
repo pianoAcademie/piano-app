@@ -10,6 +10,8 @@ import type {
   AdminClientPasswordEmailTemplateOut,
   AdminCreditTypeOut,
   AdminFormulaOut,
+  AdminMessagingSettingsOut,
+  AdminMessagingTemplateOut,
   AdminPlanningActivitiesOut,
   AdminProfessorContractDeleteOut,
   AdminProfessorContractGridOut,
@@ -3542,6 +3544,158 @@ export async function updateAdminConfigPaymentProviderAction(formData: FormData)
 
   revalidatePath("/admin/config");
   redirect("/admin/config?section=params-payments&ok=Configuration%20PSP%20mise%20a%20jour");
+}
+
+export async function updateAdminConfigMessagingSettingsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const payload = {
+    studio_email: String(formData.get("studio_email") ?? "").trim(),
+    studio_sender_name: String(formData.get("studio_sender_name") ?? "").trim(),
+    teacher_sender_name: String(formData.get("teacher_sender_name") ?? "").trim(),
+    use_studio_name_as_default_sender: checkboxField(formData, "use_studio_name_as_default_sender"),
+    use_studio_email_for_reminders: checkboxField(formData, "use_studio_email_for_reminders"),
+    use_studio_email_for_lesson_notes: checkboxField(formData, "use_studio_email_for_lesson_notes"),
+    send_birthday_emails: checkboxField(formData, "send_birthday_emails"),
+  };
+
+  const result = await backendRequest<AdminMessagingSettingsOut>(
+    "/api/v1/admin/config/messaging-settings",
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  redirect("/admin/config?section=params-messaging&ok=Parametres%20messagerie%20mis%20a%20jour");
+}
+
+export async function saveAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const templateKind = String(formData.get("template_kind") ?? "").trim().toUpperCase();
+  const templateChannel = String(formData.get("template_channel") ?? "").trim().toUpperCase();
+  const templateCode = String(formData.get("template_code") ?? "").trim().toUpperCase();
+  const templateId = String(formData.get("template_id") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const subject = optionalField(formData, "subject");
+  const body = String(formData.get("body") ?? "").trim();
+  const active = checkboxField(formData, "active");
+
+  if (!body) {
+    redirect("/admin/config?section=params-messaging&error=Corps%20du%20modele%20obligatoire");
+  }
+
+  if (templateKind === "PREDEFINED") {
+    if (!templateCode) {
+      redirect("/admin/config?section=params-messaging&error=Template%20predefini%20introuvable");
+    }
+
+    const result = await backendRequest<AdminMessagingTemplateOut>(
+      `/api/v1/admin/config/messaging-templates/predefined/${encodeURIComponent(templateCode)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ subject, body, active }),
+      },
+      token,
+    );
+
+    if (!result.ok) {
+      redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+    }
+
+    revalidatePath("/admin/config");
+    redirect("/admin/config?section=params-messaging&ok=Modele%20predefini%20mis%20a%20jour");
+  }
+
+  if (templateKind !== "CUSTOM") {
+    redirect("/admin/config?section=params-messaging&error=Type%20de%20modele%20invalide");
+  }
+
+  if (!name) {
+    redirect("/admin/config?section=params-messaging&error=Nom%20du%20modele%20obligatoire");
+  }
+  if (templateChannel !== "EMAIL" && templateChannel !== "SMS") {
+    redirect("/admin/config?section=params-messaging&error=Canal%20invalide");
+  }
+  if (templateChannel === "EMAIL" && !subject) {
+    redirect("/admin/config?section=params-messaging&error=Objet%20obligatoire%20pour%20un%20email");
+  }
+
+  const payload = {
+    channel: templateChannel,
+    name,
+    subject,
+    body,
+    active,
+  };
+
+  const endpoint = templateId
+    ? `/api/v1/admin/config/messaging-templates/custom/${encodeURIComponent(templateId)}`
+    : "/api/v1/admin/config/messaging-templates/custom";
+  const method = templateId ? "PATCH" : "POST";
+  const result = await backendRequest<AdminMessagingTemplateOut>(
+    endpoint,
+    {
+      method,
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  redirect(
+    `/admin/config?section=params-messaging&ok=${encodeURIComponent(
+      templateId ? "Modele personnalise mis a jour" : "Modele personnalise cree",
+    )}`,
+  );
+}
+
+export async function deleteAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const templateId = String(formData.get("template_id") ?? "").trim();
+  if (!templateId) {
+    redirect("/admin/config?section=params-messaging&error=Template%20introuvable");
+  }
+
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/config/messaging-templates/custom/${encodeURIComponent(templateId)}`,
+    { method: "DELETE" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  redirect("/admin/config?section=params-messaging&ok=Modele%20personnalise%20supprime");
 }
 
 export async function updateAdminClientPasswordEmailTemplateAction(formData: FormData): Promise<void> {
