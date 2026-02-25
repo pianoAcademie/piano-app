@@ -1,0 +1,406 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_db, require_roles
+from app.models.catalog import CourseType
+from app.models.family import ClientFamilyLink
+from app.models.plan import (
+    ClientPlanSubscription,
+    Plan,
+    PlanCreditGrant,
+    PlanCreditGrantsRelation,
+    PlanEntitlement,
+    PlanKind,
+    PlanPriceTaxMode,
+    SubscriptionStatus,
+)
+from app.models.user import ClientKind, User, UserRole
+from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut, PlanOut, PlanPricePreviewOut, PlanPurchaseRequest
+from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
+from app.services.subscriptions import add_months_utc, reconcile_subscription_status
+
+router = APIRouter()
+
+
+def _entitlements_by_plan(
+    db: Session,
+    *,
+    plan_ids: list[UUID],
+) -> tuple[dict[UUID, list[UUID]], dict[UUID, list[str]]]:
+    if not plan_ids:
+        return {}, {}
+
+    rows = db.execute(
+        select(PlanEntitlement.plan_id, PlanEntitlement.course_type_id, CourseType.name)
+        .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
+        .where(PlanEntitlement.plan_id.in_(plan_ids))
+        .order_by(PlanEntitlement.plan_id.asc(), CourseType.name.asc())
+    ).all()
+
+    ids_map: dict[UUID, list[UUID]] = defaultdict(list)
+    names_map: dict[UUID, list[str]] = defaultdict(list)
+    for plan_id, course_type_id, course_type_name in rows:
+        ids_map[plan_id].append(course_type_id)
+        names_map[plan_id].append(course_type_name)
+
+    return dict(ids_map), dict(names_map)
+
+
+def _lock_user_purchase_scope(db: Session, user_id: UUID) -> None:
+    db.scalar(
+        select(User.id)
+        .where(User.id == user_id)
+        .with_for_update()
+    )
+
+
+def _has_same_subscription_in_current_month(
+    db: Session,
+    *,
+    user_id: UUID,
+    plan_id: UUID,
+    now: datetime,
+) -> bool:
+    existing = db.scalar(
+        select(ClientPlanSubscription.id)
+        .where(
+            ClientPlanSubscription.user_id == user_id,
+            ClientPlanSubscription.plan_id == plan_id,
+            ClientPlanSubscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED]),
+            or_(ClientPlanSubscription.cancellation_effective_at.is_(None), ClientPlanSubscription.cancellation_effective_at > now),
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
+        )
+        .limit(1)
+        .with_for_update()
+    )
+    return existing is not None
+
+
+def _has_active_pack_with_remaining_credits(db: Session, *, user_id: UUID) -> bool:
+    existing = db.scalar(
+        select(ClientPlanSubscription.id)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .where(
+            ClientPlanSubscription.user_id == user_id,
+            ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
+            Plan.active.is_(True),
+            Plan.kind == PlanKind.PACK,
+            ClientPlanSubscription.credits_remaining.is_not(None),
+            ClientPlanSubscription.credits_remaining > 0,
+        )
+        .limit(1)
+        .with_for_update()
+    )
+    return existing is not None
+
+
+def _resolve_plan_owner(
+    db: Session,
+    *,
+    current_user: User,
+    requested_user_id: UUID | None,
+) -> User:
+    if requested_user_id is None or requested_user_id == current_user.id:
+        return current_user
+
+    if current_user.client_kind != ClientKind.ADULT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only adult accounts can purchase for another family member",
+        )
+
+    link_exists = db.scalar(
+        select(ClientFamilyLink.id).where(
+            ClientFamilyLink.adult_user_id == current_user.id,
+            ClientFamilyLink.child_user_id == requested_user_id,
+        )
+    )
+    if link_exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Target member is not attached to this adult account",
+        )
+
+    member = db.scalar(
+        select(User).where(
+            User.id == requested_user_id,
+            User.role == UserRole.CLIENT,
+        )
+    )
+    if member is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target client not found")
+    if not member.is_active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Target client is inactive")
+    return member
+
+
+def _plan_payment_methods(plan: Plan) -> list[str]:
+    raw = plan.payment_methods_json
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        code = str(value).strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(code)
+    return out
+
+
+def _default_subscription_billing_method(plan: Plan) -> str | None:
+    methods = _plan_payment_methods(plan)
+    if "CARD_ONLINE" in methods:
+        return "CARD_ONLINE"
+    return methods[0] if methods else None
+
+
+def _effective_pack_credits_for_plan(db: Session, *, plan: Plan) -> int | None:
+    if plan.kind != PlanKind.PACK:
+        return None
+    grant_counts = db.scalars(
+        select(PlanCreditGrant.credits_count).where(PlanCreditGrant.plan_id == plan.id)
+    ).all()
+    normalized = [int(count) for count in grant_counts if int(count) > 0]
+    if normalized:
+        if plan.credit_grants_relation == PlanCreditGrantsRelation.OR:
+            return max(normalized)
+        return sum(normalized)
+    return int(plan.credits_count or 0)
+
+
+@router.get("/plans", response_model=list[PlanOut])
+def list_plans(active: bool = True, db: Session = Depends(get_db)) -> list[PlanOut]:
+    stmt = select(Plan)
+    if active:
+        stmt = stmt.where(Plan.active.is_(True))
+    stmt = stmt.order_by(Plan.name.asc())
+
+    plans = db.scalars(stmt).all()
+    return [
+        PlanOut(
+            id=plan.id,
+            code=plan.code,
+            name=plan.name,
+            kind=plan.kind,
+            credits_count=_effective_pack_credits_for_plan(db, plan=plan),
+            monthly_price_excl_vat=plan.monthly_price_excl_vat,
+            currency_code=plan.currency_code,
+            active=plan.active,
+        )
+        for plan in plans
+    ]
+
+
+@router.get("/plans/{plan_id}/price-preview", response_model=PlanPricePreviewOut)
+def plan_price_preview(
+    plan_id: UUID,
+    country: str = Query(default="FR", min_length=2, max_length=2),
+    currency: str = Query(default="EUR", min_length=3, max_length=3),
+    db: Session = Depends(get_db),
+) -> PlanPricePreviewOut:
+    normalized_country = country.upper()
+    normalized_currency = currency.upper()
+    today = date.today()
+
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True)))
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    service_code = plan_service_code(plan.kind.value)
+    vat_rate = resolve_vat_rate(
+        db,
+        country=normalized_country,
+        service_code=service_code,
+        on_date=today,
+    )
+
+    price_excl_vat: Decimal | None = None
+    currency_code = (plan.currency_code or normalized_currency).upper()
+    if plan.monthly_price_value is not None:
+        raw_price = Decimal(plan.monthly_price_value)
+        if plan.price_tax_mode == PlanPriceTaxMode.TTC:
+            divisor = Decimal("1") + (vat_rate / Decimal("100"))
+            price_excl_vat = raw_price if divisor <= 0 else (raw_price / divisor)
+        else:
+            price_excl_vat = raw_price
+    elif plan.monthly_price_excl_vat is not None:
+        price_excl_vat = Decimal(plan.monthly_price_excl_vat)
+    else:
+        resolved_price = resolve_plan_price(
+            db,
+            plan_id=plan.id,
+            country=normalized_country,
+            currency=normalized_currency,
+            on_date=today,
+        )
+        if resolved_price is not None:
+            price_excl_vat = Decimal(resolved_price.price_excl_vat)
+            currency_code = resolved_price.currency_code
+
+    if price_excl_vat is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No price rule found for this plan")
+
+    price, vat_amount, total = compute_tax_totals(price_excl_vat=price_excl_vat, vat_rate=vat_rate)
+
+    return PlanPricePreviewOut(
+        plan_id=plan.id,
+        country=normalized_country,
+        currency=currency_code,
+        price_excl_vat=price,
+        vat_rate=vat_rate,
+        vat_amount=vat_amount,
+        total_incl_vat=total,
+    )
+
+
+@router.post("/plans/{plan_id}/purchase", response_model=ClientSubscriptionOut, status_code=status.HTTP_201_CREATED)
+def purchase_plan(
+    plan_id: UUID,
+    payload: PlanPurchaseRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientSubscriptionOut:
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True)))
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    payload = payload or PlanPurchaseRequest()
+    owner = _resolve_plan_owner(
+        db,
+        current_user=current_user,
+        requested_user_id=payload.user_id,
+    )
+
+    now = datetime.now(timezone.utc)
+    _lock_user_purchase_scope(db, owner.id)
+
+    if plan.kind == PlanKind.SUBSCRIPTION and _has_same_subscription_in_current_month(
+        db,
+        user_id=owner.id,
+        plan_id=plan.id,
+        now=now,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This subscription is already purchased for the current month",
+        )
+
+    if plan.kind == PlanKind.PACK and _has_active_pack_with_remaining_credits(
+        db,
+        user_id=owner.id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active pack with remaining credits already exists",
+        )
+
+    credits_initial: int | None = None
+    credits_remaining: int | None = None
+    ends_at = None
+
+    if plan.kind == PlanKind.PACK:
+        credits_initial = _effective_pack_credits_for_plan(db, plan=plan) or 0
+        credits_remaining = credits_initial
+    elif plan.kind == PlanKind.SUBSCRIPTION:
+        ends_at = add_months_utc(now, 1)
+
+    subscription = ClientPlanSubscription(
+        user_id=owner.id,
+        plan_id=plan.id,
+        status=SubscriptionStatus.ACTIVE,
+        started_at=now,
+        ends_at=ends_at,
+        credits_initial=credits_initial,
+        credits_remaining=credits_remaining,
+        auto_renew=(plan.kind == PlanKind.SUBSCRIPTION),
+        billing_method_code=_default_subscription_billing_method(plan) if plan.kind == PlanKind.SUBSCRIPTION else None,
+        next_payment_at=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
+    )
+    db.add(subscription)
+    db.commit()
+    db.refresh(subscription)
+
+    entitlement_ids_map, entitlement_names_map = _entitlements_by_plan(db, plan_ids=[plan.id])
+
+    return ClientSubscriptionOut(
+        id=subscription.id,
+        status=subscription.status,
+        started_at=subscription.started_at,
+        ends_at=subscription.ends_at,
+        next_payment_at=subscription.next_payment_at,
+        credits_initial=subscription.credits_initial,
+        credits_remaining=subscription.credits_remaining,
+        auto_renew=subscription.auto_renew,
+        billing_method_code=subscription.billing_method_code,
+        suspension_starts_at=subscription.suspension_starts_at,
+        suspension_ends_at=subscription.suspension_ends_at,
+        cancellation_requested_at=subscription.cancellation_requested_at,
+        cancellation_effective_at=subscription.cancellation_effective_at,
+        plan=PlanMiniOut(
+            id=plan.id,
+            code=plan.code,
+            name=plan.name,
+            kind=plan.kind,
+        ),
+        entitlement_course_type_ids=entitlement_ids_map.get(plan.id, []),
+        entitlement_course_type_names=entitlement_names_map.get(plan.id, []),
+    )
+
+
+@router.get("/clients/me/subscriptions", response_model=list[ClientSubscriptionOut])
+def list_my_subscriptions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> list[ClientSubscriptionOut]:
+    rows = db.execute(
+        select(ClientPlanSubscription, Plan)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .where(ClientPlanSubscription.user_id == current_user.id)
+        .order_by(ClientPlanSubscription.created_at.desc())
+    ).all()
+    plan_ids = list({plan.id for _, plan in rows})
+    entitlement_ids_map, entitlement_names_map = _entitlements_by_plan(db, plan_ids=plan_ids)
+    now = datetime.now(timezone.utc)
+    changed = False
+    payload: list[ClientSubscriptionOut] = []
+    for sub, plan in rows:
+        if reconcile_subscription_status(sub, now=now, plan_kind=plan.kind):
+            changed = True
+        payload.append(
+            ClientSubscriptionOut(
+                id=sub.id,
+                status=sub.status,
+                started_at=sub.started_at,
+                ends_at=sub.ends_at,
+                next_payment_at=sub.next_payment_at,
+                credits_initial=sub.credits_initial,
+                credits_remaining=sub.credits_remaining,
+                auto_renew=sub.auto_renew,
+                billing_method_code=sub.billing_method_code,
+                suspension_starts_at=sub.suspension_starts_at,
+                suspension_ends_at=sub.suspension_ends_at,
+                cancellation_requested_at=sub.cancellation_requested_at,
+                cancellation_effective_at=sub.cancellation_effective_at,
+                plan=PlanMiniOut(
+                    id=plan.id,
+                    code=plan.code,
+                    name=plan.name,
+                    kind=plan.kind,
+                ),
+                entitlement_course_type_ids=entitlement_ids_map.get(plan.id, []),
+                entitlement_course_type_names=entitlement_names_map.get(plan.id, []),
+            )
+        )
+    if changed:
+        db.commit()
+    return payload

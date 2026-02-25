@@ -1,0 +1,429 @@
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from sqlalchemy import select
+
+from app.db.session import SessionLocal
+from app.models.catalog import Booking, CourseSession, Location, Professor
+from app.models.ops import EmailReminder
+from app.models.plan import Plan, PlanEntitlement, PlanKind
+from app.models.user import User, UserRole
+
+BASE_URL = "http://localhost:8000"
+
+
+@dataclass
+class ApiResult:
+    status: int
+    data: Any
+
+
+class SmokeFailure(RuntimeError):
+    pass
+
+
+class ApiClient:
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url.rstrip("/")
+
+    def call(self, method: str, path: str, payload: Any | None = None, token: str | None = None) -> ApiResult:
+        headers: dict[str, str] = {}
+        body = None
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(payload).encode()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        request = Request(f"{self.base_url}{path}", data=body, headers=headers, method=method)
+        try:
+            with urlopen(request, timeout=20) as response:
+                raw = response.read().decode()
+                data = json.loads(raw) if raw else None
+                return ApiResult(status=response.status, data=data)
+        except HTTPError as exc:
+            raw = exc.read().decode()
+            try:
+                data = json.loads(raw) if raw else None
+            except Exception:
+                data = raw
+            return ApiResult(status=exc.code, data=data)
+
+
+api = ApiClient(BASE_URL)
+
+
+def ensure(condition: bool, message: str) -> None:
+    if not condition:
+        raise SmokeFailure(message)
+
+
+def step(message: str) -> None:
+    print(f"[SMOKE] {message}", flush=True)
+
+
+def register_user(email: str, password: str, *, timezone: str = "Europe/Paris") -> None:
+    payload = {
+        "email": email,
+        "password": password,
+        "first_name": "Smoke",
+        "last_name": "User",
+        "address_line": "1 Rue Test",
+        "phone": "+33100000000",
+        "residence_country": "FR",
+        "preferred_currency": "EUR",
+        "timezone": timezone,
+    }
+    res = api.call("POST", "/api/v1/auth/register", payload)
+    ensure(res.status == 201, f"register failed for {email}: {res.status} {res.data}")
+
+
+def promote_user_role(email: str, role: UserRole) -> None:
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == email))
+        ensure(user is not None, f"user not found for role promotion: {email}")
+        user.role = role
+        db.add(user)
+        db.commit()
+
+
+def login(email: str, password: str) -> str:
+    res = api.call("POST", "/api/v1/auth/login", {"email": email, "password": password})
+    ensure(res.status == 200, f"login failed for {email}: {res.status} {res.data}")
+    token = res.data.get("access_token") if isinstance(res.data, dict) else None
+    ensure(isinstance(token, str) and token, f"missing access token for {email}")
+    return token
+
+
+def get_pack_plan_and_course_type() -> tuple[str, str]:
+    with SessionLocal() as db:
+        row = db.execute(
+            select(Plan.id, PlanEntitlement.course_type_id)
+            .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
+            .where(Plan.kind == PlanKind.PACK, Plan.active.is_(True))
+            .limit(1)
+        ).first()
+        ensure(row is not None, "no active PACK plan entitlement found")
+        return str(row.id), str(row.course_type_id)
+
+
+def get_subscription_plan_id() -> str:
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(Plan.id)
+            .where(Plan.kind == PlanKind.SUBSCRIPTION, Plan.active.is_(True))
+            .limit(1)
+        )
+        ensure(row is not None, "no active SUBSCRIPTION plan found")
+        return str(row)
+
+
+def get_online_location_and_professor() -> tuple[str, str]:
+    with SessionLocal() as db:
+        location = db.scalar(select(Location).where(Location.code == "ONLINE"))
+        professor = db.scalar(select(Professor).where(Professor.email == "prof.demo@piano-academie.local"))
+        ensure(location is not None, "ONLINE location not found")
+        ensure(professor is not None, "demo professor not found")
+        return str(location.id), str(professor.id)
+
+
+def create_session_as_admin(
+    admin_token: str,
+    *,
+    title: str,
+    start_at: datetime,
+    course_type_id: str,
+    location_id: str,
+    professor_id: str,
+    capacity: int,
+    deadline_hours_before: int = 6,
+) -> str:
+    payload = {
+        "course_type_id": course_type_id,
+        "location_id": location_id,
+        "professor_id": professor_id,
+        "title": title,
+        "description": "Smoke test session",
+        "start_at_utc": start_at.isoformat(),
+        "end_at_utc": (start_at + timedelta(hours=1)).isoformat(),
+        "capacity_max": capacity,
+        "auto_cancel_deadline_utc": (start_at - timedelta(hours=deadline_hours_before)).isoformat(),
+        "zoom_link": "https://zoom.us/j/smoke-test",
+    }
+    res = api.call("POST", "/api/v1/admin/sessions", payload, admin_token)
+    ensure(res.status == 201, f"admin create session failed: {res.status} {res.data}")
+    session_id = res.data.get("id") if isinstance(res.data, dict) else None
+    ensure(isinstance(session_id, str), "missing session id after admin create")
+    return session_id
+
+
+def buy_plan(token: str, plan_id: str) -> str:
+    res = api.call("POST", f"/api/v1/plans/{plan_id}/purchase", token=token)
+    ensure(res.status == 201, f"purchase plan failed: {res.status} {res.data}")
+    sub_id = res.data.get("id") if isinstance(res.data, dict) else None
+    ensure(isinstance(sub_id, str), "missing subscription id after purchase")
+    return sub_id
+
+
+def book_session(token: str, session_id: str, subscription_id: str) -> dict[str, Any]:
+    res = api.call(
+        "POST",
+        f"/api/v1/sessions/{session_id}/book",
+        {"client_plan_subscription_id": subscription_id},
+        token,
+    )
+    ensure(res.status == 201, f"book session failed: {res.status} {res.data}")
+    ensure(isinstance(res.data, dict), f"unexpected book payload: {res.data}")
+    return res.data
+
+
+def cancel_booking(token: str, booking_id: str) -> None:
+    res = api.call("DELETE", f"/api/v1/bookings/{booking_id}", token=token)
+    ensure(res.status == 204, f"cancel booking failed: {res.status} {res.data}")
+
+
+def main() -> None:
+    started = time.time()
+    ts = int(started)
+    now = datetime.now(UTC)
+
+    step("health")
+    health = api.call("GET", "/health")
+    ensure(health.status == 200 and isinstance(health.data, dict) and health.data.get("ok") is True, "health check failed")
+
+    client_email = f"smoke.client.{ts}@example.com"
+    wait_email = f"smoke.wait.{ts}@example.com"
+    admin_email = f"smoke.admin.{ts}@example.com"
+    prof_email = "prof.demo@piano-academie.local"
+    password = "Password123X"
+
+    step("register users")
+    register_user(client_email, password)
+    register_user(wait_email, password)
+    register_user(admin_email, password)
+
+    with SessionLocal() as db:
+        prof_user = db.scalar(select(User).where(User.email == prof_email))
+    if prof_user is None:
+        register_user(prof_email, password)
+
+    promote_user_role(admin_email, UserRole.ADMIN)
+    promote_user_role(prof_email, UserRole.PROF)
+
+    step("login users")
+    client_token = login(client_email, password)
+    wait_token = login(wait_email, password)
+    admin_token = login(admin_email, password)
+    prof_token = login(prof_email, password)
+
+    step("client profile")
+    me_client = api.call("GET", "/api/v1/clients/me", token=client_token)
+    ensure(me_client.status == 200, f"GET /clients/me failed: {me_client.status} {me_client.data}")
+
+    patch_client = api.call(
+        "PATCH",
+        "/api/v1/clients/me",
+        {"timezone": "Europe/London", "residence_country": "GB", "preferred_currency": "EUR"},
+        client_token,
+    )
+    ensure(patch_client.status == 200, f"PATCH /clients/me failed: {patch_client.status} {patch_client.data}")
+
+    plan_id, course_type_id = get_pack_plan_and_course_type()
+    sub_plan_id = get_subscription_plan_id()
+    location_id, professor_id = get_online_location_and_professor()
+
+    step("waitlist scenario")
+    waitlist_session_id = create_session_as_admin(
+        admin_token,
+        title=f"Smoke waitlist {ts}",
+        start_at=now + timedelta(hours=30),
+        course_type_id=course_type_id,
+        location_id=location_id,
+        professor_id=professor_id,
+        capacity=1,
+    )
+
+    sub_client = buy_plan(client_token, plan_id)
+    sub_wait = buy_plan(wait_token, plan_id)
+
+    step("purchase guards")
+    duplicate_pack = api.call("POST", f"/api/v1/plans/{plan_id}/purchase", token=client_token)
+    ensure(duplicate_pack.status == 409, f"duplicate pack purchase should fail: {duplicate_pack.status} {duplicate_pack.data}")
+
+    first_monthly = api.call("POST", f"/api/v1/plans/{sub_plan_id}/purchase", token=client_token)
+    ensure(first_monthly.status == 201, f"first monthly purchase failed: {first_monthly.status} {first_monthly.data}")
+
+    duplicate_monthly = api.call("POST", f"/api/v1/plans/{sub_plan_id}/purchase", token=client_token)
+    ensure(
+        duplicate_monthly.status == 409,
+        f"duplicate monthly purchase should fail: {duplicate_monthly.status} {duplicate_monthly.data}",
+    )
+
+    booking_client = book_session(client_token, waitlist_session_id, sub_client)
+    booking_wait = book_session(wait_token, waitlist_session_id, sub_wait)
+
+    ensure(booking_client.get("status") == "BOOKED", f"expected BOOKED, got {booking_client.get('status')}")
+    ensure(booking_wait.get("status") == "WAITLISTED", f"expected WAITLISTED, got {booking_wait.get('status')}")
+
+    cancel_booking(client_token, booking_client["id"])
+
+    with SessionLocal() as db:
+        wait_booking = db.scalar(select(Booking).where(Booking.id == booking_wait["id"]))
+        ensure(wait_booking is not None, "waitlist booking missing after cancel")
+        ensure(wait_booking.status.value == "WAITLISTED", "waitlist booking should remain WAITLISTED after cancel")
+
+    step("attendance scenario")
+    attendance_session_id = create_session_as_admin(
+        admin_token,
+        title=f"Smoke attendance {ts}",
+        start_at=now + timedelta(hours=30),
+        course_type_id=course_type_id,
+        location_id=location_id,
+        professor_id=professor_id,
+        capacity=3,
+    )
+    booking_att = book_session(wait_token, attendance_session_id, sub_wait)
+    ensure(booking_att.get("status") == "BOOKED", "attendance booking should be BOOKED")
+
+    step("reminders")
+    set_reminder = api.call("PUT", "/api/v1/admin/settings/reminder_hours_before_start", {"value": "48"}, admin_token)
+    ensure(set_reminder.status == 200, f"setting reminder hours failed: {set_reminder.status} {set_reminder.data}")
+
+    run_reminders = api.call("POST", "/api/v1/internal/jobs/send-reminders", token=admin_token)
+    ensure(run_reminders.status == 200, f"send reminders failed: {run_reminders.status} {run_reminders.data}")
+
+    with SessionLocal() as db:
+        reminder = db.scalar(select(EmailReminder).where(EmailReminder.booking_id == booking_att["id"]).order_by(EmailReminder.created_at.desc()))
+        ensure(reminder is not None, "reminder record missing")
+
+    attendance = api.call(
+        "POST",
+        f"/api/v1/bookings/{booking_att['id']}/attendance",
+        {"attendance_status": "ATTENDED"},
+        prof_token,
+    )
+    ensure(attendance.status == 200, f"attendance update failed: {attendance.status} {attendance.data}")
+
+    step("auto-cancel job")
+    auto_session_id = create_session_as_admin(
+        admin_token,
+        title=f"Smoke autocancel {ts}",
+        start_at=now + timedelta(hours=10),
+        course_type_id=course_type_id,
+        location_id=location_id,
+        professor_id=professor_id,
+        capacity=3,
+        deadline_hours_before=1,
+    )
+    patch_auto = api.call(
+        "PATCH",
+        f"/api/v1/admin/sessions/{auto_session_id}",
+        {"auto_cancel_deadline_utc": (now - timedelta(minutes=5)).isoformat()},
+        admin_token,
+    )
+    ensure(patch_auto.status == 200, f"patch auto-cancel deadline failed: {patch_auto.status} {patch_auto.data}")
+
+    auto_job = api.call("POST", "/api/v1/internal/jobs/auto-cancel-empty-sessions", token=admin_token)
+    ensure(auto_job.status == 200, f"auto-cancel job failed: {auto_job.status} {auto_job.data}")
+
+    with SessionLocal() as db:
+        auto_session = db.scalar(select(CourseSession).where(CourseSession.id == auto_session_id))
+        ensure(auto_session is not None and auto_session.status.value == "CANCELLED", "auto-cancel session not cancelled")
+
+    step("admin pricing + vat")
+    pp = api.call(
+        "POST",
+        "/api/v1/admin/pricing/plan-prices",
+        {
+            "plan_id": plan_id,
+            "residence_country": "US",
+            "currency_code": "USD",
+            "price_excl_vat": "111.11",
+            "valid_from": "2026-02-01",
+        },
+        admin_token,
+    )
+    ensure(pp.status in {201, 409}, f"plan price create unexpected: {pp.status} {pp.data}")
+
+    ctp = api.call(
+        "POST",
+        "/api/v1/admin/pricing/course-type-prices",
+        {
+            "course_type_id": course_type_id,
+            "residence_country": "US",
+            "currency_code": "USD",
+            "price_excl_vat": "33.33",
+            "valid_from": "2026-02-01",
+        },
+        admin_token,
+    )
+    ensure(ctp.status in {201, 409}, f"course type price create unexpected: {ctp.status} {ctp.data}")
+
+    vat = api.call(
+        "POST",
+        "/api/v1/admin/vat-rules",
+        {
+            "country_code": "US",
+            "service_code": "PIANO_CLASS",
+            "vat_rate": "7.50",
+            "valid_from": "2026-02-01",
+        },
+        admin_token,
+    )
+    ensure(vat.status in {201, 409}, f"vat create unexpected: {vat.status} {vat.data}")
+
+    pp_list = api.call("GET", "/api/v1/admin/pricing/plan-prices?country=US&currency=USD", token=admin_token)
+    ctp_list = api.call("GET", "/api/v1/admin/pricing/course-type-prices?country=US&currency=USD", token=admin_token)
+    vat_list = api.call("GET", "/api/v1/admin/vat-rules?country_code=US&service_code=PIANO_CLASS", token=admin_token)
+    ensure(pp_list.status == 200 and isinstance(pp_list.data, list), "plan price list failed")
+    ensure(ctp_list.status == 200 and isinstance(ctp_list.data, list), "course type price list failed")
+    ensure(vat_list.status == 200 and isinstance(vat_list.data, list), "vat list failed")
+
+    step("reports + payouts")
+    reports = [
+        api.call("GET", "/api/v1/admin/reports/reservations", token=admin_token),
+        api.call("GET", "/api/v1/admin/reports/attendance", token=admin_token),
+        api.call("GET", "/api/v1/admin/reports/professor-statements", token=admin_token),
+    ]
+    ensure(all(r.status == 200 for r in reports), "one of report endpoints failed")
+
+    payout = api.call("POST", "/api/v1/internal/jobs/calc-professor-payouts", token=admin_token)
+    ensure(payout.status == 200, f"payout job failed: {payout.status} {payout.data}")
+
+    duration = round(time.time() - started, 2)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "duration_seconds": duration,
+                "checks": {
+                    "health": True,
+                    "auth_roles": True,
+                    "client_profile": True,
+                    "waitlist": True,
+                    "purchase_guards": True,
+                    "attendance": True,
+                    "reminders_job": True,
+                    "auto_cancel_job": True,
+                    "admin_pricing": True,
+                    "reports": True,
+                    "payout_job": True,
+                },
+            }
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,1208 @@
+from __future__ import annotations
+
+import enum
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+from app.models.catalog import DeliveryMode, SessionStatus
+from app.models.ops import ReminderStatus
+from app.models.payout import PayoutStatus
+from app.models.plan import PlanCreditGrantsRelation, PlanKind, PlanPriceTaxMode, PlanRestrictionPeriod, SubscriptionStatus
+from app.models.professor_contract import ProfessorContractLineMode
+from app.models.user import ClientKind, ClientStatus, UserRole
+
+
+class AppSettingOut(BaseModel):
+    key: str
+    value: str
+    updated_at: datetime
+
+
+class AppSettingUpdateRequest(BaseModel):
+    value: str = Field(min_length=1)
+
+
+class AdminConfigAccountOut(BaseModel):
+    contact_first_name: str
+    contact_last_name: str
+    contact_email: str
+    contact_phone: str
+    company_name: str
+    club_name: str
+    siret: str
+    vat_number: str
+    vat_default_rate: str
+    website: str
+    address_line: str
+    postal_code: str
+    city: str
+    country: str
+    allowed_currencies: list[str] = Field(default_factory=list)
+    default_currency: str
+    legal_terms: str
+
+
+class AdminConfigAccountUpdateRequest(BaseModel):
+    contact_first_name: str = Field(default="", max_length=100)
+    contact_last_name: str = Field(default="", max_length=100)
+    contact_email: str = Field(default="", max_length=255)
+    contact_phone: str = Field(default="", max_length=40)
+    company_name: str = Field(default="", max_length=255)
+    club_name: str = Field(default="", max_length=255)
+    siret: str = Field(default="", max_length=30)
+    vat_number: str = Field(default="", max_length=50)
+    vat_default_rate: str = Field(default="", max_length=20)
+    website: str = Field(default="", max_length=255)
+    address_line: str = Field(default="", max_length=255)
+    postal_code: str = Field(default="", max_length=20)
+    city: str = Field(default="", max_length=120)
+    country: str = Field(default="", max_length=120)
+    allowed_currencies: list[str] = Field(default_factory=list)
+    default_currency: str = Field(default="EUR", min_length=3, max_length=3)
+    legal_terms: str = Field(default="")
+
+
+class AdminSubscriptionSettingsOut(BaseModel):
+    direct_debit_day: int | None
+    allow_card_subscriptions: bool
+    add_contract_signature: bool
+    close_expired_subscriptions: bool
+    allow_promotional_start_period: bool
+    allow_prorata_card: bool
+    allow_prorata_sepa: bool
+    online_resiliation_enabled: bool
+
+
+class AdminSubscriptionSettingsUpdateRequest(BaseModel):
+    direct_debit_day: int | None = Field(default=None, ge=1, le=28)
+    allow_card_subscriptions: bool
+    add_contract_signature: bool
+    close_expired_subscriptions: bool
+    allow_promotional_start_period: bool
+    allow_prorata_card: bool
+    allow_prorata_sepa: bool
+    online_resiliation_enabled: bool
+
+
+class AdminPaymentMethodOptionOut(BaseModel):
+    code: str
+    label: str
+    enabled: bool
+
+
+class AdminPaymentMethodsOut(BaseModel):
+    methods: list[AdminPaymentMethodOptionOut]
+
+
+class AdminPaymentMethodsUpdateRequest(BaseModel):
+    enabled_codes: list[str] = Field(default_factory=list)
+
+
+class AdminPaymentProviderOut(BaseModel):
+    provider: str
+    mode: str
+    subscriptions_supported: bool
+    subscriptions_managed_by_psp: bool
+    recommendation: str
+    payplug_test_secret_configured: bool
+    payplug_live_secret_configured: bool
+    mollie_test_api_key_configured: bool
+    mollie_live_api_key_configured: bool
+    payplug_test_secret_masked: str
+    payplug_live_secret_masked: str
+    mollie_test_api_key_masked: str
+    mollie_live_api_key_masked: str
+    webhook_secret_masked: str
+
+
+class AdminPaymentProviderUpdateRequest(BaseModel):
+    provider: str = Field(min_length=1, max_length=30)
+    mode: str = Field(min_length=1, max_length=10)
+    payplug_test_secret: str | None = Field(default=None, max_length=255)
+    payplug_live_secret: str | None = Field(default=None, max_length=255)
+    mollie_test_api_key: str | None = Field(default=None, max_length=255)
+    mollie_live_api_key: str | None = Field(default=None, max_length=255)
+    webhook_secret: str | None = Field(default=None, max_length=255)
+
+
+class AdminProfessorDefaultGridRuleInput(BaseModel):
+    min_students: int = Field(ge=0)
+    max_students: int | None = Field(default=None, ge=0)
+    hourly_rate: Decimal = Field(ge=0)
+
+
+class AdminProfessorDefaultGridLineInput(BaseModel):
+    course_type_id: UUID
+    default_hourly_rate: Decimal | None = Field(default=None, ge=0)
+    rules: list[AdminProfessorDefaultGridRuleInput] = Field(default_factory=list)
+
+
+class AdminProfessorDefaultGridUpdateRequest(BaseModel):
+    lines: list[AdminProfessorDefaultGridLineInput] = Field(default_factory=list)
+
+
+class AdminProfessorDefaultGridRuleOut(BaseModel):
+    min_students: int
+    max_students: int | None
+    hourly_rate: Decimal
+    display_order: int
+
+
+class AdminProfessorDefaultGridLineOut(BaseModel):
+    course_type_id: UUID
+    course_type_name: str
+    mode: ProfessorContractLineMode
+    reference_duration_minutes: int | None
+    default_hourly_rate: Decimal | None
+    display_order: int
+    rules: list[AdminProfessorDefaultGridRuleOut] = Field(default_factory=list)
+
+
+class AdminProfessorDefaultGridOut(BaseModel):
+    lines: list[AdminProfessorDefaultGridLineOut] = Field(default_factory=list)
+    updated_at: datetime | None
+
+
+class AdminFormulaRestrictionIn(BaseModel):
+    period: PlanRestrictionPeriod
+    max_bookings: int = Field(ge=1, le=50)
+    course_type_ids: list[UUID] = Field(default_factory=list)
+
+
+class AdminFormulaRestrictionOut(BaseModel):
+    id: str
+    period: PlanRestrictionPeriod
+    max_bookings: int
+    course_type_ids: list[UUID] = Field(default_factory=list)
+    course_type_names: list[str] = Field(default_factory=list)
+
+
+class AdminFormulaCreditGrantIn(BaseModel):
+    credit_type_id: UUID
+    credits_count: int = Field(ge=1, le=100000)
+
+
+class AdminFormulaCreditGrantOut(BaseModel):
+    id: str
+    credit_type_id: UUID
+    credit_type_code: str | None = None
+    credit_type_name: str | None = None
+    credits_count: int
+
+
+class AdminFormulaOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    kind: PlanKind
+    active: bool
+    is_private: bool
+    description: str | None
+    credits_count: int | None
+    credit_grants: list[AdminFormulaCreditGrantOut] = Field(default_factory=list)
+    credit_grants_relation: PlanCreditGrantsRelation
+    monthly_price_value: Decimal | None
+    signup_fee_value: Decimal | None
+    price_tax_mode: PlanPriceTaxMode
+    monthly_price_excl_vat: Decimal | None
+    currency_code: str | None
+    signup_fee_excl_vat: Decimal | None
+    options: list[str] = Field(default_factory=list)
+    payment_methods: list[str] = Field(default_factory=list)
+    entitlement_course_type_ids: list[UUID] = Field(default_factory=list)
+    entitlement_course_type_names: list[str] = Field(default_factory=list)
+    restrictions: list[AdminFormulaRestrictionOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminFormulaUpsertRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    kind: PlanKind
+    active: bool = True
+    is_private: bool = False
+    description: str | None = None
+    credits_count: int | None = Field(default=None, ge=1)
+    credit_grants: list[AdminFormulaCreditGrantIn] = Field(default_factory=list)
+    credit_grants_relation: PlanCreditGrantsRelation = PlanCreditGrantsRelation.OR
+    monthly_price_value: Decimal | None = Field(default=None, ge=0)
+    signup_fee_value: Decimal | None = Field(default=None, ge=0)
+    price_tax_mode: PlanPriceTaxMode = PlanPriceTaxMode.HT
+    monthly_price_excl_vat: Decimal | None = Field(default=None, ge=0)
+    currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+    signup_fee_excl_vat: Decimal | None = Field(default=None, ge=0)
+    options: list[str] = Field(default_factory=list)
+    payment_methods: list[str] = Field(default_factory=list)
+    entitlement_course_type_ids: list[UUID] = Field(default_factory=list)
+    restrictions: list[AdminFormulaRestrictionIn] = Field(default_factory=list)
+
+
+class AdminFormulaUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    kind: PlanKind | None = None
+    active: bool | None = None
+    is_private: bool | None = None
+    description: str | None = None
+    credits_count: int | None = Field(default=None, ge=1)
+    credit_grants: list[AdminFormulaCreditGrantIn] | None = None
+    credit_grants_relation: PlanCreditGrantsRelation | None = None
+    monthly_price_value: Decimal | None = Field(default=None, ge=0)
+    signup_fee_value: Decimal | None = Field(default=None, ge=0)
+    price_tax_mode: PlanPriceTaxMode | None = None
+    monthly_price_excl_vat: Decimal | None = Field(default=None, ge=0)
+    currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+    signup_fee_excl_vat: Decimal | None = Field(default=None, ge=0)
+    options: list[str] | None = None
+    payment_methods: list[str] | None = None
+    entitlement_course_type_ids: list[UUID] | None = None
+    restrictions: list[AdminFormulaRestrictionIn] | None = None
+
+
+class AdminCreditTypeOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    description: str | None
+    active: bool
+    activity_ids: list[UUID] = Field(default_factory=list)
+    activity_names: list[str] = Field(default_factory=list)
+    activity_count: int = 0
+
+
+class AdminCreditTypeUpsertRequest(BaseModel):
+    code: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    active: bool = True
+
+
+class AdminCreditTypeUpdateRequest(BaseModel):
+    code: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    active: bool | None = None
+
+
+class AdminActivityOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    description: str | None
+    service_code: str
+    credit_type_id: UUID | None
+    credit_type_code: str | None
+    credit_type_name: str | None
+    duration_minutes: int
+    color_hex: str
+    mode: DeliveryMode
+    default_capacity: int
+    default_hourly_rate: Decimal | None
+    active: bool
+
+
+class AdminActivityUpsertRequest(BaseModel):
+    code: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    service_code: str = Field(default="ACTIVITY", min_length=1, max_length=80)
+    credit_type_id: UUID
+    duration_minutes: int = Field(default=60, ge=5, le=600)
+    color_hex: str = Field(default="#94C973", min_length=7, max_length=7)
+    mode: DeliveryMode = DeliveryMode.ANY
+    default_capacity: int = Field(default=8, ge=1, le=500)
+    default_hourly_rate: Decimal | None = Field(default=None, ge=0)
+    active: bool = True
+
+
+class AdminActivityUpdateRequest(BaseModel):
+    code: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    service_code: str | None = Field(default=None, min_length=1, max_length=80)
+    credit_type_id: UUID | None = None
+    duration_minutes: int | None = Field(default=None, ge=5, le=600)
+    color_hex: str | None = Field(default=None, min_length=7, max_length=7)
+    mode: DeliveryMode | None = None
+    default_capacity: int | None = Field(default=None, ge=1, le=500)
+    default_hourly_rate: Decimal | None = Field(default=None, ge=0)
+    active: bool | None = None
+
+
+class AdminClientOut(BaseModel):
+    id: UUID
+    email: str
+    role: UserRole
+    client_kind: ClientKind
+    first_name: str | None
+    last_name: str | None
+    address_line: str | None
+    postal_code: str | None
+    city: str | None
+    address_country: str
+    phone: str | None
+    mobile_phone_1: str | None
+    mobile_phone_2: str | None
+    home_phone: str | None
+    birth_date: date | None
+    important_info: str | None
+    private_note: str | None
+    residence_country: str
+    preferred_currency: str
+    timezone: str
+    first_course_at: datetime | None = None
+    portal_contact_visible: bool = True
+    email_opt_in: bool = True
+    sms_opt_in: bool = True
+    lesson_reminder_email_opt_in: bool = True
+    lesson_reminder_sms_opt_in: bool = False
+    client_status: ClientStatus = ClientStatus.ACTIVE
+    family_name: str | None = None
+    group_ids: list[UUID] = Field(default_factory=list)
+    group_names: list[str] = Field(default_factory=list)
+    is_active: bool
+    next_session_start_at_utc: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminClientUpdateRequest(BaseModel):
+    email: str | None = Field(default=None, min_length=3, max_length=255)
+    client_kind: ClientKind | None = None
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    address_line: str | None = Field(default=None, min_length=1, max_length=255)
+    postal_code: str | None = Field(default=None, min_length=1, max_length=20)
+    city: str | None = Field(default=None, min_length=1, max_length=120)
+    address_country: str | None = Field(default=None, min_length=2, max_length=2)
+    phone: str | None = Field(default=None, min_length=3, max_length=30)
+    mobile_phone_1: str | None = Field(default=None, min_length=3, max_length=30)
+    mobile_phone_2: str | None = Field(default=None, min_length=3, max_length=30)
+    home_phone: str | None = Field(default=None, min_length=3, max_length=30)
+    birth_date: date | None = None
+    important_info: str | None = Field(default=None, min_length=1, max_length=1000)
+    private_note: str | None = Field(default=None, min_length=1, max_length=5000)
+    residence_country: str | None = Field(default=None, min_length=2, max_length=2)
+    preferred_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    timezone: str | None = Field(default=None, min_length=2, max_length=100)
+    portal_contact_visible: bool | None = None
+    email_opt_in: bool | None = None
+    sms_opt_in: bool | None = None
+    lesson_reminder_email_opt_in: bool | None = None
+    lesson_reminder_sms_opt_in: bool | None = None
+    client_status: ClientStatus | None = None
+    is_active: bool | None = None
+
+
+class AdminClientCreateRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    client_kind: ClientKind = ClientKind.ADULT
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    address_line: str | None = Field(default=None, min_length=1, max_length=255)
+    postal_code: str | None = Field(default=None, min_length=1, max_length=20)
+    city: str | None = Field(default=None, min_length=1, max_length=120)
+    address_country: str = Field(default="FR", min_length=2, max_length=2)
+    phone: str | None = Field(default=None, min_length=3, max_length=30)
+    mobile_phone_1: str | None = Field(default=None, min_length=3, max_length=30)
+    mobile_phone_2: str | None = Field(default=None, min_length=3, max_length=30)
+    home_phone: str | None = Field(default=None, min_length=3, max_length=30)
+    birth_date: date | None = None
+    important_info: str | None = Field(default=None, min_length=1, max_length=1000)
+    private_note: str | None = Field(default=None, min_length=1, max_length=5000)
+    residence_country: str = Field(default="FR", min_length=2, max_length=2)
+    preferred_currency: str = Field(default="EUR", min_length=3, max_length=3)
+    timezone: str = Field(default="Europe/Paris", min_length=2, max_length=100)
+    portal_contact_visible: bool = True
+    email_opt_in: bool = True
+    sms_opt_in: bool = True
+    lesson_reminder_email_opt_in: bool = True
+    lesson_reminder_sms_opt_in: bool = False
+    client_status: ClientStatus | None = None
+    is_active: bool = True
+
+
+class AdminClientGroupsUpdateRequest(BaseModel):
+    group_ids: list[UUID] = Field(default_factory=list)
+
+
+class AdminClientGroupOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    active: bool
+    members_count: int = 0
+
+
+class AdminClientGroupCreateRequest(BaseModel):
+    code: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    active: bool = True
+
+
+class AdminClientGroupUpdateRequest(BaseModel):
+    code: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    active: bool | None = None
+
+
+class AdminClientBulkAction(str, enum.Enum):
+    UPDATE_STATUS = "UPDATE_STATUS"
+    ASSIGN_GROUP = "ASSIGN_GROUP"
+    ARCHIVE = "ARCHIVE"
+    DELETE = "DELETE"
+    EMAIL_CLIENTS = "EMAIL_CLIENTS"
+    EMAIL_PARENTS = "EMAIL_PARENTS"
+
+
+class AdminClientSelectionScope(str, enum.Enum):
+    PAGE = "PAGE"
+    FILTERED = "FILTERED"
+
+
+class AdminClientBulkRequest(BaseModel):
+    client_ids: list[UUID] = Field(default_factory=list)
+    selection_scope: AdminClientSelectionScope = AdminClientSelectionScope.PAGE
+    action: AdminClientBulkAction
+    target_status: ClientStatus | None = None
+    group_id: UUID | None = None
+    filter_search: str | None = Field(default=None, min_length=1, max_length=255)
+    filter_status: ClientStatus | None = None
+    filter_group_id: UUID | None = None
+    filter_include_archived: bool = False
+    filter_active_only: bool = False
+
+
+class AdminClientBulkOut(BaseModel):
+    processed_count: int
+    skipped_count: int = 0
+    message: str
+
+
+class AdminFamilyMemberOut(BaseModel):
+    id: UUID
+    email: str
+    first_name: str | None
+    last_name: str | None
+    phone: str | None
+    mobile_phone_1: str | None
+    mobile_phone_2: str | None
+    home_phone: str | None
+    address_line: str | None
+    postal_code: str | None
+    city: str | None
+    address_country: str
+    client_kind: ClientKind
+    is_active: bool
+
+
+class AdminClientPasswordEmailTemplateOut(BaseModel):
+    subject: str
+    body: str
+    updated_at: datetime | None = None
+
+
+class AdminClientPasswordEmailTemplateUpdateRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=255)
+    body: str = Field(min_length=1, max_length=5000)
+
+
+class AdminClientPasswordResetOut(BaseModel):
+    client_id: UUID
+    email: str
+    message_id: str
+    sent_at: datetime
+
+
+class AdminClientFamilyLinkOut(BaseModel):
+    id: UUID
+    adult: AdminFamilyMemberOut
+    child: AdminFamilyMemberOut
+    relationship_label: str | None
+    is_billing_recipient: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminClientFamilyOut(BaseModel):
+    client_id: UUID
+    client_kind: ClientKind
+    links_as_adult: list[AdminClientFamilyLinkOut] = Field(default_factory=list)
+    links_as_child: list[AdminClientFamilyLinkOut] = Field(default_factory=list)
+    billing_recipient_adult_id: UUID | None = None
+
+
+class AdminClientFamilyLinkCreateRequest(BaseModel):
+    adult_client_id: UUID
+    child_client_id: UUID
+    relationship_label: str | None = Field(default=None, max_length=80)
+    is_billing_recipient: bool = False
+
+
+class AdminClientFamilyLinkUpdateRequest(BaseModel):
+    relationship_label: str | None = Field(default=None, max_length=80)
+    is_billing_recipient: bool | None = None
+
+
+class AdminClientSubscriptionMiniOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    kind: PlanKind
+
+
+class AdminClientSubscriptionOut(BaseModel):
+    id: UUID
+    status: SubscriptionStatus
+    started_at: datetime
+    ends_at: datetime | None
+    next_payment_at: datetime | None = None
+    credits_initial: int | None
+    credits_remaining: int | None
+    auto_renew: bool
+    billing_method_code: str | None = None
+    payment_provider_subscription_ref: str | None = None
+    payment_provider_customer_ref: str | None = None
+    payment_provider_mandate_ref: str | None = None
+    last_payment_at: datetime | None = None
+    last_payment_status: str | None = None
+    suspension_starts_at: datetime | None = None
+    suspension_ends_at: datetime | None = None
+    suspension_duration_value: int | None = None
+    suspension_duration_unit: str | None = None
+    cancellation_requested_at: datetime | None = None
+    cancellation_effective_at: datetime | None = None
+    plan: AdminClientSubscriptionMiniOut
+    estimated_price_excl_vat: Decimal | None
+    estimated_vat_rate: Decimal | None
+    estimated_vat_amount: Decimal | None
+    estimated_total_incl_vat: Decimal | None
+    estimated_currency: str | None
+
+
+class AdminClientSubscriptionSuspendRequest(BaseModel):
+    suspension_starts_at: datetime
+    duration_unit: str = Field(pattern="^(DAY|MONTH)$")
+    duration_value: int = Field(ge=1, le=30)
+
+
+class AdminClientSubscriptionCancelRequest(BaseModel):
+    cancellation_requested_at: datetime | None = None
+
+
+class AdminClientSubscriptionBillingSetupRequest(BaseModel):
+    billing_method_code: str | None = Field(default=None, max_length=40)
+    payment_provider_subscription_ref: str | None = Field(default=None, max_length=120)
+    payment_provider_customer_ref: str | None = Field(default=None, max_length=120)
+    payment_provider_mandate_ref: str | None = Field(default=None, max_length=120)
+
+
+class AdminClientManualCreditOut(BaseModel):
+    id: UUID | None
+    credit_type_id: UUID
+    credit_type_code: str | None
+    credit_type_name: str | None
+    credits_count: int
+    updated_at: datetime | None
+
+
+class AdminClientManualCreditUpdateRequest(BaseModel):
+    credits_count: int = Field(ge=0, le=100000)
+
+
+class AdminClientNoteOut(BaseModel):
+    id: UUID
+    user_id: UUID
+    author_user_id: UUID | None
+    author_display_name: str
+    entry_type: str
+    message: str
+    created_at: datetime
+
+
+class AdminClientNoteCreateRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class AdminClientBookingOut(BaseModel):
+    id: UUID
+    session_id: UUID
+    session_title: str
+    session_status: SessionStatus
+    session_start_at_utc: datetime
+    session_end_at_utc: datetime
+    course_type_name: str
+    location_name: str
+    client_plan_subscription_id: UUID | None
+    plan_name: str | None
+    status: str
+    booked_at: datetime
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
+    price_excl_vat_snapshot: Decimal
+    vat_rate_snapshot: Decimal
+    vat_amount_snapshot: Decimal
+    total_incl_vat_snapshot: Decimal
+    currency_snapshot: str
+
+
+class AdminClientMessageOut(BaseModel):
+    id: UUID
+    booking_id: UUID
+    session_id: UUID
+    session_title: str
+    scheduled_for_utc: datetime
+    sent_at: datetime | None
+    status: ReminderStatus
+    provider_message_id: str | None
+    error_message: str | None
+    subject_preview: str
+
+
+class AdminClientPaymentOut(BaseModel):
+    id: UUID
+    source: str
+    occurred_at: datetime
+    label: str
+    status: str
+    amount_excl_vat: Decimal
+    vat_rate: Decimal
+    vat_amount: Decimal
+    total_incl_vat: Decimal
+    currency: str
+    reference: str | None
+    invoice_number: str | None = None
+    invoice_status: str | None = None
+    refunded_at: datetime | None = None
+    refund_reason: str | None = None
+
+
+class AdminClientPaymentRefundRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class AdminClientPaymentRefundOut(BaseModel):
+    client_id: UUID
+    source: str
+    payment_id: UUID
+    refunded_at: datetime
+    reason: str | None
+
+
+class AdminProfessorOut(BaseModel):
+    id: UUID
+    first_name: str
+    last_name: str
+    email: str
+    active: bool
+
+
+class ProfessorPermissionOut(BaseModel):
+    can_view_dashboard: bool
+    can_view_clients: bool
+    can_export_clients: bool
+    can_create_clients: bool
+    can_message_clients: bool
+    can_view_client_reminders: bool
+    can_create_subscriptions: bool
+    can_close_subscriptions: bool
+    can_edit_subscriptions: bool
+    can_downgrade_subscriptions: bool
+    can_cancel_subscriptions: bool
+    can_edit_payments: bool
+    can_refund_payments: bool
+    can_cancel_payments: bool
+    can_manage_mobile_news: bool
+    can_access_cash_menu: bool
+    can_view_planning: bool
+    can_view_all_school_sessions: bool
+    can_edit_planning: bool
+    can_force_booking: bool
+    can_view_admin_dashboard: bool
+    can_view_admin_reservations: bool
+    can_access_collaborators: bool
+    can_configure_app: bool
+    can_list_payments: bool
+    can_manage_events: bool
+    can_view_sportigo_info: bool
+    can_take_attendance: bool
+    can_record_payments_with_attendance: bool
+    can_edit_own_sessions: bool
+    can_view_pay_details: bool
+    can_manage_mileage_log: bool
+    can_view_other_teachers_contacts: bool
+    can_manage_other_teachers_students_and_sessions: bool
+    can_view_other_teachers_sessions: bool
+    can_view_student_parent_addresses_phones: bool
+    can_view_student_parent_emails: bool
+    can_view_student_attachments: bool
+    can_manage_invoices_and_accounts: bool
+    can_manage_expenses_and_other_income: bool
+    can_manage_shared_online_resources: bool
+    can_manage_website_and_news: bool
+    can_create_and_view_reports: bool
+
+
+class ProfessorPermissionUpdateRequest(BaseModel):
+    can_view_dashboard: bool = False
+    can_view_clients: bool = False
+    can_export_clients: bool = False
+    can_create_clients: bool = False
+    can_message_clients: bool = False
+    can_view_client_reminders: bool = False
+    can_create_subscriptions: bool = False
+    can_close_subscriptions: bool = False
+    can_edit_subscriptions: bool = False
+    can_downgrade_subscriptions: bool = False
+    can_cancel_subscriptions: bool = False
+    can_edit_payments: bool = False
+    can_refund_payments: bool = False
+    can_cancel_payments: bool = False
+    can_manage_mobile_news: bool = False
+    can_access_cash_menu: bool = False
+    can_view_planning: bool = True
+    can_view_all_school_sessions: bool = False
+    can_edit_planning: bool = False
+    can_force_booking: bool = False
+    can_view_admin_dashboard: bool = False
+    can_view_admin_reservations: bool = False
+    can_access_collaborators: bool = False
+    can_configure_app: bool = False
+    can_list_payments: bool = False
+    can_manage_events: bool = False
+    can_view_sportigo_info: bool = False
+    can_take_attendance: bool = True
+    can_record_payments_with_attendance: bool = False
+    can_edit_own_sessions: bool = False
+    can_view_pay_details: bool = False
+    can_manage_mileage_log: bool = False
+    can_view_other_teachers_contacts: bool = False
+    can_manage_other_teachers_students_and_sessions: bool = False
+    can_view_other_teachers_sessions: bool = False
+    can_view_student_parent_addresses_phones: bool = False
+    can_view_student_parent_emails: bool = False
+    can_view_student_attachments: bool = False
+    can_manage_invoices_and_accounts: bool = False
+    can_manage_expenses_and_other_income: bool = False
+    can_manage_shared_online_resources: bool = False
+    can_manage_website_and_news: bool = False
+    can_create_and_view_reports: bool = False
+    is_admin: bool | None = None
+
+
+class AdminProfessorContractOut(BaseModel):
+    file_name: str
+    content_type: str
+    size_bytes: int
+    uploaded_at: datetime
+
+
+class AdminProfessorContractDeleteOut(BaseModel):
+    deleted: bool
+
+
+class AdminProfessorDetailOut(BaseModel):
+    id: UUID
+    first_name: str
+    last_name: str
+    email: str
+    phone: str | None
+    siret: str | None
+    iban: str | None
+    address_line: str | None
+    zoom_link: str | None
+    spoken_languages: list[str]
+    payout_currency: str
+    payout_balance_amount: Decimal = Decimal("0.00")
+    payout_balance_currency: str | None = None
+    payout_balance_as_of: date | None = None
+    role: UserRole
+    is_coach: bool
+    active: bool
+    user_is_active: bool
+    daily_schedule_email_enabled: bool
+    daily_schedule_email_time: str
+    daily_schedule_skip_if_no_course: bool
+    contract: AdminProfessorContractOut | None = None
+    permissions: ProfessorPermissionOut
+    created_at: datetime
+    updated_at: datetime
+    last_activation_email_sent_at: datetime | None
+
+
+class AdminProfessorCreateRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    phone: str | None = Field(default=None, min_length=3, max_length=30)
+    siret: str | None = Field(default=None, max_length=30)
+    iban: str | None = Field(default=None, max_length=34)
+    address_line: str | None = Field(default=None, max_length=255)
+    zoom_link: str | None = Field(default=None, max_length=500)
+    spoken_languages: list[str] = Field(default_factory=list)
+    payout_currency: str = Field(default="EUR", min_length=3, max_length=3)
+    is_coach: bool = True
+    is_admin: bool = False
+    daily_schedule_email_enabled: bool = False
+    daily_schedule_email_time: str = Field(default="07:00", pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+    daily_schedule_skip_if_no_course: bool = True
+    permissions: ProfessorPermissionUpdateRequest | None = None
+
+
+class AdminProfessorUpdateRequest(BaseModel):
+    email: str | None = Field(default=None, min_length=3, max_length=255)
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    phone: str | None = Field(default=None, min_length=3, max_length=30)
+    siret: str | None = Field(default=None, max_length=30)
+    iban: str | None = Field(default=None, max_length=34)
+    address_line: str | None = Field(default=None, max_length=255)
+    zoom_link: str | None = Field(default=None, max_length=500)
+    spoken_languages: list[str] | None = None
+    payout_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    is_coach: bool | None = None
+    is_admin: bool | None = None
+    active: bool | None = None
+    daily_schedule_email_enabled: bool | None = None
+    daily_schedule_email_time: str | None = Field(default=None, pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+    daily_schedule_skip_if_no_course: bool | None = None
+
+
+class AdminProfessorUpdateResult(BaseModel):
+    professor: AdminProfessorDetailOut
+    activation_email_sent: bool
+    activation_email_message_id: str | None
+
+
+class AdminProfessorRateOut(BaseModel):
+    id: UUID
+    course_type_id: UUID | None
+    course_type_name: str
+    currency_code: str
+    hourly_rate: Decimal | None
+    rules: list["AdminProfessorRateRuleOut"] = Field(default_factory=list)
+    valid_from: date
+    valid_to: date | None
+
+
+class AdminProfessorRateRuleInput(BaseModel):
+    min_students: int = Field(ge=0)
+    max_students: int | None = Field(default=None, ge=0)
+    hourly_rate: Decimal = Field(ge=0)
+
+
+class AdminProfessorRateRuleOut(BaseModel):
+    min_students: int
+    max_students: int | None
+    hourly_rate: Decimal
+
+
+class AdminProfessorRateInput(BaseModel):
+    course_type_id: UUID | None = None
+    hourly_rate: Decimal | None = None
+    rules: list[AdminProfessorRateRuleInput] = Field(default_factory=list)
+    currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+
+
+class AdminProfessorRatesUpdateRequest(BaseModel):
+    rates: list[AdminProfessorRateInput] = Field(default_factory=list)
+    effective_from: date | None = None
+
+
+class AdminProfessorPayoutLedgerRowOut(BaseModel):
+    session_id: UUID
+    start_at_utc: datetime
+    end_at_utc: datetime
+    course_type_name: str
+    location_name: str
+    duration_hours: Decimal
+    hourly_rate: Decimal | None
+    amount: Decimal | None
+    currency: str | None
+    payout_status: PayoutStatus | None
+    counted_in_due: bool
+    cumulative_due: Decimal
+
+
+class AdminProfessorPayoutLedgerOut(BaseModel):
+    professor_id: UUID
+    as_of_date: date
+    currency: str
+    total_due: Decimal
+    rows: list[AdminProfessorPayoutLedgerRowOut] = Field(default_factory=list)
+
+
+class AdminProfessorContractLocationOptionOut(BaseModel):
+    code: str
+    label: str
+
+
+class AdminProfessorContractGridRuleInput(BaseModel):
+    min_students: int = Field(ge=0)
+    max_students: int | None = Field(default=None, ge=0)
+    hourly_rate: Decimal = Field(ge=0)
+
+
+class AdminProfessorContractGridRuleOut(BaseModel):
+    id: UUID
+    min_students: int
+    max_students: int | None
+    hourly_rate: Decimal
+    display_order: int
+
+
+class AdminProfessorContractGridLineInput(BaseModel):
+    course_type_id: UUID
+    default_hourly_rate: Decimal | None = Field(default=None, ge=0)
+    rules: list[AdminProfessorContractGridRuleInput] = Field(default_factory=list)
+
+
+class AdminProfessorContractGridLineOut(BaseModel):
+    id: UUID
+    course_type_id: UUID | None
+    course_type_name: str
+    service_type: str
+    mode: ProfessorContractLineMode
+    reference_duration_minutes: int | None
+    default_hourly_rate: Decimal | None
+    display_order: int
+    rules: list[AdminProfessorContractGridRuleOut] = Field(default_factory=list)
+
+
+class AdminProfessorContractGridUpsertRequest(BaseModel):
+    valid_from: date
+    valid_to: date | None = None
+    location_code: str | None = Field(default=None, max_length=60)
+    notes: str | None = None
+    lines: list[AdminProfessorContractGridLineInput] = Field(default_factory=list)
+    clone_from_grid_id: UUID | None = None
+
+
+class AdminProfessorContractGridOut(BaseModel):
+    id: UUID
+    professor_id: UUID
+    valid_from: date
+    valid_to: date | None
+    location_code: str | None
+    location_label: str
+    notes: str | None
+    is_active_today: bool
+    lines: list[AdminProfessorContractGridLineOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminSessionRecurrenceRequest(BaseModel):
+    frequency: Literal["DAILY", "WEEKLY", "MONTHLY"] = "WEEKLY"
+    occurrences: int | None = Field(default=None, ge=2, le=365)
+    until_date: date | None = None
+
+
+class AdminSessionCreateRequest(BaseModel):
+    course_type_id: UUID
+    location_id: UUID
+    professor_id: UUID
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    public_description: str | None = None
+    private_description: str | None = None
+    start_at_utc: datetime
+    end_at_utc: datetime | None = None
+    is_all_day: bool = False
+    capacity_max: int = Field(default=1, ge=0)
+    auto_cancel_deadline_utc: datetime | None = None
+    zoom_link: str | None = None
+    is_private: bool = False
+    recurrence: AdminSessionRecurrenceRequest | None = None
+
+
+class AdminSessionUpdateRequest(BaseModel):
+    course_type_id: UUID | None = None
+    location_id: UUID | None = None
+    professor_id: UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    public_description: str | None = None
+    private_description: str | None = None
+    start_at_utc: datetime | None = None
+    end_at_utc: datetime | None = None
+    is_all_day: bool | None = None
+    capacity_max: int | None = Field(default=None, ge=0)
+    auto_cancel_deadline_utc: datetime | None = None
+    zoom_link: str | None = None
+    status: SessionStatus | None = None
+    cancel_reason: str | None = None
+    is_private: bool | None = None
+
+
+class AdminSessionOut(BaseModel):
+    id: UUID
+    course_type_id: UUID
+    location_id: UUID
+    professor_id: UUID
+    title: str
+    description: str | None
+    public_description: str | None
+    private_description: str | None
+    start_at_utc: datetime
+    end_at_utc: datetime
+    is_all_day: bool
+    capacity_max: int
+    booked_count: int
+    status: SessionStatus
+    auto_cancel_deadline_utc: datetime
+    cancel_reason: str | None
+    zoom_link: str | None
+    is_private: bool
+    recurrence_group_id: UUID | None
+    recurrence_rule: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminSessionBookingOut(BaseModel):
+    id: UUID
+    session_id: UUID
+    client_id: UUID
+    client_email: str
+    client_first_name: str | None
+    client_last_name: str | None
+    client_display_name: str
+    client_plan_subscription_id: UUID | None
+    status: str
+    booked_at: datetime
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
+    waitlist_position: int | None
+
+
+class AdminSessionBookingCreateRequest(BaseModel):
+    client_id: UUID
+    client_plan_subscription_id: UUID | None = None
+    recurrence_end_date: date | None = None
+
+
+class AdminSessionBookingOperationOut(BaseModel):
+    processed_count: int
+    booked_count: int
+    waitlisted_count: int
+    skipped_count: int
+    details: list[str] = Field(default_factory=list)
+
+
+class AdminSessionMessageFormat(str, enum.Enum):
+    TEXT = "TEXT"
+    HTML = "HTML"
+
+
+class AdminCollaboratorMessageRequest(BaseModel):
+    collaborator_ids: list[UUID] = Field(default_factory=list)
+    subject: str = Field(min_length=1, max_length=255)
+    body: str = Field(min_length=1)
+    body_format: AdminSessionMessageFormat = AdminSessionMessageFormat.TEXT
+
+
+class AdminCollaboratorMessageOut(BaseModel):
+    requested_count: int
+    sent_count: int
+    skipped_count: int
+    details: list[str] = Field(default_factory=list)
+
+
+class AdminSessionOperationNotificationRequest(BaseModel):
+    notify_students: bool = False
+    students_subject: str | None = Field(default=None, max_length=255)
+    students_message: str | None = None
+    students_format: AdminSessionMessageFormat = AdminSessionMessageFormat.TEXT
+    notify_professor: bool = False
+    professor_same_as_students: bool = True
+    professor_subject: str | None = Field(default=None, max_length=255)
+    professor_message: str | None = None
+    professor_format: AdminSessionMessageFormat = AdminSessionMessageFormat.TEXT
+
+
+class AdminSessionCancelOperationRequest(BaseModel):
+    cancel_reason: str | None = Field(default="ADMIN_CANCELLED", max_length=255)
+    notifications: AdminSessionOperationNotificationRequest | None = None
+
+
+class AdminSessionDeleteOperationRequest(BaseModel):
+    notifications: AdminSessionOperationNotificationRequest | None = None
+
+
+class AdminSessionOperationOut(BaseModel):
+    processed_sessions: int
+    notified_students: int
+    notified_professors: int
+    notifications_enabled: bool
+
+
+class AdminPlanningSettingsOut(BaseModel):
+    location_id: UUID
+    location_name: str
+    description: str | None
+    min_booking_notice_hours: int
+    max_booking_horizon_months: int
+    cancellation_deadline_hours: int
+    max_bookings_per_client: int | None
+    allow_negative_credits: bool
+    waitlist_capacity: int
+    auto_cancel_if_booked_less_than: int
+    auto_cancel_hours_before_start: int
+    is_private: bool
+    allow_force_booking: bool
+    allow_multi_booking: bool
+    notify_coach: bool
+    notify_admins: bool
+    hide_booking_count: bool
+    block_client_cancellation: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminPlanningSettingsUpdateRequest(BaseModel):
+    description: str | None = None
+    min_booking_notice_hours: int | None = Field(default=None, ge=0)
+    max_booking_horizon_months: int | None = Field(default=None, ge=1)
+    cancellation_deadline_hours: int | None = Field(default=None, ge=0)
+    max_bookings_per_client: int | None = Field(default=None, ge=1)
+    allow_negative_credits: bool | None = None
+    waitlist_capacity: int | None = Field(default=None, ge=0)
+    auto_cancel_if_booked_less_than: int | None = Field(default=None, ge=0)
+    auto_cancel_hours_before_start: int | None = Field(default=None, ge=0)
+    is_private: bool | None = None
+    allow_force_booking: bool | None = None
+    allow_multi_booking: bool | None = None
+    notify_coach: bool | None = None
+    notify_admins: bool | None = None
+    hide_booking_count: bool | None = None
+    block_client_cancellation: bool | None = None
+
+
+class AdminPlanningActivityOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    description: str | None
+    duration_minutes: int
+    color_hex: str
+    mode: DeliveryMode
+    default_capacity: int
+    active: bool
+    selected: bool
+    display_order: int
+
+
+class AdminPlanningActivitiesOut(BaseModel):
+    location_id: UUID
+    location_name: str
+    selected_activity_ids: list[UUID] = Field(default_factory=list)
+    activities: list[AdminPlanningActivityOut] = Field(default_factory=list)
+
+
+class AdminPlanningActivitiesUpdateRequest(BaseModel):
+    activity_ids: list[UUID] = Field(default_factory=list)

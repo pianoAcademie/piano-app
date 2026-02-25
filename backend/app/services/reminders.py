@@ -1,0 +1,237 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, SessionStatus
+from app.models.ops import AppSetting, EmailReminder, ReminderStatus
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ReminderJobResult:
+    created: int
+    sent: int
+    skipped: int
+    failed: int
+
+
+def get_setting_int(db: Session, key: str, default: int) -> int:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == key))
+    if setting is None:
+        return default
+
+    try:
+        return int(setting.value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_setting_str(db: Session, key: str, default: str) -> str:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == key))
+    if setting is None:
+        return default
+    value = (setting.value or "").strip()
+    return value or default
+
+
+def _public_base_url(db: Session) -> str:
+    website = get_setting_str(db, "config_account_website", "http://localhost:3000")
+    if website.startswith("http://") or website.startswith("https://"):
+        return website.rstrip("/")
+    return f"https://{website.rstrip('/')}"
+
+
+def ensure_booking_reminder(
+    db: Session,
+    *,
+    booking: Booking,
+    session_obj: CourseSession,
+    now: datetime,
+) -> EmailReminder | None:
+    if booking.status != BookingStatus.BOOKED:
+        return None
+
+    reminder_hours = get_setting_int(db, "reminder_hours_before_start", 24)
+    scheduled_for = session_obj.start_at_utc - timedelta(hours=reminder_hours)
+
+    reminder = db.scalar(
+        select(EmailReminder).where(
+            EmailReminder.booking_id == booking.id,
+            EmailReminder.scheduled_for_utc == scheduled_for,
+        )
+    )
+
+    if reminder is None:
+        reminder = EmailReminder(
+            booking_id=booking.id,
+            scheduled_for_utc=scheduled_for,
+            status=ReminderStatus.PENDING,
+        )
+        db.add(reminder)
+        return reminder
+
+    if reminder.status in (ReminderStatus.SKIPPED, ReminderStatus.FAILED):
+        reminder.status = ReminderStatus.PENDING
+        reminder.sent_at = None
+        reminder.provider_message_id = None
+        reminder.error_message = None
+
+    return reminder
+
+
+def skip_pending_reminders_for_booking(db: Session, *, booking_id: UUID | str, reason: str, now: datetime) -> int:
+    reminders = db.scalars(
+        select(EmailReminder).where(
+            EmailReminder.booking_id == booking_id,
+            EmailReminder.status == ReminderStatus.PENDING,
+        )
+    ).all()
+
+    for reminder in reminders:
+        reminder.status = ReminderStatus.SKIPPED
+        reminder.error_message = reason
+        reminder.sent_at = now
+
+    return len(reminders)
+
+
+def backfill_future_booking_reminders(db: Session, *, now: datetime, limit: int = 500) -> int:
+    rows = db.execute(
+        select(Booking, CourseSession)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .where(
+            Booking.status == BookingStatus.BOOKED,
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc > now,
+        )
+        .limit(limit)
+    ).all()
+
+    created_or_updated = 0
+    for booking, session_obj in rows:
+        reminder = ensure_booking_reminder(db, booking=booking, session_obj=session_obj, now=now)
+        if reminder is not None:
+            created_or_updated += 1
+
+    return created_or_updated
+
+
+def _format_session_datetime(session_obj: CourseSession, timezone_preference: str | None, location: Location) -> str:
+    tz_name = timezone_preference or location.timezone or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz_name = location.timezone or "UTC"
+        try:
+            tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            tz_name = "UTC"
+            tz = ZoneInfo("UTC")
+
+    local_dt = session_obj.start_at_utc.astimezone(tz)
+    return f"{local_dt.strftime('%Y-%m-%d %H:%M')} ({tz_name})"
+
+
+def _build_email_payload(
+    db: Session,
+    user: User,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    location: Location,
+) -> tuple[str, str]:
+    start_human = _format_session_datetime(session_obj, user.timezone, location)
+    location_label = "Online" if location.is_online else location.name
+
+    subject = f"Rappel cours: {course_type.name} - {start_human}"
+    lines = [
+        f"Bonjour {user.email},",
+        "",
+        f"Rappel de votre cours: {course_type.name}",
+        f"Date: {start_human}",
+        f"Lieu: {location_label}",
+        f"Description: {session_obj.description or session_obj.title}",
+    ]
+
+    if location.is_online and session_obj.zoom_link:
+        lines.append(f"Lien Zoom: {session_obj.zoom_link}")
+
+    lines.append("")
+    if user.communication_optout_token:
+        lines.append(
+            "Se desinscrire des rappels non transactionnels: "
+            f"{_public_base_url(db)}/api/v1/clients/communication/optout"
+            f"?token={user.communication_optout_token}&channel=EMAIL"
+        )
+        lines.append("")
+    lines.append("Piano Academie")
+
+    return subject, "\n".join(lines)
+
+
+def run_send_reminders_job(db: Session, *, now: datetime, limit: int = 200) -> ReminderJobResult:
+    created = backfill_future_booking_reminders(db, now=now, limit=limit)
+
+    rows = db.execute(
+        select(EmailReminder, Booking, User, CourseSession, CourseType, Location)
+        .join(Booking, Booking.id == EmailReminder.booking_id)
+        .join(User, User.id == Booking.user_id)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            EmailReminder.status == ReminderStatus.PENDING,
+            EmailReminder.scheduled_for_utc <= now,
+        )
+        .order_by(EmailReminder.scheduled_for_utc.asc())
+        .limit(limit)
+    ).all()
+
+    sent = 0
+    skipped = 0
+    failed = 0
+
+    for reminder, booking, user, session_obj, course_type, location in rows:
+        if (
+            booking.status != BookingStatus.BOOKED
+            or session_obj.status != SessionStatus.SCHEDULED
+            or session_obj.start_at_utc <= now
+        ):
+            reminder.status = ReminderStatus.SKIPPED
+            reminder.sent_at = now
+            reminder.error_message = "Booking/session not active"
+            skipped += 1
+            continue
+
+        if not user.email_opt_in or not user.lesson_reminder_email_opt_in:
+            reminder.status = ReminderStatus.SKIPPED
+            reminder.sent_at = now
+            reminder.error_message = "Client opt-out email reminders"
+            skipped += 1
+            continue
+
+        try:
+            subject, body = _build_email_payload(db, user, session_obj, course_type, location)
+            message_id = f"dev-{uuid4()}"
+            logger.info("Reminder sent | id=%s | to=%s | subject=%s | body=%s", message_id, user.email, subject, body)
+
+            reminder.status = ReminderStatus.SENT
+            reminder.sent_at = now
+            reminder.provider_message_id = message_id
+            reminder.error_message = None
+            sent += 1
+        except Exception as exc:  # pragma: no cover - defensive runtime guard
+            reminder.status = ReminderStatus.FAILED
+            reminder.sent_at = now
+            reminder.error_message = str(exc)
+            failed += 1
+
+    return ReminderJobResult(created=created, sent=sent, skipped=skipped, failed=failed)

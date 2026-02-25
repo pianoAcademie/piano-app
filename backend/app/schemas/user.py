@@ -1,0 +1,213 @@
+from __future__ import annotations
+
+import enum
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.models.catalog import BookingStatus, SessionStatus
+from app.models.plan import PlanKind, SubscriptionStatus
+from app.models.user import ClientKind
+from app.models.user import ClientStatus, UserRole
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    email: str
+    role: UserRole
+    client_kind: ClientKind
+    first_name: str | None
+    last_name: str | None
+    address_line: str | None
+    postal_code: str | None
+    city: str | None
+    address_country: str
+    phone: str | None
+    mobile_phone_1: str | None
+    mobile_phone_2: str | None
+    home_phone: str | None
+    birth_date: date | None
+    important_info: str | None
+    first_course_at: datetime | None
+    portal_contact_visible: bool
+    email_opt_in: bool
+    sms_opt_in: bool
+    lesson_reminder_email_opt_in: bool
+    lesson_reminder_sms_opt_in: bool
+    residence_country: str
+    preferred_currency: str
+    timezone: str
+    client_status: ClientStatus
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ClientMeUpdateRequest(BaseModel):
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    address_line: str | None = Field(default=None, min_length=1, max_length=255)
+    postal_code: str | None = Field(default=None, min_length=1, max_length=20)
+    city: str | None = Field(default=None, min_length=1, max_length=120)
+    address_country: str | None = Field(default=None, min_length=2, max_length=2)
+    phone: str | None = Field(default=None, min_length=3, max_length=30)
+    mobile_phone_1: str | None = Field(default=None, min_length=3, max_length=30)
+    mobile_phone_2: str | None = Field(default=None, min_length=3, max_length=30)
+    home_phone: str | None = Field(default=None, min_length=3, max_length=30)
+    important_info: str | None = Field(default=None, min_length=1, max_length=1000)
+    portal_contact_visible: bool | None = None
+    email_opt_in: bool | None = None
+    sms_opt_in: bool | None = None
+    lesson_reminder_email_opt_in: bool | None = None
+    lesson_reminder_sms_opt_in: bool | None = None
+    residence_country: str | None = Field(default=None, min_length=2, max_length=2)
+    preferred_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    timezone: str | None = Field(default=None, min_length=2, max_length=100)
+
+
+class FamilyMemberOut(BaseModel):
+    id: UUID
+    email: str
+    first_name: str | None
+    last_name: str | None
+    phone: str | None
+    mobile_phone_1: str | None
+    mobile_phone_2: str | None
+    home_phone: str | None
+    address_line: str | None
+    postal_code: str | None
+    city: str | None
+    address_country: str
+    client_kind: ClientKind
+    is_active: bool
+
+
+class FamilyLinkOut(BaseModel):
+    id: UUID
+    adult: FamilyMemberOut
+    child: FamilyMemberOut
+    relationship_label: str | None
+    is_billing_recipient: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class FamilyPlanMiniOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    kind: PlanKind
+
+
+class FamilySessionMiniOut(BaseModel):
+    id: UUID
+    title: str
+    start_at_utc: datetime
+    end_at_utc: datetime
+    status: SessionStatus
+
+
+class FamilySubscriptionOut(BaseModel):
+    id: UUID
+    owner_client_id: UUID
+    owner_display_name: str
+    owner_email: str
+    status: SubscriptionStatus
+    started_at: datetime
+    ends_at: datetime | None
+    next_payment_at: datetime | None = None
+    credits_initial: int | None
+    credits_remaining: int | None
+    auto_renew: bool
+    billing_method_code: str | None = None
+    suspension_starts_at: datetime | None = None
+    suspension_ends_at: datetime | None = None
+    cancellation_requested_at: datetime | None = None
+    cancellation_effective_at: datetime | None = None
+    plan: FamilyPlanMiniOut
+    entitlement_course_type_ids: list[UUID] = Field(default_factory=list)
+    entitlement_course_type_names: list[str] = Field(default_factory=list)
+
+
+class FamilyBookingOut(BaseModel):
+    id: UUID
+    owner_client_id: UUID
+    owner_display_name: str
+    owner_email: str
+    client_plan_subscription_id: UUID | None
+    status: BookingStatus
+    booked_at: datetime
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
+    price_excl_vat_snapshot: Decimal
+    vat_rate_snapshot: Decimal
+    vat_amount_snapshot: Decimal
+    total_incl_vat_snapshot: Decimal
+    currency_snapshot: str
+    session: FamilySessionMiniOut
+
+
+class ClientFamilyOverviewOut(BaseModel):
+    me: FamilyMemberOut
+    links_as_adult: list[FamilyLinkOut]
+    links_as_child: list[FamilyLinkOut]
+    billing_recipient_adult_id: UUID | None
+    managed_client_ids: list[UUID]
+    subscriptions: list[FamilySubscriptionOut]
+    bookings: list[FamilyBookingOut]
+
+
+class ClientMessageScope(str, enum.Enum):
+    LAST_3_MONTHS = "LAST_3_MONTHS"
+    CURRENT_YEAR = "CURRENT_YEAR"
+    ALL = "ALL"
+
+
+class ClientMessageOut(BaseModel):
+    id: UUID
+    owner_client_id: UUID
+    owner_display_name: str
+    channel: str
+    booking_id: UUID
+    session_id: UUID
+    session_title: str
+    scheduled_for_utc: datetime
+    sent_at: datetime | None
+    status: str
+    provider_message_id: str | None
+    error_message: str | None
+    subject_preview: str
+
+
+class ClientPaymentOut(BaseModel):
+    id: str
+    owner_client_id: UUID
+    owner_display_name: str
+    source: str
+    occurred_at: datetime
+    label: str
+    status: str
+    amount_excl_vat: Decimal
+    vat_rate: Decimal
+    vat_amount: Decimal
+    total_incl_vat: Decimal
+    currency: str
+    reference: str | None
+
+
+class ClientInvoiceOut(BaseModel):
+    id: str
+    owner_client_id: UUID
+    owner_display_name: str
+    invoice_number: str
+    issued_at: datetime
+    source: str
+    status: str
+    label: str
+    total_incl_vat: Decimal
+    currency: str
+    reference: str | None
