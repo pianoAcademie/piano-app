@@ -233,6 +233,19 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         variables_hint="{first_name}",
     ),
     MessagingTemplateDefinition(
+        code="BIRTHDAY_EMAIL",
+        name="Birthday Email",
+        channel="EMAIL",
+        subject="Joyeux anniversaire",
+        body=(
+            "Bonjour {first_name},\n\n"
+            "Toute l equipe de Piano Academie vous souhaite un tres bon anniversaire.\n\n"
+            "Piano Academie"
+        ),
+        description="Email automatique d anniversaire.",
+        variables_hint="{first_name}",
+    ),
+    MessagingTemplateDefinition(
         code="LESSON_NOTES",
         name="Lesson Notes",
         channel="EMAIL",
@@ -567,6 +580,28 @@ def upsert_predefined_template(
     if normalized_code == PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD and cleaned_subject is not None:
         _set_setting_value(db, LEGACY_CLIENT_PASSWORD_SUBJECT_KEY, cleaned_subject)
         _set_setting_value(db, LEGACY_CLIENT_PASSWORD_BODY_KEY, cleaned_body)
+
+    return resolve_predefined_template(db, code=normalized_code)
+
+
+def reset_predefined_template(
+    db: Session,
+    *,
+    code: str,
+) -> dict[str, object]:
+    normalized_code = code.strip().upper()
+    definition = PREDEFINED_TEMPLATE_BY_CODE.get(normalized_code)
+    if definition is None:
+        raise KeyError(f"Unknown predefined template: {code}")
+
+    overrides = _predefined_overrides(db)
+    if normalized_code in overrides:
+        overrides.pop(normalized_code, None)
+        _save_predefined_overrides(db, overrides)
+
+    if normalized_code == PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD:
+        _set_setting_value(db, LEGACY_CLIENT_PASSWORD_SUBJECT_KEY, "")
+        _set_setting_value(db, LEGACY_CLIENT_PASSWORD_BODY_KEY, "")
 
     return resolve_predefined_template(db, code=normalized_code)
 

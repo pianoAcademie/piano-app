@@ -90,6 +90,7 @@ from app.services.messaging_templates import (
     delete_custom_template,
     list_messaging_templates,
     load_messaging_settings,
+    reset_predefined_template,
     save_messaging_settings,
     update_custom_template,
     upsert_predefined_template,
@@ -1402,6 +1403,20 @@ def update_admin_predefined_messaging_template(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    return _serialize_messaging_template(item)
+
+
+@router.delete("/config/messaging-templates/predefined/{template_code}", response_model=AdminMessagingTemplateOut)
+def reset_admin_predefined_messaging_template(
+    template_code: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMessagingTemplateOut:
+    try:
+        item = reset_predefined_template(db, code=template_code)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     db.commit()
     return _serialize_messaging_template(item)
 

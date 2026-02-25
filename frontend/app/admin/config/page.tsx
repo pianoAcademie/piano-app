@@ -18,6 +18,7 @@ import {
   updateAdminConfigPaymentProviderAction,
   updateAdminConfigSubscriptionsAction,
   deleteAdminConfigMessagingTemplateAction,
+  resetAdminConfigPredefinedMessagingTemplateAction,
   saveAdminConfigMessagingTemplateAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
@@ -108,6 +109,9 @@ function readParam(params: SearchParams, key: string): string {
 
 function parseSection(raw: string): ConfigSection {
   const value = raw.trim();
+  if (value === "params-client-password-email") {
+    return "params-messaging";
+  }
   if (
     value === "params-account" ||
     value === "params-subscriptions" ||
@@ -381,6 +385,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const selectedCreditType = creditTypes.find((creditType) => creditType.id === selectedCreditTypeId) ?? null;
   const activeCreditTypes = creditTypes.filter((creditType) => creditType.active);
   const messagingModalMode = readParam(params, "messaging_modal");
+  const newCustomTemplateChannelRaw = readParam(params, "new_template_channel").toUpperCase();
+  const newCustomTemplateChannel = newCustomTemplateChannelRaw === "SMS" ? "SMS" : "EMAIL";
   const editingTemplateKind = readParam(params, "template_kind").toUpperCase();
   const editingTemplateCode = readParam(params, "template_code").toUpperCase();
   const editingTemplateId = readParam(params, "template_id");
@@ -391,6 +397,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       ? customTemplates.find((row) => row.id === editingTemplateId) ?? null
       : null;
   const createCustomMessagingTemplate = messagingModalMode === "new-custom";
+  const customEmailTemplates = customTemplates.filter((template) => template.channel === "EMAIL");
+  const customSmsTemplates = customTemplates.filter((template) => template.channel === "SMS");
 
   const paymentMethodLabelByCode = new Map(paymentMethods.map((method) => [method.code, method.label]));
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
@@ -1034,12 +1042,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     className="mode-link"
                     href={buildConfigHref("params-messaging", {
                       messaging_modal: "new-custom",
+                      new_template_channel: "EMAIL",
                     })}
                   >
                     + Ajouter nouveau
                   </Link>
                 </div>
-                {customTemplates.length === 0 ? (
+                {customEmailTemplates.length === 0 ? (
                   <p className="muted">Aucun modele personnalise.</p>
                 ) : (
                   <div className="table-wrap">
@@ -1047,16 +1056,80 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <thead>
                         <tr>
                           <th>Nom</th>
-                          <th>Canal</th>
+                          <th>Objet</th>
                           <th>Actif</th>
                           <th aria-label="Actions" />
                         </tr>
                       </thead>
                       <tbody>
-                        {customTemplates.map((template) => (
+                        {customEmailTemplates.map((template) => (
                           <tr key={template.id}>
                             <td>{template.name}</td>
-                            <td>{template.channel}</td>
+                            <td>{template.subject || "-"}</td>
+                            <td>{template.active ? "Oui" : "Non"}</td>
+                            <td>
+                              <div className="row">
+                                <Link
+                                  className="icon-link"
+                                  title="Modifier"
+                                  href={buildConfigHref("params-messaging", {
+                                    messaging_modal: "edit",
+                                    template_kind: "CUSTOM",
+                                    template_id: template.id,
+                                  })}
+                                >
+                                  ✎
+                                </Link>
+                                <form action={deleteAdminConfigMessagingTemplateAction}>
+                                  <input type="hidden" name="template_id" value={template.id} />
+                                  <button type="submit" className="icon-link danger-link" title="Supprimer">
+                                    🗑
+                                  </button>
+                                </form>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="card">
+                <div className="row spread">
+                  <h3>Modeles de SMS personnalises</h3>
+                  <Link
+                    className="mode-link"
+                    href={buildConfigHref("params-messaging", {
+                      messaging_modal: "new-custom",
+                      new_template_channel: "SMS",
+                    })}
+                  >
+                    + Ajouter nouveau
+                  </Link>
+                </div>
+                {customSmsTemplates.length === 0 ? (
+                  <p className="muted">Aucun modele personnalise.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Nom</th>
+                          <th>Contenu</th>
+                          <th>Actif</th>
+                          <th aria-label="Actions" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {customSmsTemplates.map((template) => (
+                          <tr key={template.id}>
+                            <td>{template.name}</td>
+                            <td>
+                              {template.body.slice(0, 90)}
+                              {template.body.length > 90 ? "..." : ""}
+                            </td>
                             <td>{template.active ? "Oui" : "Non"}</td>
                             <td>
                               <div className="row">
@@ -1089,23 +1162,31 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
               {editingTemplate || createCustomMessagingTemplate ? (
                 <section className="modal-overlay">
-                  <article className="modal-panel activity-modal-panel">
+                  <article className="modal-panel activity-modal-panel messaging-template-modal">
                     <Link className="modal-close-x" href={messagingListPath} aria-label="Fermer">
                       ×
                     </Link>
-                    <header className="activity-modal-header">
+                    <header className="activity-modal-header messaging-template-modal-header">
                       <div>
-                        <h3>
-                          {editingTemplate
-                            ? `Modifier le modele: ${editingTemplate.name}`
-                            : "Nouveau modele personnalise"}
+                        <h3 className="messaging-template-modal-title">
+                          {editingTemplate?.kind === "PREDEFINED" && editingTemplate.channel === "EMAIL"
+                            ? "Modifier le modele de courriel systeme"
+                            : editingTemplate?.kind === "PREDEFINED" && editingTemplate.channel === "SMS"
+                            ? "Modifier le modele de SMS systeme"
+                            : editingTemplate
+                            ? `Modifier le modele personnalise (${editingTemplate.channel})`
+                            : `Nouveau modele personnalise (${newCustomTemplateChannel === "SMS" ? "SMS" : "Email"})`}
                         </h3>
-                        <p className="muted">Configurez l objet et le contenu de vos messages.</p>
+                        <p className="muted">
+                          {editingTemplate
+                            ? "Mettez a jour l objet et le contenu du modele."
+                            : "Configurez un nouveau modele reutilisable."}
+                        </p>
                       </div>
                     </header>
 
-                    <section className="card modal-card">
-                      <form action={saveAdminConfigMessagingTemplateAction} className="grid config-form-grid">
+                    <section className="card modal-card messaging-template-modal-card">
+                      <form action={saveAdminConfigMessagingTemplateAction} className="grid config-form-grid messaging-template-form">
                         {editingTemplate ? (
                           <>
                             <input type="hidden" name="template_kind" value={editingTemplate.kind} />
@@ -1121,21 +1202,40 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 <input type="text" name="name" defaultValue={editingTemplate.name} maxLength={180} required />
                               </label>
                             ) : (
-                              <p className="muted">
-                                Modele systeme: <strong>{editingTemplate.name}</strong>
+                              <p className="messaging-template-title-line">
+                                <strong>Titre :</strong> {editingTemplate.name}
                               </p>
                             )}
 
                             {editingTemplate.channel === "EMAIL" ? (
                               <label>
-                                Objet
+                                Objet du courriel
                                 <input type="text" name="subject" defaultValue={editingTemplate.subject ?? ""} maxLength={255} required />
                               </label>
                             ) : null}
 
-                            <label>
-                              Corps du message
-                              <textarea name="body" defaultValue={editingTemplate.body} rows={12} required />
+                            <label className="messaging-editor-label">
+                              Message
+                              <div className="messaging-editor-shell">
+                                {editingTemplate.channel === "EMAIL" ? (
+                                  <div className="messaging-editor-toolbar" aria-hidden>
+                                    <span>B</span>
+                                    <span>I</span>
+                                    <span>U</span>
+                                    <span>UL</span>
+                                    <span>1.</span>
+                                    <span>LNK</span>
+                                    <span>IMG</span>
+                                  </div>
+                                ) : null}
+                                <textarea
+                                  className="messaging-editor-body"
+                                  name="body"
+                                  defaultValue={editingTemplate.body}
+                                  rows={20}
+                                  required
+                                />
+                              </div>
                             </label>
 
                             <label className="checkline">
@@ -1152,7 +1252,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             </label>
                             <label>
                               Canal
-                              <select name="template_channel" defaultValue="EMAIL">
+                              <select name="template_channel" defaultValue={newCustomTemplateChannel}>
                                 <option value="EMAIL">Email</option>
                                 <option value="SMS">SMS</option>
                               </select>
@@ -1161,9 +1261,20 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               Objet (email uniquement)
                               <input type="text" name="subject" maxLength={255} />
                             </label>
-                            <label>
-                              Corps du message
-                              <textarea name="body" rows={12} required />
+                            <label className="messaging-editor-label">
+                              Message
+                              <div className="messaging-editor-shell">
+                                <div className="messaging-editor-toolbar" aria-hidden>
+                                  <span>B</span>
+                                  <span>I</span>
+                                  <span>U</span>
+                                  <span>UL</span>
+                                  <span>1.</span>
+                                  <span>LNK</span>
+                                  <span>IMG</span>
+                                </div>
+                                <textarea className="messaging-editor-body" name="body" rows={20} required />
+                              </div>
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="active" defaultChecked />
@@ -1176,7 +1287,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <p className="muted">Variables: {editingTemplate.variables_hint}</p>
                         ) : null}
 
-                        <div className="row">
+                        <div className="row spread messaging-template-actions">
+                          <div className="row">
+                            {editingTemplate?.kind === "PREDEFINED" && editingTemplate.code ? (
+                              <button
+                                type="submit"
+                                formAction={resetAdminConfigPredefinedMessagingTemplateAction}
+                                className="ghost"
+                              >
+                                Retablir le modele par defaut
+                              </button>
+                            ) : null}
+                          </div>
                           <button type="submit">Sauvegarder</button>
                         </div>
                       </form>

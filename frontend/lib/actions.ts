@@ -3671,6 +3671,35 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
   );
 }
 
+export async function resetAdminConfigPredefinedMessagingTemplateAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const templateCode = String(formData.get("template_code") ?? "").trim().toUpperCase();
+  if (!templateCode) {
+    redirect("/admin/config?section=params-messaging&error=Template%20predefini%20introuvable");
+  }
+
+  const result = await backendRequest<AdminMessagingTemplateOut>(
+    `/api/v1/admin/config/messaging-templates/predefined/${encodeURIComponent(templateCode)}`,
+    {
+      method: "DELETE",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  redirect("/admin/config?section=params-messaging&ok=Modele%20predefini%20retabli");
+}
+
 export async function deleteAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -3709,7 +3738,7 @@ export async function updateAdminClientPasswordEmailTemplateAction(formData: For
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   if (!subject || !body) {
-    redirect("/admin/config?section=params-client-password-email&error=Objet%20et%20corps%20sont%20obligatoires");
+    redirect("/admin/config?section=params-messaging&error=Objet%20et%20corps%20sont%20obligatoires");
   }
 
   const result = await backendRequest<AdminClientPasswordEmailTemplateOut>(
@@ -3722,12 +3751,12 @@ export async function updateAdminClientPasswordEmailTemplateAction(formData: For
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-client-password-email&error=${encodeURIComponent(result.message)}`);
+    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin/clients");
-  redirect("/admin/config?section=params-client-password-email&ok=Template%20email%20client%20mis%20a%20jour");
+  redirect("/admin/config?section=params-messaging&ok=Template%20email%20client%20mis%20a%20jour");
 }
 
 export async function createAdminFormulaAction(formData: FormData): Promise<void> {

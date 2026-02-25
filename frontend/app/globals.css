@@ -1526,6 +1526,78 @@ button.danger {
   width: min(980px, 96vw);
 }
 
+.messaging-template-modal {
+  width: min(1080px, 97vw);
+  max-height: 90vh;
+}
+
+.messaging-template-modal-header {
+  padding: 8px 56px 2px 4px;
+}
+
+.messaging-template-modal-title {
+  font-size: 44px;
+  line-height: 1.05;
+  letter-spacing: 0.2px;
+}
+
+.messaging-template-modal-card {
+  padding: 14px;
+}
+
+.messaging-template-form {
+  gap: 14px;
+}
+
+.messaging-template-title-line {
+  margin: 0;
+  font-size: 32px;
+  line-height: 1.1;
+  color: #2b2419;
+}
+
+.messaging-editor-label {
+  gap: 8px;
+}
+
+.messaging-editor-shell {
+  border: 1px solid #dcc6a4;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fffdfa;
+}
+
+.messaging-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eadcc8;
+  background: #f9f3e8;
+  color: #5c4b33;
+  font-weight: 700;
+}
+
+.messaging-editor-body {
+  border: 0;
+  border-radius: 0;
+  resize: vertical;
+  min-height: 420px;
+  background: #fff;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.messaging-editor-body:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px #d9b98a;
+}
+
+.messaging-template-actions {
+  border-top: 1px solid #e7d6bf;
+  padding-top: 12px;
+  align-items: center;
+}
+
 .client-create-modal {
   width: min(1180px, 97vw);
   max-height: 90vh;
@@ -1747,6 +1819,14 @@ button.danger {
 
   .activity-modal-panel {
     width: min(100vw, 100%);
+  }
+
+  .messaging-template-modal-title {
+    font-size: 32px;
+  }
+
+  .messaging-editor-body {
+    min-height: 320px;
   }
 
   .client-create-modal {
