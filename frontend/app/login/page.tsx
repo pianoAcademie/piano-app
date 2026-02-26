@@ -1,4 +1,4 @@
-import { loginAction, registerAction } from "../../lib/actions";
+import { forgotPasswordAction, loginAction, registerAction, resetPasswordAction } from "../../lib/actions";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -13,6 +13,7 @@ function readParam(params: SearchParams, key: string): string {
 export default function LoginPage({ searchParams }: { searchParams: SearchParams }): JSX.Element {
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
+  const resetToken = readParam(searchParams, "reset_token");
 
   return (
     <main className="page">
@@ -25,6 +26,25 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
 
       <section className="grid cols-2">
+        {resetToken ? (
+          <article className="card">
+            <h2>Reinitialiser le mot de passe</h2>
+            <p className="muted">Choisissez un nouveau mot de passe pour ce compte.</p>
+            <form action={resetPasswordAction} className="grid">
+              <input type="hidden" name="token" value={resetToken} />
+              <label>
+                Nouveau mot de passe
+                <input type="password" name="password" required minLength={8} autoComplete="new-password" />
+              </label>
+              <label>
+                Confirmer le mot de passe
+                <input type="password" name="password_confirm" required minLength={8} autoComplete="new-password" />
+              </label>
+              <button type="submit">Mettre a jour le mot de passe</button>
+            </form>
+          </article>
+        ) : null}
+
         <article className="card">
           <h2>Connexion</h2>
           <p className="muted">Utilisez votre compte existant.</p>
@@ -38,6 +58,18 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
               <input type="password" name="password" required minLength={8} autoComplete="current-password" />
             </label>
             <button type="submit">Se connecter</button>
+          </form>
+
+          <hr />
+
+          <h3>Mot de passe oublie ?</h3>
+          <p className="muted">Saisissez votre email pour recevoir un lien de reinitialisation.</p>
+          <form action={forgotPasswordAction} className="grid">
+            <label>
+              Email
+              <input type="email" name="email" required autoComplete="email" />
+            </label>
+            <button type="submit">Envoyer le lien</button>
           </form>
         </article>
 

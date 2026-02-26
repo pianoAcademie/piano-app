@@ -14,7 +14,7 @@ from app.models.catalog import (
     Professor,
     SessionStatus,
 )
-from app.models.ops import AppSetting, EmailReminder, MessageFormat, ProfessorSessionMessage, ReminderStatus
+from app.models.ops import AppSetting, EmailReminder, MessageFormat, PasswordResetToken, ProfessorSessionMessage, ReminderStatus
 from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
 from app.models.professor_contract import (
     ProfessorContractGrid,
@@ -55,6 +55,7 @@ __all__ = [
     "PlanKind",
     "PlanRestrictionPeriod",
     "PlanPrice",
+    "PasswordResetToken",
     "Professor",
     "ProfessorHourlyRate",
     "ProfessorContractGrid",

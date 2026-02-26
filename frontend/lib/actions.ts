@@ -468,6 +468,51 @@ export async function registerAction(formData: FormData): Promise<void> {
   redirect("/dashboard?ok=Compte%20cree");
 }
 
+export async function forgotPasswordAction(formData: FormData): Promise<void> {
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  if (!email) {
+    redirect("/login?error=Email%20obligatoire");
+  }
+
+  const result = await backendRequest<{ message: string }>("/api/v1/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+
+  if (!result.ok) {
+    redirect(`/login?error=${encodeURIComponent(result.message)}`);
+  }
+
+  redirect(`/login?ok=${encodeURIComponent(result.data.message)}`);
+}
+
+export async function resetPasswordAction(formData: FormData): Promise<void> {
+  const token = String(formData.get("token") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+  const passwordConfirm = String(formData.get("password_confirm") ?? "");
+
+  if (!token) {
+    redirect("/login?error=Lien%20de%20reinitialisation%20invalide");
+  }
+  if (password.length < 8) {
+    redirect(`/login?reset_token=${encodeURIComponent(token)}&error=Mot%20de%20passe%20trop%20court`);
+  }
+  if (password !== passwordConfirm) {
+    redirect(`/login?reset_token=${encodeURIComponent(token)}&error=Les%20mots%20de%20passe%20ne%20correspondent%20pas`);
+  }
+
+  const result = await backendRequest<{ message: string }>("/api/v1/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+
+  if (!result.ok) {
+    redirect(`/login?reset_token=${encodeURIComponent(token)}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  redirect(`/login?ok=${encodeURIComponent(result.data.message)}`);
+}
+
 export async function logoutAction(): Promise<void> {
   clearToken();
   redirect("/login?ok=Deconnexion%20effectuee");

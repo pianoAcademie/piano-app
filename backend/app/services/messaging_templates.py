@@ -30,6 +30,7 @@ LEGACY_CLIENT_PASSWORD_SUBJECT_KEY = "config_client_password_email_subject"
 LEGACY_CLIENT_PASSWORD_BODY_KEY = "config_client_password_email_body"
 
 PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD = "CLIENT_PASSWORD_SETUP"
+PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET = "PASSWORD_RESET"
 PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD = "TEACHER_PORTAL_LOGIN_SETUP"
 
 
@@ -137,6 +138,22 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         ),
         description="Activation du portail client et envoi du mot de passe temporaire.",
         variables_hint="{first_name} {last_name} {full_name} {email} {temporary_password} {login_url}",
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
+        name="Password Reset",
+        channel="EMAIL",
+        subject="Reinitialisation de votre mot de passe Piano Academie",
+        body=(
+            "Bonjour {first_name},\n\n"
+            "Nous avons recu une demande de reinitialisation de mot de passe.\n"
+            "Pour definir un nouveau mot de passe, cliquez sur ce lien:\n"
+            "{reset_url}\n\n"
+            "Si vous n etes pas a l origine de cette demande, ignorez simplement cet email.\n\n"
+            "Piano Academie"
+        ),
+        description="Lien de reinitialisation de mot de passe client.",
+        variables_hint="{first_name} {last_name} {full_name} {email} {reset_url} {login_url}",
     ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD,
