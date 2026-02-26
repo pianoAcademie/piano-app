@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 from dataclasses import dataclass
 from decimal import Decimal
@@ -83,8 +82,13 @@ def _request_json(
 
 
 def _payplug_auth_header(secret: str) -> str:
-    token = base64.b64encode(f"{secret}:".encode("utf-8")).decode("ascii")
-    return f"Basic {token}"
+    token = secret.strip()
+    if not token:
+        return ""
+    lowered = token.lower()
+    if lowered.startswith("bearer ") or lowered.startswith("basic "):
+        return token
+    return f"Bearer {token}"
 
 
 def _normalize_metadata(raw: object) -> dict[str, str]:
