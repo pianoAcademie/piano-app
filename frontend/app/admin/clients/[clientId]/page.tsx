@@ -254,6 +254,31 @@ function subscriptionStatusPill(sub: AdminClientSubscriptionOut): { label: strin
   return { label: normalized || "INCONNU", toneClass: statusClass(normalized || "INCONNU") };
 }
 
+function isPendingSubscriptionCancellation(sub: AdminClientSubscriptionOut): boolean {
+  if (!sub.cancellation_requested_at) {
+    return false;
+  }
+  if (!sub.cancellation_effective_at) {
+    return true;
+  }
+  const effectiveAt = Date.parse(sub.cancellation_effective_at);
+  if (!Number.isFinite(effectiveAt)) {
+    return true;
+  }
+  return effectiveAt > Date.now();
+}
+
+function isCancellationAlreadyEffective(sub: AdminClientSubscriptionOut): boolean {
+  if (!sub.cancellation_effective_at) {
+    return false;
+  }
+  const effectiveAt = Date.parse(sub.cancellation_effective_at);
+  if (!Number.isFinite(effectiveAt)) {
+    return false;
+  }
+  return effectiveAt <= Date.now();
+}
+
 export default async function AdminClientDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
   const token = cookies().get("access_token")?.value;
   if (!token) {
@@ -416,8 +441,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const selectedPlanBaseTotal = selectedPlanForPurchase?.monthly_price_excl_vat ?? null;
   const selectedPlanCurrency = selectedPlanForPurchase?.currency_code || client.preferred_currency || "EUR";
 
-  const activeSubscriptions = subscriptions.filter((sub) => sub.status === "ACTIVE" || sub.status === "PAUSED");
-  const archivedSubscriptions = subscriptions.filter((sub) => sub.status !== "ACTIVE" && sub.status !== "PAUSED");
+  const activeSubscriptions = subscriptions.filter(
+    (sub) => (sub.status === "ACTIVE" || sub.status === "PAUSED") && !isPendingSubscriptionCancellation(sub),
+  );
+  const endingSubscriptions = subscriptions.filter(
+    (sub) => (sub.status === "ACTIVE" || sub.status === "PAUSED") && isPendingSubscriptionCancellation(sub),
+  );
+  const archivedSubscriptions = subscriptions.filter(
+    (sub) => (sub.status !== "ACTIVE" && sub.status !== "PAUSED") || isCancellationAlreadyEffective(sub),
+  );
+  const visibleCurrentSubscriptions = [...activeSubscriptions, ...endingSubscriptions];
   const selectedSubscriptionForModal =
     subscriptionModalId && (subscriptionModalAction === "suspend" || subscriptionModalAction === "cancel" || subscriptionModalAction === "billing")
       ? subscriptions.find((sub) => sub.id === subscriptionModalId) ?? null
@@ -559,21 +592,31 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
           <article className="card span-2">
             <div className="row spread">
-              <h3>Abonnements et produits actifs</h3>
-              <span className="badge">Total actifs: {activeSubscriptions.length}</span>
+              <h3>Abonnements et produits en cours</h3>
+              <div className="row">
+                <span className="badge">Actifs: {activeSubscriptions.length}</span>
+                <span className="badge">Fin de periode: {endingSubscriptions.length}</span>
+              </div>
             </div>
 
-            {activeSubscriptions.length === 0 ? (
-              <p className="muted top-gap-sm">Aucun produit actif.</p>
+            {visibleCurrentSubscriptions.length === 0 ? (
+              <p className="muted top-gap-sm">Aucun produit en cours.</p>
             ) : (
               <div className="subscription-stack top-gap-sm">
-                {activeSubscriptions.map((sub) => {
+                {visibleCurrentSubscriptions.map((sub) => {
                   const statusPill = subscriptionStatusPill(sub);
+                  const pendingCancellation = isPendingSubscriptionCancellation(sub);
                   return (
                     <article key={sub.id} className="subscription-detail-card">
                     <header className="row spread subscription-head">
                       <div className="stack-sm">
-                        <small className="muted">{sub.plan.kind === "SUBSCRIPTION" ? "Abonnement en cours" : "Carnet actif"}</small>
+                        <small className="muted">
+                          {sub.plan.kind === "SUBSCRIPTION"
+                            ? pendingCancellation
+                              ? "Abonnement en fin de periode"
+                              : "Abonnement en cours"
+                            : "Carnet actif"}
+                        </small>
                         <h4>{sub.plan.name}</h4>
                         <span className="muted">
                           Numero de contrat: {shortContractRef(sub.id)} ({sub.id})
