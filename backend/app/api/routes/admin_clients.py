@@ -214,12 +214,7 @@ def _get_setting_value(db: Session, key: str, default: str) -> str:
 
 
 def _fallback_login_url(raw_website: str) -> str:
-    candidate = raw_website.strip()
-    if not candidate:
-        return "http://localhost:3000/login"
-    if candidate.startswith("http://") or candidate.startswith("https://"):
-        return candidate.rstrip("/") + "/login"
-    return "https://" + candidate.rstrip("/") + "/login"
+    return _frontend_url(raw_website, path="/login")
 
 
 def _main_phone(client: User) -> str | None:
@@ -331,14 +326,33 @@ def _payment_method_label(method_code: str | None) -> str:
     }
     return labels.get(normalized, normalized or "Non defini")
 
+def _payment_method_label_client(method_code: str | None) -> str:
+    normalized = (method_code or "").strip().upper()
+    labels = {
+        "CARD_ONLINE": "CB en ligne",
+        "CARD_TERMINAL": "CB sur place (TPE)",
+        "SEPA_DEBIT": "Prelevement SEPA",
+        "BANK_TRANSFER": "Virement bancaire",
+        "CHECK": "Cheque",
+        "CASH": "Especes",
+        "PAYPAL": "PayPal",
+    }
+    return labels.get(normalized, normalized or "Non defini")
+
 
 def _fallback_dashboard_transactions_url(raw_website: str) -> str:
+    return _frontend_url(raw_website, path="/dashboard?tab=transactions")
+
+
+def _frontend_url(raw_website: str, *, path: str) -> str:
     candidate = raw_website.strip()
     if not candidate:
-        return "http://localhost:3000/dashboard?tab=transactions"
-    if candidate.startswith("http://") or candidate.startswith("https://"):
-        return candidate.rstrip("/") + "/dashboard?tab=transactions"
-    return "https://" + candidate.rstrip("/") + "/dashboard?tab=transactions"
+        candidate = (settings.frontend_base_url or "").strip()
+    if not candidate:
+        candidate = "http://localhost:3000"
+    if not candidate.startswith("http://") and not candidate.startswith("https://"):
+        candidate = "https://" + candidate
+    return candidate.rstrip("/") + path
 
 
 def _send_admin_subscription_immediate_cancellation_email(
@@ -2258,7 +2272,7 @@ def send_admin_client_subscription_payment_email(
         plan_name=plan.name,
         amount_due=f"{amount_due:.2f}",
         currency=currency_code,
-        payment_method=_payment_method_label(method_code),
+        payment_method=_payment_method_label_client(method_code),
         payment_url=payment_url,
         subscription_reference=str(sub.id),
     )
