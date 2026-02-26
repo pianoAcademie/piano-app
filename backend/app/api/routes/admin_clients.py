@@ -54,6 +54,8 @@ from app.schemas.admin import (
     AdminClientSubscriptionSuspendRequest,
     AdminClientSubscriptionCancelRequest,
     AdminClientSubscriptionBillingSetupRequest,
+    AdminClientSubscriptionPaymentEmailRequest,
+    AdminClientSubscriptionPaymentEmailOut,
     AdminClientManualCreditOut,
     AdminClientManualCreditUpdateRequest,
     AdminClientNoteOut,
@@ -68,6 +70,10 @@ from app.services.client_password_email import (
     generate_temporary_password,
     render_client_password_email,
     send_client_password_email,
+)
+from app.services.client_payment_email import (
+    render_client_payment_email,
+    send_client_payment_email,
 )
 from app.services.family_billing import resolve_billing_profile
 from app.services.messaging_templates import (
@@ -87,9 +93,11 @@ from app.services.subscriptions import (
 
 router = APIRouter(prefix="/admin/clients")
 
-PAID_PAYMENT_STATUSES = {"ACTIVE", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE", "PAID"}
-PENDING_PAYMENT_STATUSES = {"PENDING", "WAITLISTED", "TRIAL"}
+PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"}
+PENDING_PAYMENT_STATUSES = {"PENDING", "WAITLISTED", "TRIAL", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT", "FAILED"}
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
+FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
+ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
 
 
 def _utcnow() -> datetime:
@@ -305,6 +313,69 @@ def _invoice_status_from_payment_status(status_value: str) -> str:
         return "PENDING"
     if normalized in CANCELLED_PAYMENT_STATUSES:
         return "CANCELLED"
+    return "PENDING"
+
+
+def _payment_method_label(method_code: str | None) -> str:
+    normalized = (method_code or "").strip().upper()
+    labels = {
+        "CARD_ONLINE": "CB en ligne (Mollie / Payplug)",
+        "CARD_TERMINAL": "CB sur place (TPE)",
+        "SEPA_DEBIT": "Prelevement SEPA",
+        "BANK_TRANSFER": "Virement bancaire",
+        "CHECK": "Cheque",
+        "CASH": "Especes",
+        "PAYPAL": "PayPal",
+    }
+    return labels.get(normalized, normalized or "Non defini")
+
+
+def _fallback_dashboard_transactions_url(raw_website: str) -> str:
+    candidate = raw_website.strip()
+    if not candidate:
+        return "http://localhost:3000/dashboard?tab=transactions"
+    if candidate.startswith("http://") or candidate.startswith("https://"):
+        return candidate.rstrip("/") + "/dashboard?tab=transactions"
+    return "https://" + candidate.rstrip("/") + "/dashboard?tab=transactions"
+
+
+def _is_failed_payment_status(status_value: str) -> bool:
+    normalized = (status_value or "").strip().upper()
+    if not normalized:
+        return False
+    if normalized in FAILED_PAYMENT_STATUSES:
+        return True
+    if normalized.startswith("HTTP_"):
+        return True
+    if normalized.startswith("FAILED"):
+        return True
+    if normalized.endswith("_ERROR"):
+        return True
+    return False
+
+
+def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
+    subscription_status = (subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)).strip().upper()
+    if subscription_status in CANCELLED_PAYMENT_STATUSES:
+        return "CANCELLED"
+
+    last_payment_status = (subscription.last_payment_status or "").strip().upper()
+    if last_payment_status:
+        if last_payment_status in PAID_PAYMENT_STATUSES:
+            return "PAID"
+        if last_payment_status in CANCELLED_PAYMENT_STATUSES:
+            return "CANCELLED"
+        if _is_failed_payment_status(last_payment_status):
+            return "FAILED"
+        if last_payment_status in PENDING_PAYMENT_STATUSES:
+            return "PENDING"
+        return "PENDING"
+
+    billing_method = (subscription.billing_method_code or "").strip().upper()
+    if billing_method in ONLINE_COLLECTION_METHOD_CODES:
+        return "PENDING"
+    if billing_method:
+        return "PAID"
     return "PENDING"
 
 
@@ -2045,6 +2116,108 @@ def setup_admin_client_subscription_billing(
     )
 
 
+@router.post(
+    "/{client_id}/subscriptions/{subscription_id}/send-payment-email",
+    response_model=AdminClientSubscriptionPaymentEmailOut,
+)
+def send_admin_client_subscription_payment_email(
+    client_id: UUID,
+    subscription_id: UUID,
+    payload: AdminClientSubscriptionPaymentEmailRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientSubscriptionPaymentEmailOut:
+    client = _require_client(db, client_id)
+    sub, plan = _admin_subscription_with_plan_for_client(db, client_id=client_id, subscription_id=subscription_id)
+    if not client.email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Client email is missing")
+
+    try:
+        template = resolve_predefined_template(db, code="PAYMENT")
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if not bool(template.get("active", True)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="PAYMENT email template is disabled")
+
+    subject_template = str(template.get("subject") or "")
+    body_template = str(template.get("body") or "")
+    if not subject_template or not body_template:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="PAYMENT email template is incomplete")
+
+    billing_profile = resolve_billing_profile(db, client)
+    pricing = _estimate_subscription_pricing(
+        db,
+        plan=plan,
+        residence_country=billing_profile.residence_country or "FR",
+        preferred_currency=billing_profile.preferred_currency or "EUR",
+        on_date=sub.started_at,
+    )
+    currency_code = (plan.currency_code or billing_profile.preferred_currency or "EUR").upper()
+    amount_due = Decimal(payload.discounted_total_incl_vat) if payload.discounted_total_incl_vat is not None else None
+    if amount_due is None and pricing is not None:
+        amount_due = pricing[3]
+        currency_code = pricing[4]
+    if amount_due is None:
+        amount_due = Decimal("0.00")
+    amount_due = amount_due.quantize(Decimal("0.01"))
+
+    method_code = _normalize_optional(payload.payment_method_code)
+    if method_code is None:
+        method_code = sub.billing_method_code or _default_subscription_billing_method(plan)
+    method_code = (method_code or "").strip().upper() or "CARD_ONLINE"
+
+    website = _get_setting_value(db, "config_account_website", "")
+    payment_url = _fallback_dashboard_transactions_url(website)
+
+    subject, body = render_client_payment_email(
+        subject_template=subject_template,
+        body_template=body_template,
+        first_name=(client.first_name or "").strip(),
+        last_name=(client.last_name or "").strip(),
+        email=client.email,
+        plan_name=plan.name,
+        amount_due=f"{amount_due:.2f}",
+        currency=currency_code,
+        payment_method=_payment_method_label(method_code),
+        payment_url=payment_url,
+        subscription_reference=str(sub.id),
+    )
+
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    message_id = send_client_payment_email(
+        to_email=client.email,
+        subject=subject,
+        body=body,
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
+    )
+
+    sent_at = _utcnow()
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="EMAIL",
+        message=(
+            f"Demande de paiement envoyee a {client.email} pour '{plan.name}' "
+            f"({amount_due:.2f} {currency_code}, {_payment_method_label(method_code)}). "
+            f"Message id: {message_id}."
+        ),
+    )
+    db.commit()
+
+    return AdminClientSubscriptionPaymentEmailOut(
+        client_id=client.id,
+        subscription_id=sub.id,
+        email=client.email,
+        message_id=message_id,
+        sent_at=sent_at,
+    )
+
+
 @router.get("/{client_id}/manual-credits", response_model=list[AdminClientManualCreditOut])
 def list_admin_client_manual_credits(
     client_id: UUID,
@@ -2318,7 +2491,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 source="PLAN_PURCHASE",
                 occurred_at=sub.started_at,
                 label=plan.name,
-                status=sub.status.value,
+                status=_subscription_payment_status(sub),
                 amount_excl_vat=price_excl_vat,
                 vat_rate=vat_rate,
                 vat_amount=vat_amount,

@@ -200,10 +200,18 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="PAYMENT",
         name="Payment",
         channel="EMAIL",
-        subject="Confirmation de paiement",
-        body="Bonjour {first_name},\n\nVotre paiement a bien ete enregistre.\n\nPiano Academie",
-        description="Confirmation de paiement recu.",
-        variables_hint="{first_name}",
+        subject="Finalisez votre paiement Piano Academie",
+        body=(
+            "Bonjour {first_name},\n\n"
+            "Votre achat {plan_name} a ete prepare.\n"
+            "Montant a regler: {amount_due} {currency}\n"
+            "Mode de reglement: {payment_method}\n\n"
+            "Lien de paiement: {payment_url}\n"
+            "Reference abonnement: {subscription_reference}\n\n"
+            "Piano Academie"
+        ),
+        description="Demande de finalisation de paiement.",
+        variables_hint="{first_name} {plan_name} {amount_due} {currency} {payment_method} {payment_url} {subscription_reference}",
     ),
     MessagingTemplateDefinition(
         code="REFUND_ISSUED",
@@ -313,9 +321,9 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         name="Payment",
         channel="SMS",
         subject=None,
-        body="Paiement recu. Merci.",
-        description="SMS confirmation de paiement.",
-        variables_hint="",
+        body="Paiement en attente pour {plan_name}: {amount_due} {currency}. {payment_url}",
+        description="SMS de demande de paiement.",
+        variables_hint="{plan_name} {amount_due} {currency} {payment_url}",
     ),
     MessagingTemplateDefinition(
         code="SMS_REFUND_ISSUED",

@@ -99,7 +99,7 @@ from app.services.messaging_templates import (
 router = APIRouter(prefix="/admin")
 
 PAYMENT_METHOD_CATALOG: list[tuple[str, str]] = [
-    ("CARD_ONLINE", "CB en ligne (Molly CB)"),
+    ("CARD_ONLINE", "CB en ligne (Mollie / Payplug)"),
     ("CARD_TERMINAL", "CB sur place (TPE)"),
     ("CHECK", "Cheque"),
     ("CASH", "Especes"),

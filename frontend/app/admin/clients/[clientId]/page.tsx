@@ -119,7 +119,7 @@ function formatPercent(value: number): string {
 function billingMethodLabel(code: string | null): string {
   const normalized = (code ?? "").toUpperCase();
   if (normalized === "CARD_ONLINE") {
-    return "CB en ligne";
+    return "CB en ligne (Mollie / Payplug)";
   }
   if (normalized === "SEPA_DEBIT") {
     return "Prelevement SEPA";
@@ -158,11 +158,17 @@ function paymentStatusLabel(status: string): string {
   if (normalized === "REFUNDED") {
     return "Rembourse";
   }
-  if (normalized === "PAID" || normalized === "ACTIVE" || normalized === "BOOKED" || normalized === "ATTENDED") {
+  if (normalized === "PAID" || normalized === "BOOKED" || normalized === "ATTENDED") {
     return "Paye";
+  }
+  if (normalized === "FAILED") {
+    return "Echec";
   }
   if (normalized === "PENDING" || normalized === "WAITLISTED" || normalized === "TRIAL") {
     return "En attente";
+  }
+  if (normalized === "ACTIVE") {
+    return "Actif";
   }
   if (normalized === "NO_SHOW") {
     return "Absence";
@@ -224,7 +230,7 @@ function statusClass(status: string): string {
   if (normalized === "ACTIVE" || normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "SENT" || normalized === "PAID") {
     return "status-ok";
   }
-  if (normalized === "WAITLISTED" || normalized === "PENDING") {
+  if (normalized === "WAITLISTED" || normalized === "PENDING" || normalized === "TRIAL" || normalized === "FAILED") {
     return "status-warn";
   }
   return "status-off";
@@ -817,7 +823,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <option value="CHECK">Cheque</option>
                   <option value="CASH">Especes</option>
                   <option value="BANK_TRANSFER">Virement bancaire</option>
-                  <option value="CARD_ONLINE">Carte bleue en ligne</option>
+                  <option value="CARD_ONLINE">CB en ligne (Mollie / Payplug)</option>
                   <option value="PAYPAL">PayPal</option>
                   <option value="CARD_TERMINAL">CB sur place (TPE)</option>
                 </select>
@@ -932,7 +938,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <label>
                 Methode de paiement
                 <select name="billing_method_code" defaultValue={selectedSubscriptionForModal.billing_method_code ?? "CARD_ONLINE"}>
-                  <option value="CARD_ONLINE">CARD_ONLINE (CB en ligne)</option>
+                  <option value="CARD_ONLINE">CARD_ONLINE (CB en ligne - Mollie / Payplug)</option>
                   <option value="SEPA_DEBIT">SEPA_DEBIT</option>
                   <option value="CARD_TERMINAL">CARD_TERMINAL</option>
                   <option value="BANK_TRANSFER">BANK_TRANSFER</option>

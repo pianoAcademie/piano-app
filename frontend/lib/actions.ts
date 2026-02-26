@@ -1644,6 +1644,23 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
     }
   }
 
+  if (signatureChannel === "EMAIL") {
+    const emailResult = await backendRequest<{ message_id: string }>(
+      `/api/v1/admin/clients/${clientId}/subscriptions/${subscriptionId}/send-payment-email`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          payment_method_code: paymentMethodCode,
+          discounted_total_incl_vat: discountedTotal !== null ? discountedTotal.toFixed(2) : null,
+        }),
+      },
+      token,
+    );
+    if (!emailResult.ok) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(emailResult.message)}`);
+    }
+  }
+
   const notes: string[] = [];
   notes.push(`Nouvel achat: ${planName}.`);
   notes.push(`Reglement: ${paymentMethodCode}.`);
@@ -1652,9 +1669,11 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   }
   notes.push("CGV acceptees sur la fiche client.");
   if (signatureChannel === "EMAIL") {
-    notes.push("Demande de signature envoyee par email.");
+    notes.push("Demande de signature: email (envoyee).");
   } else if (signatureChannel === "SMS") {
-    notes.push("Demande de signature envoyee par SMS.");
+    notes.push("Demande de signature: SMS (envoi manuel requis).");
+  } else {
+    notes.push("Demande de signature: non envoyee.");
   }
 
   await backendRequest<{ id: string }>(

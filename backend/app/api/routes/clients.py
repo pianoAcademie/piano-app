@@ -37,6 +37,12 @@ from app.services.pricing import compute_tax_totals, plan_service_code, resolve_
 
 router = APIRouter()
 
+PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"}
+CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
+PENDING_PAYMENT_STATUSES = {"PENDING", "WAITLISTED", "TRIAL", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT", "FAILED"}
+FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
+ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -108,6 +114,46 @@ def _member_out(user: User) -> FamilyMemberOut:
 def _display_name(user: User) -> str:
     full_name = " ".join(part for part in [user.first_name, user.last_name] if part)
     return full_name or user.email
+
+
+def _is_failed_payment_status(status_value: str) -> bool:
+    normalized = (status_value or "").strip().upper()
+    if not normalized:
+        return False
+    if normalized in FAILED_PAYMENT_STATUSES:
+        return True
+    if normalized.startswith("HTTP_"):
+        return True
+    if normalized.startswith("FAILED"):
+        return True
+    if normalized.endswith("_ERROR"):
+        return True
+    return False
+
+
+def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
+    subscription_status = (subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)).strip().upper()
+    if subscription_status in CANCELLED_PAYMENT_STATUSES:
+        return "CANCELLED"
+
+    last_payment_status = (subscription.last_payment_status or "").strip().upper()
+    if last_payment_status:
+        if last_payment_status in PAID_PAYMENT_STATUSES:
+            return "PAID"
+        if last_payment_status in CANCELLED_PAYMENT_STATUSES:
+            return "CANCELLED"
+        if _is_failed_payment_status(last_payment_status):
+            return "FAILED"
+        if last_payment_status in PENDING_PAYMENT_STATUSES:
+            return "PENDING"
+        return "PENDING"
+
+    billing_method = (subscription.billing_method_code or "").strip().upper()
+    if billing_method in ONLINE_COLLECTION_METHOD_CODES:
+        return "PENDING"
+    if billing_method:
+        return "PAID"
+    return "PENDING"
 
 
 def _managed_client_ids_for_sessions(db: Session, current_user: User) -> set[UUID]:
@@ -648,7 +694,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 source="PLAN_PURCHASE",
                 occurred_at=sub.started_at,
                 label=plan.name,
-                status=sub.status.value if hasattr(sub.status, "value") else str(sub.status),
+                status=_subscription_payment_status(sub),
                 amount_excl_vat=price_excl_vat,
                 vat_rate=vat_rate,
                 vat_amount=vat_amount,
@@ -699,14 +745,11 @@ def list_client_invoices(
     payments = _build_client_payments(db, current_user)
     invoices: list[ClientInvoiceOut] = []
 
-    paid_statuses = {"ACTIVE", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"}
-    cancelled_statuses = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
-
     for payment in payments:
         normalized_status = (payment.status or "").upper()
-        if normalized_status in paid_statuses:
+        if normalized_status in PAID_PAYMENT_STATUSES:
             invoice_status = "PAID"
-        elif normalized_status in cancelled_statuses:
+        elif normalized_status in CANCELLED_PAYMENT_STATUSES:
             invoice_status = "CANCELLED"
         else:
             invoice_status = "PENDING"

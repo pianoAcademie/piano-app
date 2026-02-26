@@ -667,6 +667,19 @@ class AdminClientSubscriptionBillingSetupRequest(BaseModel):
     payment_provider_mandate_ref: str | None = Field(default=None, max_length=120)
 
 
+class AdminClientSubscriptionPaymentEmailRequest(BaseModel):
+    payment_method_code: str | None = Field(default=None, max_length=40)
+    discounted_total_incl_vat: Decimal | None = Field(default=None, ge=0)
+
+
+class AdminClientSubscriptionPaymentEmailOut(BaseModel):
+    client_id: UUID
+    subscription_id: UUID
+    email: str
+    message_id: str
+    sent_at: datetime
+
+
 class AdminClientManualCreditOut(BaseModel):
     id: UUID | None
     credit_type_id: UUID
