@@ -542,6 +542,8 @@ def book_session(
 
     if session_obj.is_private:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Private session cannot be booked directly")
+    if not session_obj.allow_online_booking:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Online booking is disabled for this session")
 
     if session_obj.start_at_utc <= now:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session already started")

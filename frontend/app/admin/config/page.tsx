@@ -13,6 +13,7 @@ import {
   updateAdminCreditTypeAction,
   updateAdminConfigAccountAction,
   updateAdminConfigMessagingSettingsAction,
+  updateAdminConfigInvoiceTemplateAction,
   updateAdminConfigProfessorDefaultGridAction,
   updateAdminConfigPaymentMethodsAction,
   updateAdminConfigPaymentProviderAction,
@@ -29,6 +30,7 @@ import type {
   AdminFormulaOut,
   AdminMessagingSettingsOut,
   AdminMessagingTemplateOut,
+  AdminInvoiceTemplateOut,
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProfessorDefaultGridOut,
@@ -264,6 +266,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     paymentMethodsResult,
     paymentProviderResult,
     messagingSettingsResult,
+    invoiceTemplateResult,
     emailPredefinedTemplatesResult,
     smsPredefinedTemplatesResult,
     customTemplatesResult,
@@ -278,6 +281,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
     backendRequest<AdminPaymentProviderOut>("/api/v1/admin/config/payment-provider", {}, token),
     backendRequest<AdminMessagingSettingsOut>("/api/v1/admin/config/messaging-settings", {}, token),
+    backendRequest<AdminInvoiceTemplateOut>("/api/v1/admin/config/invoice-template", {}, token),
     backendRequest<AdminMessagingTemplateOut[]>(
       "/api/v1/admin/config/messaging-templates?channel=EMAIL&kind=PREDEFINED",
       {},
@@ -328,6 +332,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     ? messagingSettingsResult.data
     : (() => {
         loadErrors.push(`Messagerie: ${messagingSettingsResult.message}`);
+        return null;
+      })();
+  const invoiceTemplate = invoiceTemplateResult.ok
+    ? invoiceTemplateResult.data
+    : (() => {
+        loadErrors.push(`Modele facture: ${invoiceTemplateResult.message}`);
         return null;
       })();
   const emailPredefinedTemplates = emailPredefinedTemplatesResult.ok
@@ -990,6 +1000,27 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       </tbody>
                     </table>
                   </div>
+                )}
+              </section>
+
+              <section className="card">
+                <h3>Modele de facture</h3>
+                {!invoiceTemplate ? (
+                  <p className="muted">Impossible de charger le modele de facture.</p>
+                ) : (
+                  <form action={updateAdminConfigInvoiceTemplateAction} className="grid config-form-grid">
+                    <p className="muted">Variables disponibles: {invoiceTemplate.variables_hint}</p>
+                    <label>
+                      Corps de facture
+                      <textarea name="body" defaultValue={invoiceTemplate.body} rows={14} required />
+                    </label>
+                    {invoiceTemplate.updated_at ? (
+                      <p className="muted">Derniere mise a jour: {new Date(invoiceTemplate.updated_at).toLocaleString("fr-FR")}</p>
+                    ) : null}
+                    <div className="row">
+                      <button type="submit">Enregistrer le modele de facture</button>
+                    </div>
+                  </form>
                 )}
               </section>
 

@@ -57,6 +57,7 @@ from app.schemas.admin import (
     AdminClientSubscriptionBillingSetupRequest,
     AdminClientSubscriptionPaymentEmailRequest,
     AdminClientSubscriptionPaymentEmailOut,
+    AdminClientPlanPurchaseRequest,
     AdminClientManualCreditOut,
     AdminClientManualCreditUpdateRequest,
     AdminClientNoteOut,
@@ -78,12 +79,14 @@ from app.services.client_payment_email import (
 )
 from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
+from app.services.invoice_documents import render_invoice_text
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
     resolve_predefined_template,
     resolve_sender_profile,
     upsert_predefined_template,
 )
+from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.security import hash_password
 from app.services.subscriptions import (
@@ -122,7 +125,7 @@ def _has_same_subscription_in_current_month(
         .where(
             ClientPlanSubscription.user_id == user_id,
             ClientPlanSubscription.plan_id == plan_id,
-            ClientPlanSubscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED]),
+            ClientPlanSubscription.status.in_([SubscriptionStatus.PENDING, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED]),
             or_(ClientPlanSubscription.cancellation_effective_at.is_(None), ClientPlanSubscription.cancellation_effective_at > now),
             or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
         )
@@ -340,6 +343,10 @@ def _payment_method_label_client(method_code: str | None) -> str:
     return labels.get(normalized, normalized or "Non defini")
 
 
+def _is_online_collection_method(method_code: str | None) -> bool:
+    return (method_code or "").strip().upper() in ONLINE_COLLECTION_METHOD_CODES
+
+
 def _fallback_dashboard_transactions_url(raw_website: str) -> str:
     return _frontend_url(raw_website, path="/dashboard?tab=transactions")
 
@@ -353,6 +360,67 @@ def _frontend_url(raw_website: str, *, path: str) -> str:
     if not candidate.startswith("http://") and not candidate.startswith("https://"):
         candidate = "https://" + candidate
     return candidate.rstrip("/") + path
+
+
+def _checkout_urls(raw_website: str, *, client_id: UUID, subscription_id: UUID) -> tuple[str, str, str]:
+    query = f"tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}"
+    success_url = _frontend_url(raw_website, path=f"/dashboard?{query}&payment_return=success")
+    cancel_url = _frontend_url(raw_website, path=f"/dashboard?{query}&payment_return=cancel")
+    webhook_url = _frontend_url(raw_website, path=f"/api/v1/public/payments/webhook?client_id={client_id}&subscription_id={subscription_id}")
+    return success_url, cancel_url, webhook_url
+
+
+def _create_checkout_for_subscription(
+    db: Session,
+    *,
+    client: User,
+    subscription: ClientPlanSubscription,
+    plan: Plan,
+    method_code: str | None,
+    amount_due: Decimal,
+    currency_code: str,
+    raw_website: str,
+    force_pending: bool,
+) -> str | None:
+    normalized_method = (method_code or "").strip().upper()
+    if not _is_online_collection_method(normalized_method):
+        return None
+    if amount_due <= Decimal("0.00"):
+        return None
+
+    success_url, cancel_url, webhook_url = _checkout_urls(raw_website, client_id=client.id, subscription_id=subscription.id)
+    checkout = create_checkout_session(
+        db,
+        CheckoutCreateRequest(
+            amount=amount_due.quantize(Decimal("0.01")),
+            currency=(currency_code or "EUR").upper(),
+            description=f"{plan.name} ({client.email})",
+            customer_email=client.email,
+            success_return_url=success_url,
+            cancel_return_url=cancel_url,
+            webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
+            metadata={
+                "client_id": str(client.id),
+                "subscription_id": str(subscription.id),
+                "plan_id": str(plan.id),
+                "plan_code": plan.code,
+            },
+        ),
+    )
+    if not checkout.success or not checkout.checkout_url:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Impossible de creer la session de paiement ({checkout.message})",
+        )
+
+    subscription.billing_method_code = normalized_method
+    subscription.payment_provider_subscription_ref = checkout.provider_reference or subscription.payment_provider_subscription_ref
+    subscription.last_payment_status = (checkout.status or "WAITING_PAYMENT").strip().upper() or "WAITING_PAYMENT"
+    if force_pending and subscription.status != SubscriptionStatus.CANCELLED:
+        subscription.status = SubscriptionStatus.PENDING
+        subscription.auto_renew = False
+
+    return checkout.checkout_url
 
 
 def _send_admin_subscription_immediate_cancellation_email(
@@ -380,15 +448,19 @@ def _send_admin_subscription_immediate_cancellation_email(
 
     subject = f"Resiliation immediate - {plan.name} - {client_name}"
     body = (
-        "Une resiliation immediate d'abonnement a ete executee depuis le BackOffice.\n\n"
+        "Une resiliation immediate de produit a ete executee depuis le BackOffice.\n\n"
         f"Client: {client_name} ({client.email})\n"
-        f"Abonnement: {plan.name}\n"
+        f"Produit: {plan.name}\n"
         f"Reference contrat: {subscription.id}\n"
         f"Date de demande: {requested_at.isoformat()}\n"
         f"Date de resiliation effective: {cancelled_at.isoformat()}\n"
         f"Action realisee par: {actor_name}\n"
         f"ID administrateur: {actor.id}\n\n"
-        "Le prelevement recurrent est desactive et aucun prochain prelevement ne sera lance."
+        + (
+            "Le prelevement recurrent est desactive et aucun prochain prelevement ne sera lance."
+            if plan.kind == PlanKind.SUBSCRIPTION
+            else "Le carnet est clos et les credits restants sont invalides."
+        )
     )
 
     return send_email(
@@ -423,6 +495,8 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     subscription_status = (subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)).strip().upper()
     if subscription_status in CANCELLED_PAYMENT_STATUSES:
         return "CANCELLED"
+    if subscription_status == "PENDING":
+        return "PENDING"
 
     last_payment_status = (subscription.last_payment_status or "").strip().upper()
     if last_payment_status:
@@ -2010,10 +2084,8 @@ def cancel_admin_client_subscription(
 ) -> AdminClientSubscriptionOut:
     client = _require_client(db, client_id)
     sub, plan = _admin_subscription_with_plan_for_client(db, client_id=client_id, subscription_id=subscription_id)
-    if plan.kind != PlanKind.SUBSCRIPTION:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only SUBSCRIPTION can be cancelled")
     if sub.status == SubscriptionStatus.CANCELLED:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Subscription is already cancelled")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Produit deja resilie")
 
     requested = payload.cancellation_requested_at or _utcnow()
     if requested.tzinfo is None:
@@ -2029,13 +2101,16 @@ def cancel_admin_client_subscription(
         )
 
     now = _utcnow()
-    cycle_end = sub.next_payment_at or sub.ends_at or default_next_payment_at(sub.started_at)
-    if cycle_end.tzinfo is None:
-        cycle_end = cycle_end.replace(tzinfo=timezone.utc)
+    cycle_end: datetime | None = None
+    if plan.kind == PlanKind.SUBSCRIPTION:
+        cycle_end = sub.next_payment_at or sub.ends_at or default_next_payment_at(sub.started_at)
+        if cycle_end.tzinfo is None:
+            cycle_end = cycle_end.replace(tzinfo=timezone.utc)
+        else:
+            cycle_end = cycle_end.astimezone(timezone.utc)
+        effective_at = now if immediate else cycle_end
     else:
-        cycle_end = cycle_end.astimezone(timezone.utc)
-
-    effective_at = now if immediate else cycle_end
+        effective_at = now if immediate else max(requested, now)
 
     sub.cancellation_requested_at = requested
     sub.cancellation_effective_at = effective_at
@@ -2044,6 +2119,8 @@ def cancel_admin_client_subscription(
     if immediate or effective_at <= now:
         sub.status = SubscriptionStatus.CANCELLED
         sub.next_payment_at = None
+        if plan.kind == PlanKind.PACK:
+            sub.credits_remaining = 0
 
     db.add(sub)
     admin_message_id: str | None = None
@@ -2064,11 +2141,15 @@ def cancel_admin_client_subscription(
         entry_type="AUTO",
         message=(
             (
-                f"Resiliation immediate abonnement '{plan.name}' executee le {effective_at.date().isoformat()}."
+                f"Resiliation immediate produit '{plan.name}' executee le {effective_at.date().isoformat()}."
                 if immediate
                 else (
-                    f"Resiliation abonnement '{plan.name}' demandee le {requested.date().isoformat()} "
-                    f"avec fin de periode au {cycle_end.date().isoformat()}."
+                    f"Resiliation produit '{plan.name}' demandee le {requested.date().isoformat()} "
+                    + (
+                        f"avec fin de periode au {cycle_end.date().isoformat()}."
+                        if cycle_end is not None
+                        else f"avec effet au {effective_at.date().isoformat()}."
+                    )
                 )
             )
             + (f" Notification email admin envoyee ({admin_message_id})." if immediate and admin_message_id else "")
@@ -2262,6 +2343,19 @@ def send_admin_client_subscription_payment_email(
 
     website = _get_setting_value(db, "config_account_website", "")
     payment_url = _fallback_dashboard_transactions_url(website)
+    checkout_url = _create_checkout_for_subscription(
+        db,
+        client=client,
+        subscription=sub,
+        plan=plan,
+        method_code=method_code,
+        amount_due=amount_due,
+        currency_code=currency_code,
+        raw_website=website,
+        force_pending=sub.status != SubscriptionStatus.ACTIVE,
+    )
+    if checkout_url:
+        payment_url = checkout_url
 
     subject, body = render_client_payment_email(
         subject_template=subject_template,
@@ -2297,7 +2391,8 @@ def send_admin_client_subscription_payment_email(
         message=(
             f"Demande de paiement envoyee a {client.email} pour '{plan.name}' "
             f"({amount_due:.2f} {currency_code}, {_payment_method_label(method_code)}). "
-            f"Message id: {message_id}."
+            f"Message id: {message_id}. "
+            + (f"Checkout: {payment_url}." if checkout_url else "")
         ),
     )
     db.commit()
@@ -2725,6 +2820,7 @@ def download_admin_client_payment_invoice(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
+    payment_user = _require_client(db, client_id)
     source_code = source.strip().upper()
     if source_code not in {"PLAN_PURCHASE", "BOOKING"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported payment source")
@@ -2741,25 +2837,26 @@ def download_admin_client_payment_invoice(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
 
     invoice_number = payment.invoice_number or _invoice_number_for_payment(payment.id, payment.occurred_at)
-    lines = [
-        "Piano Academie - Facture",
-        f"Numero: {invoice_number}",
-        f"Date: {payment.occurred_at.strftime('%d/%m/%Y %H:%M')}",
-        f"Client: {client_id}",
-        f"Type: {_payment_source_label(payment.source)}",
-        f"Libelle: {payment.label}",
-        f"Statut: {payment.status}",
-        f"Montant HT: {payment.amount_excl_vat} {payment.currency}",
-        f"TVA: {payment.vat_amount} {payment.currency}",
-        f"Total TTC: {payment.total_incl_vat} {payment.currency}",
-        f"Reference: {payment.reference or '-'}",
-    ]
-    if payment.refunded_at is not None:
-        lines.append(f"Rembourse le: {payment.refunded_at.strftime('%d/%m/%Y %H:%M')}")
-        lines.append(f"Motif remboursement: {payment.refund_reason or '-'}")
+    client_label = _display_name(payment_user.first_name, payment_user.last_name, payment_user.email)
+    content = render_invoice_text(
+        db,
+        invoice_number=invoice_number,
+        issued_at=payment.occurred_at,
+        client_id=str(client_id),
+        client_name=client_label,
+        payment_type=_payment_source_label(payment.source),
+        label=payment.label,
+        payment_status=payment.status,
+        amount_excl_vat=payment.amount_excl_vat,
+        vat_amount=payment.vat_amount,
+        total_incl_vat=payment.total_incl_vat,
+        currency=payment.currency,
+        reference=payment.reference,
+        refunded_at=payment.refunded_at,
+        refund_reason=payment.refund_reason,
+    )
 
     file_name = f"{invoice_number}.txt".replace('"', "")
-    content = "\n".join(lines) + "\n"
     return Response(
         content=content,
         media_type="text/plain; charset=utf-8",
@@ -2774,6 +2871,7 @@ def download_admin_client_payment_invoice(
 def admin_purchase_plan_for_client(
     client_id: UUID,
     plan_id: UUID,
+    payload: AdminClientPlanPurchaseRequest | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> ClientSubscriptionOut:
@@ -2808,6 +2906,9 @@ def admin_purchase_plan_for_client(
     credits_initial: int | None = None
     credits_remaining: int | None = None
     ends_at = None
+    payload = payload or AdminClientPlanPurchaseRequest()
+    requested_method = _normalize_optional(payload.payment_method_code)
+    method_code = (requested_method or _default_subscription_billing_method(plan) or "").strip().upper() or None
 
     if plan.kind == PlanKind.PACK:
         credits_initial = _effective_pack_credits_for_plan(db, plan=plan)
@@ -2815,20 +2916,48 @@ def admin_purchase_plan_for_client(
     elif plan.kind == PlanKind.SUBSCRIPTION:
         ends_at = add_months_utc(now, 1)
 
+    should_start_pending = _is_online_collection_method(method_code)
     subscription = ClientPlanSubscription(
         user_id=client.id,
         plan_id=plan.id,
-        status=SubscriptionStatus.ACTIVE,
+        status=SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE,
         started_at=now,
         ends_at=ends_at,
         credits_initial=credits_initial,
         credits_remaining=credits_remaining,
-        auto_renew=(plan.kind == PlanKind.SUBSCRIPTION),
-        billing_method_code=_default_subscription_billing_method(plan) if plan.kind == PlanKind.SUBSCRIPTION else None,
+        auto_renew=(plan.kind == PlanKind.SUBSCRIPTION and not should_start_pending),
+        billing_method_code=method_code,
         next_payment_at=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
     )
 
     db.add(subscription)
+    db.flush()
+
+    checkout_url: str | None = None
+    if should_start_pending and method_code is not None:
+        billing_profile = resolve_billing_profile(db, client)
+        pricing = _estimate_subscription_pricing(
+            db,
+            plan=plan,
+            residence_country=billing_profile.residence_country or "FR",
+            preferred_currency=billing_profile.preferred_currency or "EUR",
+            on_date=subscription.started_at,
+        )
+        amount_due = pricing[3] if pricing is not None else Decimal("0.00")
+        currency_code = pricing[4] if pricing is not None else (plan.currency_code or billing_profile.preferred_currency or "EUR").upper()
+        website = _get_setting_value(db, "config_account_website", "")
+        checkout_url = _create_checkout_for_subscription(
+            db,
+            client=client,
+            subscription=subscription,
+            plan=plan,
+            method_code=method_code,
+            amount_due=amount_due,
+            currency_code=currency_code,
+            raw_website=website,
+            force_pending=True,
+        )
+
     db.commit()
     db.refresh(subscription)
 
@@ -2852,4 +2981,6 @@ def admin_purchase_plan_for_client(
             name=plan.name,
             kind=plan.kind,
         ),
+        checkout_url=checkout_url,
+        payment_reference=subscription.payment_provider_subscription_ref,
     )

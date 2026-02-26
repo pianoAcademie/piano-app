@@ -196,6 +196,16 @@ class AdminMessagingCustomTemplateUpdateRequest(BaseModel):
     active: bool = True
 
 
+class AdminInvoiceTemplateOut(BaseModel):
+    body: str
+    variables_hint: str
+    updated_at: datetime | None = None
+
+
+class AdminInvoiceTemplateUpdateRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=20000)
+
+
 class AdminProfessorDefaultGridRuleInput(BaseModel):
     min_students: int = Field(ge=0)
     max_students: int | None = Field(default=None, ge=0)
@@ -682,6 +692,10 @@ class AdminClientSubscriptionPaymentEmailOut(BaseModel):
     sent_at: datetime
 
 
+class AdminClientPlanPurchaseRequest(BaseModel):
+    payment_method_code: str | None = Field(default=None, max_length=40)
+
+
 class AdminClientManualCreditOut(BaseModel):
     id: UUID | None
     credit_type_id: UUID
@@ -1080,8 +1094,7 @@ class AdminProfessorContractGridOut(BaseModel):
 
 class AdminSessionRecurrenceRequest(BaseModel):
     frequency: Literal["DAILY", "WEEKLY", "MONTHLY"] = "WEEKLY"
-    occurrences: int | None = Field(default=None, ge=2, le=365)
-    until_date: date | None = None
+    until_date: date
 
 
 class AdminSessionCreateRequest(BaseModel):
@@ -1099,6 +1112,8 @@ class AdminSessionCreateRequest(BaseModel):
     auto_cancel_deadline_utc: datetime | None = None
     zoom_link: str | None = None
     is_private: bool = False
+    allow_online_booking: bool = True
+    timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
 
 
@@ -1119,6 +1134,8 @@ class AdminSessionUpdateRequest(BaseModel):
     status: SessionStatus | None = None
     cancel_reason: str | None = None
     is_private: bool | None = None
+    allow_online_booking: bool | None = None
+    timezone: str | None = Field(default=None, min_length=2, max_length=100)
 
 
 class AdminSessionOut(BaseModel):
@@ -1140,6 +1157,8 @@ class AdminSessionOut(BaseModel):
     cancel_reason: str | None
     zoom_link: str | None
     is_private: bool
+    allow_online_booking: bool
+    timezone: str
     recurrence_group_id: UUID | None
     recurrence_rule: str | None
     created_at: datetime

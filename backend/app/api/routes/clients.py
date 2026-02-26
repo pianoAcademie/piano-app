@@ -7,13 +7,15 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
+from app.core.config import settings
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.family import ClientFamilyLink
-from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanPriceTaxMode
+from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanPriceTaxMode, SubscriptionStatus
 from app.models.ops import EmailReminder
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
@@ -22,6 +24,7 @@ from app.schemas.user import (
     ClientInvoiceOut,
     ClientMessageOut,
     ClientMessageScope,
+    ClientPaymentCheckoutOut,
     ClientMeUpdateRequest,
     ClientPaymentOut,
     FamilyBookingOut,
@@ -33,6 +36,8 @@ from app.schemas.user import (
     UserOut,
 )
 from app.services.family_billing import resolve_billing_profile
+from app.services.invoice_documents import render_invoice_text
+from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 
 router = APIRouter()
@@ -46,6 +51,21 @@ ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _frontend_url(*, path: str) -> str:
+    candidate = (settings.frontend_base_url or "").strip() or "http://localhost:3000"
+    if not candidate.startswith("http://") and not candidate.startswith("https://"):
+        candidate = "https://" + candidate
+    return candidate.rstrip("/") + path
+
+
+def _checkout_urls(*, owner_id: UUID, subscription_id: UUID) -> tuple[str, str, str]:
+    query = f"tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}"
+    success_url = _frontend_url(path=f"/dashboard?{query}&payment_return=success")
+    cancel_url = _frontend_url(path=f"/dashboard?{query}&payment_return=cancel")
+    webhook_url = _frontend_url(path=f"/api/v1/public/payments/webhook?client_id={owner_id}&subscription_id={subscription_id}")
+    return success_url, cancel_url, webhook_url
 
 
 def _normalize_optional(value: str | None) -> str | None:
@@ -135,6 +155,8 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     subscription_status = (subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)).strip().upper()
     if subscription_status in CANCELLED_PAYMENT_STATUSES:
         return "CANCELLED"
+    if subscription_status == "PENDING":
+        return "PENDING"
 
     last_payment_status = (subscription.last_payment_status or "").strip().upper()
     if last_payment_status:
@@ -154,6 +176,15 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     if billing_method:
         return "PAID"
     return "PENDING"
+
+
+def _payment_source_label(source: str) -> str:
+    normalized = (source or "").strip().upper()
+    if normalized == "PLAN_PURCHASE":
+        return "Achat formule"
+    if normalized == "BOOKING":
+        return "Reservation"
+    return normalized or "Paiement"
 
 
 def _managed_client_ids_for_sessions(db: Session, current_user: User) -> set[UUID]:
@@ -201,6 +232,49 @@ def _link_out(link: ClientFamilyLink, users_by_id: dict[UUID, User]) -> FamilyLi
         created_at=link.created_at,
         updated_at=link.updated_at,
     )
+
+
+def _plan_amount_due_and_currency(
+    db: Session,
+    *,
+    plan: Plan,
+    country: str,
+    currency: str,
+    on_date: datetime,
+) -> tuple[Decimal, str]:
+    vat_rate = resolve_vat_rate(
+        db,
+        country=country,
+        service_code=plan_service_code(plan.kind.value),
+        on_date=on_date.date(),
+    )
+
+    price_excl_vat: Decimal | None = None
+    currency_code = (plan.currency_code or currency or "EUR").upper()
+    if plan.monthly_price_value is not None:
+        raw_price = Decimal(plan.monthly_price_value)
+        if plan.price_tax_mode == PlanPriceTaxMode.TTC:
+            return raw_price.quantize(Decimal("0.01")), currency_code
+        price_excl_vat = raw_price
+    elif plan.monthly_price_excl_vat is not None:
+        price_excl_vat = Decimal(plan.monthly_price_excl_vat)
+    else:
+        resolved_price = resolve_plan_price(
+            db,
+            plan_id=plan.id,
+            country=country,
+            currency=currency,
+            on_date=on_date.date(),
+        )
+        if resolved_price is not None:
+            price_excl_vat = Decimal(resolved_price.price_excl_vat)
+            currency_code = resolved_price.currency_code
+
+    if price_excl_vat is None:
+        return Decimal("0.00"), currency_code
+
+    _, _, total_incl_vat = compute_tax_totals(price_excl_vat=price_excl_vat, vat_rate=vat_rate)
+    return total_incl_vat.quantize(Decimal("0.01")), currency_code
 
 
 @router.get("/clients/me", response_model=UserOut)
@@ -299,10 +373,12 @@ def list_client_visible_sessions(
                 start_at_local=session.start_at_utc.astimezone(tz),
                 end_at_local=session.end_at_utc.astimezone(tz),
                 timezone=timezone,
+                session_timezone=session.timezone,
                 status=session.status,
                 capacity_max=session.capacity_max,
                 booked_count=booked,
                 seats_remaining=seats_remaining,
+                online_booking_enabled=(not session.is_private) and bool(session.allow_online_booking),
                 zoom_link=session.zoom_link,
                 course_type=SessionCourseTypeOut(
                     id=course_type.id,
@@ -701,6 +777,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 total_incl_vat=total_incl_vat,
                 currency=currency_code or "EUR",
                 reference=plan.code,
+                payment_url=_frontend_url(path=f"/dashboard?tab=transactions&source=PLAN_PURCHASE&payment_id={sub.id}"),
             )
         )
 
@@ -722,11 +799,91 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 total_incl_vat=Decimal("0.00") if is_excused else booking.total_incl_vat_snapshot,
                 currency=booking.currency_snapshot,
                 reference=str(session_obj.id),
+                payment_url=None,
             )
         )
 
     items.sort(key=lambda item: item.occurred_at, reverse=True)
     return items
+
+
+@router.post("/clients/me/payments/{payment_id}/checkout", response_model=ClientPaymentCheckoutOut)
+def create_client_payment_checkout(
+    payment_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientPaymentCheckoutOut:
+    managed_ids = _managed_client_ids_for_sessions(db, current_user)
+    row = db.execute(
+        select(ClientPlanSubscription, Plan, User)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .join(User, User.id == ClientPlanSubscription.user_id)
+        .where(
+            ClientPlanSubscription.id == payment_id,
+            ClientPlanSubscription.user_id.in_(managed_ids),
+        )
+        .with_for_update()
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paiement introuvable")
+
+    subscription, plan, owner = row
+    normalized_status = (subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)).strip().upper()
+    if normalized_status in {"CANCELLED", "EXPIRED"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce paiement est clos")
+
+    method_code = (subscription.billing_method_code or "").strip().upper()
+    if method_code not in ONLINE_COLLECTION_METHOD_CODES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ce paiement n'utilise pas un moyen en ligne")
+
+    amount_due, currency_code = _plan_amount_due_and_currency(
+        db,
+        plan=plan,
+        country=(owner.residence_country or "FR").upper(),
+        currency=(owner.preferred_currency or "EUR").upper(),
+        on_date=subscription.started_at,
+    )
+    if amount_due <= Decimal("0.00"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun montant a regler pour ce paiement")
+
+    success_url, cancel_url, webhook_url = _checkout_urls(owner_id=owner.id, subscription_id=subscription.id)
+    checkout = create_checkout_session(
+        db,
+        CheckoutCreateRequest(
+            amount=amount_due,
+            currency=currency_code,
+            description=f"{plan.name} ({owner.email})",
+            customer_email=owner.email,
+            success_return_url=success_url,
+            cancel_return_url=cancel_url,
+            webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
+            metadata={
+                "client_id": str(owner.id),
+                "subscription_id": str(subscription.id),
+                "plan_id": str(plan.id),
+                "plan_code": plan.code,
+            },
+        ),
+    )
+    if not checkout.success or not checkout.checkout_url:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Impossible de creer la session de paiement ({checkout.message})",
+        )
+
+    subscription.payment_provider_subscription_ref = checkout.provider_reference or subscription.payment_provider_subscription_ref
+    subscription.last_payment_status = (checkout.status or "WAITING_PAYMENT").strip().upper() or "WAITING_PAYMENT"
+    if subscription.status != SubscriptionStatus.ACTIVE:
+        subscription.status = SubscriptionStatus.PENDING
+        subscription.auto_renew = False
+    db.add(subscription)
+    db.commit()
+
+    return ClientPaymentCheckoutOut(
+        payment_id=f"plan:{subscription.id}",
+        checkout_url=checkout.checkout_url,
+        provider_reference=subscription.payment_provider_subscription_ref,
+    )
 
 
 @router.get("/clients/me/payments", response_model=list[ClientPaymentOut])
@@ -772,7 +929,68 @@ def list_client_invoices(
                 total_incl_vat=payment.total_incl_vat,
                 currency=payment.currency,
                 reference=payment.reference,
+                download_url=f"/dashboard/invoices/{payment.id}/download",
             )
         )
 
     return invoices
+
+
+@router.get("/clients/me/invoices/{invoice_id}/download")
+def download_client_invoice(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> Response:
+    managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
+    invoice_ref = invoice_id.strip()
+    if invoice_ref.startswith("invoice:"):
+        invoice_ref = invoice_ref[len("invoice:") :]
+    invoice_ref = invoice_ref.strip()
+    if not invoice_ref:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    payments = _build_client_payments(db, current_user)
+    payment = next((row for row in payments if row.id == invoice_ref), None)
+    if payment is None and ":" not in invoice_ref:
+        payment = next((row for row in payments if row.id in {f"plan:{invoice_ref}", f"booking:{invoice_ref}"}), None)
+    if payment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    if payment.owner_client_id not in managed_client_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    payment_user = db.scalar(select(User).where(User.id == payment.owner_client_id))
+    if payment_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    raw_id = payment.id.split(":", maxsplit=1)[-1]
+    compact = raw_id.replace("-", "").upper()
+    short = compact[:8] if compact else "XXXX0000"
+    invoice_number = f"FAC-{payment.occurred_at.strftime('%Y%m%d')}-{short}"
+    content = render_invoice_text(
+        db,
+        invoice_number=invoice_number,
+        issued_at=payment.occurred_at,
+        client_id=str(payment.owner_client_id),
+        client_name=_display_name(payment_user),
+        payment_type=_payment_source_label(payment.source),
+        label=payment.label,
+        payment_status=payment.status,
+        amount_excl_vat=payment.amount_excl_vat,
+        vat_amount=payment.vat_amount,
+        total_incl_vat=payment.total_incl_vat,
+        currency=payment.currency,
+        reference=payment.reference,
+        refunded_at=None,
+        refund_reason=None,
+    )
+
+    file_name = f"{invoice_number}.txt".replace('"', "")
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "Cache-Control": "no-store",
+        },
+    )

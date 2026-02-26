@@ -1317,8 +1317,13 @@ button.danger {
   align-self: end;
 }
 
-.recurrence-occurrences-label {
-  max-width: 280px;
+.recurrence-settings {
+  display: none;
+  gap: 10px;
+}
+
+.recurrence-panel:has(input[name="recurrence_mode"][value="RECURRING"]:checked) .recurrence-settings {
+  display: grid;
 }
 
 .session-booking-row {
@@ -1402,8 +1407,8 @@ button.danger {
     grid-template-columns: 1fr;
   }
 
-  .recurrence-occurrences-label {
-    max-width: none;
+  .recurrence-settings {
+    gap: 8px;
   }
 }
 

@@ -6,6 +6,7 @@ import {
   bookSessionAction,
   cancelBookingAction,
   logoutAction,
+  openClientPaymentCheckoutAction,
   purchasePlanAction,
   updateProfileAction,
 } from "../../lib/actions";
@@ -23,6 +24,7 @@ import type {
   ClientFamilyOverviewOut,
   ClientInvoiceOut,
   ClientMessageOut,
+  ClientPaymentCheckoutOut,
   ClientPaymentOut,
   CourseTypeOut,
   LocationOut,
@@ -562,6 +564,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSessionId = readParam(searchParams, "session_id");
   const messageScope = parseMessageScope(readParam(searchParams, "message_scope"));
   const financeSourceFilter = readParam(searchParams, "finance_source") || "ALL";
+  const paymentSourceParam = normalizeStatus(readParam(searchParams, "source"));
+  const paymentIdParam = readParam(searchParams, "payment_id").trim();
+  const paymentReturnParam = readParam(searchParams, "payment_return").trim().toLowerCase();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
 
   const sessionQuery = new URLSearchParams();
@@ -680,6 +685,34 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         errors.push(`invoices: ${invoicesResult.message}`);
         return [] as ClientInvoiceOut[];
       })();
+
+  if (tab === "transactions" && paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && !paymentReturnParam) {
+    const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
+    const paymentRow = payments.find(
+      (row) =>
+        normalizeStatus(row.source) === "PLAN_PURCHASE" &&
+        (row.id === paymentIdParam || row.id === `plan:${normalizedPaymentId}` || row.id === normalizedPaymentId),
+    );
+    const normalizedStatus = paymentRow ? normalizeStatus(paymentRow.status) : "";
+    const canRedirectToCheckout =
+      normalizedStatus === "PENDING" ||
+      normalizedStatus === "OPEN" ||
+      normalizedStatus === "CREATED" ||
+      normalizedStatus === "PROCESSING" ||
+      normalizedStatus === "WAITING_PAYMENT" ||
+      normalizedStatus === "FAILED";
+    if (canRedirectToCheckout) {
+      const checkout = await backendRequest<ClientPaymentCheckoutOut>(
+        `/api/v1/clients/me/payments/${normalizedPaymentId}/checkout`,
+        { method: "POST" },
+        token,
+      );
+      if (checkout.ok) {
+        redirect(checkout.data.checkout_url);
+      }
+      errors.push(`checkout: ${checkout.message}`);
+    }
+  }
 
   const memberMap = new Map<string, MemberLite>();
   const addMember = (candidate: { id: string; first_name: string | null; last_name: string | null; email: string; client_kind: string }): void => {
@@ -875,11 +908,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSessionIsPastOrStarted = selectedSessionStart ? selectedSessionStart.getTime() <= now.getTime() : false;
   const selectedSessionBooking =
     selectedSession ? bookingsBySessionAndMember.get(`${selectedSession.id}:${bookingOwnerId}`) : null;
+  const selectedSessionOnlineBookingEnabled = selectedSession ? selectedSession.online_booking_enabled : false;
   const selectedSessionEligibleByPlan = selectedSession
     ? (activeEntitlementsByOwner.get(bookingOwnerId)?.has(selectedSession.course_type.id) ?? false)
     : false;
   const selectedSessionIneligibleReason = !selectedSession
     ? ""
+    : !selectedSessionOnlineBookingEnabled
+      ? "La reservation en ligne est desactivee pour ce creneau."
     : activeSubscriptionByOwner.has(bookingOwnerId)
       ? "Aucune formule active compatible avec ce type de cours."
       : "Aucun abonnement/carnet actif pour ce membre.";
@@ -891,6 +927,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSessionCanBook =
     !!selectedSession &&
     normalizeStatus(selectedSession.status) === "SCHEDULED" &&
+    selectedSessionOnlineBookingEnabled &&
     !selectedSessionIsPastOrStarted &&
     selectedSessionBooking == null &&
     selectedSessionEligibleByPlan;
@@ -1327,6 +1364,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {selectedSession.booked_count}/{selectedSession.capacity_max}
                         </span>
                         <span className={`status-badge ${statusClass(selectedSession.status)}`}>{statusLabel(selectedSession.status)}</span>
+                        {!selectedSession.online_booking_enabled ? <span className="badge">Reservation en ligne fermee</span> : null}
                         {selectedSessionBooking ? (
                           <span className={`status-badge ${statusClass(selectedSessionBooking.status)}`}>
                             {statusLabel(selectedSessionBooking.status)}
@@ -1429,7 +1467,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   ? "Deja reserve pour ce membre"
                                   : selectedSessionIneligibleReason || "Reservation indisponible"}
                             </span>
-                            {!selectedSessionIsPastOrStarted && !selectedSessionBooking && !selectedSessionEligibleByPlan ? (
+                            {!selectedSessionIsPastOrStarted &&
+                            !selectedSessionBooking &&
+                            selectedSessionOnlineBookingEnabled &&
+                            !selectedSessionEligibleByPlan ? (
                               <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
                                 Voir les offres compatibles
                               </a>
@@ -1727,21 +1768,46 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <th>Libelle</th>
                           <th>Statut</th>
                           <th>Total</th>
+                          <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {paymentRows.map((row) => (
-                          <tr key={row.id}>
-                            <td>{formatDateTime(row.occurred_at)}</td>
-                            <td>{row.owner_display_name}</td>
-                            <td>{row.source}</td>
-                            <td>{row.label}</td>
-                            <td>
-                              <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
-                            </td>
-                            <td>{toMoney(row.total_incl_vat, row.currency)}</td>
-                          </tr>
-                        ))}
+                        {paymentRows.map((row) => {
+                          const normalizedSource = normalizeStatus(row.source);
+                          const normalizedStatus = normalizeStatus(row.status);
+                          const canPayNow =
+                            normalizedSource === "PLAN_PURCHASE" &&
+                            (normalizedStatus === "PENDING" ||
+                              normalizedStatus === "OPEN" ||
+                              normalizedStatus === "CREATED" ||
+                              normalizedStatus === "PROCESSING" ||
+                              normalizedStatus === "WAITING_PAYMENT" ||
+                              normalizedStatus === "FAILED");
+
+                          return (
+                            <tr key={row.id}>
+                              <td>{formatDateTime(row.occurred_at)}</td>
+                              <td>{row.owner_display_name}</td>
+                              <td>{row.source}</td>
+                              <td>{row.label}</td>
+                              <td>
+                                <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                              </td>
+                              <td>{toMoney(row.total_incl_vat, row.currency)}</td>
+                              <td>
+                                {canPayNow ? (
+                                  <form action={openClientPaymentCheckoutAction}>
+                                    <input type="hidden" name="payment_id" value={row.id} />
+                                    <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "transactions" })} />
+                                    <button type="submit">Payer maintenant</button>
+                                  </form>
+                                ) : (
+                                  <span className="muted">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1766,6 +1832,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <th>Objet</th>
                           <th>Statut</th>
                           <th>Total</th>
+                          <th>Action</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1779,6 +1846,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
                             </td>
                             <td>{toMoney(row.total_incl_vat, row.currency)}</td>
+                            <td>
+                              {row.download_url ? (
+                                <a className="mode-link" href={row.download_url}>
+                                  Telecharger
+                                </a>
+                              ) : (
+                                <span className="muted">-</span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

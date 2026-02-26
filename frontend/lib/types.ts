@@ -73,10 +73,12 @@ export type SessionOut = {
   start_at_local: string;
   end_at_local: string;
   timezone: string;
+  session_timezone: string;
   status: string;
   capacity_max: number;
   booked_count: number;
   seats_remaining: number;
+  online_booking_enabled: boolean;
   zoom_link: string | null;
   course_type: {
     id: string;
@@ -431,6 +433,7 @@ export type ClientPaymentOut = {
   total_incl_vat: string;
   currency: string;
   reference: string | null;
+  payment_url: string | null;
 };
 
 export type ClientInvoiceOut = {
@@ -445,6 +448,13 @@ export type ClientInvoiceOut = {
   total_incl_vat: string;
   currency: string;
   reference: string | null;
+  download_url: string | null;
+};
+
+export type ClientPaymentCheckoutOut = {
+  payment_id: string;
+  checkout_url: string;
+  provider_reference: string | null;
 };
 
 export type AdminProfessorOut = {
@@ -768,6 +778,8 @@ export type AdminSessionOut = {
   cancel_reason: string | null;
   zoom_link: string | null;
   is_private: boolean;
+  allow_online_booking: boolean;
+  timezone: string;
   recurrence_group_id: string | null;
   recurrence_rule: string | null;
   created_at: string;
@@ -888,6 +900,12 @@ export type AdminMessagingTemplateOut = {
   description: string | null;
   variables_hint: string | null;
   created_at: string | null;
+  updated_at: string | null;
+};
+
+export type AdminInvoiceTemplateOut = {
+  body: string;
+  variables_hint: string;
   updated_at: string | null;
 };
 

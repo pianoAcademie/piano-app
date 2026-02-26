@@ -66,10 +66,12 @@ class SessionOut(BaseModel):
     start_at_local: datetime
     end_at_local: datetime
     timezone: str
+    session_timezone: str
     status: SessionStatus
     capacity_max: int
     booked_count: int
     seats_remaining: int
+    online_booking_enabled: bool
     zoom_link: str | None
     course_type: SessionCourseTypeOut
     location: SessionLocationOut

@@ -170,6 +170,7 @@ class PlanCreditGrant(Base):
 
 
 class SubscriptionStatus(str, enum.Enum):
+    PENDING = "PENDING"
     ACTIVE = "ACTIVE"
     PAUSED = "PAUSED"
     CANCELLED = "CANCELLED"

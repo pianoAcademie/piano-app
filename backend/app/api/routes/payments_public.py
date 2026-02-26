@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.api.deps import SessionLocal
+from app.core.config import settings
+from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
+from app.services.payment_checkout import lookup_payment
+from app.services.payment_provider import resolve_provider
+
+router = APIRouter(prefix="/public/payments")
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _extract_reference(request: Request, payload: object) -> str | None:
+    if isinstance(payload, dict):
+        for key in ("id", "payment_id", "paymentId"):
+            value = payload.get(key)
+            if value:
+                return str(value).strip()
+        data_node = payload.get("data")
+        if isinstance(data_node, dict):
+            value = data_node.get("id")
+            if value:
+                return str(value).strip()
+    if request.query_params.get("id"):
+        return str(request.query_params.get("id")).strip()
+    form_id = request.query_params.get("payment_id")
+    if form_id:
+        return str(form_id).strip()
+    return None
+
+
+@router.api_route("/webhook", methods=["POST", "GET"])
+async def payment_webhook(
+    request: Request,
+    client_id: UUID | None = Query(default=None),
+    subscription_id: UUID | None = Query(default=None),
+    token: str | None = Query(default=None),
+) -> dict[str, object]:
+    configured = (settings.payment_webhook_secret or "").strip()
+    if configured and token != configured:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid webhook token")
+
+    raw_body = await request.body()
+    payload: object = {}
+    if raw_body:
+        body_text = raw_body.decode("utf-8", errors="ignore")
+        try:
+            payload = json.loads(body_text)
+        except Exception:
+            payload = {}
+
+    payment_reference = _extract_reference(request, payload)
+    if subscription_id is None:
+        return {"ok": True, "processed": False, "reason": "missing_subscription_id"}
+
+    db: Session = SessionLocal()
+    try:
+        sub = db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == subscription_id).with_for_update())
+        if sub is None:
+            return {"ok": True, "processed": False, "reason": "subscription_not_found"}
+        if client_id is not None and sub.user_id != client_id:
+            return {"ok": True, "processed": False, "reason": "client_mismatch"}
+
+        plan = db.scalar(select(Plan).where(Plan.id == sub.plan_id))
+        if plan is None:
+            return {"ok": True, "processed": False, "reason": "plan_not_found"}
+
+        if payment_reference:
+            sub.payment_provider_subscription_ref = payment_reference
+
+        reference = (sub.payment_provider_subscription_ref or "").strip()
+        if not reference:
+            db.add(sub)
+            db.commit()
+            return {"ok": True, "processed": False, "reason": "missing_reference"}
+
+        provider = resolve_provider(db)
+        lookup = lookup_payment(db, provider=provider, payment_reference=reference)
+        status_text = (lookup.status or "").strip().upper() or "UNKNOWN"
+        sub.last_payment_status = status_text
+        if lookup.paid:
+            sub.last_payment_at = _utcnow()
+            if sub.status in {SubscriptionStatus.PENDING, SubscriptionStatus.PAUSED, SubscriptionStatus.ACTIVE}:
+                sub.status = SubscriptionStatus.ACTIVE
+            if plan.kind == PlanKind.SUBSCRIPTION:
+                sub.auto_renew = True
+        elif lookup.cancelled:
+            if sub.status == SubscriptionStatus.PENDING:
+                sub.status = SubscriptionStatus.CANCELLED
+                sub.auto_renew = False
+                sub.next_payment_at = None
+        elif lookup.failed and sub.status == SubscriptionStatus.PENDING:
+            sub.status = SubscriptionStatus.PENDING
+
+        db.add(sub)
+        db.commit()
+        return {"ok": True, "processed": True, "payment_status": status_text}
+    finally:
+        db.close()

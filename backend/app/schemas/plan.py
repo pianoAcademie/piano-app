@@ -54,6 +54,8 @@ class ClientSubscriptionOut(BaseModel):
     plan: PlanMiniOut
     entitlement_course_type_ids: list[UUID] = Field(default_factory=list)
     entitlement_course_type_names: list[str] = Field(default_factory=list)
+    checkout_url: str | None = None
+    payment_reference: str | None = None
 
 
 class PlanPurchaseRequest(BaseModel):

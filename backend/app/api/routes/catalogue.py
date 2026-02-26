@@ -187,10 +187,12 @@ def list_sessions(
                 start_at_local=session.start_at_utc.astimezone(tz),
                 end_at_local=session.end_at_utc.astimezone(tz),
                 timezone=timezone,
+                session_timezone=session.timezone,
                 status=session.status,
                 capacity_max=session.capacity_max,
                 booked_count=booked,
                 seats_remaining=seats_remaining,
+                online_booking_enabled=(not session.is_private) and bool(session.allow_online_booking),
                 zoom_link=session.zoom_link,
                 course_type=SessionCourseTypeOut(
                     id=course_type.id,

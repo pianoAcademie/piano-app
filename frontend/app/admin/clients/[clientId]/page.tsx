@@ -663,6 +663,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               </>
                             ) : null}
                           </>
+                        ) : sub.status !== "CANCELLED" ? (
+                          <Link
+                            className="client-action-icon danger"
+                            href={ficheHref(client.id, { subscription_modal: "cancel_now", subscription_id: sub.id })}
+                            title="Annuler le carnet"
+                          >
+                            ✕
+                          </Link>
                         ) : null}
                       </div>
                     </header>
@@ -735,7 +743,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <p className="muted">
                         Actions rapides: utilisez les icones pour configurer le prelevement, suspendre ou resilier.
                       </p>
-                    ) : null}
+                    ) : (
+                      <p className="muted">Actions rapides: utilisez l icone pour annuler immediatement le carnet.</p>
+                    )}
                     </article>
                   );
                 })}
@@ -1119,9 +1129,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
               ×
             </Link>
-            <h3 className="modal-title">Resiliation immediate</h3>
+            <h3 className="modal-title">{selectedSubscriptionForModal.plan.kind === "PACK" ? "Annulation immediate du carnet" : "Resiliation immediate"}</h3>
             <p className="muted">
-              {selectedSubscriptionForModal.plan.name} - cette action coupe l abonnement maintenant et desactive tout prochain prelevement.
+              {selectedSubscriptionForModal.plan.kind === "PACK"
+                ? `${selectedSubscriptionForModal.plan.name} - cette action cloture le carnet maintenant et annule les credits restants.`
+                : `${selectedSubscriptionForModal.plan.name} - cette action coupe l abonnement maintenant et desactive tout prochain prelevement.`}
             </p>
             <form action={cancelAdminClientSubscriptionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
@@ -1138,14 +1150,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </label>
               <label className="checkline">
                 <input type="checkbox" name="confirm_immediate" required />
-                Je confirme la resiliation immediate et irreversible.
+                {selectedSubscriptionForModal.plan.kind === "PACK"
+                  ? "Je confirme l annulation immediate et irreversible du carnet."
+                  : "Je confirme la resiliation immediate et irreversible."}
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
                   Annuler
                 </Link>
                 <button type="submit" className="danger">
-                  Resilier immediatement
+                  {selectedSubscriptionForModal.plan.kind === "PACK" ? "Annuler immediatement" : "Resilier immediatement"}
                 </button>
               </div>
             </form>

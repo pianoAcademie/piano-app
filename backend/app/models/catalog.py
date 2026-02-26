@@ -239,6 +239,8 @@ class CourseSession(Base):
     cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     zoom_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    allow_online_booking: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'UTC'"))
     recurrence_group_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     recurrence_rule: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

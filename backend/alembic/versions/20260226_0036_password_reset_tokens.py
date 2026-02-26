@@ -1,7 +1,7 @@
 """add password reset tokens table
 
-Revision ID: 20260226_0035
-Revises: 20260225_0034
+Revision ID: 20260226_0036
+Revises: 20260226_0035
 Create Date: 2026-02-26 11:15:00.000000
 """
 
@@ -15,8 +15,8 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision: str = "20260226_0035"
-down_revision: Union[str, None] = "20260225_0034"
+revision: str = "20260226_0036"
+down_revision: Union[str, None] = "20260226_0035"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

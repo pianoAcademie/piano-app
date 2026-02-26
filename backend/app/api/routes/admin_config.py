@@ -51,6 +51,8 @@ from app.schemas.admin import (
     AdminMessagingTemplateKind,
     AdminMessagingTemplateOut,
     AdminMessagingPredefinedTemplateUpdateRequest,
+    AdminInvoiceTemplateOut,
+    AdminInvoiceTemplateUpdateRequest,
     AdminProfessorDefaultGridLineInput,
     AdminProfessorDefaultGridLineOut,
     AdminProfessorDefaultGridOut,
@@ -94,6 +96,11 @@ from app.services.messaging_templates import (
     save_messaging_settings,
     update_custom_template,
     upsert_predefined_template,
+)
+from app.services.invoice_documents import (
+    INVOICE_TEMPLATE_VARIABLES_HINT,
+    get_invoice_template,
+    save_invoice_template,
 )
 
 router = APIRouter(prefix="/admin")
@@ -1477,6 +1484,35 @@ def delete_admin_custom_messaging_template(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Custom template not found")
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/config/invoice-template", response_model=AdminInvoiceTemplateOut)
+def get_admin_invoice_template(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminInvoiceTemplateOut:
+    body, updated_at = get_invoice_template(db)
+    return AdminInvoiceTemplateOut(
+        body=body,
+        variables_hint=INVOICE_TEMPLATE_VARIABLES_HINT,
+        updated_at=updated_at,
+    )
+
+
+@router.put("/config/invoice-template", response_model=AdminInvoiceTemplateOut)
+def update_admin_invoice_template(
+    payload: AdminInvoiceTemplateUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminInvoiceTemplateOut:
+    updated_at = save_invoice_template(db, body=payload.body)
+    db.commit()
+    body, _ = get_invoice_template(db)
+    return AdminInvoiceTemplateOut(
+        body=body,
+        variables_hint=INVOICE_TEMPLATE_VARIABLES_HINT,
+        updated_at=updated_at,
+    )
 
 
 @router.get("/config/professor-default-grid", response_model=AdminProfessorDefaultGridOut)

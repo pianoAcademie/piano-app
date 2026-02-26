@@ -197,6 +197,7 @@ class ClientPaymentOut(BaseModel):
     total_incl_vat: Decimal
     currency: str
     reference: str | None
+    payment_url: str | None = None
 
 
 class ClientInvoiceOut(BaseModel):
@@ -211,3 +212,10 @@ class ClientInvoiceOut(BaseModel):
     total_incl_vat: Decimal
     currency: str
     reference: str | None
+    download_url: str | None = None
+
+
+class ClientPaymentCheckoutOut(BaseModel):
+    payment_id: str
+    checkout_url: str
+    provider_reference: str | None = None

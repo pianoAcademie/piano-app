@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
+from app.core.config import settings
 from app.models.catalog import CourseType
 from app.models.family import ClientFamilyLink
 from app.models.plan import (
@@ -24,6 +25,7 @@ from app.models.plan import (
 )
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut, PlanOut, PlanPricePreviewOut, PlanPurchaseRequest
+from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
 
@@ -74,7 +76,7 @@ def _has_same_subscription_in_current_month(
         .where(
             ClientPlanSubscription.user_id == user_id,
             ClientPlanSubscription.plan_id == plan_id,
-            ClientPlanSubscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED]),
+            ClientPlanSubscription.status.in_([SubscriptionStatus.PENDING, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED]),
             or_(ClientPlanSubscription.cancellation_effective_at.is_(None), ClientPlanSubscription.cancellation_effective_at > now),
             or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
         )
@@ -162,6 +164,68 @@ def _default_subscription_billing_method(plan: Plan) -> str | None:
     if "CARD_ONLINE" in methods:
         return "CARD_ONLINE"
     return methods[0] if methods else None
+
+
+def _is_online_collection_method(method_code: str | None) -> bool:
+    return (method_code or "").strip().upper() in {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
+
+
+def _frontend_url(*, path: str) -> str:
+    candidate = (settings.frontend_base_url or "").strip() or "http://localhost:3000"
+    if not candidate.startswith("http://") and not candidate.startswith("https://"):
+        candidate = "https://" + candidate
+    return candidate.rstrip("/") + path
+
+
+def _checkout_urls(*, owner_id: UUID, subscription_id: UUID) -> tuple[str, str, str]:
+    query = f"tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}"
+    success_url = _frontend_url(path=f"/dashboard?{query}&payment_return=success")
+    cancel_url = _frontend_url(path=f"/dashboard?{query}&payment_return=cancel")
+    webhook_url = _frontend_url(path=f"/api/v1/public/payments/webhook?client_id={owner_id}&subscription_id={subscription_id}")
+    return success_url, cancel_url, webhook_url
+
+
+def _plan_amount_due_and_currency(
+    db: Session,
+    *,
+    plan: Plan,
+    country: str,
+    currency: str,
+    on_date: date,
+) -> tuple[Decimal, str]:
+    vat_rate = resolve_vat_rate(
+        db,
+        country=country,
+        service_code=plan_service_code(plan.kind.value),
+        on_date=on_date,
+    )
+
+    price_excl_vat: Decimal | None = None
+    currency_code = (plan.currency_code or currency or "EUR").upper()
+    if plan.monthly_price_value is not None:
+        raw_price = Decimal(plan.monthly_price_value)
+        if plan.price_tax_mode == PlanPriceTaxMode.TTC:
+            return raw_price.quantize(Decimal("0.01")), currency_code
+        price_excl_vat = raw_price
+    elif plan.monthly_price_excl_vat is not None:
+        price_excl_vat = Decimal(plan.monthly_price_excl_vat)
+    else:
+        resolved = resolve_plan_price(
+            db,
+            plan_id=plan.id,
+            country=country,
+            currency=currency,
+            on_date=on_date,
+        )
+        if resolved is not None:
+            price_excl_vat = Decimal(resolved.price_excl_vat)
+            currency_code = resolved.currency_code
+
+    if price_excl_vat is None:
+        return Decimal("0.00"), currency_code
+
+    _, _, total = compute_tax_totals(price_excl_vat=price_excl_vat, vat_rate=vat_rate)
+    return total.quantize(Decimal("0.01")), currency_code
 
 
 def _effective_pack_credits_for_plan(db: Session, *, plan: Plan) -> int | None:
@@ -307,6 +371,21 @@ def purchase_plan(
     credits_initial: int | None = None
     credits_remaining: int | None = None
     ends_at = None
+    method_code = (_default_subscription_billing_method(plan) or "").strip().upper() or None
+    amount_due, currency_code = _plan_amount_due_and_currency(
+        db,
+        plan=plan,
+        country=(owner.residence_country or "FR").upper(),
+        currency=(owner.preferred_currency or "EUR").upper(),
+        on_date=now.date(),
+    )
+    requires_online_checkout = amount_due > Decimal("0.00")
+    if requires_online_checkout and not _is_online_collection_method(method_code):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cette offre doit etre reglee en ligne (CB/SEPA/PayPal)",
+        )
+    should_start_pending = requires_online_checkout and _is_online_collection_method(method_code)
 
     if plan.kind == PlanKind.PACK:
         credits_initial = _effective_pack_credits_for_plan(db, plan=plan) or 0
@@ -317,16 +396,48 @@ def purchase_plan(
     subscription = ClientPlanSubscription(
         user_id=owner.id,
         plan_id=plan.id,
-        status=SubscriptionStatus.ACTIVE,
+        status=SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE,
         started_at=now,
         ends_at=ends_at,
         credits_initial=credits_initial,
         credits_remaining=credits_remaining,
-        auto_renew=(plan.kind == PlanKind.SUBSCRIPTION),
-        billing_method_code=_default_subscription_billing_method(plan) if plan.kind == PlanKind.SUBSCRIPTION else None,
+        auto_renew=(plan.kind == PlanKind.SUBSCRIPTION and not should_start_pending),
+        billing_method_code=method_code,
         next_payment_at=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
     )
     db.add(subscription)
+    db.flush()
+
+    checkout_url: str | None = None
+    if should_start_pending and method_code is not None:
+        success_url, cancel_url, webhook_url = _checkout_urls(owner_id=owner.id, subscription_id=subscription.id)
+        checkout = create_checkout_session(
+            db,
+            CheckoutCreateRequest(
+                amount=amount_due,
+                currency=currency_code,
+                description=f"{plan.name} ({owner.email})",
+                customer_email=owner.email,
+                success_return_url=success_url,
+                cancel_return_url=cancel_url,
+                webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
+                metadata={
+                    "client_id": str(owner.id),
+                    "subscription_id": str(subscription.id),
+                    "plan_id": str(plan.id),
+                    "plan_code": plan.code,
+                },
+            ),
+        )
+        if not checkout.success or not checkout.checkout_url:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Impossible de creer la session de paiement ({checkout.message})",
+            )
+        subscription.payment_provider_subscription_ref = checkout.provider_reference
+        subscription.last_payment_status = (checkout.status or "WAITING_PAYMENT").strip().upper() or "WAITING_PAYMENT"
+        checkout_url = checkout.checkout_url
+
     db.commit()
     db.refresh(subscription)
 
@@ -354,6 +465,8 @@ def purchase_plan(
         ),
         entitlement_course_type_ids=entitlement_ids_map.get(plan.id, []),
         entitlement_course_type_names=entitlement_names_map.get(plan.id, []),
+        checkout_url=checkout_url,
+        payment_reference=subscription.payment_provider_subscription_ref,
     )
 
 

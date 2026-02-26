@@ -4,6 +4,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import delete, func, select
@@ -126,6 +127,8 @@ def _to_admin_session_out(session_obj: CourseSession, *, booked_count: int) -> A
         cancel_reason=session_obj.cancel_reason,
         zoom_link=session_obj.zoom_link,
         is_private=session_obj.is_private,
+        allow_online_booking=session_obj.allow_online_booking,
+        timezone=session_obj.timezone,
         recurrence_group_id=session_obj.recurrence_group_id,
         recurrence_rule=session_obj.recurrence_rule,
         created_at=session_obj.created_at,
@@ -313,6 +316,23 @@ def _is_vacation_course_type(course_type: CourseType) -> bool:
     return course_type.code.upper() == VACATION_COURSE_TYPE_CODE
 
 
+def _normalize_session_timezone(value: str) -> str:
+    timezone_name = (value or "").strip()
+    if not timezone_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid timezone",
+        )
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid timezone",
+        ) from exc
+    return timezone_name
+
+
 def _start_of_utc_day(moment: datetime) -> datetime:
     return moment.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -337,23 +357,13 @@ def _advance_recurrence_datetime(base: datetime, *, frequency: str, offset: int)
 def _resolve_recurrence_occurrences(
     *,
     recurrence_frequency: str,
-    recurrence_occurrences: int | None,
     recurrence_until_date: date | None,
     anchor_start_at_utc: datetime,
 ) -> int:
-    if recurrence_occurrences is not None and recurrence_until_date is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Choose recurrence end date OR occurrences, not both",
-        )
-
-    if recurrence_occurrences is not None:
-        return recurrence_occurrences
-
     if recurrence_until_date is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Recurrence requires either occurrences or end date",
+            detail="Recurrence requires an end date",
         )
 
     anchor_day = anchor_start_at_utc.date()
@@ -472,10 +482,11 @@ def _validate_session_times(*, start_at_utc: datetime, end_at_utc: datetime, aut
         )
 
 
-def _validate_same_day_slot(*, start_at_utc: datetime, end_at_utc: datetime, is_all_day: bool) -> None:
+def _validate_same_day_slot(*, start_at_utc: datetime, end_at_utc: datetime, is_all_day: bool, session_timezone: str) -> None:
     if is_all_day:
         return
-    if start_at_utc.date() != end_at_utc.date():
+    tz = ZoneInfo(session_timezone)
+    if start_at_utc.astimezone(tz).date() != end_at_utc.astimezone(tz).date():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Session end must be on the same day as start",
@@ -1000,12 +1011,13 @@ def create_session(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminSessionOut:
-    course_type, _, _ = _validate_and_load_refs(
+    course_type, location, _ = _validate_and_load_refs(
         db,
         course_type_id=payload.course_type_id,
         location_id=payload.location_id,
         professor_id=payload.professor_id,
     )
+    session_timezone = _normalize_session_timezone(payload.timezone or location.timezone)
 
     is_vacation = _is_vacation_course_type(course_type)
     is_all_day = bool(payload.is_all_day or is_vacation)
@@ -1041,6 +1053,7 @@ def create_session(
         start_at_utc=start_at_utc,
         end_at_utc=end_at_utc,
         is_all_day=is_all_day,
+        session_timezone=session_timezone,
     )
 
     recurrence_occurrences = 1
@@ -1049,7 +1062,6 @@ def create_session(
         recurrence_rule = payload.recurrence.frequency
         recurrence_occurrences = _resolve_recurrence_occurrences(
             recurrence_frequency=recurrence_rule,
-            recurrence_occurrences=payload.recurrence.occurrences,
             recurrence_until_date=payload.recurrence.until_date,
             anchor_start_at_utc=start_at_utc,
         )
@@ -1084,6 +1096,7 @@ def create_session(
             start_at_utc=starts_at,
             end_at_utc=ends_at,
             is_all_day=is_all_day,
+            session_timezone=session_timezone,
         )
 
         if recurrence_occurrences > 1 and not is_vacation:
@@ -1107,6 +1120,8 @@ def create_session(
                 cancel_reason=None,
                 zoom_link=payload.zoom_link,
                 is_private=payload.is_private,
+                allow_online_booking=(not payload.is_private) and bool(payload.allow_online_booking),
+                timezone=session_timezone,
                 recurrence_group_id=recurrence_group_id,
                 recurrence_rule=recurrence_rule,
                 updated_at=now,
@@ -1497,7 +1512,7 @@ def update_session(
     professor_id = updates.get("professor_id", session_obj.professor_id)
     enforce_planning_allowed = "course_type_id" in updates or "location_id" in updates
 
-    course_type, _, _ = _validate_and_load_refs(
+    course_type, location, _ = _validate_and_load_refs(
         db,
         course_type_id=course_type_id,
         location_id=location_id,
@@ -1505,6 +1520,7 @@ def update_session(
         enforce_planning_allowed=enforce_planning_allowed,
     )
     is_vacation = _is_vacation_course_type(course_type)
+    anchor_timezone = _normalize_session_timezone(updates.get("timezone", session_obj.timezone or location.timezone))
 
     original_anchor_start = session_obj.start_at_utc
     original_anchor_end = session_obj.end_at_utc
@@ -1554,6 +1570,7 @@ def update_session(
         start_at_utc=anchor_start,
         end_at_utc=anchor_end,
         is_all_day=anchor_is_all_day,
+        session_timezone=anchor_timezone,
     )
 
     has_start_update = "start_at_utc" in updates
@@ -1600,11 +1617,21 @@ def update_session(
             target.cancel_reason = updates["cancel_reason"]
         if "is_private" in updates:
             target.is_private = updates["is_private"]
+        if "allow_online_booking" in updates or "is_private" in updates:
+            next_online_booking = bool(updates.get("allow_online_booking", target.allow_online_booking))
+            next_is_private = bool(updates.get("is_private", target.is_private))
+            target.allow_online_booking = False if next_is_private else next_online_booking
 
         original_target_start = target.start_at_utc
         original_target_end = target.end_at_utc
         original_target_deadline = target.auto_cancel_deadline_utc
         resolved_is_all_day = bool(updates.get("is_all_day", target.is_all_day))
+        if apply_scope == "ONE":
+            resolved_timezone = anchor_timezone
+        elif "timezone" in updates:
+            resolved_timezone = anchor_timezone
+        else:
+            resolved_timezone = _normalize_session_timezone(target.timezone or location.timezone)
 
         if apply_scope == "ONE":
             resolved_start = anchor_start
@@ -1653,12 +1680,14 @@ def update_session(
             start_at_utc=resolved_start,
             end_at_utc=resolved_end,
             is_all_day=resolved_is_all_day,
+            session_timezone=resolved_timezone,
         )
 
         target.start_at_utc = resolved_start
         target.end_at_utc = resolved_end
         target.auto_cancel_deadline_utc = resolved_deadline
         target.is_all_day = resolved_is_all_day
+        target.timezone = resolved_timezone
         target.updated_at = now
 
     db.commit()

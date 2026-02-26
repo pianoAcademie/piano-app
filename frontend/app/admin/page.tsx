@@ -266,12 +266,35 @@ function toDateTimeLocalUtcValue(value: string): string {
   return safeDate(value)?.toISOString().slice(0, 16) ?? "";
 }
 
-function toDateInputUtcValue(value: string): string {
-  return safeDate(value)?.toISOString().slice(0, 10) ?? "";
+function toDateInputInTimezone(value: string, timezone: string): string {
+  const parsed = safeDate(value);
+  if (!parsed) {
+    return "";
+  }
+  const safeTimezone = resolveTimezone(timezone);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: safeTimezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(parsed);
+  const year = getDatePart(parts, "year");
+  const month = getDatePart(parts, "month");
+  const day = getDatePart(parts, "day");
+  return `${year}-${month}-${day}`;
 }
 
-function toTimeInputUtcValue(value: string): string {
-  return safeDate(value)?.toISOString().slice(11, 16) ?? "";
+function toTimeInputInTimezone(value: string, timezone: string): string {
+  const parsed = safeDate(value);
+  if (!parsed) {
+    return "";
+  }
+  return parsed.toLocaleTimeString("fr-FR", {
+    timeZone: resolveTimezone(timezone),
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 function formatDate(value: string): string {
@@ -646,6 +669,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const timezoneOptions = timezoneOptionValues.has(timezone)
     ? PLANNING_TIMEZONES
     : [{ value: timezone, label: `${timezone} (personnalise)` }, ...PLANNING_TIMEZONES];
+  const sessionTimezoneValues = new Set<string>([
+    ...PLANNING_TIMEZONES.map((option) => option.value),
+    ...locations.map((row) => row.timezone),
+    selectedSession?.timezone ?? timezone,
+  ]);
+  const sessionTimezoneOptions = Array.from(sessionTimezoneValues)
+    .filter((value) => value && value.trim().length > 0)
+    .sort((a, b) => a.localeCompare(b, "fr"))
+    .map((value) => {
+      const known = PLANNING_TIMEZONES.find((option) => option.value === value);
+      return { value, label: known?.label ?? value };
+    });
 
   return (
     <section className="admin-page-grid">
@@ -823,9 +858,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               ×
             </a>
             <h2 className="modal-title">Ajouter un creneau</h2>
-            <p className="muted">
-              Saisie separee jour/heure (UTC). Capacite requise (defaut: 1). Un creneau est sur un seul jour.
-            </p>
+            <p className="muted">Un creneau est sur un seul jour local. Capacite requise (defaut: 1).</p>
             <form action={createAdminSessionAction} className="grid cols-4 create-session-form">
               <input type="hidden" name="return_to" value={createHref} />
 
@@ -870,7 +903,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </label>
 
               <label>
-                Jour debut (UTC)
+                Fuseau horaire du creneau
+                <select name="session_timezone" defaultValue={timezone} required>
+                  {sessionTimezoneOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Jour debut
                 <input type="date" name="start_date" defaultValue={agendaDate} required />
               </label>
 
@@ -880,12 +924,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </label>
 
               <label>
-                Heure debut (UTC)
+                Heure debut
                 <input type="time" name="start_time" defaultValue="12:00" />
               </label>
 
               <label>
-                Heure fin (UTC)
+                Heure fin
                 <input type="time" name="end_time" defaultValue="13:00" />
               </label>
 
@@ -912,43 +956,39 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   </label>
                 </div>
 
-                <div className="grid cols-4 recurrence-grid">
-                  <label>
-                    Frequence
-                    <select name="recurrence_frequency" defaultValue="WEEKLY">
-                      <option value="DAILY">Journaliere</option>
-                      <option value="WEEKLY">Hebdomadaire</option>
-                      <option value="MONTHLY">Mensuelle</option>
-                    </select>
-                  </label>
+                <div className="recurrence-settings">
+                  <div className="grid cols-4 recurrence-grid">
+                    <label>
+                      Frequence
+                      <select name="recurrence_frequency" defaultValue="WEEKLY">
+                        <option value="DAILY">Journaliere</option>
+                        <option value="WEEKLY">Hebdomadaire</option>
+                        <option value="MONTHLY">Mensuelle</option>
+                      </select>
+                    </label>
 
-                  <label>
-                    Se repete chaque
-                    <input type="number" name="recurrence_interval" min={1} defaultValue={1} />
-                  </label>
+                    <label>
+                      Se repete chaque
+                      <input type="number" name="recurrence_interval" min={1} defaultValue={1} />
+                    </label>
 
-                  <label className="checkline recurrence-forever">
-                    <input type="checkbox" name="recurrence_forever" />
-                    Repeter indefiniment
-                  </label>
-
-                  <label>
-                    Repeter jusqu a (UTC)
-                    <input type="date" name="recurrence_until_date" />
-                  </label>
+                    <label>
+                      Repeter jusqu au
+                      <input type="date" name="recurrence_until_date" />
+                    </label>
+                  </div>
+                  <p className="muted">La recurrence est creee jusqu a la date de fin incluse.</p>
                 </div>
-                <p className="muted">
-                  Optionnel: renseignez un nombre d occurrences au lieu d une date de fin.
-                </p>
-                <label className="recurrence-occurrences-label">
-                  Nombre d occurrences
-                  <input type="number" name="recurrence_occurrences" min={2} max={365} />
-                </label>
               </fieldset>
 
               <label className="checkline">
                 <input type="checkbox" name="is_private" />
                 Creneau prive
+              </label>
+
+              <label className="checkline">
+                <input type="checkbox" name="allow_online_booking" defaultChecked />
+                Autoriser la reservation en ligne (creneau public)
               </label>
 
               <label className="span-2">
@@ -1127,6 +1167,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <span className={`status-badge ${statusClass(selectedSession.status)}`}>{selectedSession.status}</span>
               {selectedSession.recurrence_group_id ? <span className="badge">Serie recurrente</span> : null}
               {selectedSession.is_private ? <span className="status-badge status-private">PRIVE</span> : null}
+              {!selectedSession.is_private ? (
+                <span className="badge">{selectedSession.allow_online_booking ? "Reservation en ligne: oui" : "Reservation en ligne: non"}</span>
+              ) : null}
             </div>
             <p className="muted session-summary-line">
               <span className="meta-icon" aria-hidden="true">
@@ -1143,6 +1186,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 📍
               </span>
               {selectedLocationName}
+              {"  "}
+              <span className="meta-icon" aria-hidden="true">
+                🕒
+              </span>
+              {selectedSession.timezone}
               {"  "}
               <span className="meta-icon" aria-hidden="true">
                 🔁
@@ -1190,12 +1238,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <p className="muted">Aucun eleve inscrit.</p>
               ) : (
                 <div className="list session-bookings-list">
-                  {selectedSessionBookings.map((booking) => (
+                  {selectedSessionBookings.map((booking, index) => (
                     <article key={booking.id} className="item row spread session-booking-row">
                       <div>
-                        <strong>{booking.client_display_name}</strong>
+                        <strong>Participant {index + 1}</strong>
                         <br />
-                        <small className="muted">{booking.client_email}</small>
+                        <small className="muted">Identite masquee</small>
                       </div>
                       <div className="row">
                         <span className={`status-badge ${statusClass(booking.status)}`}>
@@ -1302,8 +1350,24 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       </label>
 
                       <label>
-                        Jour debut (UTC)
-                        <input type="date" name="start_date" defaultValue={toDateInputUtcValue(selectedSession.start_at_utc)} required />
+                        Fuseau horaire du creneau
+                        <select name="session_timezone" defaultValue={selectedSession.timezone} required>
+                          {sessionTimezoneOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label>
+                        Jour debut
+                        <input
+                          type="date"
+                          name="start_date"
+                          defaultValue={toDateInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                          required
+                        />
                       </label>
 
                       <label className="checkline">
@@ -1312,13 +1376,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       </label>
 
                       <label>
-                        Heure debut (UTC)
-                        <input type="time" name="start_time" defaultValue={toTimeInputUtcValue(selectedSession.start_at_utc)} />
+                        Heure debut
+                        <input type="time" name="start_time" defaultValue={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)} />
                       </label>
 
                       <label>
-                        Heure fin (UTC)
-                        <input type="time" name="end_time" defaultValue={toTimeInputUtcValue(selectedSession.end_at_utc)} />
+                        Heure fin
+                        <input type="time" name="end_time" defaultValue={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)} />
                       </label>
 
                       <label>
@@ -1352,6 +1416,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       <label className="checkline">
                         <input type="checkbox" name="is_private" defaultChecked={selectedSession.is_private} />
                         Creneau prive
+                      </label>
+
+                      <label className="checkline">
+                        <input type="checkbox" name="allow_online_booking" defaultChecked={selectedSession.allow_online_booking} />
+                        Autoriser la reservation en ligne (creneau public)
                       </label>
 
                       <label className="session-edit-span">

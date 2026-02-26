@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { backendRequest } from "./backend";
 import type {
   AdminActivityOut,
+  AdminInvoiceTemplateOut,
   AdminClientPasswordEmailTemplateOut,
   AdminCreditTypeOut,
   AdminFormulaOut,
@@ -24,6 +25,7 @@ import type {
   AdminPaymentMethodsOut,
   AdminProfessorDefaultGridOut,
   AuthLoginResponse,
+  ClientPaymentCheckoutOut,
   ProfessorPermissionOut,
   UserOut,
 } from "./types";
@@ -107,6 +109,118 @@ function parseUtcFromDateAndTime(dateRaw: string, timeRaw: string): string | nul
     return null;
   }
 
+  return parsed.toISOString();
+}
+
+function normalizeTimezone(raw: string, fallback = "UTC"): string {
+  const value = raw.trim();
+  if (!value) {
+    return fallback;
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return value;
+  } catch {
+    return fallback;
+  }
+}
+
+type DateParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+function parseDateParts(dateRaw: string, timeRaw: string): DateParts | null {
+  const dateMatch = dateRaw.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!dateMatch) {
+    return null;
+  }
+  const timeMatch = timeRaw.trim().match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!timeMatch) {
+    return null;
+  }
+
+  return {
+    year: Number.parseInt(dateMatch[1], 10),
+    month: Number.parseInt(dateMatch[2], 10),
+    day: Number.parseInt(dateMatch[3], 10),
+    hour: Number.parseInt(timeMatch[1], 10),
+    minute: Number.parseInt(timeMatch[2], 10),
+    second: Number.parseInt(timeMatch[3] ?? "0", 10),
+  };
+}
+
+function getTimeZoneDateParts(instant: Date, timezone: string): DateParts {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(instant);
+
+  const pick = (type: Intl.DateTimeFormatPartTypes): number => {
+    const value = parts.find((part) => part.type === type)?.value ?? "0";
+    return Number.parseInt(value, 10);
+  };
+
+  return {
+    year: pick("year"),
+    month: pick("month"),
+    day: pick("day"),
+    hour: pick("hour"),
+    minute: pick("minute"),
+    second: pick("second"),
+  };
+}
+
+function parseUtcFromDateAndTimeInTimezone(dateRaw: string, timeRaw: string, timezoneRaw: string): string | null {
+  const timezone = normalizeTimezone(timezoneRaw, "UTC");
+  const requested = parseDateParts(dateRaw, timeRaw);
+  if (!requested) {
+    return null;
+  }
+
+  const requestedLocalMs = Date.UTC(
+    requested.year,
+    requested.month - 1,
+    requested.day,
+    requested.hour,
+    requested.minute,
+    requested.second,
+    0,
+  );
+
+  let utcMs = requestedLocalMs;
+  for (let i = 0; i < 3; i += 1) {
+    const observed = getTimeZoneDateParts(new Date(utcMs), timezone);
+    const observedLocalMs = Date.UTC(
+      observed.year,
+      observed.month - 1,
+      observed.day,
+      observed.hour,
+      observed.minute,
+      observed.second,
+      0,
+    );
+    const delta = requestedLocalMs - observedLocalMs;
+    utcMs += delta;
+    if (delta === 0) {
+      break;
+    }
+  }
+
+  const parsed = new Date(utcMs);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
   return parsed.toISOString();
 }
 
@@ -584,7 +698,7 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
     payload.user_id = purchaseUserId;
   }
 
-  const result = await backendRequest<{ id: string }>(
+  const result = await backendRequest<{ id: string; checkout_url?: string | null }>(
     `/api/v1/plans/${planId}/purchase`,
     {
       method: "POST",
@@ -598,7 +712,38 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   }
 
   revalidatePath("/dashboard");
+  if (result.data.checkout_url) {
+    redirect(result.data.checkout_url);
+  }
   redirect("/dashboard?tab=offers&ok=Offre%20souscrite");
+}
+
+export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  const returnTo = safeClientReturnPath(formData, "/dashboard?tab=transactions");
+  const paymentRaw = String(formData.get("payment_id") ?? "").trim();
+  const paymentId = paymentRaw.startsWith("plan:") ? paymentRaw.slice("plan:".length) : paymentRaw;
+  if (!paymentId) {
+    redirect(appendQueryMessage(returnTo, "error", "Paiement introuvable"));
+  }
+
+  const result = await backendRequest<ClientPaymentCheckoutOut>(
+    `/api/v1/clients/me/payments/${paymentId}/checkout`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/dashboard");
+  redirect(result.data.checkout_url);
 }
 
 export async function bookSessionAction(formData: FormData): Promise<void> {
@@ -808,25 +953,24 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const private_description = optionalField(formData, "private_description");
   const zoom_link = optionalField(formData, "zoom_link");
   const is_private = checkboxField(formData, "is_private");
+  const allow_online_booking = !is_private && checkboxFieldWithDefault(formData, "allow_online_booking", true);
   const is_all_day = checkboxField(formData, "is_all_day");
+  const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const recurrence_mode = String(formData.get("recurrence_mode") ?? "NONE").trim().toUpperCase();
 
   const recurrence_frequency = String(formData.get("recurrence_frequency") ?? "WEEKLY").trim().toUpperCase();
-  const recurrence_forever = checkboxField(formData, "recurrence_forever");
   const recurrence_interval_raw = String(formData.get("recurrence_interval") ?? "1").trim();
   const recurrence_interval = parsePositiveInt(recurrence_interval_raw);
-  const recurrence_occurrences_raw = String(formData.get("recurrence_occurrences") ?? "").trim();
-  const recurrence_occurrences = parsePositiveInt(recurrence_occurrences_raw);
   const recurrence_until_date = String(formData.get("recurrence_until_date") ?? "").trim();
 
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
   const end_time = String(formData.get("end_time") ?? "");
-  const start_at_utc = parseUtcFromDateAndTime(start_date, is_all_day ? "00:00" : start_time);
+  const start_at_utc = parseUtcFromDateAndTimeInTimezone(start_date, is_all_day ? "00:00" : start_time, session_timezone);
   const end_at_utc = is_all_day
     ? null
     : end_time.trim()
-      ? parseUtcFromDateAndTime(start_date, end_time)
+      ? parseUtcFromDateAndTimeInTimezone(start_date, end_time, session_timezone)
       : null;
 
   const capacity_raw = String(formData.get("capacity_max") ?? "");
@@ -860,18 +1004,8 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     if (recurrence_interval !== 1) {
       redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence > 1 pas encore supporte"));
     }
-    if (recurrence_forever && (recurrence_until_date || recurrence_occurrences !== null)) {
-      redirect(appendQueryMessage(returnTo, "error", "Choisir recurrence indefinie OU date/occurrences"));
-    }
-    if (recurrence_forever) {
-      // Current backend recurrence requires an end condition; cap "indefini" to 365 generated occurrences.
-    } else {
-      if (!recurrence_until_date && recurrence_occurrences === null) {
-        redirect(appendQueryMessage(returnTo, "error", "Choisir une date de fin ou un nombre d occurrences"));
-      }
-      if (recurrence_until_date && recurrence_occurrences !== null) {
-        redirect(appendQueryMessage(returnTo, "error", "Choisir soit date de fin, soit nombre d occurrences"));
-      }
+    if (!recurrence_until_date) {
+      redirect(appendQueryMessage(returnTo, "error", "Choisir une date de fin de recurrence"));
     }
   }
 
@@ -884,6 +1018,8 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     is_all_day,
     capacity_max,
     is_private,
+    allow_online_booking,
+    timezone: session_timezone,
   };
 
   if (public_description !== null) {
@@ -900,13 +1036,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   }
   if (recurrenceEnabled) {
     const recurrence: Record<string, unknown> = { frequency: recurrence_frequency };
-    if (recurrence_forever) {
-      recurrence.occurrences = 365;
-    } else if (recurrence_until_date) {
-      recurrence.until_date = recurrence_until_date;
-    } else if (recurrence_occurrences !== null) {
-      recurrence.occurrences = recurrence_occurrences;
-    }
+    recurrence.until_date = recurrence_until_date;
     payload.recurrence = recurrence;
   }
 
@@ -947,14 +1077,16 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const zoom_link = optionalField(formData, "zoom_link");
   const status = String(formData.get("status") ?? "").trim();
   const is_private = checkboxField(formData, "is_private");
+  const allow_online_booking = !is_private && checkboxFieldWithDefault(formData, "allow_online_booking", true);
   const is_all_day = checkboxField(formData, "is_all_day");
+  const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
 
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
   const end_time = String(formData.get("end_time") ?? "");
-  const start_at_utc = parseUtcFromDateAndTime(start_date, is_all_day ? "00:00" : start_time);
-  const end_at_utc = is_all_day ? null : parseUtcFromDateAndTime(start_date, end_time);
+  const start_at_utc = parseUtcFromDateAndTimeInTimezone(start_date, is_all_day ? "00:00" : start_time, session_timezone);
+  const end_at_utc = is_all_day ? null : parseUtcFromDateAndTimeInTimezone(start_date, end_time, session_timezone);
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const capacity_max = parseNonNegativeInt(capacity_raw);
 
@@ -979,6 +1111,8 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     start_at_utc,
     is_all_day,
     is_private,
+    allow_online_booking,
+    timezone: session_timezone,
   };
 
   if (end_at_utc !== null) {
@@ -1665,6 +1799,9 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
     `/api/v1/admin/clients/${clientId}/plans/${planId}/purchase`,
     {
       method: "POST",
+      body: JSON.stringify({
+        payment_method_code: paymentMethodCode,
+      }),
     },
     token,
   );
@@ -3654,6 +3791,37 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
 
   revalidatePath("/admin/config");
   redirect("/admin/config?section=params-messaging&ok=Parametres%20messagerie%20mis%20a%20jour");
+}
+
+export async function updateAdminConfigInvoiceTemplateAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const body = String(formData.get("body") ?? "").trim();
+  if (!body) {
+    redirect("/admin/config?section=params-messaging&error=Modele%20de%20facture%20obligatoire");
+  }
+
+  const result = await backendRequest<AdminInvoiceTemplateOut>(
+    "/api/v1/admin/config/invoice-template",
+    {
+      method: "PUT",
+      body: JSON.stringify({ body }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin/clients");
+  redirect("/admin/config?section=params-messaging&ok=Modele%20de%20facture%20mis%20a%20jour");
 }
 
 export async function saveAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
