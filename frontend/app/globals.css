@@ -1194,7 +1194,36 @@ button.danger {
 }
 
 .planning-filters-modal {
-  width: min(560px, 95vw);
+  width: min(720px, 96vw);
+}
+
+.planning-filters-modal form {
+  gap: 12px;
+}
+
+.planning-filters-modal label {
+  display: grid;
+  gap: 6px;
+}
+
+.planning-filters-modal select[multiple] {
+  min-height: 132px;
+  padding: 8px 10px;
+}
+
+.planning-filters-modal small.muted {
+  display: block;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .planning-filters-modal .span-2 {
+    grid-column: span 1;
+  }
+
+  .planning-filters-modal select[multiple] {
+    min-height: 112px;
+  }
 }
 
 .modal-day-details {

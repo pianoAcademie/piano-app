@@ -37,10 +37,12 @@ type PlanningQuery = {
   agendaDate: string;
   timezone: string;
   locationId: string;
+  locationIds: string[];
   courseTypeId: string;
-  professorId: string;
+  professorIds: string[];
   status: string;
   clientStatus: string;
+  clientIds: string[];
   createOpen: boolean;
   showFilters: boolean;
   dayDetails: string;
@@ -62,6 +64,16 @@ function readParam(params: SearchParams, key: string): string {
     return value[0] ?? "";
   }
   return value ?? "";
+}
+
+function readMultiParam(params: SearchParams, key: string): string[] {
+  const value = params[key];
+  const tokens = Array.isArray(value) ? value : value ? [value] : [];
+  const entries = tokens
+    .flatMap((token) => String(token).split(","))
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  return Array.from(new Set(entries));
 }
 
 function parseAgendaView(value: string): AgendaView {
@@ -379,8 +391,20 @@ function buildPlanningHref(query: PlanningQuery): string {
   if (query.courseTypeId) {
     sp.set("course_type_id", query.courseTypeId);
   }
-  if (query.professorId) {
-    sp.set("professor_id", query.professorId);
+  for (const locationId of query.locationIds) {
+    if (locationId) {
+      sp.append("location_ids", locationId);
+    }
+  }
+  for (const professorId of query.professorIds) {
+    if (professorId) {
+      sp.append("professor_ids", professorId);
+    }
+  }
+  for (const clientId of query.clientIds) {
+    if (clientId) {
+      sp.append("client_ids", clientId);
+    }
   }
   if (query.status && query.status !== "ALL") {
     sp.set("status", query.status);
@@ -444,6 +468,13 @@ function clientDisplayName(client: AdminClientOut): string {
   return fullName || client.email;
 }
 
+function compactList(values: string[], limit = 2): string {
+  if (values.length <= limit) {
+    return values.join(", ");
+  }
+  return `${values.slice(0, limit).join(", ")} +${values.length - limit}`;
+}
+
 export default async function AdminPlanningPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("access_token")?.value;
   if (!token) {
@@ -452,7 +483,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
   const selectedCourseType = readParam(searchParams, "course_type_id");
   const rawLocation = readParam(searchParams, "location_id");
-  const selectedProfessor = readParam(searchParams, "professor_id");
+  const selectedLocationIdsFromQuery = readMultiParam(searchParams, "location_ids");
+  const selectedProfessorLegacy = readParam(searchParams, "professor_id");
+  const selectedProfessorIdsFromQuery = readMultiParam(searchParams, "professor_ids");
+  const selectedProfessorIds = selectedProfessorIdsFromQuery.length
+    ? selectedProfessorIdsFromQuery
+    : selectedProfessorLegacy
+      ? [selectedProfessorLegacy]
+      : [];
+  const selectedClientIds = readMultiParam(searchParams, "client_ids");
   const selectedStatus = readParam(searchParams, "status") || "ALL";
   const selectedClientStatus = readParam(searchParams, "client_status") || "ALL";
   const timezone = resolveTimezone(readParam(searchParams, "timezone") || "Europe/Paris");
@@ -468,14 +507,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const confirmAction: "" | "cancel" | "delete" = confirmActionRaw === "cancel" || confirmActionRaw === "delete" ? confirmActionRaw : "";
 
   const sessionsQuery = new URLSearchParams();
-  if (rawLocation) {
-    sessionsQuery.set("location_id", rawLocation);
+  const locationFilterIdsForApi = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : rawLocation ? [rawLocation] : [];
+  for (const locationId of locationFilterIdsForApi) {
+    sessionsQuery.append("location_ids", locationId);
   }
   if (selectedCourseType) {
     sessionsQuery.set("course_type_id", selectedCourseType);
   }
-  if (selectedProfessor) {
-    sessionsQuery.set("professor_id", selectedProfessor);
+  for (const professorId of selectedProfessorIds) {
+    sessionsQuery.append("professor_ids", professorId);
+  }
+  for (const clientId of selectedClientIds) {
+    sessionsQuery.append("client_ids", clientId);
   }
   if (selectedStatus !== "ALL") {
     sessionsQuery.set("status", selectedStatus);
@@ -522,7 +565,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         return [] as AdminClientOut[];
       })();
 
-  const focusedLocationId = rawLocation || (locations[0]?.id ?? "");
+  const focusedLocationId = rawLocation || selectedLocationIdsFromQuery[0] || (locations[0]?.id ?? "");
+  const selectedLocationIds = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : focusedLocationId ? [focusedLocationId] : [];
   const focusedLocation = locations.find((location) => location.id === focusedLocationId) ?? null;
 
   const courseTypesEndpoint = focusedLocationId
@@ -541,10 +585,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     agendaDate,
     timezone,
     locationId: focusedLocationId,
+    locationIds: selectedLocationIds,
     courseTypeId: selectedCourseType,
-    professorId: selectedProfessor,
+    professorIds: selectedProfessorIds,
     status: selectedStatus,
     clientStatus: selectedClientStatus,
+    clientIds: selectedClientIds,
     createOpen,
     showFilters: filtersOpen,
     dayDetails,
@@ -561,9 +607,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const filtersResetHref = buildPlanningHref({
     ...queryForLinks,
     courseTypeId: "",
-    professorId: "",
+    locationIds: [],
+    professorIds: [],
     status: "ALL",
     clientStatus: "ALL",
+    clientIds: [],
     createOpen: false,
     showFilters: false,
     dayDetails: "",
@@ -583,16 +631,45 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const courseTypeById = new Map(courseTypes.map((row) => [row.id, row]));
   const locationById = new Map(locations.map((row) => [row.id, row]));
   const professorById = new Map(professors.map((row) => [row.id, row]));
+  const clientById = new Map(clients.map((row) => [row.id, row]));
+  const selectedLocationSet = new Set(selectedLocationIds);
+  const selectedProfessorSet = new Set(selectedProfessorIds);
+  const selectedLocationLabels = selectedLocationIdsFromQuery
+    .map((locationId) => locationById.get(locationId)?.name ?? "")
+    .filter((name) => name.length > 0);
+  const selectedProfessorLabels = selectedProfessorIds
+    .map((professorId) => {
+      const professor = professorById.get(professorId);
+      return professor ? `${professor.first_name} ${professor.last_name}`.trim() : "";
+    })
+    .filter((name) => name.length > 0);
+  const selectedClientLabels = selectedClientIds
+    .map((clientId) => clientById.get(clientId))
+    .filter((client): client is AdminClientOut => Boolean(client))
+    .map((client) => clientDisplayName(client));
+  const hasAdvancedFilters =
+    Boolean(selectedCourseType) ||
+    selectedLocationIdsFromQuery.length > 0 ||
+    selectedProfessorIds.length > 0 ||
+    selectedClientIds.length > 0 ||
+    selectedStatus !== "ALL" ||
+    selectedClientStatus !== "ALL";
+  const planningTitle =
+    selectedLocationLabels.length > 1
+      ? `Planning - Multi lieux (${selectedLocationLabels.length})`
+      : selectedLocationLabels[0]
+        ? `Planning - ${selectedLocationLabels[0]}`
+        : `Planning - ${focusedLocation?.name ?? "Aucun lieu"}`;
 
   const filteredSessions = sessions
     .filter((session) => {
-      if (!focusedLocationId || session.location_id !== focusedLocationId) {
+      if (selectedLocationSet.size > 0 && !selectedLocationSet.has(session.location_id)) {
         return false;
       }
       if (selectedCourseType && session.course_type_id !== selectedCourseType) {
         return false;
       }
-      if (selectedProfessor && session.professor_id !== selectedProfessor) {
+      if (selectedProfessorSet.size > 0 && !selectedProfessorSet.has(session.professor_id)) {
         return false;
       }
       if (selectedStatus !== "ALL" && session.status !== selectedStatus) {
@@ -690,7 +767,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       <section className="card">
         <div className="row spread">
-          <h2>Planning - {focusedLocation?.name ?? "Aucun lieu"}</h2>
+          <h2>{planningTitle}</h2>
           <div className="row">
             <a className={`mode-link ${!createOpen ? "mode-active" : ""}`} href={lectureHref}>
               Lecture
@@ -717,10 +794,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </div>
         <form method="get" className="grid cols-4 planning-quick-form">
           <input type="hidden" name="course_type_id" value={selectedCourseType} />
-          <input type="hidden" name="professor_id" value={selectedProfessor} />
           <input type="hidden" name="status" value={selectedStatus} />
           <input type="hidden" name="client_status" value={selectedClientStatus} />
           <input type="hidden" name="agenda_date" value={agendaDate} />
+          {selectedLocationIdsFromQuery.map((locationId) => (
+            <input key={`quick-location-${locationId}`} type="hidden" name="location_ids" value={locationId} />
+          ))}
+          {selectedProfessorIds.map((professorId) => (
+            <input key={`quick-professor-${professorId}`} type="hidden" name="professor_ids" value={professorId} />
+          ))}
+          {selectedClientIds.map((clientId) => (
+            <input key={`quick-client-${clientId}`} type="hidden" name="client_ids" value={clientId} />
+          ))}
           {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
           <label>
@@ -766,14 +851,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           {selectedCourseType ? (
             <span className="badge">Type: {courseTypeById.get(selectedCourseType)?.name ?? "Selection"}</span>
           ) : null}
-          {selectedProfessor ? (
-            <span className="badge">
-              Prof: {professorById.get(selectedProfessor)?.first_name} {professorById.get(selectedProfessor)?.last_name}
-            </span>
+          {selectedLocationLabels.length > 0 ? (
+            <span className="badge">Lieux: {compactList(selectedLocationLabels)}</span>
+          ) : null}
+          {selectedProfessorLabels.length > 0 ? (
+            <span className="badge">Professeurs: {compactList(selectedProfessorLabels)}</span>
+          ) : null}
+          {selectedClientLabels.length > 0 ? (
+            <span className="badge">Etudiants: {compactList(selectedClientLabels)}</span>
           ) : null}
           {selectedStatus !== "ALL" ? <span className="badge">Statut cours: {selectedStatus}</span> : null}
           {selectedClientStatus !== "ALL" ? <span className="badge">Statut adherent: {selectedClientStatus}</span> : null}
-          {!selectedCourseType && !selectedProfessor && selectedStatus === "ALL" && selectedClientStatus === "ALL" ? (
+          {!hasAdvancedFilters ? (
             <span className="muted">Aucun filtre avance actif.</span>
           ) : null}
         </div>
@@ -786,15 +875,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               ×
             </a>
             <h2 className="modal-title">Filtres planning</h2>
-            <p className="muted">Le lieu, la vue et le fuseau horaire se reglent directement dans la barre principale.</p>
-            <form method="get" className="grid">
+            <p className="muted">Vous pouvez filtrer sur plusieurs lieux, professeurs et etudiants.</p>
+            <form method="get" className="grid cols-2">
               <input type="hidden" name="location_id" value={focusedLocationId} />
               <input type="hidden" name="agenda_view" value={agendaView} />
               <input type="hidden" name="agenda_date" value={agendaDate} />
               <input type="hidden" name="timezone" value={timezone} />
               {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
-              <label>
+              <label className="span-2">
                 Type de cours
                 <select name="course_type_id" defaultValue={selectedCourseType}>
                   <option value="">Tous</option>
@@ -807,15 +896,54 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </label>
 
               <label>
-                Professeur
-                <select name="professor_id" defaultValue={selectedProfessor}>
-                  <option value="">Tous</option>
+                Lieux (multi)
+                <select
+                  name="location_ids"
+                  multiple
+                  defaultValue={selectedLocationIdsFromQuery}
+                  size={Math.min(6, Math.max(3, locations.length))}
+                >
+                  {locations.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.name}
+                    </option>
+                  ))}
+                </select>
+                <small className="muted">Ctrl/Cmd + clic pour selection multiple.</small>
+              </label>
+
+              <label>
+                Professeurs (multi)
+                <select
+                  name="professor_ids"
+                  multiple
+                  defaultValue={selectedProfessorIds}
+                  size={Math.min(7, Math.max(3, professors.length))}
+                >
                   {professors.map((row) => (
                     <option key={row.id} value={row.id}>
                       {row.first_name} {row.last_name}
                     </option>
                   ))}
                 </select>
+                <small className="muted">Laisser vide pour tous les professeurs.</small>
+              </label>
+
+              <label className="span-2">
+                Etudiants (multi)
+                <select
+                  name="client_ids"
+                  multiple
+                  defaultValue={selectedClientIds}
+                  size={Math.min(8, Math.max(4, clientsSorted.length))}
+                >
+                  {clientsSorted.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {clientDisplayName(client)}
+                    </option>
+                  ))}
+                </select>
+                <small className="muted">Laisser vide pour tous les etudiants.</small>
               </label>
 
               <label>
@@ -840,7 +968,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </select>
               </label>
 
-              <div className="row">
+              <div className="row span-2">
                 <button type="submit">Appliquer</button>
                 <a className="reset-link" href={filtersResetHref}>
                   Reinitialiser

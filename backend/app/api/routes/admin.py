@@ -1156,8 +1156,11 @@ def create_session(
 @router.get("/sessions", response_model=list[AdminSessionOut])
 def list_admin_sessions(
     location_id: UUID | None = None,
+    location_ids: list[UUID] | None = Query(default=None),
     course_type_id: UUID | None = None,
     professor_id: UUID | None = None,
+    professor_ids: list[UUID] | None = Query(default=None),
+    client_ids: list[UUID] | None = Query(default=None),
     status: SessionStatus | None = None,
     client_status: ClientStatus | None = None,
     db: Session = Depends(get_db),
@@ -1165,24 +1168,36 @@ def list_admin_sessions(
 ) -> list[AdminSessionOut]:
     stmt = select(CourseSession)
 
-    if location_id is not None:
-        stmt = stmt.where(CourseSession.location_id == location_id)
+    location_filter_ids = list(dict.fromkeys(location_ids or []))
+    if not location_filter_ids and location_id is not None:
+        location_filter_ids = [location_id]
+    if location_filter_ids:
+        stmt = stmt.where(CourseSession.location_id.in_(location_filter_ids))
+
     if course_type_id is not None:
         stmt = stmt.where(CourseSession.course_type_id == course_type_id)
-    if professor_id is not None:
-        stmt = stmt.where(CourseSession.professor_id == professor_id)
+
+    professor_filter_ids = list(dict.fromkeys(professor_ids or []))
+    if not professor_filter_ids and professor_id is not None:
+        professor_filter_ids = [professor_id]
+    if professor_filter_ids:
+        stmt = stmt.where(CourseSession.professor_id.in_(professor_filter_ids))
+
     if status is not None:
         stmt = stmt.where(CourseSession.status == status)
-    if client_status is not None:
+
+    client_filter_ids = list(dict.fromkeys(client_ids or []))
+    if client_status is not None or client_filter_ids:
         stmt = (
             stmt.join(Booking, Booking.session_id == CourseSession.id)
             .join(User, User.id == Booking.user_id)
-            .where(
-                Booking.status != BookingStatus.CANCELLED,
-                User.client_status == client_status,
-            )
-            .distinct()
+            .where(Booking.status != BookingStatus.CANCELLED)
         )
+        if client_status is not None:
+            stmt = stmt.where(User.client_status == client_status)
+        if client_filter_ids:
+            stmt = stmt.where(User.id.in_(client_filter_ids))
+        stmt = stmt.distinct()
 
     sessions = db.scalars(stmt.order_by(CourseSession.start_at_utc.desc())).all()
     counts = _booked_counts_map(db, [session_obj.id for session_obj in sessions])
