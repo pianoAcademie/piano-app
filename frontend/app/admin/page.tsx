@@ -12,6 +12,7 @@ import {
   updateAdminSessionAction,
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
+import SearchMultiSelect from "../../components/search-multi-select";
 import type {
   AdminClientOut,
   AdminProfessorOut,
@@ -726,6 +727,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const clientsSorted = [...clients]
     .filter((client) => client.is_active)
     .sort((a, b) => clientDisplayName(a).localeCompare(clientDisplayName(b), "fr"));
+  const locationFilterOptions = locations.map((location) => ({ id: location.id, label: location.name }));
+  const professorFilterOptions = professors.map((professor) => ({
+    id: professor.id,
+    label: `${professor.first_name} ${professor.last_name}`.trim(),
+  }));
+  const clientFilterOptions = clientsSorted.map((client) => ({
+    id: client.id,
+    label: clientDisplayName(client),
+  }));
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
@@ -895,56 +905,33 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </select>
               </label>
 
-              <label>
-                Lieux (multi)
-                <select
-                  name="location_ids"
-                  multiple
-                  defaultValue={selectedLocationIdsFromQuery}
-                  size={Math.min(6, Math.max(3, locations.length))}
-                >
-                  {locations.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.name}
-                    </option>
-                  ))}
-                </select>
-                <small className="muted">Ctrl/Cmd + clic pour selection multiple.</small>
-              </label>
+              <SearchMultiSelect
+                label="Par salles"
+                name="location_ids"
+                options={locationFilterOptions}
+                selectedIds={selectedLocationIdsFromQuery}
+                placeholder="Rechercher une salle..."
+                emptySelectionLabel="Aucune salle selectionnee."
+              />
 
-              <label>
-                Professeurs (multi)
-                <select
-                  name="professor_ids"
-                  multiple
-                  defaultValue={selectedProfessorIds}
-                  size={Math.min(7, Math.max(3, professors.length))}
-                >
-                  {professors.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.first_name} {row.last_name}
-                    </option>
-                  ))}
-                </select>
-                <small className="muted">Laisser vide pour tous les professeurs.</small>
-              </label>
+              <SearchMultiSelect
+                label="Par enseignants"
+                name="professor_ids"
+                options={professorFilterOptions}
+                selectedIds={selectedProfessorIds}
+                placeholder="Rechercher un enseignant..."
+                emptySelectionLabel="Aucun enseignant selectionne."
+              />
 
-              <label className="span-2">
-                Etudiants (multi)
-                <select
-                  name="client_ids"
-                  multiple
-                  defaultValue={selectedClientIds}
-                  size={Math.min(8, Math.max(4, clientsSorted.length))}
-                >
-                  {clientsSorted.map((client) => (
-                    <option key={client.id} value={client.id}>
-                      {clientDisplayName(client)}
-                    </option>
-                  ))}
-                </select>
-                <small className="muted">Laisser vide pour tous les etudiants.</small>
-              </label>
+              <SearchMultiSelect
+                className="span-2"
+                label="Par etudiants"
+                name="client_ids"
+                options={clientFilterOptions}
+                selectedIds={selectedClientIds}
+                placeholder="Rechercher un etudiant..."
+                emptySelectionLabel="Aucun etudiant selectionne."
+              />
 
               <label>
                 Statut cours

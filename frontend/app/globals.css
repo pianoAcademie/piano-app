@@ -1206,9 +1206,110 @@ button.danger {
   gap: 6px;
 }
 
-.planning-filters-modal select[multiple] {
-  min-height: 132px;
-  padding: 8px 10px;
+.planning-multi-search {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d7dbe1;
+  border-radius: 12px;
+  background: #f6f8fb;
+  padding: 10px;
+}
+
+.planning-multi-search-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.planning-multi-search-head strong {
+  font-size: 17px;
+}
+
+.planning-multi-search-selected {
+  min-height: 42px;
+  border: 1px solid #ccd3dc;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.planning-multi-search-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #eaf3ff;
+  border: 1px solid #b7d6ff;
+  color: #184477;
+}
+
+.planning-multi-search-chip button {
+  border: none;
+  background: transparent;
+  color: #184477;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.planning-multi-search-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.planning-multi-search-input {
+  border: 1px solid #b8c4d3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.planning-multi-search-input:focus-visible {
+  outline: 2px solid rgba(28, 123, 238, 0.25);
+  border-color: #1c7bee;
+}
+
+.planning-multi-search-clear {
+  white-space: nowrap;
+}
+
+.planning-multi-search-options {
+  min-height: 130px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #ccd3dc;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 4px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+
+.planning-multi-search-option {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 9px 10px;
+  text-align: left;
+  background: #fcfdff;
+  color: #1f2a36;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+}
+
+.planning-multi-search-option:hover,
+.planning-multi-search-option:focus-visible {
+  border-color: #6ab0ff;
+  background: #eef6ff;
+  color: #12355c;
+  outline: none;
 }
 
 .planning-filters-modal small.muted {
@@ -1221,8 +1322,13 @@ button.danger {
     grid-column: span 1;
   }
 
-  .planning-filters-modal select[multiple] {
-    min-height: 112px;
+  .planning-multi-search-options {
+    min-height: 108px;
+    max-height: 180px;
+  }
+
+  .planning-multi-search-toolbar {
+    grid-template-columns: 1fr;
   }
 }
 
