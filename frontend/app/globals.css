@@ -1078,6 +1078,13 @@ button.danger {
 .checkline input[type="checkbox"] {
   width: 16px;
   height: 16px;
+  flex: 0 0 16px;
+}
+
+.checkline input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 @media (max-width: 900px) {
