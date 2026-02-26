@@ -658,6 +658,8 @@ class AdminClientSubscriptionSuspendRequest(BaseModel):
 
 class AdminClientSubscriptionCancelRequest(BaseModel):
     cancellation_requested_at: datetime | None = None
+    immediate: bool = False
+    confirm_immediate: bool = False
 
 
 class AdminClientSubscriptionBillingSetupRequest(BaseModel):

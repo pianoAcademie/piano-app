@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
+from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import ClientManualCreditBalance, ClientNoteEntry, ClientPaymentRefund
 from app.models.family import ClientFamilyLink
@@ -75,6 +76,7 @@ from app.services.client_payment_email import (
     render_client_payment_email,
     send_client_payment_email,
 )
+from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
@@ -337,6 +339,55 @@ def _fallback_dashboard_transactions_url(raw_website: str) -> str:
     if candidate.startswith("http://") or candidate.startswith("https://"):
         return candidate.rstrip("/") + "/dashboard?tab=transactions"
     return "https://" + candidate.rstrip("/") + "/dashboard?tab=transactions"
+
+
+def _send_admin_subscription_immediate_cancellation_email(
+    db: Session,
+    *,
+    actor: User,
+    client: User,
+    plan: Plan,
+    subscription: ClientPlanSubscription,
+    requested_at: datetime,
+    cancelled_at: datetime,
+) -> str | None:
+    admin_email = (
+        _get_setting_value(db, "config_account_contact_email", actor.email).strip()
+        or actor.email
+        or settings.email_reply_to
+        or settings.email_from
+    )
+    if not admin_email:
+        return None
+
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    actor_name = _display_name(actor.first_name, actor.last_name, actor.email)
+    client_name = _display_name(client.first_name, client.last_name, client.email)
+
+    subject = f"Resiliation immediate - {plan.name} - {client_name}"
+    body = (
+        "Une resiliation immediate d'abonnement a ete executee depuis le BackOffice.\n\n"
+        f"Client: {client_name} ({client.email})\n"
+        f"Abonnement: {plan.name}\n"
+        f"Reference contrat: {subscription.id}\n"
+        f"Date de demande: {requested_at.isoformat()}\n"
+        f"Date de resiliation effective: {cancelled_at.isoformat()}\n"
+        f"Action realisee par: {actor_name}\n"
+        f"ID administrateur: {actor.id}\n\n"
+        "Le prelevement recurrent est desactive et aucun prochain prelevement ne sera lance."
+    )
+
+    return send_email(
+        to_email=admin_email,
+        subject=subject,
+        body=body,
+        body_format="TEXT",
+        context="ADMIN_SUBSCRIPTION_IMMEDIATE_CANCELLATION",
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
+    )
 
 
 def _is_failed_payment_status(status_value: str) -> bool:
@@ -1956,29 +2007,57 @@ def cancel_admin_client_subscription(
     else:
         requested = requested.astimezone(timezone.utc)
 
+    immediate = bool(payload.immediate)
+    if immediate and not bool(payload.confirm_immediate):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Immediate cancellation requires explicit confirmation",
+        )
+
+    now = _utcnow()
     cycle_end = sub.next_payment_at or sub.ends_at or default_next_payment_at(sub.started_at)
     if cycle_end.tzinfo is None:
         cycle_end = cycle_end.replace(tzinfo=timezone.utc)
     else:
         cycle_end = cycle_end.astimezone(timezone.utc)
 
+    effective_at = now if immediate else cycle_end
+
     sub.cancellation_requested_at = requested
-    sub.cancellation_effective_at = cycle_end
+    sub.cancellation_effective_at = effective_at
     sub.auto_renew = False
-    sub.ends_at = cycle_end
-    if cycle_end <= _utcnow():
+    sub.ends_at = effective_at
+    if immediate or effective_at <= now:
         sub.status = SubscriptionStatus.CANCELLED
         sub.next_payment_at = None
 
     db.add(sub)
+    admin_message_id: str | None = None
+    if immediate:
+        admin_message_id = _send_admin_subscription_immediate_cancellation_email(
+            db,
+            actor=actor,
+            client=client,
+            plan=plan,
+            subscription=sub,
+            requested_at=requested,
+            cancelled_at=effective_at,
+        )
     _create_client_note(
         db,
         client_id=client_id,
         author_user_id=actor.id,
         entry_type="AUTO",
         message=(
-            f"Resiliation abonnement '{plan.name}' demandee le {requested.date().isoformat()} "
-            f"avec fin de periode au {cycle_end.date().isoformat()}."
+            (
+                f"Resiliation immediate abonnement '{plan.name}' executee le {effective_at.date().isoformat()}."
+                if immediate
+                else (
+                    f"Resiliation abonnement '{plan.name}' demandee le {requested.date().isoformat()} "
+                    f"avec fin de periode au {cycle_end.date().isoformat()}."
+                )
+            )
+            + (f" Notification email admin envoyee ({admin_message_id})." if immediate and admin_message_id else "")
         ),
     )
     db.commit()

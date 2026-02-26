@@ -1747,12 +1747,17 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
   const clientId = String(formData.get("client_id") ?? "").trim();
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
   const requestedRaw = String(formData.get("cancellation_requested_at") ?? "").trim();
+  const immediateCancel = checkboxField(formData, "immediate_cancel");
+  const confirmImmediate = checkboxField(formData, "confirm_immediate");
   if (!clientId || !subscriptionId) {
     redirect("/admin/clients?error=Abonnement%20invalide");
   }
   const requestedAt = parseUtcStartOfDate(requestedRaw);
   if (!requestedAt) {
     redirect(`/admin/clients/${clientId}?tab=fiche&error=Date%20de%20resiliation%20invalide`);
+  }
+  if (immediateCancel && !confirmImmediate) {
+    redirect(`/admin/clients/${clientId}?tab=fiche&error=Confirmation%20obligatoire%20pour%20une%20resiliation%20immediate`);
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -1761,6 +1766,8 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
       method: "POST",
       body: JSON.stringify({
         cancellation_requested_at: requestedAt,
+        immediate: immediateCancel,
+        confirm_immediate: confirmImmediate,
       }),
     },
     token,
@@ -1771,7 +1778,11 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=fiche&ok=Resiliation%20enregistree`);
+  redirect(
+    `/admin/clients/${clientId}?tab=fiche&ok=${
+      immediateCancel ? "Resiliation%20immediate%20enregistree" : "Resiliation%20enregistree"
+    }`,
+  );
 }
 
 export async function setupAdminClientSubscriptionBillingAction(formData: FormData): Promise<void> {

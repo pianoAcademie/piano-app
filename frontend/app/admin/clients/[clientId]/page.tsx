@@ -452,7 +452,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   );
   const visibleCurrentSubscriptions = [...activeSubscriptions, ...endingSubscriptions];
   const selectedSubscriptionForModal =
-    subscriptionModalId && (subscriptionModalAction === "suspend" || subscriptionModalAction === "cancel" || subscriptionModalAction === "billing")
+    subscriptionModalId &&
+    (subscriptionModalAction === "suspend" ||
+      subscriptionModalAction === "cancel" ||
+      subscriptionModalAction === "cancel_now" ||
+      subscriptionModalAction === "billing")
       ? subscriptions.find((sub) => sub.id === subscriptionModalId) ?? null
       : null;
   const selectedCreditForModal = openManualCreditModal
@@ -648,6 +652,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   title="Resilier a fin de periode"
                                 >
                                   ✕
+                                </Link>
+                                <Link
+                                  className="client-action-icon danger"
+                                  href={ficheHref(client.id, { subscription_modal: "cancel_now", subscription_id: sub.id })}
+                                  title="Resilier immediatement"
+                                >
+                                  ⚠
                                 </Link>
                               </>
                             ) : null}
@@ -1095,6 +1106,46 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </Link>
                 <button type="submit" className="danger">
                   Confirmer la resiliation
+                </button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {currentTab === "fiche" && selectedSubscriptionForModal && subscriptionModalAction === "cancel_now" ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Resiliation immediate</h3>
+            <p className="muted">
+              {selectedSubscriptionForModal.plan.name} - cette action coupe l abonnement maintenant et desactive tout prochain prelevement.
+            </p>
+            <form action={cancelAdminClientSubscriptionAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
+              <input type="hidden" name="immediate_cancel" value="on" />
+              <label>
+                Date de demande
+                <input
+                  type="date"
+                  name="cancellation_requested_at"
+                  defaultValue={formatDateForInput(selectedSubscriptionForModal.cancellation_requested_at, todayInputValue)}
+                  required
+                />
+              </label>
+              <label className="checkline">
+                <input type="checkbox" name="confirm_immediate" required />
+                Je confirme la resiliation immediate et irreversible.
+              </label>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={tabHref(client.id, "fiche")}>
+                  Annuler
+                </Link>
+                <button type="submit" className="danger">
+                  Resilier immediatement
                 </button>
               </div>
             </form>
