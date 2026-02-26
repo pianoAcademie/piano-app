@@ -1196,8 +1196,9 @@ button.danger {
 }
 
 .modal-create-session {
-  width: min(1080px, 97vw);
-  max-height: 88vh;
+  width: min(1220px, 98vw);
+  max-height: 92vh;
+  padding: 12px;
 }
 
 .modal-confirm-operation {
@@ -1210,7 +1211,54 @@ button.danger {
 }
 
 .create-session-form {
-  gap: 8px;
+  display: grid;
+  gap: 12px;
+}
+
+.create-session-section {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fffdf9;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.create-session-section-title {
+  font-size: 17px;
+}
+
+.create-session-grid,
+.create-session-visibility-grid {
+  gap: 10px;
+}
+
+.create-session-grid label,
+.create-session-visibility-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.create-session-grid:has(input[name="is_all_day"]:checked) .create-time-field {
+  display: none;
+}
+
+.create-session-toggle {
+  width: 100%;
+  min-height: 46px;
+  border: 1px dashed #deccb2;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff9ee;
+}
+
+.create-session-actions {
+  position: sticky;
+  bottom: -12px;
+  margin: 0 -12px -12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255, 249, 239, 0.9), #f8ebd2 45%);
 }
 
 .modal-title {
@@ -1289,10 +1337,6 @@ button.danger {
 }
 
 .recurrence-panel {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px;
-  background: #fffdf9;
   display: grid;
   gap: 10px;
 }
@@ -1305,12 +1349,12 @@ button.danger {
 .recurrence-mode-row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px 18px;
   flex-wrap: wrap;
 }
 
 .recurrence-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .recurrence-forever {
@@ -1395,6 +1439,10 @@ button.danger {
     padding: 8px;
   }
 
+  .modal-create-session {
+    padding: 8px;
+  }
+
   .session-bookings-list {
     max-height: 200px;
   }
@@ -1409,6 +1457,18 @@ button.danger {
 
   .recurrence-settings {
     gap: 8px;
+  }
+
+  .create-session-actions {
+    position: static;
+    margin: 0;
+    padding: 0;
+    border-top: 0;
+    background: transparent;
+  }
+
+  .create-session-section {
+    padding: 10px;
   }
 }
 

@@ -859,91 +859,98 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </a>
             <h2 className="modal-title">Ajouter un creneau</h2>
             <p className="muted">Un creneau est sur un seul jour local. Capacite requise (defaut: 1).</p>
-            <form action={createAdminSessionAction} className="grid cols-4 create-session-form">
+            <form action={createAdminSessionAction} className="create-session-form">
               <input type="hidden" name="return_to" value={createHref} />
+              <section className="create-session-section">
+                <div className="row spread">
+                  <h3 className="create-session-section-title">Informations principales</h3>
+                  <span className="badge">Obligatoire</span>
+                </div>
+                <div className="grid cols-4 create-session-grid">
+                  <label className="span-2">
+                    Titre
+                    <input type="text" name="title" required maxLength={255} autoFocus />
+                  </label>
 
-              <label>
-                Titre
-                <input type="text" name="title" required maxLength={255} />
-              </label>
+                  <label>
+                    Type de cours
+                    <select name="course_type_id" required>
+                      <option value="">Selectionner</option>
+                      {courseTypes.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              <label>
-                Type de cours
-                <select name="course_type_id" required>
-                  <option value="">Selectionner</option>
-                  {courseTypes.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <label>
+                    Coach
+                    <select name="professor_id" required>
+                      <option value="">Selectionner</option>
+                      {professors.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.first_name} {row.last_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              <label>
-                Lieu
-                <select name="location_id" defaultValue={focusedLocationId} required>
-                  {locations.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <label>
+                    Lieu
+                    <select name="location_id" defaultValue={focusedLocationId} required>
+                      {locations.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              <label>
-                Coach
-                <select name="professor_id" required>
-                  <option value="">Selectionner</option>
-                  {professors.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.first_name} {row.last_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <label>
+                    Fuseau horaire du creneau
+                    <select name="session_timezone" defaultValue={timezone} required>
+                      {sessionTimezoneOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              <label>
-                Fuseau horaire du creneau
-                <select name="session_timezone" defaultValue={timezone} required>
-                  {sessionTimezoneOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <label>
+                    Jour debut
+                    <input type="date" name="start_date" defaultValue={agendaDate} required />
+                  </label>
 
-              <label>
-                Jour debut
-                <input type="date" name="start_date" defaultValue={agendaDate} required />
-              </label>
+                  <label className="checkline create-session-toggle">
+                    <input type="checkbox" name="is_all_day" />
+                    Creneau sur toute la journee
+                  </label>
 
-              <label className="checkline">
-                <input type="checkbox" name="is_all_day" />
-                Creneau sur toute la journee
-              </label>
+                  <label className="create-time-field">
+                    Heure debut
+                    <input type="time" name="start_time" defaultValue="12:00" />
+                  </label>
 
-              <label>
-                Heure debut
-                <input type="time" name="start_time" defaultValue="12:00" />
-              </label>
+                  <label className="create-time-field">
+                    Heure fin
+                    <input type="time" name="end_time" defaultValue="13:00" />
+                  </label>
 
-              <label>
-                Heure fin
-                <input type="time" name="end_time" defaultValue="13:00" />
-              </label>
+                  <label>
+                    Capacite max
+                    <input type="number" name="capacity_max" min={0} defaultValue={1} required />
+                  </label>
 
-              <label>
-                Capacite max
-                <input type="number" name="capacity_max" min={0} defaultValue={1} required />
-              </label>
+                  <label className="span-2">
+                    Lien Zoom (optionnel)
+                    <input type="url" name="zoom_link" placeholder="https://..." />
+                  </label>
+                </div>
+              </section>
 
-              <label>
-                Lien Zoom (optionnel)
-                <input type="url" name="zoom_link" placeholder="https://..." />
-              </label>
-
-              <fieldset className="session-edit-span recurrence-panel">
+              <fieldset className="create-session-section recurrence-panel">
                 <legend>Recurrence</legend>
                 <div className="recurrence-mode-row">
                   <label className="checkline">
@@ -957,7 +964,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </div>
 
                 <div className="recurrence-settings">
-                  <div className="grid cols-4 recurrence-grid">
+                  <div className="grid cols-3 recurrence-grid">
                     <label>
                       Frequence
                       <select name="recurrence_frequency" defaultValue="WEEKLY">
@@ -981,28 +988,39 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </div>
               </fieldset>
 
-              <label className="checkline">
-                <input type="checkbox" name="is_private" />
-                Creneau prive
-              </label>
+              <section className="create-session-section">
+                <h3 className="create-session-section-title">Visibilite et descriptions</h3>
+                <div className="grid cols-2 create-session-visibility-grid">
+                  <label className="checkline create-session-toggle">
+                    <input type="checkbox" name="is_private" />
+                    Creneau prive
+                  </label>
 
-              <label className="checkline">
-                <input type="checkbox" name="allow_online_booking" defaultChecked />
-                Autoriser la reservation en ligne (creneau public)
-              </label>
+                  <label className="checkline create-session-toggle">
+                    <input type="checkbox" name="allow_online_booking" defaultChecked />
+                    Autoriser la reservation en ligne (creneau public)
+                  </label>
 
-              <label className="span-2">
-                Description publique (vue client)
-                <textarea name="public_description" rows={3} />
-              </label>
+                  <label>
+                    Description publique (vue client)
+                    <textarea name="public_description" rows={4} />
+                  </label>
 
-              <label className="span-2">
-                Description privee (interne)
-                <textarea name="private_description" rows={3} />
-              </label>
+                  <label>
+                    Description privee (interne)
+                    <textarea name="private_description" rows={4} />
+                  </label>
+                </div>
+              </section>
 
-              <div className="row">
-                <button type="submit">Creer le creneau</button>
+              <div className="row spread create-session-actions">
+                <p className="muted">Les champs obligatoires sont marques en haut du formulaire.</p>
+                <div className="row">
+                  <a className="reset-link" href={createCloseHref}>
+                    Annuler
+                  </a>
+                  <button type="submit">Creer le creneau</button>
+                </div>
               </div>
             </form>
           </article>
