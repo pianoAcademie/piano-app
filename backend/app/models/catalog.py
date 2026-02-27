@@ -219,6 +219,7 @@ class CourseSession(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     private_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    group_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_all_day: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
@@ -306,6 +307,7 @@ class Booking(Base):
     vat_amount_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     total_incl_vat_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     currency_snapshot: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
+    student_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class PlanningConfig(Base):

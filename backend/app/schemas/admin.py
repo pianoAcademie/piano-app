@@ -1183,6 +1183,7 @@ class AdminSessionOut(BaseModel):
     description: str | None
     public_description: str | None
     private_description: str | None
+    group_note: str | None
     start_at_utc: datetime
     end_at_utc: datetime
     is_all_day: bool
@@ -1215,12 +1216,25 @@ class AdminSessionBookingOut(BaseModel):
     cancelled_at: datetime | None
     cancellation_reason: str | None
     waitlist_position: int | None
+    student_note: str | None
 
 
 class AdminSessionBookingCreateRequest(BaseModel):
     client_id: UUID
     client_plan_subscription_id: UUID | None = None
     recurrence_end_date: date | None = None
+
+
+class AdminSessionBookingAttendanceUpdateRequest(BaseModel):
+    attendance_status: Literal["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"]
+
+
+class AdminSessionGroupNoteUpdateRequest(BaseModel):
+    group_note: str | None = Field(default=None, max_length=12000)
+
+
+class AdminSessionBookingNoteUpdateRequest(BaseModel):
+    student_note: str | None = Field(default=None, max_length=12000)
 
 
 class AdminSessionBookingOperationOut(BaseModel):

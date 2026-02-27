@@ -779,6 +779,7 @@ export type AdminSessionOut = {
   description: string | null;
   public_description: string | null;
   private_description: string | null;
+  group_note: string | null;
   start_at_utc: string;
   end_at_utc: string;
   is_all_day: boolean;
@@ -811,6 +812,7 @@ export type AdminSessionBookingOut = {
   cancelled_at: string | null;
   cancellation_reason: string | null;
   waitlist_position: number | null;
+  student_note: string | null;
 };
 
 export type AdminSessionBookingOperationOut = {

@@ -5,6 +5,9 @@ import { redirect } from "next/navigation";
 import {
   adminAddClientToSessionAction,
   adminRemoveClientFromSessionAction,
+  adminUpdateSessionAttendanceAction,
+  adminUpdateSessionBookingNoteAction,
+  adminUpdateSessionGroupNoteAction,
   cancelAdminSessionAction,
   createAdminSessionAction,
   deleteAdminSessionAction,
@@ -357,11 +360,20 @@ function statusClass(status: string): string {
   if (status === "CANCELLED") {
     return "status-cancelled";
   }
+  if (status === "NO_SHOW") {
+    return "status-cancelled";
+  }
+  if (status === "EXCUSED_ABSENCE" || status === "WAITLISTED") {
+    return "status-waitlist";
+  }
+  if (status === "BOOKED") {
+    return "status-booked";
+  }
   if (status === "COMPLETED") {
     return "status-completed";
   }
-  if (status === "WAITLISTED") {
-    return "status-waitlist";
+  if (status === "ATTENDED") {
+    return "status-completed";
   }
   return "status-scheduled";
 }
@@ -1371,35 +1383,108 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <p className="muted">Aucun eleve inscrit.</p>
               ) : (
                 <div className="list session-bookings-list">
-                  {selectedSessionBookings.map((booking, index) => (
-                    <article key={booking.id} className="item row spread session-booking-row">
-                      <div>
-                        <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
-                        <br />
-                        <small className="muted">{booking.client_email}</small>
-                      </div>
-                      <div className="row">
-                        <span className={`status-badge ${statusClass(booking.status)}`}>
-                          {booking.status}
-                          {booking.waitlist_position ? ` #${booking.waitlist_position}` : ""}
-                        </span>
-                        {isBookingRemovable(selectedSession, booking) ? (
-                          <form action={adminRemoveClientFromSessionAction} className="row">
+                  {selectedSessionBookings.map((booking, index) => {
+                    const canUpdateAttendance = ["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(booking.status);
+                    const attendanceDefault =
+                      booking.status === "BOOKED" ||
+                      booking.status === "ATTENDED" ||
+                      booking.status === "NO_SHOW" ||
+                      booking.status === "EXCUSED_ABSENCE"
+                        ? booking.status
+                        : "";
+
+                    return (
+                      <article key={booking.id} className="item session-booking-row">
+                        <div className="row spread">
+                          <div>
+                            <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
+                            <br />
+                            <small className="muted">{booking.client_email}</small>
+                          </div>
+                          <div className="row">
+                            <span className={`status-badge ${statusClass(booking.status)}`}>
+                              {booking.status}
+                              {booking.waitlist_position ? ` #${booking.waitlist_position}` : ""}
+                            </span>
+                            {isBookingRemovable(selectedSession, booking) ? (
+                              <form action={adminRemoveClientFromSessionAction} className="row">
+                                <input type="hidden" name="session_id" value={selectedSession.id} />
+                                <input type="hidden" name="booking_id" value={booking.id} />
+                                <input type="hidden" name="return_to" value={modalHref} />
+                                <button className="icon-btn danger" type="submit" title="Retirer l adherent">
+                                  🗑
+                                </button>
+                              </form>
+                            ) : (
+                              <span className="muted">Verrouille</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {canUpdateAttendance ? (
+                          <form action={adminUpdateSessionAttendanceAction} className="row session-attendance-form">
                             <input type="hidden" name="session_id" value={selectedSession.id} />
                             <input type="hidden" name="booking_id" value={booking.id} />
                             <input type="hidden" name="return_to" value={modalHref} />
-                            <button className="icon-btn danger" type="submit" title="Retirer l adherent">
-                              🗑
+                            <label className="row">
+                              Presence
+                              <select name="attendance_status" defaultValue={attendanceDefault} required>
+                                <option value="">Selectionner...</option>
+                                <option value="BOOKED">Non renseigne</option>
+                                <option value="ATTENDED">Present</option>
+                                <option value="NO_SHOW">Absent</option>
+                                <option value="EXCUSED_ABSENCE">Absent excuse</option>
+                              </select>
+                            </label>
+                            <button type="submit" className="ghost small-btn">
+                              Enregistrer presence
                             </button>
                           </form>
                         ) : (
-                          <span className="muted">Verrouille</span>
+                          <p className="muted">Presence non editable pour ce statut.</p>
                         )}
-                      </div>
-                    </article>
-                  ))}
+
+                        <form action={adminUpdateSessionBookingNoteAction} className="grid session-booking-note-form">
+                          <input type="hidden" name="session_id" value={selectedSession.id} />
+                          <input type="hidden" name="booking_id" value={booking.id} />
+                          <input type="hidden" name="return_to" value={modalHref} />
+                          <label>
+                            Note eleve
+                            <textarea
+                              name="student_note"
+                              rows={2}
+                              placeholder="Saisir une note pour cet eleve..."
+                              defaultValue={booking.student_note ?? ""}
+                            />
+                          </label>
+                          <div className="row">
+                            <button type="submit" className="ghost small-btn">
+                              Sauvegarder note eleve
+                            </button>
+                          </div>
+                        </form>
+                      </article>
+                    );
+                  })}
                 </div>
               )}
+            </section>
+
+            <section className="card modal-card">
+              <h3>Notes de groupe</h3>
+              <form action={adminUpdateSessionGroupNoteAction} className="grid">
+                <input type="hidden" name="session_id" value={selectedSession.id} />
+                <input type="hidden" name="return_to" value={modalHref} />
+                <label>
+                  Note du creneau (groupe)
+                  <textarea name="group_note" rows={4} placeholder="Saisir une note de groupe..." defaultValue={selectedSession.group_note ?? ""} />
+                </label>
+                <div className="row">
+                  <button type="submit" className="ghost small-btn">
+                    Sauvegarder note de groupe
+                  </button>
+                </div>
+              </form>
             </section>
 
             <section className="card modal-card">

@@ -51,9 +51,12 @@ from app.schemas.admin import (
     AdminPlanningSettingsUpdateRequest,
     AdminProfessorOut,
     AdminSessionBookingCreateRequest,
+    AdminSessionBookingAttendanceUpdateRequest,
+    AdminSessionBookingNoteUpdateRequest,
     AdminSessionBookingOperationOut,
     AdminSessionBookingOut,
     AdminSessionCreateRequest,
+    AdminSessionGroupNoteUpdateRequest,
     AdminSessionOut,
     AdminSessionUpdateRequest,
     AppSettingOut,
@@ -117,6 +120,7 @@ def _to_admin_session_out(session_obj: CourseSession, *, booked_count: int) -> A
         description=session_obj.description,
         public_description=session_obj.description,
         private_description=session_obj.private_description,
+        group_note=session_obj.group_note,
         start_at_utc=session_obj.start_at_utc,
         end_at_utc=session_obj.end_at_utc,
         is_all_day=session_obj.is_all_day,
@@ -156,6 +160,7 @@ def _to_admin_session_booking_out(db: Session, booking: Booking, client: User) -
         cancelled_at=booking.cancelled_at,
         cancellation_reason=booking.cancellation_reason,
         waitlist_position=_waitlist_position(db, booking),
+        student_note=booking.student_note,
     )
 
 
@@ -1262,6 +1267,130 @@ def list_admin_session_bookings(
     )
 
     return [_to_admin_session_booking_out(db, booking, client) for booking, client in sorted_rows]
+
+
+@router.post("/sessions/{session_id}/bookings/{booking_id}/attendance", response_model=AdminSessionBookingOut)
+def update_admin_session_booking_attendance(
+    session_id: UUID,
+    booking_id: UUID,
+    payload: AdminSessionBookingAttendanceUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSessionBookingOut:
+    session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
+    if session_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    booking = db.scalar(
+        select(Booking)
+        .where(
+            Booking.id == booking_id,
+            Booking.session_id == session_obj.id,
+        )
+        .with_for_update()
+    )
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    if booking.status in (BookingStatus.CANCELLED, BookingStatus.WAITLISTED):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking attendance cannot be updated")
+
+    if booking.status not in (
+        BookingStatus.BOOKED,
+        BookingStatus.ATTENDED,
+        BookingStatus.NO_SHOW,
+        BookingStatus.EXCUSED_ABSENCE,
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking attendance cannot be updated")
+
+    previous_status = booking.status
+    next_status = BookingStatus(payload.attendance_status)
+    if previous_status != next_status and booking.client_plan_subscription_id is not None:
+        sub_and_plan = _load_subscription_with_plan_for_update(db, subscription_id=booking.client_plan_subscription_id)
+        if sub_and_plan is not None:
+            subscription, plan = sub_and_plan
+            if (
+                next_status == BookingStatus.EXCUSED_ABSENCE
+                and previous_status in (BookingStatus.BOOKED, BookingStatus.ATTENDED, BookingStatus.NO_SHOW)
+                and subscription.user_id == booking.user_id
+            ):
+                _restore_pack_credit(subscription, plan)
+            elif (
+                previous_status == BookingStatus.EXCUSED_ABSENCE
+                and next_status in (BookingStatus.BOOKED, BookingStatus.ATTENDED, BookingStatus.NO_SHOW)
+                and subscription.user_id == booking.user_id
+            ):
+                if not _consume_pack_credit(subscription, plan):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Credits insuffisants pour remettre le statut present/absent",
+                    )
+
+    booking.status = next_status
+    booking.cancelled_at = None
+    booking.cancellation_reason = None
+
+    db.commit()
+    db.refresh(booking)
+
+    client = db.scalar(select(User).where(User.id == booking.user_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    return _to_admin_session_booking_out(db, booking, client)
+
+
+@router.patch("/sessions/{session_id}/group-note", response_model=AdminSessionOut)
+def update_admin_session_group_note(
+    session_id: UUID,
+    payload: AdminSessionGroupNoteUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSessionOut:
+    session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
+    if session_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    session_obj.group_note = _normalize_message_field(payload.group_note)
+    session_obj.updated_at = _utcnow()
+
+    db.commit()
+    db.refresh(session_obj)
+
+    booked_count = _booked_count_by_session(db, session_obj.id)
+    return _to_admin_session_out(session_obj, booked_count=booked_count)
+
+
+@router.patch("/sessions/{session_id}/bookings/{booking_id}/note", response_model=AdminSessionBookingOut)
+def update_admin_session_booking_note(
+    session_id: UUID,
+    booking_id: UUID,
+    payload: AdminSessionBookingNoteUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSessionBookingOut:
+    booking = db.scalar(
+        select(Booking)
+        .where(
+            Booking.id == booking_id,
+            Booking.session_id == session_id,
+            Booking.status != BookingStatus.CANCELLED,
+        )
+        .with_for_update()
+    )
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    booking.student_note = _normalize_message_field(payload.student_note)
+
+    db.commit()
+    db.refresh(booking)
+
+    client = db.scalar(select(User).where(User.id == booking.user_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    return _to_admin_session_booking_out(db, booking, client)
 
 
 @router.post("/sessions/{session_id}/bookings", response_model=AdminSessionBookingOperationOut)

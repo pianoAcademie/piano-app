@@ -1438,6 +1438,103 @@ export async function adminRemoveClientFromSessionAction(formData: FormData): Pr
   redirect(appendQueryMessage(returnTo, "ok", "Eleve retire du creneau"));
 }
 
+export async function adminUpdateSessionAttendanceAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const bookingId = String(formData.get("booking_id") ?? "").trim();
+  const attendanceStatus = String(formData.get("attendance_status") ?? "").trim().toUpperCase();
+
+  if (!sessionId || !bookingId || !["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(attendanceStatus)) {
+    redirect(appendQueryMessage(returnTo, "error", "Saisie de presence invalide"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}/attendance`,
+    {
+      method: "POST",
+      body: JSON.stringify({ attendance_status: attendanceStatus }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  redirect(appendQueryMessage(returnTo, "ok", "Presence mise a jour"));
+}
+
+export async function adminUpdateSessionGroupNoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  if (!sessionId) {
+    redirect(appendQueryMessage(returnTo, "error", "Session invalide"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/sessions/${sessionId}/group-note`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ group_note: optionalField(formData, "group_note") }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  redirect(appendQueryMessage(returnTo, "ok", "Note de groupe enregistree"));
+}
+
+export async function adminUpdateSessionBookingNoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const bookingId = String(formData.get("booking_id") ?? "").trim();
+  if (!sessionId || !bookingId) {
+    redirect(appendQueryMessage(returnTo, "error", "Reservation invalide"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}/note`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ student_note: optionalField(formData, "student_note") }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  redirect(appendQueryMessage(returnTo, "ok", "Note eleve enregistree"));
+}
+
 export async function updatePlanningSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

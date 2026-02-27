@@ -1539,13 +1539,29 @@ button.danger {
 }
 
 .session-booking-row {
-  align-items: center;
+  display: grid;
+  gap: 8px;
 }
 
 .session-bookings-list {
   max-height: 240px;
   overflow: auto;
   padding-right: 4px;
+}
+
+.session-attendance-form {
+  align-items: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-attendance-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.session-booking-note-form {
+  gap: 6px;
 }
 
 .day-details-list {
