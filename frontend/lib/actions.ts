@@ -1637,14 +1637,14 @@ export async function updateAdminClientAction(formData: FormData): Promise<void>
   const client_kind = client_kind_raw === "CHILD" ? "CHILD" : "ADULT";
   const birthDateRaw = String(formData.get("birth_date") ?? "").trim();
 
-  if (!email || !firstName || !lastName || !residence_country || !preferred_currency || !timezone || !address_country) {
+  if (!firstName || !lastName || !address_country) {
     redirect(
-      `/admin/clients/${clientId}?tab=${returnTab}&error=Email%2C%20prenom%2C%20nom%2C%20pays%2C%20adresse%20pays%2C%20devise%20et%20timezone%20sont%20obligatoires`,
+      `/admin/clients/${clientId}?tab=${returnTab}&error=Prenom%2C%20nom%20et%20pays%20de%20taxation%20sont%20obligatoires`,
     );
   }
 
   const payload = {
-    email,
+    ...(email ? { email } : {}),
     first_name: firstName,
     last_name: lastName,
     address_line: optionalField(formData, "address_line"),
@@ -2332,25 +2332,27 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
   const client_kind = client_kind_raw === "CHILD" ? "CHILD" : "ADULT";
   const client_status = String(formData.get("client_status") ?? "").trim().toUpperCase() || "ACTIVE";
   const birthDateRaw = String(formData.get("birth_date") ?? "").trim();
+  const addressLine = optionalField(formData, "address_line");
+  const city = optionalField(formData, "city");
 
-  if (!email || !firstName || !lastName || !residence_country || !preferred_currency || !timezone || !address_country) {
+  if (!firstName || !lastName || !address_country) {
     redirect(
       appendQueryMessage(
         returnTo,
         "error",
-        "Email, prenom, nom, pays residence, adresse pays, devise et fuseau sont obligatoires",
+        "Prenom, nom et pays de taxation sont obligatoires",
       ),
     );
   }
 
   const payload = {
-    email,
+    email: email || null,
     client_kind,
     first_name: firstName,
     last_name: lastName,
-    address_line: optionalField(formData, "address_line"),
+    address_line: addressLine,
     postal_code: optionalField(formData, "postal_code"),
-    city: optionalField(formData, "city"),
+    city,
     address_country,
     mobile_phone_1: optionalField(formData, "mobile_phone_1"),
     mobile_phone_2: optionalField(formData, "mobile_phone_2"),
@@ -2407,22 +2409,24 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
     }
 
     if (newAdultEmail || newAdultFirstName || newAdultLastName) {
-      if (!newAdultEmail || !newAdultFirstName || !newAdultLastName) {
-        redirect(`/admin/clients/${createdClientId}?tab=famille&error=Email%2C%20prenom%20et%20nom%20adulte%20obligatoires`);
+      if (!newAdultFirstName || !newAdultLastName) {
+        redirect(`/admin/clients/${createdClientId}?tab=famille&error=Prenom%20et%20nom%20adulte%20obligatoires`);
       }
+      const newAdultAddressLine = optionalField(formData, "adult_address_line");
+      const newAdultCity = optionalField(formData, "adult_city");
 
       const createAdultResult = await backendRequest<{ id: string }>(
         "/api/v1/admin/clients",
         {
           method: "POST",
           body: JSON.stringify({
-            email: newAdultEmail,
+            email: newAdultEmail || null,
             client_kind: "ADULT",
             first_name: newAdultFirstName,
             last_name: newAdultLastName,
-            address_line: optionalField(formData, "adult_address_line"),
+            address_line: newAdultAddressLine,
             postal_code: optionalField(formData, "adult_postal_code"),
-            city: optionalField(formData, "adult_city"),
+            city: newAdultCity,
             address_country: newAdultAddressCountry,
             mobile_phone_1: optionalField(formData, "adult_mobile_phone_1"),
             mobile_phone_2: optionalField(formData, "adult_mobile_phone_2"),
@@ -2495,7 +2499,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
   const billingRecipient = checkboxField(formData, "is_billing_recipient");
   const childStatus = String(formData.get("child_client_status") ?? "").trim().toUpperCase() || "ACTIVE";
 
-  if (!email || !firstName || !lastName || !residence_country || !preferred_currency || !timezone || !address_country) {
+  if (!firstName || !lastName || !residence_country || !preferred_currency || !timezone || !address_country) {
     redirect(`/admin/clients/${adultClientId}?tab=famille&error=Informations%20enfant%20incompletes`);
   }
 
@@ -2504,7 +2508,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
     {
       method: "POST",
       body: JSON.stringify({
-        email,
+        email: email || null,
         client_kind: "CHILD",
         first_name: firstName,
         last_name: lastName,
@@ -2584,8 +2588,10 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
   const address_country = String(formData.get("adult_address_country") ?? "FR").trim().toUpperCase();
   const adultStatus = String(formData.get("adult_client_status") ?? "").trim().toUpperCase() || "ACTIVE";
   const relationship_label = optionalField(formData, "relationship_label");
+  const adultAddressLine = optionalField(formData, "adult_address_line");
+  const adultCity = optionalField(formData, "adult_city");
 
-  if (!email || !firstName || !lastName || !residence_country || !preferred_currency || !timezone || !address_country) {
+  if (!firstName || !lastName || !address_country) {
     redirect(`/admin/clients/${childClientId}?tab=famille&error=Informations%20adulte%20incompletes`);
   }
 
@@ -2594,13 +2600,13 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
     {
       method: "POST",
       body: JSON.stringify({
-        email,
+        email: email || null,
         client_kind: "ADULT",
         first_name: firstName,
         last_name: lastName,
-        address_line: optionalField(formData, "adult_address_line"),
+        address_line: adultAddressLine,
         postal_code: optionalField(formData, "adult_postal_code"),
-        city: optionalField(formData, "adult_city"),
+        city: adultCity,
         address_country,
         mobile_phone_1: optionalField(formData, "adult_mobile_phone_1"),
         mobile_phone_2: optionalField(formData, "adult_mobile_phone_2"),

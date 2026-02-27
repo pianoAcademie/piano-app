@@ -104,6 +104,29 @@ function formatDateForInput(value: string | null | undefined, fallback: string):
   return parsed.toISOString().slice(0, 10);
 }
 
+function isDateInput(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function endOfDateUtcMs(value: string): number {
+  if (!isDateInput(value)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return new Date(`${value}T23:59:59.999Z`).getTime();
+}
+
+function formatDateInputLabel(value: string): string {
+  if (!isDateInput(value)) {
+    return value;
+  }
+  return new Date(`${value}T00:00:00.000Z`).toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 function formatMoney(value: string | null | undefined, currency: string): string {
   const amount = Number(value ?? "0");
   return new Intl.NumberFormat("fr-FR", {
@@ -361,6 +384,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const purchasePaymentMethod = readParam(searchParams, "purchase_payment_method").toUpperCase();
   const purchaseDiscountedTotalRaw = readParam(searchParams, "purchase_discounted_total").replace(",", ".");
   const purchaseReturnTab = parseTab(readParam(searchParams, "purchase_return_tab") || currentTab);
+  const balanceDateParam = readParam(searchParams, "balance_date");
 
   const [
     clientResult,
@@ -402,6 +426,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const client = clientResult.data;
   const fullName = [client.first_name, client.last_name].filter(Boolean).join(" ");
   const todayInputValue = formatDateInput(new Date());
+  const selectedBalanceDate = isDateInput(balanceDateParam) ? balanceDateParam : todayInputValue;
+  const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
   const monthStartInputValue = `${todayInputValue.slice(0, 8)}01`;
 
   const errors: string[] = [];
@@ -574,11 +600,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .filter((row) => Date.parse(row.session_start_at_utc) < Date.now())
     .sort((a, b) => b.session_start_at_utc.localeCompare(a.session_start_at_utc));
 
+  const paymentsAsOfDate = payments.filter((row) => {
+    const occurredAtMs = Date.parse(row.occurred_at);
+    if (!Number.isFinite(occurredAtMs)) {
+      return false;
+    }
+    return occurredAtMs <= selectedBalanceDateEndMs;
+  });
+
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
   const pendingTotalsByCurrency = new Map<string, number>();
   const cancelledOrNotBillableTotalsByCurrency = new Map<string, number>();
-  for (const row of payments) {
+  for (const row of paymentsAsOfDate) {
     const currency = row.currency || "EUR";
     const amount = Number(row.total_incl_vat || "0");
     const status = normalizePaymentStatus(row.status);
@@ -1581,8 +1615,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <input type="hidden" name="return_tab" value="infos" />
 
                     <label>
-                      Email <span className="required-star">*</span>
-                      <input type="email" name="email" defaultValue={client.email} required />
+                      Email (optionnel)
+                      <input type="email" name="email" defaultValue={client.email} />
                     </label>
 
                     <label>
@@ -1626,7 +1660,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Pays adresse <span className="required-star">*</span>
+                      Pays taxation <span className="required-star">*</span>
                       <select name="address_country" defaultValue={client.address_country || DEFAULT_COUNTRY} required>
                         {COUNTRY_OPTIONS.map((country) => (
                           <option key={country.value} value={country.value}>
@@ -1637,7 +1671,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Type adherent <span className="required-star">*</span>
+                      Type adherent
                       <select name="client_kind" defaultValue={client.client_kind === "CHILD" ? "CHILD" : "ADULT"} required>
                         <option value="ADULT">Adulte</option>
                         <option value="CHILD">Enfant</option>
@@ -1645,7 +1679,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Statut <span className="required-star">*</span>
+                      Statut
                       <select name="client_status" defaultValue={client.client_status || "ACTIVE"} required>
                         <option value="ACTIVE">ACTIF</option>
                         <option value="TRIAL">ESSAI</option>
@@ -1656,7 +1690,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Pays residence <span className="required-star">*</span>
+                      Pays residence
                       <select name="residence_country" defaultValue={client.residence_country || DEFAULT_COUNTRY} required>
                         {COUNTRY_OPTIONS.map((country) => (
                           <option key={country.value} value={country.value}>
@@ -1667,7 +1701,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Devise <span className="required-star">*</span>
+                      Devise
                       <select name="preferred_currency" defaultValue={client.preferred_currency || DEFAULT_CURRENCY} required>
                         {CURRENCY_OPTIONS.map((currency) => (
                           <option key={currency.value} value={currency.value}>
@@ -1678,7 +1712,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Fuseau horaire <span className="required-star">*</span>
+                      Fuseau horaire
                       <select name="timezone" defaultValue={client.timezone || DEFAULT_TIMEZONE} required>
                         {TIMEZONE_OPTIONS.map((item) => (
                           <option key={item.value} value={item.value}>
@@ -1908,8 +1942,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <form action={createChildForAdultAction} className="grid cols-3">
                 <input type="hidden" name="adult_client_id" value={client.id} />
                 <label>
-                  Email <span className="required-star">*</span>
-                  <input type="email" name="child_email" required />
+                  Email (optionnel)
+                  <input type="email" name="child_email" />
                 </label>
                 <label>
                   Prenom <span className="required-star">*</span>
@@ -2023,8 +2057,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <form action={createAdultForChildAction} className="grid cols-3">
                 <input type="hidden" name="child_client_id" value={client.id} />
                 <label>
-                  Email <span className="required-star">*</span>
-                  <input type="email" name="adult_email" required />
+                  Email (optionnel)
+                  <input type="email" name="adult_email" />
                 </label>
                 <label>
                   Prenom <span className="required-star">*</span>
@@ -2188,6 +2222,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <div className="row spread">
               <h3>Paiements et transactions</h3>
               <div className="row">
+                <span className="badge">Solde en date du {formatDateInputLabel(selectedBalanceDate)}</span>
                 {[...totalsByCurrency.entries()].map(([currency, total]) => (
                   <span key={currency} className="badge">
                     Solde {currency}: {formatMoney(String(total), currency)}
@@ -2208,21 +2243,35 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     Annule/non facturable {currency}: {formatMoney(String(total), currency)}
                   </span>
                 ))}
+                <form method="get" className="row balance-date-form">
+                  <input type="hidden" name="tab" value="paiements" />
+                  <label className="balance-date-label">
+                    Date solde
+                    <input type="date" name="balance_date" defaultValue={selectedBalanceDate} />
+                  </label>
+                  <button type="submit" className="ghost">
+                    Mettre a jour
+                  </button>
+                </form>
                 <Link
                   className="mode-link"
-                  href={paymentsHref(client.id, { payment_modal: "manual" })}
+                  href={paymentsHref(client.id, { payment_modal: "manual", balance_date: selectedBalanceDate })}
                 >
                   Ajouter une transaction
                 </Link>
                 <Link
                   className="mode-link"
-                  href={paymentsHref(client.id, { payment_modal: "invoice_range" })}
+                  href={paymentsHref(client.id, { payment_modal: "invoice_range", balance_date: selectedBalanceDate })}
                 >
                   Generer une facture
                 </Link>
                 <Link
                   className="client-action-icon payment-add-icon"
-                  href={paymentsHref(client.id, { purchase_modal: "wizard", purchase_return_tab: "paiements" })}
+                  href={paymentsHref(client.id, {
+                    purchase_modal: "wizard",
+                    purchase_return_tab: "paiements",
+                    balance_date: selectedBalanceDate,
+                  })}
                   title="Ajouter un achat"
                 >
                   +

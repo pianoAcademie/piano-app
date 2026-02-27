@@ -487,7 +487,7 @@ class AdminClientUpdateRequest(BaseModel):
 
 
 class AdminClientCreateRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
     client_kind: ClientKind = ClientKind.ADULT
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)

@@ -5,7 +5,7 @@ import io
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -1579,12 +1579,19 @@ def create_admin_client(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientOut:
-    email = _normalize_required(payload.email, "email").lower()
+    normalized_email = _normalize_optional(payload.email)
+    if normalized_email:
+        email = normalized_email.lower()
+    else:
+        synthetic_prefix = "adult" if payload.client_kind == ClientKind.ADULT else "child"
+        email = f"{synthetic_prefix}-{uuid4().hex}@no-email.local"
     if _is_email_in_use(db, email=email):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
 
     first_name = _normalize_required(payload.first_name, "first_name")
     last_name = _normalize_required(payload.last_name, "last_name")
+    address_line = _normalize_optional(payload.address_line)
+    city = _normalize_optional(payload.city)
     mobile_phone_1 = _normalize_optional(payload.mobile_phone_1)
     legacy_phone = _normalize_optional(payload.phone)
     primary_phone = mobile_phone_1 or legacy_phone
@@ -1598,9 +1605,9 @@ def create_admin_client(
         client_kind=payload.client_kind,
         first_name=first_name,
         last_name=last_name,
-        address_line=_normalize_optional(payload.address_line),
+        address_line=address_line,
         postal_code=_normalize_optional(payload.postal_code),
-        city=_normalize_optional(payload.city),
+        city=city,
         address_country=_normalize_required(payload.address_country, "address_country").upper(),
         phone=primary_phone,
         mobile_phone_1=primary_phone,
@@ -1643,11 +1650,20 @@ def patch_admin_client(
         return _client_out(client)
 
     if "email" in changes:
-        new_email = _normalize_required(changes["email"], "email").lower()
-        existing = db.scalar(select(User).where(User.email == new_email, User.id != client.id))
-        if existing is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
-        client.email = new_email
+        normalized_new_email = _normalize_optional(changes["email"])
+        if normalized_new_email:
+            new_email = normalized_new_email.lower()
+            existing = db.scalar(select(User).where(User.email == new_email, User.id != client.id))
+            if existing is not None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
+            client.email = new_email
+        else:
+            target_kind_for_email = changes.get("client_kind") or client.client_kind
+            synthetic_prefix = "adult" if target_kind_for_email == ClientKind.ADULT else "child"
+            generated_email = f"{synthetic_prefix}-{uuid4().hex}@no-email.local"
+            while _is_email_in_use(db, email=generated_email):
+                generated_email = f"{synthetic_prefix}-{uuid4().hex}@no-email.local"
+            client.email = generated_email
 
     if "client_kind" in changes and changes["client_kind"] is not None:
         target_kind = changes["client_kind"]
@@ -2916,7 +2932,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             AdminClientPaymentOut(
                 id=booking.id,
                 source="BOOKING",
-                occurred_at=booking.booked_at,
+                occurred_at=session_obj.start_at_utc,
                 label=f"{course_type.name} - {location.name}",
                 status=status_value,
                 amount_excl_vat=Decimal("0.00") if not is_billable else booking.price_excl_vat_snapshot,

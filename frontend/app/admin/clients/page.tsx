@@ -732,8 +732,8 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 <input type="hidden" name="return_to" value={closeHref} />
 
                 <label>
-                  Email <span className="required-star">*</span>
-                  <input type="email" name="email" required />
+                  Email (optionnel)
+                  <input type="email" name="email" />
                 </label>
                 <label>
                   Prenom <span className="required-star">*</span>
@@ -794,7 +794,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   <input type="text" name="city" maxLength={120} />
                 </label>
                 <label>
-                  Pays adresse <span className="required-star">*</span>
+                  Pays taxation <span className="required-star">*</span>
                   <select name="address_country" defaultValue={DEFAULT_COUNTRY}>
                     {COUNTRY_OPTIONS.map((country) => (
                       <option key={country.value} value={country.value}>
@@ -805,7 +805,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 </label>
 
                 <label>
-                  Pays residence <span className="required-star">*</span>
+                  Pays residence
                   <select name="residence_country" defaultValue={DEFAULT_COUNTRY}>
                     {COUNTRY_OPTIONS.map((country) => (
                       <option key={country.value} value={country.value}>
@@ -815,7 +815,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   </select>
                 </label>
                 <label>
-                  Devise <span className="required-star">*</span>
+                  Devise
                   <select name="preferred_currency" defaultValue={DEFAULT_CURRENCY}>
                     {CURRENCY_OPTIONS.map((currency) => (
                       <option key={currency.value} value={currency.value}>
@@ -825,7 +825,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   </select>
                 </label>
                 <label>
-                  Fuseau horaire <span className="required-star">*</span>
+                  Fuseau horaire
                   <select name="timezone" defaultValue={DEFAULT_TIMEZONE}>
                     {TIMEZONE_OPTIONS.map((item) => (
                       <option key={item.value} value={item.value}>
