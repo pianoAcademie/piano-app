@@ -192,6 +192,34 @@ def _payment_source_label(source: str) -> str:
     return normalized or "Paiement"
 
 
+def _booking_uuid_from_payment_id(payment_id: str) -> UUID | None:
+    raw_id = str(payment_id or "").split(":", maxsplit=1)[-1].strip()
+    if not raw_id:
+        return None
+    try:
+        return UUID(raw_id)
+    except ValueError:
+        return None
+
+
+def _forfait_booking_ids(db: Session, booking_ids: list[UUID]) -> set[UUID]:
+    unique_ids = list({booking_id for booking_id in booking_ids if booking_id is not None})
+    if not unique_ids:
+        return set()
+
+    rows = db.execute(
+        select(Booking.id)
+        .select_from(Booking)
+        .join(ClientPlanSubscription, ClientPlanSubscription.id == Booking.client_plan_subscription_id, isouter=True)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id, isouter=True)
+        .where(
+            Booking.id.in_(unique_ids),
+            Plan.kind == PlanKind.FORFAIT,
+        )
+    ).all()
+    return {row[0] for row in rows}
+
+
 def _managed_client_ids_for_sessions(db: Session, current_user: User) -> set[UUID]:
     managed_ids: set[UUID] = {current_user.id}
     if current_user.client_kind != ClientKind.ADULT:
@@ -1028,9 +1056,21 @@ def list_client_invoices(
     current_user: User = Depends(require_roles(UserRole.CLIENT)),
 ) -> list[ClientInvoiceOut]:
     payments = _build_client_payments(db, current_user)
+    booking_payment_ids = [
+        booking_id
+        for payment in payments
+        for booking_id in (_booking_uuid_from_payment_id(payment.id),)
+        if (payment.source or "").strip().upper() == "BOOKING" and booking_id is not None
+    ]
+    forfait_bookings = _forfait_booking_ids(db, booking_payment_ids)
     invoices: list[ClientInvoiceOut] = []
 
     for payment in payments:
+        if (payment.source or "").strip().upper() == "BOOKING":
+            booking_id = _booking_uuid_from_payment_id(payment.id)
+            if booking_id is not None and booking_id in forfait_bookings:
+                continue
+
         normalized_status = (payment.status or "").upper()
         if normalized_status in PAID_PAYMENT_STATUSES:
             invoice_status = "PAID"
@@ -1084,6 +1124,13 @@ def download_client_invoice(
         payment = next((row for row in payments if row.id in {f"plan:{invoice_ref}", f"booking:{invoice_ref}"}), None)
     if payment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    if (payment.source or "").strip().upper() == "BOOKING":
+        booking_id = _booking_uuid_from_payment_id(payment.id)
+        if booking_id is not None and booking_id in _forfait_booking_ids(db, [booking_id]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Forfait booking invoices are generated manually from back office.",
+            )
     if payment.owner_client_id not in managed_client_ids:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
