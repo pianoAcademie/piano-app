@@ -192,6 +192,27 @@ function paymentStatusLabel(status: string): string {
   return normalized || "Inconnu";
 }
 
+const PAID_PAYMENT_STATUSES = new Set(["PAID", "SUCCEEDED", "COMPLETED", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"]);
+const PENDING_PAYMENT_STATUSES = new Set(["PENDING", "WAITLISTED", "TRIAL", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT", "FAILED"]);
+const CANCELLED_PAYMENT_STATUSES = new Set(["CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"]);
+
+function normalizePaymentStatus(status: string): string {
+  return (status || "").trim().toUpperCase();
+}
+
+function shouldCountInClientBalance(row: AdminClientPaymentOut): boolean {
+  const status = normalizePaymentStatus(row.status);
+  if (status === "NOT_BILLABLE" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
+    return false;
+  }
+
+  if (row.source.trim().toUpperCase() === "MANUAL") {
+    return true;
+  }
+
+  return PENDING_PAYMENT_STATUSES.has(status);
+}
+
 function invoiceStatusLabel(status: string | null): string {
   const normalized = (status ?? "").trim().toUpperCase();
   if (normalized === "PAID") {
@@ -554,9 +575,27 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .sort((a, b) => b.session_start_at_utc.localeCompare(a.session_start_at_utc));
 
   const totalsByCurrency = new Map<string, number>();
+  const paidTotalsByCurrency = new Map<string, number>();
+  const pendingTotalsByCurrency = new Map<string, number>();
+  const cancelledOrNotBillableTotalsByCurrency = new Map<string, number>();
   for (const row of payments) {
-    const current = totalsByCurrency.get(row.currency) ?? 0;
-    totalsByCurrency.set(row.currency, current + Number(row.total_incl_vat || "0"));
+    const currency = row.currency || "EUR";
+    const amount = Number(row.total_incl_vat || "0");
+    const status = normalizePaymentStatus(row.status);
+
+    const dueCurrent = totalsByCurrency.get(currency) ?? 0;
+    totalsByCurrency.set(currency, dueCurrent + (shouldCountInClientBalance(row) ? amount : 0));
+
+    if (status === "NOT_BILLABLE" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
+      const current = cancelledOrNotBillableTotalsByCurrency.get(currency) ?? 0;
+      cancelledOrNotBillableTotalsByCurrency.set(currency, current + amount);
+    } else if (PAID_PAYMENT_STATUSES.has(status)) {
+      const current = paidTotalsByCurrency.get(currency) ?? 0;
+      paidTotalsByCurrency.set(currency, current + amount);
+    } else {
+      const current = pendingTotalsByCurrency.get(currency) ?? 0;
+      pendingTotalsByCurrency.set(currency, current + amount);
+    }
   }
 
   const okMessage = readParam(searchParams, "ok");
@@ -2151,7 +2190,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <div className="row">
                 {[...totalsByCurrency.entries()].map(([currency, total]) => (
                   <span key={currency} className="badge">
-                    Total {currency}: {formatMoney(String(total), currency)}
+                    Solde {currency}: {formatMoney(String(total), currency)}
+                  </span>
+                ))}
+                {[...pendingTotalsByCurrency.entries()].map(([currency, total]) => (
+                  <span key={`pending-${currency}`} className="badge">
+                    En attente {currency}: {formatMoney(String(total), currency)}
+                  </span>
+                ))}
+                {[...paidTotalsByCurrency.entries()].map(([currency, total]) => (
+                  <span key={`paid-${currency}`} className="badge">
+                    Paye {currency}: {formatMoney(String(total), currency)}
+                  </span>
+                ))}
+                {[...cancelledOrNotBillableTotalsByCurrency.entries()].map(([currency, total]) => (
+                  <span key={`cancelled-${currency}`} className="badge">
+                    Annule/non facturable {currency}: {formatMoney(String(total), currency)}
                   </span>
                 ))}
                 <Link
