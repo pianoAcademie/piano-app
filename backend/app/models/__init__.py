@@ -1,6 +1,6 @@
 from app.models.family import ClientFamilyLink
 from app.models.client_group import ClientGroup, ClientGroupMembership
-from app.models.client_record import ClientManualCreditBalance, ClientNoteEntry, ClientPaymentRefund
+from app.models.client_record import ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry, ClientPaymentRefund
 from app.models.catalog import (
     Booking,
     BookingStatus,
@@ -37,6 +37,7 @@ __all__ = [
     "ClientGroupMembership",
     "ClientKind",
     "ClientManualCreditBalance",
+    "ClientManualTransaction",
     "ClientNoteEntry",
     "ClientPaymentRefund",
     "ClientStatus",

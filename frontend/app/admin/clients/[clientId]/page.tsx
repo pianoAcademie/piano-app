@@ -12,12 +12,14 @@ import {
   cancelAdminClientSubscriptionAction,
   linkExistingFamilyMembersAction,
   adminPurchasePlanForClientAction,
+  createAdminClientManualTransactionAction,
   refundAdminClientPaymentAction,
   sendAdminClientPasswordAction,
   setFamilyBillingRecipientAction,
   setupAdminClientSubscriptionBillingAction,
   suspendAdminClientSubscriptionAction,
   unlinkFamilyMembersAction,
+  updateAdminClientSubscriptionExpiryAction,
   updateAdminClientManualCreditAction,
   updateAdminClientAction,
   updateAdminClientGroupsAction,
@@ -150,6 +152,9 @@ function paymentSourceLabel(source: string): string {
   if (normalized === "BOOKING") {
     return "Reservation";
   }
+  if (normalized === "MANUAL") {
+    return "Manuel";
+  }
   return normalized || "Paiement";
 }
 
@@ -175,6 +180,9 @@ function paymentStatusLabel(status: string): string {
   }
   if (normalized === "EXCUSED_ABSENCE") {
     return "Absence excusee";
+  }
+  if (normalized === "NOT_BILLABLE") {
+    return "Non facturable";
   }
   if (normalized === "CANCELLED" || normalized === "EXPIRED" || normalized === "ARCHIVED" || normalized === "INACTIVE") {
     return "Annule";
@@ -279,6 +287,17 @@ function isCancellationAlreadyEffective(sub: AdminClientSubscriptionOut): boolea
   return effectiveAt <= Date.now();
 }
 
+function planKindLabel(kind: string): string {
+  const normalized = kind.trim().toUpperCase();
+  if (normalized === "PACK") {
+    return "Carnet";
+  }
+  if (normalized === "FORFAIT") {
+    return "Forfait";
+  }
+  return "Abonnement";
+}
+
 export default async function AdminClientDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
   const token = cookies().get("access_token")?.value;
   if (!token) {
@@ -337,6 +356,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const client = clientResult.data;
   const fullName = [client.first_name, client.last_name].filter(Boolean).join(" ");
   const todayInputValue = formatDateInput(new Date());
+  const monthStartInputValue = `${todayInputValue.slice(0, 8)}01`;
 
   const errors: string[] = [];
 
@@ -456,7 +476,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     (subscriptionModalAction === "suspend" ||
       subscriptionModalAction === "cancel" ||
       subscriptionModalAction === "cancel_now" ||
-      subscriptionModalAction === "billing")
+      subscriptionModalAction === "billing" ||
+      subscriptionModalAction === "expiry")
       ? subscriptions.find((sub) => sub.id === subscriptionModalId) ?? null
       : null;
   const selectedCreditForModal = openManualCreditModal
@@ -587,7 +608,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 +
               </Link>
             </div>
-            <p className="muted">Associer une formule (abonnement/carnet), avec reglement et validation CGV en popup.</p>
+            <p className="muted">Associer une formule (abonnement/carnet/forfait), avec reglement et validation CGV en popup.</p>
             <p className="muted top-gap-sm">Flux: Offre -&gt; Prix remisé -&gt; Reglement -&gt; CGV -&gt; Signature email/SMS.</p>
             <p className="muted">
               Regles appliquees: pas de doublon d&apos;abonnement sur le mois, pas de nouveau carnet si credits restants.
@@ -619,7 +640,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             ? pendingCancellation
                               ? "Abonnement en fin de periode"
                               : "Abonnement en cours"
-                            : "Carnet actif"}
+                            : sub.plan.kind === "PACK"
+                              ? "Carnet actif"
+                              : "Forfait actif"}
                         </small>
                         <h4>{sub.plan.name}</h4>
                         <span className="muted">
@@ -664,13 +687,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             ) : null}
                           </>
                         ) : sub.status !== "CANCELLED" ? (
-                          <Link
-                            className="client-action-icon danger"
-                            href={ficheHref(client.id, { subscription_modal: "cancel_now", subscription_id: sub.id })}
-                            title="Annuler le carnet"
-                          >
-                            ✕
-                          </Link>
+                          <>
+                            <Link
+                              className="client-action-icon"
+                              href={ficheHref(client.id, { subscription_modal: "expiry", subscription_id: sub.id })}
+                              title="Modifier la date d expiration"
+                            >
+                              ✎
+                            </Link>
+                            <Link
+                              className="client-action-icon danger"
+                              href={ficheHref(client.id, { subscription_modal: "cancel_now", subscription_id: sub.id })}
+                              title="Annuler le carnet / forfait"
+                            >
+                              ✕
+                            </Link>
+                          </>
                         ) : null}
                       </div>
                     </header>
@@ -679,7 +711,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <article className="subscription-field">
                         <p className="muted">Formule</p>
                         <strong>{sub.plan.name}</strong>
-                        <small className="muted">{sub.plan.kind === "SUBSCRIPTION" ? "Reconduction tacite" : "Carnet de credits"}</small>
+                        <small className="muted">
+                          {sub.plan.kind === "SUBSCRIPTION"
+                            ? "Reconduction tacite"
+                            : sub.plan.kind === "PACK"
+                              ? "Carnet de credits"
+                              : "Forfait facture au reel"}
+                        </small>
                       </article>
                       <article className="subscription-field">
                         <p className="muted">Prix / Tarif TTC</p>
@@ -744,7 +782,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         Actions rapides: utilisez les icones pour configurer le prelevement, suspendre ou resilier.
                       </p>
                     ) : (
-                      <p className="muted">Actions rapides: utilisez l icone pour annuler immediatement le carnet.</p>
+                      <p className="muted">Actions rapides: modifiez la date d expiration ou cloturez immediatement.</p>
                     )}
                     </article>
                   );
@@ -869,7 +907,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </option>
                   {plans.map((plan) => (
                     <option key={plan.id} value={plan.id}>
-                      {plan.name} ({plan.kind === "PACK" ? "Carnet" : "Abonnement"})
+                      {plan.name} ({planKindLabel(plan.kind)})
                     </option>
                   ))}
                 </select>
@@ -920,7 +958,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <article className="card modal-card">
               <h4>Recapitulatif de la commande</h4>
               <p className="muted">
-                Offre: {selectedPlanForPurchase.name} ({selectedPlanForPurchase.kind === "PACK" ? "Carnet" : "Abonnement"})
+                Offre: {selectedPlanForPurchase.name} ({planKindLabel(selectedPlanForPurchase.kind)})
               </p>
               <p className="muted">
                 Prix catalogue: {selectedPlanBaseTotal ? formatMoney(selectedPlanBaseTotal, selectedPlanCurrency) : "n/a"}
@@ -1039,6 +1077,43 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
+      {currentTab === "fiche" && selectedSubscriptionForModal && subscriptionModalAction === "expiry" ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">
+              {selectedSubscriptionForModal.plan.kind === "PACK" ? "Modifier l expiration du carnet" : "Modifier l expiration du forfait"}
+            </h3>
+            <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
+            <form action={updateAdminClientSubscriptionExpiryAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
+              <label>
+                Date d expiration
+                <input
+                  type="date"
+                  name="ends_at"
+                  defaultValue={formatDateForInput(selectedSubscriptionForModal.ends_at, todayInputValue)}
+                  required
+                />
+              </label>
+              <p className="muted">
+                Si la date est deja passee, le produit est automatiquement marque comme termine et les credits du carnet deviennent
+                inutilisables.
+              </p>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={tabHref(client.id, "fiche")}>
+                  Annuler
+                </Link>
+                <button type="submit">Enregistrer</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
       {currentTab === "fiche" && selectedSubscriptionForModal && subscriptionModalAction === "suspend" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
@@ -1129,11 +1204,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
               ×
             </Link>
-            <h3 className="modal-title">{selectedSubscriptionForModal.plan.kind === "PACK" ? "Annulation immediate du carnet" : "Resiliation immediate"}</h3>
+            <h3 className="modal-title">
+              {selectedSubscriptionForModal.plan.kind === "PACK"
+                ? "Annulation immediate du carnet"
+                : selectedSubscriptionForModal.plan.kind === "FORFAIT"
+                  ? "Cloture immediate du forfait"
+                  : "Resiliation immediate"}
+            </h3>
             <p className="muted">
               {selectedSubscriptionForModal.plan.kind === "PACK"
                 ? `${selectedSubscriptionForModal.plan.name} - cette action cloture le carnet maintenant et annule les credits restants.`
-                : `${selectedSubscriptionForModal.plan.name} - cette action coupe l abonnement maintenant et desactive tout prochain prelevement.`}
+                : selectedSubscriptionForModal.plan.kind === "FORFAIT"
+                  ? `${selectedSubscriptionForModal.plan.name} - cette action cloture le forfait maintenant et arrete toute facturation future.`
+                  : `${selectedSubscriptionForModal.plan.name} - cette action coupe l abonnement maintenant et desactive tout prochain prelevement.`}
             </p>
             <form action={cancelAdminClientSubscriptionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
@@ -1152,14 +1235,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input type="checkbox" name="confirm_immediate" required />
                 {selectedSubscriptionForModal.plan.kind === "PACK"
                   ? "Je confirme l annulation immediate et irreversible du carnet."
-                  : "Je confirme la resiliation immediate et irreversible."}
+                  : selectedSubscriptionForModal.plan.kind === "FORFAIT"
+                    ? "Je confirme la cloture immediate et irreversible du forfait."
+                    : "Je confirme la resiliation immediate et irreversible."}
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
                   Annuler
                 </Link>
                 <button type="submit" className="danger">
-                  {selectedSubscriptionForModal.plan.kind === "PACK" ? "Annuler immediatement" : "Resilier immediatement"}
+                  {selectedSubscriptionForModal.plan.kind === "PACK"
+                    ? "Annuler immediatement"
+                    : selectedSubscriptionForModal.plan.kind === "FORFAIT"
+                      ? "Cloturer immediatement"
+                      : "Resilier immediatement"}
                 </button>
               </div>
             </form>
@@ -1990,6 +2079,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </span>
                 ))}
                 <Link
+                  className="mode-link"
+                  href={paymentsHref(client.id, { payment_modal: "manual" })}
+                >
+                  Ajouter une transaction
+                </Link>
+                <Link
+                  className="mode-link"
+                  href={paymentsHref(client.id, { payment_modal: "invoice_range" })}
+                >
+                  Generer une facture
+                </Link>
+                <Link
                   className="client-action-icon payment-add-icon"
                   href={paymentsHref(client.id, { purchase_modal: "wizard", purchase_return_tab: "paiements" })}
                   title="Ajouter un achat"
@@ -2042,7 +2143,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             >
                               ↓
                             </a>
-                            {row.status !== "REFUNDED" ? (
+                            {row.status !== "REFUNDED" && row.source.toUpperCase() !== "MANUAL" ? (
                               <Link
                                 className="client-action-icon danger"
                                 href={paymentsHref(client.id, {
@@ -2118,7 +2219,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </option>
                   {plans.map((plan) => (
                     <option key={plan.id} value={plan.id}>
-                      {plan.name} ({plan.kind === "PACK" ? "Carnet" : "Abonnement"})
+                      {plan.name} ({planKindLabel(plan.kind)})
                     </option>
                   ))}
                 </select>
@@ -2128,6 +2229,123 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   Annuler
                 </Link>
                 <button type="submit">Ajouter</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {currentTab === "paiements" && paymentModalAction === "manual" ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Ajouter une transaction</h3>
+            <p className="muted">Paiement, remboursement, montant facture ou rabais.</p>
+            <form action={createAdminClientManualTransactionAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="currency" value={client.preferred_currency || "EUR"} />
+              <label>
+                Type
+                <select name="transaction_type" defaultValue="CHARGE" required>
+                  <option value="PAYMENT">Paiement</option>
+                  <option value="REFUND">Remboursement</option>
+                  <option value="CHARGE">Montant facture</option>
+                  <option value="DISCOUNT">Rabais</option>
+                </select>
+              </label>
+              <label>
+                Etudiant (optionnel)
+                <select name="student_id" defaultValue="">
+                  <option value="">(Non precise)</option>
+                  <option value={client.id}>{fullName || client.email}</option>
+                  {family.links_as_adult.map((link) => (
+                    <option key={link.child.id} value={link.child.id}>
+                      {[link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Date
+                <input type="date" name="occurred_at" defaultValue={todayInputValue} required />
+              </label>
+              <label>
+                Montant TTC
+                <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
+              </label>
+              <label>
+                TVA (%)
+                <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue="20" required />
+              </label>
+              <label>
+                Categorie (optionnel)
+                <input type="text" name="category" maxLength={120} placeholder="Ex: Lecon, Frais..." />
+              </label>
+              <label>
+                Libelle (optionnel)
+                <input type="text" name="label" maxLength={255} placeholder="Ex: Frais inscription" />
+              </label>
+              <label>
+                Reference (optionnel)
+                <input type="text" name="reference" maxLength={120} placeholder="Ex: CHEQUE-1024" />
+              </label>
+              <label>
+                Description (optionnel)
+                <textarea name="description" rows={3} maxLength={2000} placeholder="Ce texte apparaitra dans la facture." />
+              </label>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={tabHref(client.id, "paiements")}>
+                  Annuler
+                </Link>
+                <button type="submit">Ajouter la transaction</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {currentTab === "paiements" && paymentModalAction === "invoice_range" ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Generer une facture</h3>
+            <p className="muted">Genere un document pour une plage de dates.</p>
+            <form method="get" action={`/admin/clients/${client.id}/payments/invoice-range`} className="grid top-gap-sm">
+              <label>
+                Date de debut
+                <input type="date" name="start_date" defaultValue={monthStartInputValue} required />
+              </label>
+              <label>
+                Date de fin
+                <input type="date" name="end_date" defaultValue={todayInputValue} required />
+              </label>
+              <label>
+                Lignes en attente
+                <select name="include_pending" defaultValue="true">
+                  <option value="true">Inclure</option>
+                  <option value="false">Exclure</option>
+                </select>
+              </label>
+              <label>
+                Lignes annulees
+                <select name="include_cancelled" defaultValue="false">
+                  <option value="false">Exclure</option>
+                  <option value="true">Inclure</option>
+                </select>
+              </label>
+              <label>
+                Note (optionnel)
+                <textarea name="note" rows={3} maxLength={2000} placeholder="Note de bas de facture." />
+              </label>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={tabHref(client.id, "paiements")}>
+                  Annuler
+                </Link>
+                <button type="submit">Telecharger</button>
               </div>
             </form>
           </article>

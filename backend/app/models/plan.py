@@ -19,6 +19,7 @@ def _enum_values(enum_cls: type[enum.Enum]) -> list[str]:
 class PlanKind(str, enum.Enum):
     PACK = "PACK"
     SUBSCRIPTION = "SUBSCRIPTION"
+    FORFAIT = "FORFAIT"
 
 
 class PlanRestrictionPeriod(str, enum.Enum):
@@ -62,6 +63,7 @@ class Plan(Base):
         nullable=False,
     )
     credits_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pack_validity_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
     monthly_price_value: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     price_tax_mode: Mapped[PlanPriceTaxMode] = mapped_column(
         Enum(

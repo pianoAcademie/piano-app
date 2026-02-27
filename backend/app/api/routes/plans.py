@@ -86,13 +86,15 @@ def _has_same_subscription_in_current_month(
     return existing is not None
 
 
-def _has_active_pack_with_remaining_credits(db: Session, *, user_id: UUID) -> bool:
+def _has_active_pack_with_remaining_credits(db: Session, *, user_id: UUID, now: datetime) -> bool:
     existing = db.scalar(
         select(ClientPlanSubscription.id)
         .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
         .where(
             ClientPlanSubscription.user_id == user_id,
             ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
+            or_(ClientPlanSubscription.cancellation_effective_at.is_(None), ClientPlanSubscription.cancellation_effective_at > now),
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
             Plan.active.is_(True),
             Plan.kind == PlanKind.PACK,
             ClientPlanSubscription.credits_remaining.is_not(None),
@@ -193,6 +195,10 @@ def _plan_amount_due_and_currency(
     currency: str,
     on_date: date,
 ) -> tuple[Decimal, str]:
+    currency_code = (plan.currency_code or currency or "EUR").upper()
+    if plan.kind == PlanKind.FORFAIT:
+        return Decimal("0.00"), currency_code
+
     vat_rate = resolve_vat_rate(
         db,
         country=country,
@@ -201,7 +207,6 @@ def _plan_amount_due_and_currency(
     )
 
     price_excl_vat: Decimal | None = None
-    currency_code = (plan.currency_code or currency or "EUR").upper()
     if plan.monthly_price_value is not None:
         raw_price = Decimal(plan.monthly_price_value)
         if plan.price_tax_mode == PlanPriceTaxMode.TTC:
@@ -362,6 +367,7 @@ def purchase_plan(
     if plan.kind == PlanKind.PACK and _has_active_pack_with_remaining_credits(
         db,
         user_id=owner.id,
+        now=now,
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -390,6 +396,7 @@ def purchase_plan(
     if plan.kind == PlanKind.PACK:
         credits_initial = _effective_pack_credits_for_plan(db, plan=plan) or 0
         credits_remaining = credits_initial
+        ends_at = add_months_utc(now, int(plan.pack_validity_months or 12))
     elif plan.kind == PlanKind.SUBSCRIPTION:
         ends_at = add_months_utc(now, 1)
 

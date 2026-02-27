@@ -168,5 +168,5 @@ def compute_tax_totals(*, price_excl_vat: Decimal, vat_rate: Decimal) -> tuple[M
     return price, vat, total
 
 
-def plan_service_code(plan_kind: Literal["PACK", "SUBSCRIPTION"]) -> str:
+def plan_service_code(plan_kind: Literal["PACK", "SUBSCRIPTION", "FORFAIT"]) -> str:
     return "SUBSCRIPTION" if plan_kind == "SUBSCRIPTION" else "COURSE_PACKAGE"

@@ -1919,6 +1919,43 @@ export async function suspendAdminClientSubscriptionAction(formData: FormData): 
   redirect(`/admin/clients/${clientId}?tab=fiche&ok=Suspension%20enregistree`);
 }
 
+export async function updateAdminClientSubscriptionExpiryAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
+  const endsAtRaw = String(formData.get("ends_at") ?? "").trim();
+  if (!clientId || !subscriptionId) {
+    redirect("/admin/clients?error=Produit%20invalide");
+  }
+  const endsAt = parseUtcStartOfDate(endsAtRaw);
+  if (!endsAt) {
+    redirect(`/admin/clients/${clientId}?tab=fiche&error=Date%20d%27expiration%20invalide`);
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/clients/${clientId}/subscriptions/${subscriptionId}/expiry`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ends_at: endsAt,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=fiche&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=fiche&ok=Date%20d%27expiration%20mise%20a%20jour`);
+}
+
 export async function cancelAdminClientSubscriptionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -2113,6 +2150,66 @@ export async function refundAdminClientPaymentAction(formData: FormData): Promis
 
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(`/admin/clients/${clientId}?tab=paiements&ok=Remboursement%20enregistre`);
+}
+
+export async function createAdminClientManualTransactionAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const transactionType = String(formData.get("transaction_type") ?? "").trim().toUpperCase();
+  const amountRaw = String(formData.get("amount_incl_vat") ?? "").trim().replace(",", ".");
+  const vatRateRaw = String(formData.get("vat_rate") ?? "20").trim().replace(",", ".");
+  const occurredAtRaw = String(formData.get("occurred_at") ?? "").trim();
+  const occurredAt = occurredAtRaw ? parseUtcStartOfDate(occurredAtRaw) : null;
+  const amountInclVat = parseNonNegativeDecimal(amountRaw);
+  const vatRate = parseNonNegativeDecimal(vatRateRaw);
+
+  if (!clientId) {
+    redirect("/admin/clients?error=Client%20invalide");
+  }
+  if (!["PAYMENT", "REFUND", "CHARGE", "DISCOUNT"].includes(transactionType)) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Type%20de%20transaction%20invalide`);
+  }
+  if (amountInclVat === null || amountInclVat <= 0) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Montant%20invalide`);
+  }
+  if (vatRate === null || vatRate < 0 || vatRate > 100) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
+  }
+  if (occurredAtRaw && !occurredAt) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Date%20invalide`);
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/clients/${clientId}/manual-transactions`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        transaction_type: transactionType,
+        occurred_at: occurredAt,
+        label: optionalField(formData, "label"),
+        description: optionalField(formData, "description"),
+        category: optionalField(formData, "category"),
+        reference: optionalField(formData, "reference"),
+        student_id: optionalField(formData, "student_id"),
+        amount_incl_vat: amountInclVat,
+        vat_rate: vatRate,
+        currency: optionalField(formData, "currency"),
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20ajoutee`);
 }
 
 export async function createAdminClientAction(formData: FormData): Promise<void> {
@@ -3222,7 +3319,7 @@ function parseFormulaCreditGrants(formData: FormData): Array<{ credit_type_id: s
 function parseFormulaPayload(formData: FormData): Record<string, unknown> {
   const name = String(formData.get("name") ?? "").trim();
   const kindRaw = String(formData.get("kind") ?? "PACK").trim().toUpperCase();
-  const kind = kindRaw === "SUBSCRIPTION" ? "SUBSCRIPTION" : "PACK";
+  const kind = kindRaw === "SUBSCRIPTION" ? "SUBSCRIPTION" : kindRaw === "FORFAIT" ? "FORFAIT" : "PACK";
   const priceTaxModeRaw = String(formData.get("price_tax_mode") ?? "HT").trim().toUpperCase();
   const priceTaxMode = priceTaxModeRaw === "TTC" ? "TTC" : "HT";
   const creditGrantsRelationRaw = String(formData.get("credit_grants_relation") ?? "OR").trim().toUpperCase();
@@ -3234,6 +3331,8 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
   const signupFee = parseNonNegativeDecimal(
     String(formData.get("signup_fee_value") ?? formData.get("signup_fee_excl_vat") ?? ""),
   );
+  const packValidityMonthsRaw = String(formData.get("pack_validity_months") ?? "").trim();
+  const packValidityMonths = packValidityMonthsRaw ? parsePositiveInt(packValidityMonthsRaw) : null;
   const creditGrants = parseFormulaCreditGrants(formData);
   const creditsCount = creditGrants.reduce((sum, grant) => sum + grant.credits_count, 0);
   const entitlementIds = parseStringList(formData.getAll("entitlement_course_type_ids"));
@@ -3256,6 +3355,9 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
   if (kind === "PACK" && creditsCount <= 0) {
     throw new Error("Nombre de credits total invalide pour un carnet");
   }
+  if (kind === "PACK" && (packValidityMonths === null || packValidityMonths < 1 || packValidityMonths > 12)) {
+    throw new Error("La duree de validite du carnet doit etre comprise entre 1 et 12 mois");
+  }
   if (entitlementIds.length === 0) {
     throw new Error("Selectionnez au moins un type de cours");
   }
@@ -3267,6 +3369,7 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
     is_private: checkboxField(formData, "is_private"),
     description: optionalField(formData, "description"),
     credits_count: kind === "PACK" ? creditsCount : null,
+    pack_validity_months: kind === "PACK" ? packValidityMonths : null,
     credit_grants: kind === "PACK" ? creditGrants : [],
     credit_grants_relation: kind === "PACK" ? creditGrantsRelation : "OR",
     price_tax_mode: priceTaxMode,

@@ -280,6 +280,7 @@ class AdminFormulaOut(BaseModel):
     is_private: bool
     description: str | None
     credits_count: int | None
+    pack_validity_months: int | None
     credit_grants: list[AdminFormulaCreditGrantOut] = Field(default_factory=list)
     credit_grants_relation: PlanCreditGrantsRelation
     monthly_price_value: Decimal | None
@@ -304,6 +305,7 @@ class AdminFormulaUpsertRequest(BaseModel):
     is_private: bool = False
     description: str | None = None
     credits_count: int | None = Field(default=None, ge=1)
+    pack_validity_months: int | None = Field(default=None, ge=1, le=12)
     credit_grants: list[AdminFormulaCreditGrantIn] = Field(default_factory=list)
     credit_grants_relation: PlanCreditGrantsRelation = PlanCreditGrantsRelation.OR
     monthly_price_value: Decimal | None = Field(default=None, ge=0)
@@ -325,6 +327,7 @@ class AdminFormulaUpdateRequest(BaseModel):
     is_private: bool | None = None
     description: str | None = None
     credits_count: int | None = Field(default=None, ge=1)
+    pack_validity_months: int | None = Field(default=None, ge=1, le=12)
     credit_grants: list[AdminFormulaCreditGrantIn] | None = None
     credit_grants_relation: PlanCreditGrantsRelation | None = None
     monthly_price_value: Decimal | None = Field(default=None, ge=0)
@@ -672,6 +675,10 @@ class AdminClientSubscriptionCancelRequest(BaseModel):
     confirm_immediate: bool = False
 
 
+class AdminClientSubscriptionExpiryUpdateRequest(BaseModel):
+    ends_at: datetime
+
+
 class AdminClientSubscriptionBillingSetupRequest(BaseModel):
     billing_method_code: str | None = Field(default=None, max_length=40)
     payment_provider_subscription_ref: str | None = Field(default=None, max_length=120)
@@ -774,6 +781,26 @@ class AdminClientPaymentOut(BaseModel):
     invoice_status: str | None = None
     refunded_at: datetime | None = None
     refund_reason: str | None = None
+
+
+class AdminClientManualTransactionType(str, enum.Enum):
+    PAYMENT = "PAYMENT"
+    REFUND = "REFUND"
+    CHARGE = "CHARGE"
+    DISCOUNT = "DISCOUNT"
+
+
+class AdminClientManualTransactionCreateRequest(BaseModel):
+    transaction_type: AdminClientManualTransactionType
+    occurred_at: datetime | None = None
+    label: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=120)
+    reference: str | None = Field(default=None, max_length=120)
+    student_id: UUID | None = None
+    amount_incl_vat: Decimal = Field(gt=Decimal("0"))
+    vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
 
 
 class AdminClientPaymentRefundRequest(BaseModel):

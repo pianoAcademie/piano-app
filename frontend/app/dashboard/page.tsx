@@ -165,6 +165,9 @@ function statusClass(value: string): string {
   if (normalized.includes("CANCEL")) {
     return "status-cancelled";
   }
+  if (normalized === "NOT_BILLABLE") {
+    return "status-cancelled";
+  }
   if (normalized.includes("COMPLETED") || normalized.includes("ATTENDED")) {
     return "status-completed";
   }
@@ -199,6 +202,9 @@ function statusLabel(value: string): string {
   }
   if (normalized === "EXCUSED_ABSENCE") {
     return "ABSENCE EXCUSEE";
+  }
+  if (normalized === "NOT_BILLABLE") {
+    return "NON FACTURABLE";
   }
   if (normalized === "ACTIVE") {
     return "ACTIF";
@@ -911,7 +917,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   };
   const visibleSelectedOwnerSubscriptions = selectedOwnerSubscriptions.filter(
     (sub) =>
-      (isSubscriptionActiveNow(sub, now) && (sub.plan.kind === "SUBSCRIPTION" || (sub.credits_remaining ?? 0) > 0)) ||
+      (isSubscriptionActiveNow(sub, now) &&
+        (sub.plan.kind === "SUBSCRIPTION" || sub.plan.kind === "FORFAIT" || (sub.credits_remaining ?? 0) > 0)) ||
       isPendingSubscription(sub),
   );
 
@@ -1690,6 +1697,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           Membre: {sub.owner_display_name} | Statut: {statusLabel(sub.status)} |{" "}
                           {sub.plan.kind === "SUBSCRIPTION"
                             ? "Abonnement (tarification au forfait)"
+                            : sub.plan.kind === "FORFAIT"
+                              ? "Forfait (facturation au reel)"
                             : `Credits: ${sub.credits_remaining ?? 0}/${sub.credits_initial ?? sub.credits_remaining ?? 0}`}
                         </small>
                         <small className="muted">Debut: {formatDate(sub.started_at)} {sub.ends_at ? `| Fin: ${formatDate(sub.ends_at)}` : ""}</small>
@@ -1727,9 +1736,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <article key={plan.id} className="item client-plan-card">
                       <div>
                         <h3>{plan.name}</h3>
-                        <p className="muted">{plan.kind === "SUBSCRIPTION" ? "Abonnement" : "Carnet / seances"}</p>
+                        <p className="muted">{plan.kind === "PACK" ? "Carnet / seances" : plan.kind === "FORFAIT" ? "Forfait" : "Abonnement"}</p>
                         <p className="muted">
-                          Credits: {plan.credits_count ?? "illimite"} | Prix base: {toMoney(plan.monthly_price_excl_vat, plan.currency_code ?? me.preferred_currency)}
+                          {plan.kind === "FORFAIT"
+                            ? "Facturation: au reel selon planning"
+                            : `Credits: ${plan.credits_count ?? "illimite"}`}{" "}
+                          | Prix base: {toMoney(plan.monthly_price_excl_vat, plan.currency_code ?? me.preferred_currency)}
                         </p>
                       </div>
                       <form action={purchasePlanAction}>

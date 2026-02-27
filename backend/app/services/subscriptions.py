@@ -100,6 +100,25 @@ def reconcile_subscription_status(subscription: ClientPlanSubscription, *, now: 
             changed = True
         return changed
 
+    if (
+        plan_kind in {PlanKind.PACK, PlanKind.FORFAIT}
+        and subscription.ends_at is not None
+        and now >= subscription.ends_at
+        and subscription.status in {SubscriptionStatus.PENDING, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED}
+    ):
+        subscription.status = SubscriptionStatus.EXPIRED
+        changed = True
+        if subscription.auto_renew:
+            subscription.auto_renew = False
+            changed = True
+        if subscription.next_payment_at is not None:
+            subscription.next_payment_at = None
+            changed = True
+        if plan_kind == PlanKind.PACK and (subscription.credits_remaining or 0) != 0:
+            subscription.credits_remaining = 0
+            changed = True
+        return changed
+
     if subscription.status == SubscriptionStatus.PAUSED and (suspension_end is None or now >= suspension_end):
         if plan_kind == PlanKind.SUBSCRIPTION:
             subscription.status = SubscriptionStatus.ACTIVE

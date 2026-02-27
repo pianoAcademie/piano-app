@@ -88,7 +88,7 @@ export default function AdminFormulaEditor({
   const defaultKind = formula?.kind ?? "PACK";
   const defaultPriceTaxMode: AdminFormulaPriceTaxMode = formula?.price_tax_mode ?? "HT";
   const defaultCreditGrantsRelation: AdminFormulaCreditGrantsRelation = formula?.credit_grants_relation ?? "OR";
-  const [kind, setKind] = useState<"PACK" | "SUBSCRIPTION">(defaultKind);
+  const [kind, setKind] = useState<"PACK" | "SUBSCRIPTION" | "FORFAIT">(defaultKind);
   const [priceTaxMode, setPriceTaxMode] = useState<AdminFormulaPriceTaxMode>(defaultPriceTaxMode);
   const [creditGrantsRelation, setCreditGrantsRelation] = useState<AdminFormulaCreditGrantsRelation>(defaultCreditGrantsRelation);
 
@@ -194,9 +194,10 @@ export default function AdminFormulaEditor({
 
               <label>
                 Type
-                <select name="kind" value={kind} onChange={(event) => setKind(event.currentTarget.value as "PACK" | "SUBSCRIPTION")}>
+                <select name="kind" value={kind} onChange={(event) => setKind(event.currentTarget.value as "PACK" | "SUBSCRIPTION" | "FORFAIT")}>
                   <option value="PACK">Carnet (credits)</option>
                   <option value="SUBSCRIPTION">Abonnement</option>
+                  <option value="FORFAIT">Forfait (facturation au reel)</option>
                 </select>
               </label>
 
@@ -307,6 +308,19 @@ export default function AdminFormulaEditor({
                     </button>
                   </div>
 
+                  <label>
+                    Duree de validite (mois)
+                    <input
+                      type="number"
+                      name="pack_validity_months"
+                      min={1}
+                      max={12}
+                      step={1}
+                      defaultValue={formula?.pack_validity_months ?? 12}
+                      required
+                    />
+                  </label>
+
                   <p className="muted">Associez un type de credit et un nombre de credits pour ce carnet.</p>
                   <p className="muted">
                     Total credits: <strong>{totalCredits}</strong>
@@ -393,6 +407,12 @@ export default function AdminFormulaEditor({
                       </div>
                     ))}
                   </div>
+                </section>
+              ) : kind === "FORFAIT" ? (
+                <section className="span-2 config-dynamic-section">
+                  <p className="muted">
+                    Le forfait n&apos;a pas de credits. Les transactions seront calculees depuis les cours reserves.
+                  </p>
                 </section>
               ) : null}
             </div>

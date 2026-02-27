@@ -330,7 +330,11 @@ def _select_eligible_subscription(
             Plan.active.is_(True),
         )
         .order_by(
-            case((Plan.kind == PlanKind.PACK, 0), else_=1),
+            case(
+                (Plan.kind == PlanKind.PACK, 0),
+                (Plan.kind == PlanKind.FORFAIT, 1),
+                else_=2,
+            ),
             ClientPlanSubscription.created_at.asc(),
         )
         .with_for_update()
@@ -384,8 +388,8 @@ def _resolve_booking_snapshot(
     country = (billing_profile.residence_country or "FR").upper()
     currency = (billing_profile.preferred_currency or "EUR").upper()
 
-    # For plan-backed bookings (subscription/pack), there is no per-session pricing.
-    # Billing is handled by the plan itself (subscription window or prepaid credits).
+    # For SUBSCRIPTION/PACK plan-backed bookings, there is no per-session pricing.
+    # FORFAIT keeps per-session pricing snapshots for invoice computation.
     if plan is not None and plan.kind in (PlanKind.SUBSCRIPTION, PlanKind.PACK):
         zero = Decimal("0.00")
         return zero, zero, zero, zero, currency

@@ -182,8 +182,14 @@ function restrictionPeriodLabel(period: "DAY" | "WEEK" | "MONTH" | "ROLLING_MONT
   return "semestre";
 }
 
-function formulaKindLabel(kind: "PACK" | "SUBSCRIPTION"): string {
-  return kind === "PACK" ? "Carnet" : "Abonnement";
+function formulaKindLabel(kind: "PACK" | "SUBSCRIPTION" | "FORFAIT"): string {
+  if (kind === "PACK") {
+    return "Carnet";
+  }
+  if (kind === "FORFAIT") {
+    return "Forfait";
+  }
+  return "Abonnement";
 }
 
 function formulaPriceModeLabel(mode: "HT" | "TTC"): string {
@@ -1407,6 +1413,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 {formula.kind === "PACK" ? (
                                   <div className="formula-info-col">
                                     <small className="muted">Credits totaux: {formula.credits_count ?? 0}</small>
+                                    <small className="muted">Validite: {formula.pack_validity_months ?? 12} mois</small>
                                     {formula.credit_grants.length > 0 ? (
                                       <small className="muted">
                                         {formula.credit_grants
@@ -1420,6 +1427,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       <small className="muted">Aucun type de credit associe</small>
                                     )}
                                   </div>
+                                ) : formula.kind === "FORFAIT" ? (
+                                  <small className="muted">Facturation au reel sur les cours planifies</small>
                                 ) : (
                                   <small className="muted">Illimite mensuel</small>
                                 )}

@@ -16,7 +16,7 @@ from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.family import ClientFamilyLink
-from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanPriceTaxMode, SubscriptionStatus
+from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
 from app.models.ops import EmailReminder
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
@@ -247,6 +247,10 @@ def _plan_amount_due_and_currency(
     currency: str,
     on_date: datetime,
 ) -> tuple[Decimal, str]:
+    currency_code = (plan.currency_code or currency or "EUR").upper()
+    if plan.kind == PlanKind.FORFAIT:
+        return Decimal("0.00"), currency_code
+
     vat_rate = resolve_vat_rate(
         db,
         country=country,
@@ -255,7 +259,6 @@ def _plan_amount_due_and_currency(
     )
 
     price_excl_vat: Decimal | None = None
-    currency_code = (plan.currency_code or currency or "EUR").upper()
     if plan.monthly_price_value is not None:
         raw_price = Decimal(plan.monthly_price_value)
         if plan.price_tax_mode == PlanPriceTaxMode.TTC:
@@ -713,10 +716,12 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
     ).all()
 
     rows_bookings = db.execute(
-        select(Booking, CourseSession, CourseType, Location, User)
+        select(Booking, CourseSession, CourseType, Location, User, Plan)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
+        .outerjoin(ClientPlanSubscription, ClientPlanSubscription.id == Booking.client_plan_subscription_id)
+        .outerjoin(Plan, Plan.id == ClientPlanSubscription.plan_id)
         .join(User, User.id == Booking.user_id)
         .where(Booking.user_id.in_(managed_client_ids))
     ).all()
@@ -724,9 +729,13 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
     items: list[ClientPaymentOut] = []
 
     for sub, plan, owner in rows_subs:
+        if plan.kind == PlanKind.FORFAIT:
+            continue
+
         billing_profile = resolve_billing_profile(db, owner)
         country_code = (billing_profile.residence_country or "FR").upper()
         preferred_currency = (billing_profile.preferred_currency or "EUR").upper()
+
         vat_rate = resolve_vat_rate(
             db,
             country=country_code,
@@ -786,9 +795,18 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
             )
         )
 
-    for booking, session_obj, course_type, location, owner in rows_bookings:
+    for booking, session_obj, course_type, location, owner, plan in rows_bookings:
         status_value = booking.status.value if hasattr(booking.status, "value") else str(booking.status)
-        is_excused = booking.status == BookingStatus.EXCUSED_ABSENCE
+        is_billable = True
+        if plan is not None and plan.kind == PlanKind.FORFAIT:
+            is_billable = (
+                session_obj.status != SessionStatus.CANCELLED
+                and booking.status not in {BookingStatus.WAITLISTED, BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
+            )
+            if not is_billable:
+                status_value = "NOT_BILLABLE"
+        elif booking.status == BookingStatus.EXCUSED_ABSENCE:
+            is_billable = False
         items.append(
             ClientPaymentOut(
                 id=f"booking:{booking.id}",
@@ -798,10 +816,10 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 occurred_at=booking.booked_at,
                 label=f"{course_type.name} - {location.name}",
                 status=status_value,
-                amount_excl_vat=Decimal("0.00") if is_excused else booking.price_excl_vat_snapshot,
-                vat_rate=Decimal("0.00") if is_excused else booking.vat_rate_snapshot,
-                vat_amount=Decimal("0.00") if is_excused else booking.vat_amount_snapshot,
-                total_incl_vat=Decimal("0.00") if is_excused else booking.total_incl_vat_snapshot,
+                amount_excl_vat=Decimal("0.00") if not is_billable else booking.price_excl_vat_snapshot,
+                vat_rate=Decimal("0.00") if not is_billable else booking.vat_rate_snapshot,
+                vat_amount=Decimal("0.00") if not is_billable else booking.vat_amount_snapshot,
+                total_incl_vat=Decimal("0.00") if not is_billable else booking.total_incl_vat_snapshot,
                 currency=booking.currency_snapshot,
                 reference=str(session_obj.id),
                 payment_url=None,

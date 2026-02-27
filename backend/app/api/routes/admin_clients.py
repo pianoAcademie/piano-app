@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,9 +15,9 @@ from sqlalchemy.orm import Session, aliased
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
-from app.models.client_record import ClientManualCreditBalance, ClientNoteEntry, ClientPaymentRefund
+from app.models.client_record import ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry, ClientPaymentRefund
 from app.models.family import ClientFamilyLink
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, Location
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, Location, SessionStatus
 from app.models.ops import AppSetting, EmailReminder
 from app.models.plan import (
     ClientPlanSubscription,
@@ -48,12 +48,14 @@ from app.schemas.admin import (
     AdminClientPasswordEmailTemplateUpdateRequest,
     AdminClientPasswordResetOut,
     AdminClientPaymentOut,
+    AdminClientManualTransactionCreateRequest,
     AdminClientPaymentRefundOut,
     AdminClientPaymentRefundRequest,
     AdminClientSubscriptionMiniOut,
     AdminClientSubscriptionOut,
     AdminClientSubscriptionSuspendRequest,
     AdminClientSubscriptionCancelRequest,
+    AdminClientSubscriptionExpiryUpdateRequest,
     AdminClientSubscriptionBillingSetupRequest,
     AdminClientSubscriptionPaymentEmailRequest,
     AdminClientSubscriptionPaymentEmailOut,
@@ -103,6 +105,24 @@ PENDING_PAYMENT_STATUSES = {"PENDING", "WAITLISTED", "TRIAL", "OPEN", "CREATED",
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
 ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
+MANUAL_TRANSACTION_SIGN_BY_TYPE = {
+    "PAYMENT": Decimal("-1"),
+    "DISCOUNT": Decimal("-1"),
+    "CHARGE": Decimal("1"),
+    "REFUND": Decimal("1"),
+}
+MANUAL_TRANSACTION_STATUS_BY_TYPE = {
+    "PAYMENT": "PAID",
+    "DISCOUNT": "COMPLETED",
+    "CHARGE": "PENDING",
+    "REFUND": "COMPLETED",
+}
+MANUAL_TRANSACTION_LABEL_BY_TYPE = {
+    "PAYMENT": "Paiement manuel",
+    "DISCOUNT": "Rabais manuel",
+    "CHARGE": "Montant facture",
+    "REFUND": "Remboursement",
+}
 
 
 def _utcnow() -> datetime:
@@ -135,13 +155,15 @@ def _has_same_subscription_in_current_month(
     return existing is not None
 
 
-def _has_active_pack_with_remaining_credits(db: Session, *, user_id: UUID) -> bool:
+def _has_active_pack_with_remaining_credits(db: Session, *, user_id: UUID, now: datetime) -> bool:
     existing = db.scalar(
         select(ClientPlanSubscription.id)
         .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
         .where(
             ClientPlanSubscription.user_id == user_id,
             ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
+            or_(ClientPlanSubscription.cancellation_effective_at.is_(None), ClientPlanSubscription.cancellation_effective_at > now),
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
             Plan.active.is_(True),
             Plan.kind == PlanKind.PACK,
             ClientPlanSubscription.credits_remaining.is_not(None),
@@ -180,6 +202,17 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _quantize_money(value: Decimal) -> Decimal:
+    return Decimal(value).quantize(Decimal("0.01"))
+
+
+def _normalize_currency(value: str | None, *, fallback: str = "EUR") -> str:
+    candidate = (value or "").strip().upper()
+    if len(candidate) != 3 or not candidate.isalpha():
+        return fallback
+    return candidate
 
 
 def _normalize_required(value: str | None, field_name: str) -> str:
@@ -288,12 +321,35 @@ def _create_client_note(
     return note
 
 
+def _manual_transaction_allowed_student_ids(db: Session, *, client: User) -> set[UUID]:
+    allowed = {client.id}
+    if client.client_kind != ClientKind.ADULT:
+        return allowed
+
+    child_ids = db.scalars(
+        select(ClientFamilyLink.child_user_id).where(ClientFamilyLink.adult_user_id == client.id)
+    ).all()
+    for child_id in child_ids:
+        if child_id is not None:
+            allowed.add(child_id)
+    return allowed
+
+
+def _manual_transaction_label(transaction_type: str, custom_label: str | None) -> str:
+    normalized_type = (transaction_type or "").strip().upper()
+    if custom_label:
+        return custom_label
+    return MANUAL_TRANSACTION_LABEL_BY_TYPE.get(normalized_type, "Transaction manuelle")
+
+
 def _payment_source_label(source: str) -> str:
     normalized = (source or "").strip().upper()
     if normalized == "PLAN_PURCHASE":
         return "Achat formule"
     if normalized == "BOOKING":
         return "Reservation"
+    if normalized == "MANUAL":
+        return "Transaction manuelle"
     return normalized or "Paiement"
 
 
@@ -306,6 +362,8 @@ def _invoice_number_for_payment(payment_id: UUID, occurred_at: datetime) -> str:
 def _invoice_status_from_payment_status(status_value: str) -> str:
     normalized = (status_value or "").strip().upper()
     if normalized == "REFUNDED":
+        return "CANCELLED"
+    if normalized == "NOT_BILLABLE":
         return "CANCELLED"
     if normalized in PAID_PAYMENT_STATUSES:
         return "PAID"
@@ -459,7 +517,11 @@ def _send_admin_subscription_immediate_cancellation_email(
         + (
             "Le prelevement recurrent est desactive et aucun prochain prelevement ne sera lance."
             if plan.kind == PlanKind.SUBSCRIPTION
-            else "Le carnet est clos et les credits restants sont invalides."
+            else (
+                "Le carnet est clos et les credits restants sont invalides."
+                if plan.kind == PlanKind.PACK
+                else "Le forfait est cloture et les cours futurs ne seront plus factures."
+            )
         )
     )
 
@@ -538,6 +600,9 @@ def _estimate_subscription_pricing(
     preferred_currency: str,
     on_date: datetime,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
+    if plan.kind == PlanKind.FORFAIT:
+        return None
+
     normalized_country = (residence_country or "FR").upper()
     normalized_currency = (preferred_currency or plan.currency_code or "EUR").upper()
 
@@ -2209,6 +2274,110 @@ def cancel_admin_client_subscription(
     )
 
 
+@router.post("/{client_id}/subscriptions/{subscription_id}/expiry", response_model=AdminClientSubscriptionOut)
+def update_admin_client_subscription_expiry(
+    client_id: UUID,
+    subscription_id: UUID,
+    payload: AdminClientSubscriptionExpiryUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientSubscriptionOut:
+    client = _require_client(db, client_id)
+    sub, plan = _admin_subscription_with_plan_for_client(db, client_id=client_id, subscription_id=subscription_id)
+    if plan.kind not in {PlanKind.PACK, PlanKind.FORFAIT}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only PACK or FORFAIT expiry can be updated manually",
+        )
+
+    ends_at = payload.ends_at
+    if ends_at.tzinfo is None:
+        ends_at = ends_at.replace(tzinfo=timezone.utc)
+    else:
+        ends_at = ends_at.astimezone(timezone.utc)
+
+    if ends_at <= sub.started_at:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Expiry date must be after subscription start date",
+        )
+
+    now = _utcnow()
+    sub.ends_at = ends_at
+    if ends_at <= now:
+        sub.status = SubscriptionStatus.EXPIRED
+        sub.auto_renew = False
+        sub.next_payment_at = None
+        if plan.kind == PlanKind.PACK:
+            sub.credits_remaining = 0
+    elif sub.status == SubscriptionStatus.EXPIRED:
+        sub.status = SubscriptionStatus.ACTIVE
+
+    db.add(sub)
+    _create_client_note(
+        db,
+        client_id=client_id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=(
+            f"Date d'expiration du {'carnet' if plan.kind == PlanKind.PACK else 'forfait'} "
+            f"'{plan.name}' modifiee au {ends_at.date().isoformat()}."
+        ),
+    )
+    db.commit()
+    db.refresh(sub)
+
+    billing_profile = resolve_billing_profile(db, client)
+    estimated_price_excl_vat: Decimal | None = None
+    estimated_vat_rate: Decimal | None = None
+    estimated_vat_amount: Decimal | None = None
+    estimated_total_incl_vat: Decimal | None = None
+    estimated_currency: str | None = None
+    pricing = _estimate_subscription_pricing(
+        db,
+        plan=plan,
+        residence_country=billing_profile.residence_country or "FR",
+        preferred_currency=billing_profile.preferred_currency or "EUR",
+        on_date=sub.started_at,
+    )
+    if pricing is not None:
+        estimated_price_excl_vat, estimated_vat_rate, estimated_vat_amount, estimated_total_incl_vat, estimated_currency = pricing
+
+    return AdminClientSubscriptionOut(
+        id=sub.id,
+        status=sub.status,
+        started_at=sub.started_at,
+        ends_at=sub.ends_at,
+        next_payment_at=sub.next_payment_at or sub.ends_at,
+        credits_initial=sub.credits_initial,
+        credits_remaining=sub.credits_remaining,
+        auto_renew=sub.auto_renew,
+        billing_method_code=sub.billing_method_code,
+        payment_provider_subscription_ref=sub.payment_provider_subscription_ref,
+        payment_provider_customer_ref=sub.payment_provider_customer_ref,
+        payment_provider_mandate_ref=sub.payment_provider_mandate_ref,
+        last_payment_at=sub.last_payment_at,
+        last_payment_status=sub.last_payment_status,
+        suspension_starts_at=sub.suspension_starts_at,
+        suspension_ends_at=sub.suspension_ends_at,
+        suspension_duration_value=sub.suspension_duration_value,
+        suspension_duration_unit=sub.suspension_duration_unit,
+        cancellation_requested_at=sub.cancellation_requested_at,
+        cancellation_effective_at=sub.cancellation_effective_at,
+        plan=AdminClientSubscriptionMiniOut(
+            id=plan.id,
+            code=plan.code,
+            name=plan.name,
+            kind=plan.kind,
+        ),
+        estimated_price_excl_vat=estimated_price_excl_vat,
+        estimated_vat_rate=estimated_vat_rate,
+        estimated_vat_amount=estimated_vat_amount,
+        estimated_total_incl_vat=estimated_total_incl_vat,
+        estimated_currency=estimated_currency,
+    )
+
+
 @router.post("/{client_id}/subscriptions/{subscription_id}/billing-setup", response_model=AdminClientSubscriptionOut)
 def setup_admin_client_subscription_billing(
     client_id: UUID,
@@ -2641,12 +2810,24 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
     ).all()
 
     rows_bookings = db.execute(
-        select(Booking, CourseSession, CourseType, Location)
+        select(Booking, CourseSession, CourseType, Location, Plan)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
+        .outerjoin(ClientPlanSubscription, ClientPlanSubscription.id == Booking.client_plan_subscription_id)
+        .outerjoin(Plan, Plan.id == ClientPlanSubscription.plan_id)
         .where(Booking.user_id == client_id)
     ).all()
+
+    manual_rows = db.scalars(
+        select(ClientManualTransaction).where(ClientManualTransaction.user_id == client_id)
+    ).all()
+    manual_student_ids = {row.student_user_id for row in manual_rows if row.student_user_id is not None}
+    manual_students_by_id: dict[UUID, User] = {}
+    if manual_student_ids:
+        manual_students_by_id = {
+            user.id: user for user in db.scalars(select(User).where(User.id.in_(manual_student_ids))).all()
+        }
 
     refunds = db.scalars(
         select(ClientPaymentRefund).where(ClientPaymentRefund.user_id == client_id)
@@ -2656,6 +2837,9 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
     items: list[AdminClientPaymentOut] = []
 
     for sub, plan in rows_subs:
+        if plan.kind == PlanKind.FORFAIT:
+            continue
+
         pricing = _estimate_subscription_pricing(
             db,
             plan=plan,
@@ -2689,21 +2873,60 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             )
         )
 
-    for booking, session_obj, course_type, location in rows_bookings:
-        is_excused = booking.status == BookingStatus.EXCUSED_ABSENCE
+    for booking, session_obj, course_type, location, plan in rows_bookings:
+        is_billable = True
+        status_value = booking.status.value
+        if plan is not None and plan.kind == PlanKind.FORFAIT:
+            is_billable = (
+                session_obj.status != SessionStatus.CANCELLED
+                and booking.status not in {BookingStatus.WAITLISTED, BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
+            )
+            if not is_billable:
+                status_value = "NOT_BILLABLE"
+        elif booking.status == BookingStatus.EXCUSED_ABSENCE:
+            is_billable = False
         items.append(
             AdminClientPaymentOut(
                 id=booking.id,
                 source="BOOKING",
                 occurred_at=booking.booked_at,
                 label=f"{course_type.name} - {location.name}",
-                status=booking.status.value,
-                amount_excl_vat=Decimal("0.00") if is_excused else booking.price_excl_vat_snapshot,
-                vat_rate=Decimal("0.00") if is_excused else booking.vat_rate_snapshot,
-                vat_amount=Decimal("0.00") if is_excused else booking.vat_amount_snapshot,
-                total_incl_vat=Decimal("0.00") if is_excused else booking.total_incl_vat_snapshot,
+                status=status_value,
+                amount_excl_vat=Decimal("0.00") if not is_billable else booking.price_excl_vat_snapshot,
+                vat_rate=Decimal("0.00") if not is_billable else booking.vat_rate_snapshot,
+                vat_amount=Decimal("0.00") if not is_billable else booking.vat_amount_snapshot,
+                total_incl_vat=Decimal("0.00") if not is_billable else booking.total_incl_vat_snapshot,
                 currency=booking.currency_snapshot,
                 reference=str(session_obj.id),
+            )
+        )
+
+    for row in manual_rows:
+        student = manual_students_by_id.get(row.student_user_id) if row.student_user_id is not None else None
+        label = row.label
+        if student is not None and student.id != client_id:
+            label = f"{label} - {_display_name(student.first_name, student.last_name, student.email)}"
+
+        reference_parts: list[str] = []
+        if row.category:
+            reference_parts.append(row.category)
+        if row.reference:
+            reference_parts.append(row.reference)
+        reference = " | ".join(reference_parts) or None
+
+        items.append(
+            AdminClientPaymentOut(
+                id=row.id,
+                source="MANUAL",
+                occurred_at=row.occurred_at,
+                label=label,
+                status=(row.status or "COMPLETED").strip().upper() or "COMPLETED",
+                amount_excl_vat=_quantize_money(Decimal(row.amount_excl_vat)),
+                vat_rate=Decimal(row.vat_rate),
+                vat_amount=_quantize_money(Decimal(row.vat_amount)),
+                total_incl_vat=_quantize_money(Decimal(row.total_incl_vat)),
+                currency=_normalize_currency(row.currency, fallback=billing_profile.preferred_currency or "EUR"),
+                reference=reference,
             )
         )
 
@@ -2727,6 +2950,206 @@ def list_admin_client_payments(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminClientPaymentOut]:
     return _build_admin_client_payments(db, client_id=client_id)
+
+
+@router.post("/{client_id}/manual-transactions", response_model=AdminClientPaymentOut, status_code=status.HTTP_201_CREATED)
+def create_admin_client_manual_transaction(
+    client_id: UUID,
+    payload: AdminClientManualTransactionCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientPaymentOut:
+    client = _require_client(db, client_id)
+    transaction_type = payload.transaction_type.value.strip().upper()
+    sign = MANUAL_TRANSACTION_SIGN_BY_TYPE.get(transaction_type)
+    if sign is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported transaction type")
+
+    student_id = payload.student_id
+    if student_id is not None:
+        allowed_student_ids = _manual_transaction_allowed_student_ids(db, client=client)
+        if student_id not in allowed_student_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Selected student is not linked to this account",
+            )
+
+    total_abs = _quantize_money(Decimal(payload.amount_incl_vat))
+    if total_abs <= Decimal("0.00"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Amount must be greater than zero")
+
+    vat_rate = Decimal(payload.vat_rate).quantize(Decimal("0.001"))
+    ratio = Decimal("1.000") + (vat_rate / Decimal("100"))
+    if ratio <= Decimal("0.000"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid VAT rate")
+
+    amount_excl_abs = _quantize_money(total_abs / ratio)
+    vat_amount_abs = _quantize_money(total_abs - amount_excl_abs)
+
+    label = _manual_transaction_label(transaction_type, _normalize_optional(payload.label))
+    description = _normalize_optional(payload.description)
+    category = _normalize_optional(payload.category)
+    reference = _normalize_optional(payload.reference)
+    currency = _normalize_currency(payload.currency, fallback=client.preferred_currency or "EUR")
+    occurred_at = payload.occurred_at or _utcnow()
+    status_value = MANUAL_TRANSACTION_STATUS_BY_TYPE.get(transaction_type, "COMPLETED")
+
+    row = ClientManualTransaction(
+        user_id=client.id,
+        student_user_id=student_id,
+        actor_user_id=actor.id,
+        transaction_type=transaction_type,
+        status=status_value,
+        label=label,
+        description=description,
+        category=category,
+        occurred_at=occurred_at,
+        amount_excl_vat=_quantize_money(amount_excl_abs * sign),
+        vat_rate=vat_rate,
+        vat_amount=_quantize_money(vat_amount_abs * sign),
+        total_incl_vat=_quantize_money(total_abs * sign),
+        currency=currency,
+        reference=reference,
+    )
+    db.add(row)
+
+    direction_label = "debiteur" if sign > 0 else "crediteur"
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=(
+            f"Transaction manuelle ajoutee ({label}) : {row.total_incl_vat:.2f} {currency} "
+            f"[{direction_label}]"
+            + (f". Categorie: {category}." if category else ".")
+        ),
+    )
+
+    db.commit()
+
+    created = next(
+        (
+            item
+            for item in _build_admin_client_payments(db, client_id=client.id)
+            if item.id == row.id and item.source.strip().upper() == "MANUAL"
+        ),
+        None,
+    )
+    if created is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load created transaction")
+    return created
+
+
+@router.get("/{client_id}/payments/invoice-range")
+def download_admin_client_range_invoice(
+    client_id: UUID,
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    include_pending: bool = Query(default=True),
+    include_cancelled: bool = Query(default=False),
+    note: str | None = Query(default=None, max_length=2000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    client = _require_client(db, client_id)
+    if end_date < start_date:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid date range")
+
+    start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
+    end_at_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    all_payments = _build_admin_client_payments(db, client_id=client_id)
+    payments = [row for row in all_payments if start_at <= row.occurred_at < end_at_exclusive]
+
+    if not include_pending:
+        payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "PENDING"]
+    if not include_cancelled:
+        payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "CANCELLED"]
+
+    if not payments:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
+
+    payments.sort(key=lambda row: row.occurred_at)
+    totals_by_currency: dict[str, dict[str, Decimal]] = {}
+    for row in payments:
+        currency = _normalize_currency(row.currency, fallback="EUR")
+        current = totals_by_currency.setdefault(
+            currency,
+            {"amount_excl_vat": Decimal("0.00"), "vat_amount": Decimal("0.00"), "total_incl_vat": Decimal("0.00")},
+        )
+        current["amount_excl_vat"] = _quantize_money(current["amount_excl_vat"] + Decimal(row.amount_excl_vat))
+        current["vat_amount"] = _quantize_money(current["vat_amount"] + Decimal(row.vat_amount))
+        current["total_incl_vat"] = _quantize_money(current["total_incl_vat"] + Decimal(row.total_incl_vat))
+
+    issued_at = _utcnow()
+    compact = str(client.id).replace("-", "").upper()
+    invoice_number = f"FAC-RANGE-{issued_at.strftime('%Y%m%d%H%M%S')}-{compact[:6]}"
+    client_label = _display_name(client.first_name, client.last_name, client.email)
+    company_name = _get_setting_value(db, "config_account_club_name", "Piano Academie")
+    company_email = _get_setting_value(db, "config_account_contact_email", "") or "-"
+    company_address = " ".join(
+        part
+        for part in [
+            _get_setting_value(db, "config_account_address_line", ""),
+            _get_setting_value(db, "config_account_postal_code", ""),
+            _get_setting_value(db, "config_account_city", ""),
+            _get_setting_value(db, "config_account_country", ""),
+        ]
+        if part
+    ).strip() or "-"
+
+    lines = [
+        "Piano Academie - Facture periode",
+        f"Numero: {invoice_number}",
+        f"Date d'emission: {issued_at.strftime('%d/%m/%Y %H:%M')}",
+        f"Client: {client_label} ({client.id})",
+        f"Periode: {start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}",
+        f"Filtres: inclure en attente={include_pending} | inclure annule={include_cancelled}",
+        "",
+        f"Transactions ({len(payments)}):",
+    ]
+    for row in payments:
+        payment_status = row.status or "-"
+        lines.append(
+            " - "
+            + f"{row.occurred_at.strftime('%d/%m/%Y %H:%M')} | {_payment_source_label(row.source)} | {row.label} | "
+            + f"Statut={payment_status} | "
+            + f"Total={_quantize_money(Decimal(row.total_incl_vat))} {row.currency} | Ref={row.reference or '-'}"
+        )
+
+    lines.append("")
+    lines.append("Totaux:")
+    for currency_code in sorted(totals_by_currency.keys()):
+        values = totals_by_currency[currency_code]
+        lines.append(
+            " - "
+            + f"{currency_code} | HT={values['amount_excl_vat']} | TVA={values['vat_amount']} | TTC={values['total_incl_vat']}"
+        )
+
+    normalized_note = _normalize_optional(note)
+    if normalized_note:
+        lines.extend(["", f"Note: {normalized_note}"])
+
+    lines.extend(
+        [
+            "",
+            company_name,
+            f"Contact: {company_email}",
+            company_address,
+            "",
+        ]
+    )
+
+    content = "\n".join(lines)
+    file_name = f"{invoice_number}.txt".replace('"', "")
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/{client_id}/payments/{source}/{payment_id}/refund", response_model=AdminClientPaymentRefundOut)
@@ -2822,7 +3245,7 @@ def download_admin_client_payment_invoice(
 ) -> Response:
     payment_user = _require_client(db, client_id)
     source_code = source.strip().upper()
-    if source_code not in {"PLAN_PURCHASE", "BOOKING"}:
+    if source_code not in {"PLAN_PURCHASE", "BOOKING", "MANUAL"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported payment source")
 
     payment = next(
@@ -2897,7 +3320,7 @@ def admin_purchase_plan_for_client(
             detail="This subscription is already purchased for the current month",
         )
 
-    if plan.kind == PlanKind.PACK and _has_active_pack_with_remaining_credits(db, user_id=client.id):
+    if plan.kind == PlanKind.PACK and _has_active_pack_with_remaining_credits(db, user_id=client.id, now=now):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An active pack with remaining credits already exists",
@@ -2913,10 +3336,11 @@ def admin_purchase_plan_for_client(
     if plan.kind == PlanKind.PACK:
         credits_initial = _effective_pack_credits_for_plan(db, plan=plan)
         credits_remaining = credits_initial
+        ends_at = add_months_utc(now, int(plan.pack_validity_months or 12))
     elif plan.kind == PlanKind.SUBSCRIPTION:
         ends_at = add_months_utc(now, 1)
 
-    should_start_pending = _is_online_collection_method(method_code)
+    should_start_pending = _is_online_collection_method(method_code) and plan.kind != PlanKind.FORFAIT
     subscription = ClientPlanSubscription(
         user_id=client.id,
         plan_id=plan.id,

@@ -835,6 +835,7 @@ def _serialize_formula(
         is_private=plan.is_private,
         description=plan.description,
         credits_count=effective_credits_count,
+        pack_validity_months=plan.pack_validity_months,
         credit_grants=credit_grants_out,
         credit_grants_relation=plan.credit_grants_relation,
         monthly_price_value=monthly_price_value,
@@ -857,6 +858,7 @@ def _validate_formula_payload(
     *,
     kind: PlanKind,
     credits_count: int | None,
+    pack_validity_months: int | None,
     monthly_price_value: Decimal | None,
     currency_code: str | None,
     credit_grants: list[tuple[UUID, int]] | None = None,
@@ -876,6 +878,11 @@ def _validate_formula_payload(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="credits_count is required for PACK formulas",
+        )
+    if kind == PlanKind.PACK and (pack_validity_months is None or pack_validity_months < 1 or pack_validity_months > 12):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="pack_validity_months is required for PACK formulas (1-12)",
         )
     if kind == PlanKind.PACK and credit_grants is not None and len(credit_grants) == 0:
         raise HTTPException(
@@ -1623,6 +1630,7 @@ def create_admin_formula(
     _validate_formula_payload(
         kind=payload.kind,
         credits_count=payload.credits_count,
+        pack_validity_months=payload.pack_validity_months if payload.kind == PlanKind.PACK else None,
         monthly_price_value=monthly_price_value,
         currency_code=currency_code,
         credit_grants=_normalize_credit_grants(db, payload.credit_grants) if payload.kind == PlanKind.PACK else [],
@@ -1651,6 +1659,7 @@ def create_admin_formula(
         name=payload.name.strip(),
         kind=payload.kind,
         credits_count=effective_credits_count if payload.kind == PlanKind.PACK else None,
+        pack_validity_months=payload.pack_validity_months if payload.kind == PlanKind.PACK else None,
         credit_grants_relation=payload.credit_grants_relation if payload.kind == PlanKind.PACK else PlanCreditGrantsRelation.OR,
         monthly_price_value=monthly_price_value,
         price_tax_mode=payload.price_tax_mode,
@@ -1724,11 +1733,17 @@ def update_admin_formula(
         else PlanCreditGrantsRelation.OR
     )
     target_credits = _effective_pack_credits_count(target_credit_grants, target_credit_relation) if target_kind == PlanKind.PACK else None
+    target_pack_validity_months = (
+        updates.get("pack_validity_months", plan.pack_validity_months)
+        if target_kind == PlanKind.PACK
+        else None
+    )
     target_currency_raw = updates.get("currency_code", plan.currency_code)
     target_currency = target_currency_raw.upper() if isinstance(target_currency_raw, str) else target_currency_raw
     _validate_formula_payload(
         kind=target_kind,
         credits_count=target_credits,
+        pack_validity_months=target_pack_validity_months,
         monthly_price_value=target_monthly_price_value,
         currency_code=target_currency,
         credit_grants=target_credit_grants if target_kind == PlanKind.PACK else [],
@@ -1738,6 +1753,8 @@ def update_admin_formula(
         plan.name = updates["name"].strip()
     if "kind" in updates:
         plan.kind = target_kind
+        if target_kind != PlanKind.PACK:
+            plan.pack_validity_months = None
     if "credit_grants_relation" in updates:
         plan.credit_grants_relation = updates["credit_grants_relation"] or PlanCreditGrantsRelation.OR
     if "active" in updates:
@@ -1760,6 +1777,8 @@ def update_admin_formula(
         plan.currency_code = target_currency
     if "credits_count" in updates and target_kind == PlanKind.PACK and "credit_grants" not in updates:
         plan.credits_count = updates["credits_count"]
+    if target_kind == PlanKind.PACK and ("pack_validity_months" in updates or "kind" in updates):
+        plan.pack_validity_months = target_pack_validity_months
     if "options" in updates:
         plan.options_json = _normalize_option_values(updates["options"])
     if "payment_methods" in updates:
@@ -1830,6 +1849,7 @@ def duplicate_admin_formula(
         name=f"{source.name} - copie",
         kind=source.kind,
         credits_count=source.credits_count,
+        pack_validity_months=source.pack_validity_months,
         credit_grants_relation=source.credit_grants_relation,
         monthly_price_value=source.monthly_price_value,
         price_tax_mode=source.price_tax_mode,

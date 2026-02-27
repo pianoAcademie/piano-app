@@ -102,7 +102,7 @@ export type PlanOut = {
   id: string;
   code: string;
   name: string;
-  kind: "PACK" | "SUBSCRIPTION";
+  kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
   credits_count: number | null;
   monthly_price_excl_vat: string | null;
   currency_code: string | null;
@@ -129,7 +129,7 @@ export type SubscriptionOut = {
     id: string;
     code: string;
     name: string;
-    kind: "PACK" | "SUBSCRIPTION";
+    kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
   };
 };
 
@@ -224,7 +224,7 @@ export type AdminClientSubscriptionOut = {
     id: string;
     code: string;
     name: string;
-    kind: "PACK" | "SUBSCRIPTION";
+    kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
   };
   estimated_price_excl_vat: string | null;
   estimated_vat_rate: string | null;
@@ -270,7 +270,7 @@ export type AdminClientMessageOut = {
 
 export type AdminClientPaymentOut = {
   id: string;
-  source: "PLAN_PURCHASE" | "BOOKING" | string;
+  source: "PLAN_PURCHASE" | "BOOKING" | "MANUAL" | string;
   occurred_at: string;
   label: string;
   status: string;
@@ -967,11 +967,12 @@ export type AdminFormulaOut = {
   id: string;
   code: string;
   name: string;
-  kind: "PACK" | "SUBSCRIPTION";
+  kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
   active: boolean;
   is_private: boolean;
   description: string | null;
   credits_count: number | null;
+  pack_validity_months: number | null;
   credit_grants: AdminFormulaCreditGrantOut[];
   credit_grants_relation: AdminFormulaCreditGrantsRelation;
   monthly_price_value: string | null;
