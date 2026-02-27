@@ -1408,7 +1408,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   {selectedSessionBookings.map((booking, index) => (
                     <article key={booking.id} className="item row spread session-booking-summary-row">
                       <div>
-                        <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
+                        {booking.client_id ? (
+                          <Link
+                            className="client-name-link"
+                            href={`/admin/clients/${booking.client_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Ouvrir la fiche client dans un nouvel onglet"
+                          >
+                            {booking.client_display_name || `Participant ${index + 1}`}
+                          </Link>
+                        ) : (
+                          <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
+                        )}
                         <br />
                         <small className="muted">{booking.client_email}</small>
                       </div>
