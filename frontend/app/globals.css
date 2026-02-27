@@ -1432,6 +1432,32 @@ button.danger {
   gap: 10px;
 }
 
+.manual-transaction-back-link {
+  display: inline-flex;
+  margin: 2px 0 8px;
+}
+
+.manual-transaction-choice-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.manual-transaction-choice {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fffdf9;
+  color: inherit;
+  text-decoration: none;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.manual-transaction-choice:hover {
+  border-color: #d2b184;
+  background: #fff8ec;
+}
+
 .purchase-total-line {
   margin-top: 6px;
   font-weight: 700;
@@ -1917,6 +1943,18 @@ button.danger {
 
 .config-payment-line {
   justify-content: flex-start;
+}
+
+.config-products-preview {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.config-products-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .config-formula-table td {

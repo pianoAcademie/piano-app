@@ -15,6 +15,7 @@ import {
   updateAdminConfigMessagingSettingsAction,
   updateAdminConfigInvoiceTemplateAction,
   updateAdminConfigProfessorDefaultGridAction,
+  updateAdminConfigProductCategoriesAction,
   updateAdminConfigPaymentMethodsAction,
   updateAdminConfigPaymentProviderAction,
   updateAdminConfigSubscriptionsAction,
@@ -33,6 +34,7 @@ import type {
   AdminInvoiceTemplateOut,
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
+  AdminProductCategoriesOut,
   AdminProfessorDefaultGridOut,
   AdminSubscriptionSettingsOut,
 } from "../../../lib/types";
@@ -270,6 +272,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     accountResult,
     subscriptionsResult,
     paymentMethodsResult,
+    productCategoriesResult,
     paymentProviderResult,
     messagingSettingsResult,
     invoiceTemplateResult,
@@ -285,6 +288,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
     backendRequest<AdminSubscriptionSettingsOut>("/api/v1/admin/config/subscriptions", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
+    backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
     backendRequest<AdminPaymentProviderOut>("/api/v1/admin/config/payment-provider", {}, token),
     backendRequest<AdminMessagingSettingsOut>("/api/v1/admin/config/messaging-settings", {}, token),
     backendRequest<AdminInvoiceTemplateOut>("/api/v1/admin/config/invoice-template", {}, token),
@@ -333,6 +337,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     : (() => {
         loadErrors.push(`PSP: ${paymentProviderResult.message}`);
         return null;
+      })();
+  const productCategories = productCategoriesResult.ok
+    ? productCategoriesResult.data
+    : (() => {
+        loadErrors.push(`Produits: ${productCategoriesResult.message}`);
+        return { categories: [], updated_at: null } as AdminProductCategoriesOut;
       })();
   const messagingSettings = messagingSettingsResult.ok
     ? messagingSettingsResult.data
@@ -877,6 +887,48 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 )}
               </section>
             </>
+          ) : null}
+
+          {section === "products" ? (
+            <section className="card">
+              <h3>Categories produits et facturation</h3>
+              <p className="muted">
+                Ces categories sont utilisees dans l ajout manuel des montants factures et des rabais.
+              </p>
+              {productCategories.updated_at ? (
+                <p className="muted">Derniere mise a jour: {new Date(productCategories.updated_at).toLocaleString("fr-FR")}</p>
+              ) : null}
+
+              <form action={updateAdminConfigProductCategoriesAction} className="grid config-form-grid">
+                <label>
+                  Categories (une par ligne, ou separees par virgules/points-virgules)
+                  <textarea
+                    name="categories"
+                    rows={10}
+                    defaultValue={productCategories.categories.join("\n")}
+                    placeholder={"Lecon\nFrais de dossier\nLocation salle"}
+                  />
+                </label>
+                <div className="row">
+                  <button type="submit">Enregistrer</button>
+                </div>
+              </form>
+
+              <div className="config-products-preview">
+                <strong>Categories actives ({productCategories.categories.length})</strong>
+                {productCategories.categories.length === 0 ? (
+                  <p className="muted">Aucune categorie configuree.</p>
+                ) : (
+                  <div className="config-products-chip-list">
+                    {productCategories.categories.map((category) => (
+                      <span key={category} className="badge">
+                        {category}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
           ) : null}
 
           {section === "params-messaging" ? (
@@ -1984,7 +2036,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           section !== "params-messaging" &&
           section !== "formulas" &&
           section !== "activities" &&
-          section !== "credit-types" ? (
+          section !== "credit-types" &&
+          section !== "products" ? (
             <section className="card config-placeholder-card">
               <h3>{placeholderTitleBySection[section]}</h3>
               <p className="muted">Cette section est reservee pour un prochain ticket (V2), avec ecran detaille.</p>

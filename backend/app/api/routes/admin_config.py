@@ -41,6 +41,8 @@ from app.schemas.admin import (
     AdminPaymentMethodOptionOut,
     AdminPaymentMethodsOut,
     AdminPaymentMethodsUpdateRequest,
+    AdminProductCategoriesOut,
+    AdminProductCategoriesUpdateRequest,
     AdminPaymentProviderOut,
     AdminPaymentProviderUpdateRequest,
     AdminMessagingChannel,
@@ -149,10 +151,33 @@ SUBSCRIPTION_SETTING_DEFAULTS = {
 }
 
 PAYMENT_METHODS_SETTING_KEY = "config_payment_methods_enabled"
+PRODUCT_CATEGORIES_SETTING_KEY = "config_products_categories_v1"
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _normalize_product_categories(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        normalized = str(raw or "").strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized[:120])
+    return out
+
+
+def _parse_product_categories(raw: str) -> list[str]:
+    if not raw.strip():
+        return []
+    tokens = re.split(r"[\n,;]+", raw)
+    return _normalize_product_categories(tokens)
 
 
 def _slugify(value: str) -> str:
@@ -1279,6 +1304,29 @@ def update_admin_payment_methods(
     _set_setting(db, PAYMENT_METHODS_SETTING_KEY, ",".join(enabled_codes))
     db.commit()
     return get_admin_payment_methods(db=db)
+
+
+@router.get("/config/product-categories", response_model=AdminProductCategoriesOut)
+def get_admin_product_categories(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProductCategoriesOut:
+    setting = _get_setting(db, PRODUCT_CATEGORIES_SETTING_KEY)
+    categories = _parse_product_categories(setting.value) if setting is not None else []
+    return AdminProductCategoriesOut(categories=categories, updated_at=setting.updated_at if setting is not None else None)
+
+
+@router.put("/config/product-categories", response_model=AdminProductCategoriesOut)
+def update_admin_product_categories(
+    payload: AdminProductCategoriesUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProductCategoriesOut:
+    categories = _normalize_product_categories(payload.categories)
+    _set_setting(db, PRODUCT_CATEGORIES_SETTING_KEY, "\n".join(categories))
+    db.commit()
+    setting = _get_setting(db, PRODUCT_CATEGORIES_SETTING_KEY)
+    return AdminProductCategoriesOut(categories=categories, updated_at=setting.updated_at if setting is not None else _utcnow())
 
 
 @router.get("/config/payment-provider", response_model=AdminPaymentProviderOut)

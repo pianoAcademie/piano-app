@@ -44,6 +44,8 @@ import type {
   AdminClientOut,
   AdminClientPaymentOut,
   AdminClientSubscriptionOut,
+  AdminPaymentMethodsOut,
+  AdminProductCategoriesOut,
   PlanOut,
 } from "../../../../lib/types";
 
@@ -233,6 +235,19 @@ function paymentsHref(clientId: string, params: Record<string, string>): string 
   return `/admin/clients/${clientId}?${search.toString()}`;
 }
 
+const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount"] as const;
+type ManualTransactionModalType = (typeof MANUAL_TRANSACTION_MODAL_TYPES)[number];
+
+const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{ code: string; label: string }> = [
+  { code: "CARD_ONLINE", label: "CB en ligne (Mollie / Payplug)" },
+  { code: "CARD_TERMINAL", label: "CB sur place (TPE)" },
+  { code: "CHECK", label: "Cheque" },
+  { code: "CASH", label: "Especes" },
+  { code: "PAYPAL", label: "PayPal" },
+  { code: "SEPA_DEBIT", label: "Prelevement SEPA" },
+  { code: "BANK_TRANSFER", label: "Virement bancaire" },
+];
+
 function statusClass(status: string): string {
   const normalized = status.toUpperCase();
   if (normalized === "ACTIVE" || normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "SENT" || normalized === "PAID") {
@@ -311,6 +326,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const openManualCreditModal = readParam(searchParams, "edit_credit") === "1";
   const creditTypeModalId = readParam(searchParams, "credit_type_id");
   const paymentModalAction = readParam(searchParams, "payment_modal");
+  const manualTransactionModalTypeRaw = readParam(searchParams, "manual_type").toLowerCase();
+  const manualTransactionModalType = MANUAL_TRANSACTION_MODAL_TYPES.includes(
+    manualTransactionModalTypeRaw as ManualTransactionModalType,
+  )
+    ? (manualTransactionModalTypeRaw as ManualTransactionModalType)
+    : null;
   const paymentModalSource = readParam(searchParams, "payment_source").toUpperCase();
   const paymentModalId = readParam(searchParams, "payment_id");
   const purchaseModalAction = readParam(searchParams, "purchase_modal");
@@ -327,6 +348,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     bookingsResult,
     messagesResult,
     paymentsResult,
+    productCategoriesResult,
+    paymentMethodsResult,
     familyResult,
     allClientsResult,
     groupsResult,
@@ -339,6 +362,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminClientBookingOut[]>(`/api/v1/admin/clients/${params.clientId}/bookings`, {}, token),
     backendRequest<AdminClientMessageOut[]>(`/api/v1/admin/clients/${params.clientId}/messages`, {}, token),
     backendRequest<AdminClientPaymentOut[]>(`/api/v1/admin/clients/${params.clientId}/payments`, {}, token),
+    backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
+    backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
     backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${params.clientId}/family`, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
     backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=false", {}, token),
@@ -393,6 +418,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : (() => {
         errors.push(`payments: ${paymentsResult.message}`);
         return [] as AdminClientPaymentOut[];
+      })();
+
+  const productCategories = productCategoriesResult.ok
+    ? productCategoriesResult.data.categories
+    : (() => {
+        errors.push(`product_categories: ${productCategoriesResult.message}`);
+        return [] as string[];
+      })();
+
+  const enabledPaymentMethods = paymentMethodsResult.ok
+    ? paymentMethodsResult.data.methods.filter((method) => method.enabled)
+    : (() => {
+        errors.push(`payment_methods: ${paymentMethodsResult.message}`);
+        return DEFAULT_PAYMENT_METHOD_OPTIONS.map((item) => ({ ...item, enabled: true }));
       })();
 
   const family = familyResult.ok
@@ -487,6 +526,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     paymentModalAction === "refund"
       ? payments.find((row) => row.id === paymentModalId && row.source.toUpperCase() === paymentModalSource) ?? null
       : null;
+  const openManualTransactionSelector = paymentModalAction === "manual" && manualTransactionModalType === null;
+  const openManualTransactionForm = paymentModalAction === "manual" && manualTransactionModalType !== null;
 
   const totalRemainingCredits = activeSubscriptions.reduce((acc, sub) => {
     if (sub.plan.kind !== "PACK") {
@@ -541,6 +582,41 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     { id: "paiements", label: "Paiements" },
     { id: "reservations", label: "Reservations" },
   ];
+
+  const manualTransactionTypeCodeByModal: Record<ManualTransactionModalType, "PAYMENT" | "REFUND" | "CHARGE" | "DISCOUNT"> = {
+    payment: "PAYMENT",
+    refund: "REFUND",
+    charge: "CHARGE",
+    discount: "DISCOUNT",
+  };
+  const manualTransactionTitleByModal: Record<ManualTransactionModalType, string> = {
+    payment: "Ajouter un paiement",
+    refund: "Ajouter un remboursement",
+    charge: "Ajouter des frais",
+    discount: "Ajouter une remise",
+  };
+  const manualTransactionHelpByModal: Record<ManualTransactionModalType, string> = {
+    payment: "Utiliser cette vue lorsque la famille paie.",
+    refund: "Utiliser cette vue lorsque vous remettez de l argent a la famille.",
+    charge: "Utiliser cette vue pour ajouter un montant facture sans encaissement.",
+    discount: "Utiliser cette vue pour ajouter un rabais (transaction negative).",
+  };
+  const manualTransactionDefaultLabelByModal: Record<ManualTransactionModalType, string> = {
+    payment: "Paiement manuel",
+    refund: "Remboursement",
+    charge: "Montant facture",
+    discount: "Rabais manuel",
+  };
+  const manualTransactionTypeCode =
+    manualTransactionModalType === null ? null : manualTransactionTypeCodeByModal[manualTransactionModalType];
+  const manualTransactionTitle =
+    manualTransactionModalType === null ? "Ajouter une transaction" : manualTransactionTitleByModal[manualTransactionModalType];
+  const manualTransactionHelp =
+    manualTransactionModalType === null ? "" : manualTransactionHelpByModal[manualTransactionModalType];
+  const manualTransactionDefaultLabel =
+    manualTransactionModalType === null ? "" : manualTransactionDefaultLabelByModal[manualTransactionModalType];
+  const manualIsCashFlow = manualTransactionModalType === "payment" || manualTransactionModalType === "refund";
+  const manualVatDefault = manualIsCashFlow ? "0" : "20";
 
   return (
     <section className="admin-page-grid client-detail-page">
@@ -2235,7 +2311,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
-      {currentTab === "paiements" && paymentModalAction === "manual" ? (
+      {currentTab === "paiements" && openManualTransactionSelector ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
             <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
@@ -2243,18 +2319,44 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </Link>
             <h3 className="modal-title">Ajouter une transaction</h3>
             <p className="muted">Paiement, remboursement, montant facture ou rabais.</p>
+            <div className="manual-transaction-choice-grid top-gap-sm">
+              <Link className="manual-transaction-choice" href={paymentsHref(client.id, { payment_modal: "manual", manual_type: "payment" })}>
+                <strong>Paiement</strong>
+                <small className="muted">Quand une famille vous regle.</small>
+              </Link>
+              <Link className="manual-transaction-choice" href={paymentsHref(client.id, { payment_modal: "manual", manual_type: "refund" })}>
+                <strong>Remboursement</strong>
+                <small className="muted">Quand vous redonnez de l argent a la famille.</small>
+              </Link>
+              <Link className="manual-transaction-choice" href={paymentsHref(client.id, { payment_modal: "manual", manual_type: "charge" })}>
+                <strong>Montant facture</strong>
+                <small className="muted">Ajouter un montant du, sans encaissement.</small>
+              </Link>
+              <Link className="manual-transaction-choice" href={paymentsHref(client.id, { payment_modal: "manual", manual_type: "discount" })}>
+                <strong>Rabais</strong>
+                <small className="muted">Reduire le montant du (transaction negative).</small>
+              </Link>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {currentTab === "paiements" && openManualTransactionForm && manualTransactionTypeCode ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+              ×
+            </Link>
+            <Link className="mode-link manual-transaction-back-link" href={paymentsHref(client.id, { payment_modal: "manual" })}>
+              Retour aux types
+            </Link>
+            <h3 className="modal-title">{manualTransactionTitle}</h3>
+            <p className="muted">{manualTransactionHelp}</p>
             <form action={createAdminClientManualTransactionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="currency" value={client.preferred_currency || "EUR"} />
-              <label>
-                Type
-                <select name="transaction_type" defaultValue="CHARGE" required>
-                  <option value="PAYMENT">Paiement</option>
-                  <option value="REFUND">Remboursement</option>
-                  <option value="CHARGE">Montant facture</option>
-                  <option value="DISCOUNT">Rabais</option>
-                </select>
-              </label>
+              <input type="hidden" name="transaction_type" value={manualTransactionTypeCode} />
+              {manualIsCashFlow ? <input type="hidden" name="vat_rate" value={manualVatDefault} /> : null}
               <label>
                 Etudiant (optionnel)
                 <select name="student_id" defaultValue="">
@@ -2271,30 +2373,63 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 Date
                 <input type="date" name="occurred_at" defaultValue={todayInputValue} required />
               </label>
+              {manualIsCashFlow ? (
+                <label>
+                  Mode de paiement (optionnel)
+                  <select name="payment_method_code" defaultValue="">
+                    <option value="">(Non precise)</option>
+                    {enabledPaymentMethods.map((method) => (
+                      <option key={method.code} value={method.code}>
+                        {method.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label>
-                Montant TTC
+                {manualTransactionModalType === "discount" ? "Le montant" : "Montant TTC"}
                 <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
               </label>
-              <label>
-                TVA (%)
-                <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue="20" required />
-              </label>
-              <label>
-                Categorie (optionnel)
-                <input type="text" name="category" maxLength={120} placeholder="Ex: Lecon, Frais..." />
-              </label>
+              {!manualIsCashFlow ? (
+                <>
+                  <label>
+                    TVA (%)
+                    <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={manualVatDefault} required />
+                  </label>
+                  <label>
+                    Categorie (optionnel)
+                    <select name="category" defaultValue="">
+                      <option value="">Selectionner...</option>
+                      {productCategories.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : null}
               <label>
                 Libelle (optionnel)
-                <input type="text" name="label" maxLength={255} placeholder="Ex: Frais de dossier" />
+                <input type="text" name="label" maxLength={255} defaultValue={manualTransactionDefaultLabel} placeholder="Ex: Frais de dossier" />
               </label>
               <label>
-                Reference (optionnel)
-                <input type="text" name="reference" maxLength={120} placeholder="Ex: CHEQUE-1024" />
+                Reference (optionnelle)
+                <input type="text" name="reference" maxLength={120} placeholder="Ex: CHEQUE-1024 / VIREMENT-2026-02" />
               </label>
               <label>
                 Description (optionnel)
                 <textarea name="description" rows={3} maxLength={2000} placeholder="Ce texte apparaitra dans la facture." />
               </label>
+              {!manualIsCashFlow && productCategories.length === 0 ? (
+                <p className="muted">
+                  Aucune categorie disponible. Configurez-les dans{" "}
+                  <Link className="mode-link" href="/admin/config?section=products">
+                    Les produits
+                  </Link>
+                  .
+                </p>
+              ) : null}
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "paiements")}>
                   Annuler

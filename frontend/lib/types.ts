@@ -868,6 +868,11 @@ export type AdminPaymentMethodsOut = {
   methods: AdminPaymentMethodOptionOut[];
 };
 
+export type AdminProductCategoriesOut = {
+  categories: string[];
+  updated_at: string | null;
+};
+
 export type AdminPaymentProviderOut = {
   provider: "PAYPLUG" | "MOLLIE" | string;
   mode: "TEST" | "LIVE" | string;

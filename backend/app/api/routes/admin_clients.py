@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -105,6 +106,7 @@ PENDING_PAYMENT_STATUSES = {"PENDING", "WAITLISTED", "TRIAL", "OPEN", "CREATED",
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
 ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
+PRODUCT_CATEGORIES_SETTING_KEY = "config_products_categories_v1"
 MANUAL_TRANSACTION_SIGN_BY_TYPE = {
     "PAYMENT": Decimal("-1"),
     "DISCOUNT": Decimal("-1"),
@@ -340,6 +342,31 @@ def _manual_transaction_label(transaction_type: str, custom_label: str | None) -
     if custom_label:
         return custom_label
     return MANUAL_TRANSACTION_LABEL_BY_TYPE.get(normalized_type, "Transaction manuelle")
+
+
+def _parse_product_categories(raw: str) -> list[str]:
+    if not raw.strip():
+        return []
+    tokens = re.split(r"[\n,;]+", raw)
+    out: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        normalized = token.strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized[:120])
+    return out
+
+
+def _configured_product_categories(db: Session) -> list[str]:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == PRODUCT_CATEGORIES_SETTING_KEY))
+    if setting is None:
+        return []
+    return _parse_product_categories(setting.value or "")
 
 
 def _payment_source_label(source: str) -> str:
@@ -2989,6 +3016,13 @@ def create_admin_client_manual_transaction(
     label = _manual_transaction_label(transaction_type, _normalize_optional(payload.label))
     description = _normalize_optional(payload.description)
     category = _normalize_optional(payload.category)
+    if category:
+        allowed_categories = _configured_product_categories(db)
+        if allowed_categories and category.casefold() not in {item.casefold() for item in allowed_categories}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Unknown category. Update products categories in admin config first.",
+            )
     reference = _normalize_optional(payload.reference)
     currency = _normalize_currency(payload.currency, fallback=client.preferred_currency or "EUR")
     occurred_at = payload.occurred_at or _utcnow()

@@ -102,6 +102,15 @@ class AdminPaymentMethodsUpdateRequest(BaseModel):
     enabled_codes: list[str] = Field(default_factory=list)
 
 
+class AdminProductCategoriesOut(BaseModel):
+    categories: list[str] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class AdminProductCategoriesUpdateRequest(BaseModel):
+    categories: list[str] = Field(default_factory=list)
+
+
 class AdminPaymentProviderOut(BaseModel):
     provider: str
     mode: str

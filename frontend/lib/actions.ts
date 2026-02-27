@@ -14,6 +14,7 @@ import type {
   AdminMessagingSettingsOut,
   AdminMessagingTemplateOut,
   AdminPlanningActivitiesOut,
+  AdminProductCategoriesOut,
   AdminProfessorContractDeleteOut,
   AdminProfessorContractGridOut,
   AdminProfessorContractOut,
@@ -2167,6 +2168,9 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   const occurredAt = occurredAtRaw ? parseUtcStartOfDate(occurredAtRaw) : null;
   const amountInclVat = parseNonNegativeDecimal(amountRaw);
   const vatRate = parseNonNegativeDecimal(vatRateRaw);
+  const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
+  const customReference = optionalField(formData, "reference");
+  const resolvedReference = customReference ?? (paymentMethodCode ? `MODE:${paymentMethodCode}` : null);
 
   if (!clientId) {
     redirect("/admin/clients?error=Client%20invalide");
@@ -2194,7 +2198,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         label: optionalField(formData, "label"),
         description: optionalField(formData, "description"),
         category: optionalField(formData, "category"),
-        reference: optionalField(formData, "reference"),
+        reference: resolvedReference,
         student_id: optionalField(formData, "student_id"),
         amount_incl_vat: amountInclVat,
         vat_rate: vatRate,
@@ -3824,6 +3828,49 @@ export async function updateAdminConfigPaymentMethodsAction(formData: FormData):
 
   revalidatePath("/admin/config");
   redirect("/admin/config?section=params-payments&ok=Moyens%20de%20paiement%20mis%20a%20jour");
+}
+
+export async function updateAdminConfigProductCategoriesAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const raw = String(formData.get("categories") ?? "");
+  const categories = raw
+    .split(/[\n,;]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  const deduplicated: string[] = [];
+  const seen = new Set<string>();
+  for (const category of categories) {
+    const key = category.toLocaleLowerCase("fr-FR");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduplicated.push(category);
+  }
+
+  const result = await backendRequest<AdminProductCategoriesOut>(
+    "/api/v1/admin/config/product-categories",
+    {
+      method: "PUT",
+      body: JSON.stringify({ categories: deduplicated }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=products&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin/clients");
+  redirect("/admin/config?section=products&ok=Categories%20produits%20mises%20a%20jour");
 }
 
 export async function updateAdminConfigPaymentProviderAction(formData: FormData): Promise<void> {
