@@ -210,6 +210,9 @@ function paymentStatusLabel(status: string): string {
   if (normalized === "PAID") {
     return "Paye";
   }
+  if (normalized === "INCLUDED_PLAN") {
+    return "Inclus formule";
+  }
   if (normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "NO_SHOW") {
     return "A facturer";
   }
@@ -234,6 +237,38 @@ function paymentStatusLabel(status: string): string {
   return normalized || "Inconnu";
 }
 
+function parseAmountFilter(value: string): number | null {
+  const normalized = value.replace(",", ".").trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.round(parsed * 100) / 100;
+}
+
+function isIncludedPlanBooking(row: AdminClientPaymentOut): boolean {
+  const source = (row.source || "").trim().toUpperCase();
+  const status = (row.status || "").trim().toUpperCase();
+  if (source !== "BOOKING") {
+    return false;
+  }
+  if (status === "INCLUDED_PLAN") {
+    return true;
+  }
+  if (status !== "BOOKED" && status !== "ATTENDED" && status !== "NO_SHOW") {
+    return false;
+  }
+  const total = Number(row.total_incl_vat || "0");
+  return Number.isFinite(total) && Math.abs(total) < 0.01 && Boolean(row.reference);
+}
+
+function paymentStatusDisplayLabel(row: AdminClientPaymentOut): string {
+  return isIncludedPlanBooking(row) ? "Inclus formule" : paymentStatusLabel(row.status);
+}
+
 const PAID_PAYMENT_STATUSES = new Set(["PAID", "SUCCEEDED", "COMPLETED"]);
 const PENDING_PAYMENT_STATUSES = new Set([
   "PENDING",
@@ -256,7 +291,7 @@ function normalizePaymentStatus(status: string): string {
 
 function shouldCountInClientBalance(row: AdminClientPaymentOut): boolean {
   const status = normalizePaymentStatus(row.status);
-  if (status === "NOT_BILLABLE" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
+  if (status === "NOT_BILLABLE" || status === "INCLUDED_PLAN" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
     return false;
   }
 
@@ -566,6 +601,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const purchaseReturnTab = parseTab(readParam(searchParams, "purchase_return_tab") || currentTab);
   const paymentReturnTab = parseTab(paymentReturnTabRaw || currentTab);
   const balanceDateParam = readParam(searchParams, "balance_date");
+  const paymentFilterQuery = readParam(searchParams, "payment_filter_q").trim();
+  const paymentFilterAmountRaw = readParam(searchParams, "payment_filter_amount").trim();
+  const paymentFilterAmount = parseAmountFilter(paymentFilterAmountRaw);
+  const hasPaymentFilters = paymentFilterQuery.length > 0 || paymentFilterAmount !== null;
 
   const [
     clientResult,
@@ -760,6 +799,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       : null;
   const openManualTransactionSelector = paymentModalAction === "manual" && manualTransactionModalType === null;
   const openManualTransactionForm = paymentModalAction === "manual" && manualTransactionModalType !== null;
+  const openPaymentFiltersModal = paymentModalAction === "filters";
 
   const totalRemainingCredits = activeSubscriptions.reduce((acc, sub) => {
     if (sub.plan.kind !== "PACK") {
@@ -791,6 +831,30 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       return false;
     }
     return occurredAtMs <= selectedBalanceDateEndMs;
+  });
+
+  const filteredPayments = payments.filter((row) => {
+    if (paymentFilterQuery.length > 0) {
+      const searchable = [
+        paymentSourceLabel(row.source),
+        row.label,
+        row.reference ?? "",
+        paymentStatusDisplayLabel(row),
+        row.invoice_number ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!searchable.includes(paymentFilterQuery.toLowerCase())) {
+        return false;
+      }
+    }
+    if (paymentFilterAmount !== null) {
+      const rowAmount = Number(row.total_incl_vat || "0");
+      if (!Number.isFinite(rowAmount) || Math.abs(rowAmount - paymentFilterAmount) > 0.009) {
+        return false;
+      }
+    }
+    return true;
   });
 
   const paymentInvoices: InvoiceListRow[] = payments
@@ -2589,8 +2653,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     Annule/non facturable {currency}: {formatMoney(String(total), currency)}
                   </span>
                 ))}
+                {hasPaymentFilters ? (
+                  <span className="badge">
+                    Filtres actifs
+                    {paymentFilterQuery ? ` | texte: ${paymentFilterQuery}` : ""}
+                    {paymentFilterAmount !== null ? ` | montant: ${paymentFilterAmount.toFixed(2)}` : ""}
+                  </span>
+                ) : null}
                 <form method="get" className="row balance-date-form">
                   <input type="hidden" name="tab" value="paiements" />
+                  {paymentFilterQuery ? <input type="hidden" name="payment_filter_q" value={paymentFilterQuery} /> : null}
+                  {paymentFilterAmountRaw ? <input type="hidden" name="payment_filter_amount" value={paymentFilterAmountRaw} /> : null}
                   <label className="balance-date-label">
                     Date solde
                     <input type="date" name="balance_date" defaultValue={selectedBalanceDate} />
@@ -2604,6 +2677,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   href={paymentsHref(client.id, { payment_modal: "manual", balance_date: selectedBalanceDate })}
                 >
                   Ajouter une transaction
+                </Link>
+                <Link
+                  className="mode-link"
+                  href={paymentsHref(client.id, {
+                    payment_modal: "filters",
+                    balance_date: selectedBalanceDate,
+                    payment_filter_q: paymentFilterQuery,
+                    payment_filter_amount: paymentFilterAmountRaw,
+                  })}
+                >
+                  Filtrer
                 </Link>
                 <Link
                   className="mode-link"
@@ -2635,7 +2719,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <th>Date</th>
                       <th>Type</th>
                       <th>Libelle</th>
-                      <th>Reference</th>
+                      <th>Formule liee</th>
                       <th>Tarif prestation</th>
                       <th>Statut</th>
                       <th>Total</th>
@@ -2643,7 +2727,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </tr>
                   </thead>
                   <tbody>
-                    {payments.map((row) => (
+                    {filteredPayments.map((row) => (
                       <tr key={`${row.source}-${row.id}`}>
                         <td>{formatDate(row.occurred_at)}</td>
                         <td>{paymentSourceLabel(row.source)}</td>
@@ -2655,7 +2739,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             </small>
                           </div>
                         </td>
-                        <td>{row.reference ?? "-"}</td>
+                        <td>{row.source.toUpperCase() === "BOOKING" ? row.reference ?? "-" : "-"}</td>
                         <td>
                           <div className="stack-xs">
                             <span>{formatMoney(row.total_incl_vat, row.currency)}</span>
@@ -2666,7 +2750,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           </div>
                         </td>
                         <td>
-                          <span className={`status-pill ${paymentStatusClass(row.status)}`}>{paymentStatusLabel(row.status)}</span>
+                          <span className={`status-pill ${isIncludedPlanBooking(row) ? "status-off" : paymentStatusClass(row.status)}`}>
+                            {paymentStatusDisplayLabel(row)}
+                          </span>
                         </td>
                         <td>{formatMoney(row.total_incl_vat, row.currency)}</td>
                         <td>
@@ -2701,6 +2787,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     ))}
                   </tbody>
                 </table>
+                {filteredPayments.length === 0 ? (
+                  <p className="muted top-gap-sm">Aucune ligne ne correspond aux filtres.</p>
+                ) : null}
               </div>
             )}
           </article>
@@ -2797,6 +2886,51 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <small className="muted">Reduire le montant du (transaction negative).</small>
               </Link>
             </div>
+          </article>
+        </section>
+      ) : null}
+
+      {currentTab === "paiements" && openPaymentFiltersModal ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link
+              className="modal-close-x"
+              href={paymentsHref(client.id, {
+                balance_date: selectedBalanceDate,
+                payment_filter_q: paymentFilterQuery,
+                payment_filter_amount: paymentFilterAmountRaw,
+              })}
+              aria-label="Fermer"
+            >
+              ×
+            </Link>
+            <h3 className="modal-title">Filtrer les transactions</h3>
+            <p className="muted">Recherche libre (libelle, statut, formule) et/ou montant exact TTC.</p>
+            <form method="get" action={`/admin/clients/${client.id}`} className="grid top-gap-sm">
+              <input type="hidden" name="tab" value="paiements" />
+              <input type="hidden" name="balance_date" value={selectedBalanceDate} />
+              <label>
+                Recherche
+                <input type="text" name="payment_filter_q" defaultValue={paymentFilterQuery} placeholder="Ex: collectif, inclus formule..." />
+              </label>
+              <label>
+                Montant TTC
+                <input
+                  type="number"
+                  name="payment_filter_amount"
+                  step="0.01"
+                  min="-999999"
+                  defaultValue={paymentFilterAmountRaw}
+                  placeholder="Ex: 38.00"
+                />
+              </label>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={paymentsHref(client.id, { balance_date: selectedBalanceDate })}>
+                  Reinitialiser
+                </Link>
+                <button type="submit">Appliquer</button>
+              </div>
+            </form>
           </article>
         </section>
       ) : null}

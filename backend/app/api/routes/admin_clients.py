@@ -426,6 +426,19 @@ def _payment_source_label(source: str) -> str:
     return normalized or "Paiement"
 
 
+def _linked_plan_label(plan: Plan | None) -> str | None:
+    if plan is None:
+        return None
+    kind = (plan.kind.value if hasattr(plan.kind, "value") else str(plan.kind or "")).strip().upper()
+    if kind == "PACK":
+        return f"Pack - {plan.name}"
+    if kind == "SUBSCRIPTION":
+        return f"Abonnement - {plan.name}"
+    if kind == "FORFAIT":
+        return f"Forfait - {plan.name}"
+    return plan.name
+
+
 def _invoice_number_for_payment(payment_id: UUID, occurred_at: datetime) -> str:
     compact = str(payment_id).replace("-", "").upper()
     short = compact[:8] if compact else "XXXX0000"
@@ -3053,7 +3066,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 vat_amount=Decimal("0.00") if not is_billable else _quantize_money(Decimal(vat_amount)),
                 total_incl_vat=Decimal("0.00") if not is_billable else _quantize_money(Decimal(total_incl_vat)),
                 currency=_normalize_currency(currency, fallback=(billing_profile.preferred_currency or "EUR").upper()),
-                reference=str(session_obj.id),
+                reference=_linked_plan_label(plan),
             )
         )
 
