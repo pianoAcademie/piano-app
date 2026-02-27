@@ -13,6 +13,7 @@ import {
   updateAdminCreditTypeAction,
   updateAdminConfigAccountAction,
   updateAdminConfigMessagingSettingsAction,
+  updateAdminConfigInvoiceNumberingAction,
   updateAdminConfigInvoiceTemplateAction,
   updateAdminConfigProfessorDefaultGridAction,
   updateAdminConfigProductCategoriesAction,
@@ -32,6 +33,7 @@ import type {
   AdminMessagingSettingsOut,
   AdminMessagingTemplateOut,
   AdminInvoiceTemplateOut,
+  AdminInvoiceNumberingOut,
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
@@ -276,6 +278,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     paymentProviderResult,
     messagingSettingsResult,
     invoiceTemplateResult,
+    invoiceNumberingResult,
     emailPredefinedTemplatesResult,
     smsPredefinedTemplatesResult,
     customTemplatesResult,
@@ -292,6 +295,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminPaymentProviderOut>("/api/v1/admin/config/payment-provider", {}, token),
     backendRequest<AdminMessagingSettingsOut>("/api/v1/admin/config/messaging-settings", {}, token),
     backendRequest<AdminInvoiceTemplateOut>("/api/v1/admin/config/invoice-template", {}, token),
+    backendRequest<AdminInvoiceNumberingOut>("/api/v1/admin/config/invoice-numbering", {}, token),
     backendRequest<AdminMessagingTemplateOut[]>(
       "/api/v1/admin/config/messaging-templates?channel=EMAIL&kind=PREDEFINED",
       {},
@@ -354,6 +358,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     ? invoiceTemplateResult.data
     : (() => {
         loadErrors.push(`Modele facture: ${invoiceTemplateResult.message}`);
+        return null;
+      })();
+  const invoiceNumbering = invoiceNumberingResult.ok
+    ? invoiceNumberingResult.data
+    : (() => {
+        loadErrors.push(`Numero facture: ${invoiceNumberingResult.message}`);
         return null;
       })();
   const emailPredefinedTemplates = emailPredefinedTemplatesResult.ok
@@ -1063,6 +1073,45 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
               <section className="card">
                 <h3>Modele de facture</h3>
+                {!invoiceNumbering ? (
+                  <p className="muted">Impossible de charger la numerotation des factures.</p>
+                ) : (
+                  <form action={updateAdminConfigInvoiceNumberingAction} className="grid config-form-grid">
+                    <h4>Numero de facture</h4>
+                    <label>
+                      Format du numero
+                      <input
+                        type="text"
+                        name="format_pattern"
+                        defaultValue={invoiceNumbering.format_pattern}
+                        maxLength={120}
+                        required
+                      />
+                    </label>
+                    <p className="muted">Variables: %YYYY% %YY% %MM% %DD% %NNNN% (ou %NNNNNN% pour plus de digits)</p>
+                    <label>
+                      Prochain numero
+                      <input
+                        type="number"
+                        name="next_number"
+                        defaultValue={String(invoiceNumbering.next_number)}
+                        min={1}
+                        step={1}
+                        required
+                      />
+                    </label>
+                    <p className="muted">Apercu: {invoiceNumbering.preview}</p>
+                    {invoiceNumbering.updated_at ? (
+                      <p className="muted">
+                        Derniere mise a jour: {new Date(invoiceNumbering.updated_at).toLocaleString("fr-FR")}
+                      </p>
+                    ) : null}
+                    <div className="row">
+                      <button type="submit">Enregistrer la numerotation</button>
+                    </div>
+                  </form>
+                )}
+                <hr />
                 {!invoiceTemplate ? (
                   <p className="muted">Impossible de charger le modele de facture.</p>
                 ) : (

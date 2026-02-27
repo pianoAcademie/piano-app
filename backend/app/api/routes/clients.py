@@ -153,6 +153,14 @@ def _display_name(user: User) -> str:
     return full_name or user.email
 
 
+def _billing_address_label(user: User) -> str:
+    line_1 = (user.address_line or "").strip()
+    city_line = " ".join(part for part in [(user.postal_code or "").strip(), (user.city or "").strip()] if part).strip()
+    country = (user.address_country or user.residence_country or "").strip().upper()
+    parts = [line_1, city_line, country]
+    return ", ".join(part for part in parts if part) or "-"
+
+
 def _is_failed_payment_status(status_value: str) -> bool:
     normalized = (status_value or "").strip().upper()
     if not normalized:
@@ -1154,11 +1162,14 @@ def download_client_invoice(
     compact = raw_id.replace("-", "").upper()
     short = compact[:8] if compact else "XXXX0000"
     invoice_number = f"FAC-{payment.occurred_at.strftime('%Y%m%d')}-{short}"
+    billing_profile = resolve_billing_profile(db, payment_user)
     line = InvoicePeriodLine(
         date_label=payment.occurred_at.strftime("%d/%m/%Y"),
         type_label=_payment_source_label(payment.source),
         label=payment.label,
         quantity=1,
+        amount_excl_vat=payment.amount_excl_vat,
+        vat_rate=payment.vat_rate,
         vat_amount=payment.vat_amount,
         total_incl_vat=payment.total_incl_vat,
         currency=payment.currency,
@@ -1176,14 +1187,12 @@ def download_client_invoice(
         invoice_number=invoice_number,
         issued_at=payment.occurred_at,
         client_id=str(payment.owner_client_id),
-        client_name=_display_name(payment_user),
+        client_name=_display_name(billing_profile),
         period_label=payment.occurred_at.strftime("%d/%m/%Y"),
-        layout_label="Facture detaillee",
-        include_pending=True,
-        include_cancelled=True,
         lines=[line],
         totals_by_currency=totals,
         note=f"Reference: {payment.reference or '-'}",
+        client_billing_address=_billing_address_label(billing_profile),
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")

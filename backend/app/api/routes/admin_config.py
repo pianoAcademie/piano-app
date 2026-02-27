@@ -55,6 +55,8 @@ from app.schemas.admin import (
     AdminMessagingPredefinedTemplateUpdateRequest,
     AdminInvoiceTemplateOut,
     AdminInvoiceTemplateUpdateRequest,
+    AdminInvoiceNumberingOut,
+    AdminInvoiceNumberingUpdateRequest,
     AdminProfessorDefaultGridLineInput,
     AdminProfessorDefaultGridLineOut,
     AdminProfessorDefaultGridOut,
@@ -102,6 +104,9 @@ from app.services.messaging_templates import (
 from app.services.invoice_documents import (
     INVOICE_TEMPLATE_VARIABLES_HINT,
     get_invoice_template,
+    get_invoice_numbering,
+    preview_invoice_number,
+    save_invoice_numbering,
     save_invoice_template,
 )
 
@@ -1566,6 +1571,41 @@ def update_admin_invoice_template(
     return AdminInvoiceTemplateOut(
         body=body,
         variables_hint=INVOICE_TEMPLATE_VARIABLES_HINT,
+        updated_at=updated_at,
+    )
+
+
+@router.get("/config/invoice-numbering", response_model=AdminInvoiceNumberingOut)
+def get_admin_invoice_numbering(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminInvoiceNumberingOut:
+    pattern, next_number, updated_at = get_invoice_numbering(db)
+    return AdminInvoiceNumberingOut(
+        format_pattern=pattern,
+        next_number=next_number,
+        preview=preview_invoice_number(pattern=pattern, next_number=next_number),
+        updated_at=updated_at,
+    )
+
+
+@router.put("/config/invoice-numbering", response_model=AdminInvoiceNumberingOut)
+def update_admin_invoice_numbering(
+    payload: AdminInvoiceNumberingUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminInvoiceNumberingOut:
+    updated_at = save_invoice_numbering(
+        db,
+        pattern=payload.format_pattern,
+        next_number=payload.next_number,
+    )
+    db.commit()
+    pattern, next_number, _ = get_invoice_numbering(db)
+    return AdminInvoiceNumberingOut(
+        format_pattern=pattern,
+        next_number=next_number,
+        preview=preview_invoice_number(pattern=pattern, next_number=next_number),
         updated_at=updated_at,
     )
 

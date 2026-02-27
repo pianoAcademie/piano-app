@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { backendRequest } from "./backend";
 import type {
   AdminActivityOut,
+  AdminInvoiceNumberingOut,
   AdminInvoiceTemplateOut,
   AdminClientPasswordEmailTemplateOut,
   AdminCreditTypeOut,
@@ -4113,6 +4114,46 @@ export async function updateAdminConfigInvoiceTemplateAction(formData: FormData)
   revalidatePath("/admin/config");
   revalidatePath("/admin/clients");
   redirect("/admin/config?section=params-messaging&ok=Modele%20de%20facture%20mis%20a%20jour");
+}
+
+export async function updateAdminConfigInvoiceNumberingAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const formatPattern = String(formData.get("format_pattern") ?? "").trim();
+  const nextNumberRaw = String(formData.get("next_number") ?? "").trim();
+  const nextNumber = Number.parseInt(nextNumberRaw, 10);
+
+  if (!formatPattern) {
+    redirect("/admin/config?section=params-messaging&error=Format%20numero%20de%20facture%20obligatoire");
+  }
+  if (!Number.isFinite(nextNumber) || nextNumber < 1) {
+    redirect("/admin/config?section=params-messaging&error=Prochain%20numero%20de%20facture%20invalide");
+  }
+
+  const result = await backendRequest<AdminInvoiceNumberingOut>(
+    "/api/v1/admin/config/invoice-numbering",
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        format_pattern: formatPattern,
+        next_number: nextNumber,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin/clients");
+  redirect("/admin/config?section=params-messaging&ok=Numero%20de%20facture%20mis%20a%20jour");
 }
 
 export async function saveAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {

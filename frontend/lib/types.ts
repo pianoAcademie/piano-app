@@ -927,6 +927,13 @@ export type AdminInvoiceTemplateOut = {
   updated_at: string | null;
 };
 
+export type AdminInvoiceNumberingOut = {
+  format_pattern: string;
+  next_number: number;
+  preview: string;
+  updated_at: string | null;
+};
+
 export type AdminProfessorDefaultGridRuleOut = {
   min_students: number;
   max_students: number | null;

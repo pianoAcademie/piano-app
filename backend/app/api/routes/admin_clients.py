@@ -82,7 +82,7 @@ from app.services.client_payment_email import (
 )
 from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
-from app.services.invoice_documents import InvoicePeriodLine, render_invoice_period_pdf
+from app.services.invoice_documents import InvoicePeriodLine, render_invoice_period_pdf, reserve_next_invoice_number
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
     resolve_predefined_template,
@@ -293,6 +293,14 @@ def _safe_sort_text(value: str | None) -> str:
 def _display_name(first_name: str | None, last_name: str | None, email: str) -> str:
     full_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
     return full_name or email
+
+
+def _billing_address_label(user: User) -> str:
+    line_1 = (user.address_line or "").strip()
+    city_line = " ".join(part for part in [(user.postal_code or "").strip(), (user.city or "").strip()] if part).strip()
+    country = (user.address_country or user.residence_country or "").strip().upper()
+    parts = [line_1, city_line, country]
+    return ", ".join(part for part in parts if part) or "-"
 
 
 def _note_author_display_name(author: User | None) -> str:
@@ -3159,6 +3167,8 @@ def download_admin_client_range_invoice(
                     type_label=_payment_source_label(row.source),
                     label=row.label,
                     quantity=1,
+                    amount_excl_vat=_quantize_money(Decimal(row.amount_excl_vat)),
+                    vat_rate=Decimal(row.vat_rate).quantize(Decimal("0.01")),
                     vat_amount=_quantize_money(Decimal(row.vat_amount)),
                     total_incl_vat=_quantize_money(Decimal(row.total_incl_vat)),
                     currency=currency,
@@ -3175,31 +3185,48 @@ def download_admin_client_range_invoice(
             key = (base_label, type_label, currency)
             bucket = grouped.setdefault(
                 key,
-                {"quantity": 0, "vat_amount": Decimal("0.00"), "total_incl_vat": Decimal("0.00")},
+                {
+                    "quantity": 0,
+                    "amount_excl_vat": Decimal("0.00"),
+                    "vat_amount": Decimal("0.00"),
+                    "total_incl_vat": Decimal("0.00"),
+                },
             )
             bucket["quantity"] = int(bucket["quantity"]) + 1
+            bucket["amount_excl_vat"] = _quantize_money(
+                Decimal(bucket["amount_excl_vat"]) + Decimal(row.amount_excl_vat)
+            )
             bucket["vat_amount"] = _quantize_money(Decimal(bucket["vat_amount"]) + Decimal(row.vat_amount))
             bucket["total_incl_vat"] = _quantize_money(Decimal(bucket["total_incl_vat"]) + Decimal(row.total_incl_vat))
 
         period_label = f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}"
         for (base_label, type_label, currency) in sorted(grouped.keys(), key=lambda item: (item[1], item[0], item[2])):
             values = grouped[(base_label, type_label, currency)]
+            amount_excl_vat = _quantize_money(Decimal(values["amount_excl_vat"]))
+            vat_amount = _quantize_money(Decimal(values["vat_amount"]))
+            vat_rate = Decimal("0.00")
+            if amount_excl_vat > Decimal("0.00"):
+                vat_rate = ((vat_amount / amount_excl_vat) * Decimal("100")).quantize(Decimal("0.01"))
             invoice_lines.append(
                 InvoicePeriodLine(
                     date_label=period_label,
                     type_label=type_label,
                     label=base_label,
                     quantity=int(values["quantity"]),
-                    vat_amount=_quantize_money(Decimal(values["vat_amount"])),
+                    amount_excl_vat=amount_excl_vat,
+                    vat_rate=vat_rate,
+                    vat_amount=vat_amount,
                     total_incl_vat=_quantize_money(Decimal(values["total_incl_vat"])),
                     currency=currency,
                 )
             )
 
     issued_at = _utcnow()
-    compact = str(client.id).replace("-", "").upper()
-    invoice_number = f"FAC-RANGE-{issued_at.strftime('%Y%m%d%H%M%S')}-{compact[:6]}"
-    client_label = _display_name(client.first_name, client.last_name, client.email)
+    invoice_number = reserve_next_invoice_number(db, issued_at=issued_at)
+    db.commit()
+    billing_profile = resolve_billing_profile(db, client)
+    client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
+    client_billing_address = _billing_address_label(billing_profile)
     content = render_invoice_period_pdf(
         db,
         invoice_number=invoice_number,
@@ -3207,12 +3234,10 @@ def download_admin_client_range_invoice(
         client_id=str(client.id),
         client_name=client_label,
         period_label=f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}",
-        layout_label="Facture detaillee" if normalized_layout == "DETAILED" else "Facture compilee",
-        include_pending=include_pending,
-        include_cancelled=include_cancelled,
         lines=invoice_lines,
         totals_by_currency=totals_by_currency,
         note=_normalize_optional(note),
+        client_billing_address=client_billing_address,
     )
     file_name = f"{invoice_number}.pdf".replace('"', "")
     return Response(
@@ -3340,12 +3365,15 @@ def download_admin_client_payment_invoice(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
 
     invoice_number = payment.invoice_number or _invoice_number_for_payment(payment.id, payment.occurred_at)
-    client_label = _display_name(payment_user.first_name, payment_user.last_name, payment_user.email)
+    billing_profile = resolve_billing_profile(db, payment_user)
+    client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
     line = InvoicePeriodLine(
         date_label=payment.occurred_at.strftime("%d/%m/%Y"),
         type_label=_payment_source_label(payment.source),
         label=payment.label,
         quantity=1,
+        amount_excl_vat=_quantize_money(Decimal(payment.amount_excl_vat)),
+        vat_rate=Decimal(payment.vat_rate).quantize(Decimal("0.01")),
         vat_amount=_quantize_money(Decimal(payment.vat_amount)),
         total_incl_vat=_quantize_money(Decimal(payment.total_incl_vat)),
         currency=_normalize_currency(payment.currency, fallback="EUR"),
@@ -3364,9 +3392,6 @@ def download_admin_client_payment_invoice(
         client_id=str(client_id),
         client_name=client_label,
         period_label=payment.occurred_at.strftime("%d/%m/%Y"),
-        layout_label="Facture detaillee",
-        include_pending=True,
-        include_cancelled=True,
         lines=[line],
         totals_by_currency=totals,
         note=(
@@ -3374,6 +3399,7 @@ def download_admin_client_payment_invoice(
             + (f" Rembourse le {payment.refunded_at.strftime('%d/%m/%Y %H:%M')}." if payment.refunded_at else "")
             + (f" Motif: {payment.refund_reason}." if payment.refund_reason else "")
         ),
+        client_billing_address=_billing_address_label(billing_profile),
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")

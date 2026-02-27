@@ -215,6 +215,18 @@ class AdminInvoiceTemplateUpdateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=20000)
 
 
+class AdminInvoiceNumberingOut(BaseModel):
+    format_pattern: str
+    next_number: int
+    preview: str
+    updated_at: datetime | None = None
+
+
+class AdminInvoiceNumberingUpdateRequest(BaseModel):
+    format_pattern: str = Field(min_length=1, max_length=120)
+    next_number: int = Field(ge=1, le=999_999_999)
+
+
 class AdminProfessorDefaultGridRuleInput(BaseModel):
     min_students: int = Field(ge=0)
     max_students: int | None = Field(default=None, ge=0)
