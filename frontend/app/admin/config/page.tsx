@@ -896,6 +896,66 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </form>
                 )}
               </section>
+
+              <section className="card">
+                <h3>Parametres de facturation</h3>
+                {!invoiceNumbering ? (
+                  <p className="muted">Impossible de charger la numerotation des factures.</p>
+                ) : (
+                  <form action={updateAdminConfigInvoiceNumberingAction} className="grid config-form-grid">
+                    <h4>Numero de facture</h4>
+                    <label>
+                      Format du numero
+                      <input
+                        type="text"
+                        name="format_pattern"
+                        defaultValue={invoiceNumbering.format_pattern}
+                        maxLength={120}
+                        required
+                      />
+                    </label>
+                    <p className="muted">Variables: %YYYY% %YY% %MM% %DD% %NNNN% (ou %NNNNNN% pour plus de digits)</p>
+                    <label>
+                      Prochain numero
+                      <input
+                        type="number"
+                        name="next_number"
+                        defaultValue={String(invoiceNumbering.next_number)}
+                        min={1}
+                        step={1}
+                        required
+                      />
+                    </label>
+                    <p className="muted">Apercu: {invoiceNumbering.preview}</p>
+                    {invoiceNumbering.updated_at ? (
+                      <p className="muted">
+                        Derniere mise a jour: {new Date(invoiceNumbering.updated_at).toLocaleString("fr-FR")}
+                      </p>
+                    ) : null}
+                    <div className="row">
+                      <button type="submit">Enregistrer la numerotation</button>
+                    </div>
+                  </form>
+                )}
+                <hr />
+                {!invoiceTemplate ? (
+                  <p className="muted">Impossible de charger le modele de facture.</p>
+                ) : (
+                  <form action={updateAdminConfigInvoiceTemplateAction} className="grid config-form-grid">
+                    <p className="muted">Variables disponibles: {invoiceTemplate.variables_hint}</p>
+                    <label>
+                      Corps de facture
+                      <textarea name="body" defaultValue={invoiceTemplate.body} rows={14} required />
+                    </label>
+                    {invoiceTemplate.updated_at ? (
+                      <p className="muted">Derniere mise a jour: {new Date(invoiceTemplate.updated_at).toLocaleString("fr-FR")}</p>
+                    ) : null}
+                    <div className="row">
+                      <button type="submit">Enregistrer le modele de facture</button>
+                    </div>
+                  </form>
+                )}
+              </section>
             </>
           ) : null}
 
@@ -1068,66 +1128,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       </tbody>
                     </table>
                   </div>
-                )}
-              </section>
-
-              <section className="card">
-                <h3>Modele de facture</h3>
-                {!invoiceNumbering ? (
-                  <p className="muted">Impossible de charger la numerotation des factures.</p>
-                ) : (
-                  <form action={updateAdminConfigInvoiceNumberingAction} className="grid config-form-grid">
-                    <h4>Numero de facture</h4>
-                    <label>
-                      Format du numero
-                      <input
-                        type="text"
-                        name="format_pattern"
-                        defaultValue={invoiceNumbering.format_pattern}
-                        maxLength={120}
-                        required
-                      />
-                    </label>
-                    <p className="muted">Variables: %YYYY% %YY% %MM% %DD% %NNNN% (ou %NNNNNN% pour plus de digits)</p>
-                    <label>
-                      Prochain numero
-                      <input
-                        type="number"
-                        name="next_number"
-                        defaultValue={String(invoiceNumbering.next_number)}
-                        min={1}
-                        step={1}
-                        required
-                      />
-                    </label>
-                    <p className="muted">Apercu: {invoiceNumbering.preview}</p>
-                    {invoiceNumbering.updated_at ? (
-                      <p className="muted">
-                        Derniere mise a jour: {new Date(invoiceNumbering.updated_at).toLocaleString("fr-FR")}
-                      </p>
-                    ) : null}
-                    <div className="row">
-                      <button type="submit">Enregistrer la numerotation</button>
-                    </div>
-                  </form>
-                )}
-                <hr />
-                {!invoiceTemplate ? (
-                  <p className="muted">Impossible de charger le modele de facture.</p>
-                ) : (
-                  <form action={updateAdminConfigInvoiceTemplateAction} className="grid config-form-grid">
-                    <p className="muted">Variables disponibles: {invoiceTemplate.variables_hint}</p>
-                    <label>
-                      Corps de facture
-                      <textarea name="body" defaultValue={invoiceTemplate.body} rows={14} required />
-                    </label>
-                    {invoiceTemplate.updated_at ? (
-                      <p className="muted">Derniere mise a jour: {new Date(invoiceTemplate.updated_at).toLocaleString("fr-FR")}</p>
-                    ) : null}
-                    <div className="row">
-                      <button type="submit">Enregistrer le modele de facture</button>
-                    </div>
-                  </form>
                 )}
               </section>
 
