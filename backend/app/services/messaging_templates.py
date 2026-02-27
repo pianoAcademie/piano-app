@@ -200,9 +200,14 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         name="Invoice",
         channel="EMAIL",
         subject="Votre facture Piano Academie",
-        body="Bonjour {first_name},\n\nVotre facture est disponible.\n\nPiano Academie",
+        body=(
+            "Bonjour {first_name},\n\n"
+            "Votre facture {invoice_number} est disponible.\n"
+            "Telechargement: {invoice_url}\n\n"
+            "Piano Academie"
+        ),
         description="Envoi de facture.",
-        variables_hint="{first_name}",
+        variables_hint="{first_name} {invoice_number} {invoice_url}",
     ),
     MessagingTemplateDefinition(
         code="INVOICE_REMINDER",
@@ -229,6 +234,27 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         ),
         description="Demande de finalisation de paiement.",
         variables_hint="{first_name} {plan_name} {amount_due} {currency} {payment_method} {payment_url} {subscription_reference}",
+    ),
+    MessagingTemplateDefinition(
+        code="PAYMENT_CONFIRMED",
+        name="Payment Confirmed",
+        channel="EMAIL",
+        subject="Confirmation de paiement Piano Academie",
+        body=(
+            "Bonjour {first_name},\n\n"
+            "Nous confirmons la reception de votre paiement pour {plan_name}.\n"
+            "Montant regle: {amount_paid} {currency}\n"
+            "Reference abonnement: {subscription_reference}\n"
+            "Date de paiement: {paid_at}\n\n"
+            "Voir vos transactions: {transactions_url}\n"
+            "Telecharger votre facture ({invoice_number}): {invoice_url}\n\n"
+            "Piano Academie"
+        ),
+        description="Confirmation apres paiement valide.",
+        variables_hint=(
+            "{first_name} {plan_name} {amount_paid} {currency} {subscription_reference} "
+            "{paid_at} {transactions_url} {invoice_number} {invoice_url}"
+        ),
     ),
     MessagingTemplateDefinition(
         code="REFUND_ISSUED",

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -11,10 +13,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import SessionLocal
 from app.core.config import settings
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
+from app.models.user import User
+from app.services.client_purchase_notifications import send_client_payment_success_notifications
 from app.services.payment_checkout import lookup_payment
 from app.services.payment_provider import resolve_provider
 
 router = APIRouter(prefix="/public/payments")
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -71,6 +76,7 @@ async def payment_webhook(
             return {"ok": True, "processed": False, "reason": "subscription_not_found"}
         if client_id is not None and sub.user_id != client_id:
             return {"ok": True, "processed": False, "reason": "client_mismatch"}
+        was_paid_before = sub.last_payment_at is not None
 
         plan = db.scalar(select(Plan).where(Plan.id == sub.plan_id))
         if plan is None:
@@ -105,6 +111,28 @@ async def payment_webhook(
 
         db.add(sub)
         db.commit()
+
+        if lookup.paid and not was_paid_before:
+            owner = db.scalar(select(User).where(User.id == sub.user_id))
+            if owner is not None and owner.email:
+                try:
+                    amount_paid: Decimal | None = None
+                    if plan.monthly_price_value is not None:
+                        amount_paid = Decimal(plan.monthly_price_value).quantize(Decimal("0.01"))
+                    send_client_payment_success_notifications(
+                        db,
+                        to_email=owner.email,
+                        first_name=owner.first_name,
+                        last_name=owner.last_name,
+                        plan_name=plan.name,
+                        subscription_id=sub.id,
+                        paid_at=sub.last_payment_at or _utcnow(),
+                        amount_paid=amount_paid,
+                        currency=(plan.currency_code or owner.preferred_currency or "EUR"),
+                    )
+                except Exception:
+                    logger.exception("Unable to send paid confirmation emails for subscription=%s", sub.id)
+
         return {"ok": True, "processed": True, "payment_status": status_text}
     finally:
         db.close()

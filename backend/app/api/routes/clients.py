@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import logging
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -22,6 +23,7 @@ from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, Sessio
 from app.schemas.user import (
     ClientFamilyOverviewOut,
     ClientInvoiceOut,
+    ClientPaymentConfirmOut,
     ClientMessageOut,
     ClientMessageScope,
     ClientPaymentCheckoutOut,
@@ -36,11 +38,14 @@ from app.schemas.user import (
     UserOut,
 )
 from app.services.family_billing import resolve_billing_profile
+from app.services.client_purchase_notifications import send_client_payment_success_notifications
 from app.services.invoice_documents import render_invoice_text
-from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
+from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
+from app.services.payment_provider import resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"}
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
@@ -883,6 +888,111 @@ def create_client_payment_checkout(
         payment_id=f"plan:{subscription.id}",
         checkout_url=checkout.checkout_url,
         provider_reference=subscription.payment_provider_subscription_ref,
+    )
+
+
+@router.post("/clients/me/payments/{payment_id}/confirm", response_model=ClientPaymentConfirmOut)
+def confirm_client_payment(
+    payment_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientPaymentConfirmOut:
+    managed_ids = _managed_client_ids_for_sessions(db, current_user)
+    row = db.execute(
+        select(ClientPlanSubscription, Plan)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .where(
+            ClientPlanSubscription.id == payment_id,
+            ClientPlanSubscription.user_id.in_(managed_ids),
+        )
+        .with_for_update()
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paiement introuvable")
+
+    subscription, plan = row
+    was_paid_before = subscription.last_payment_at is not None
+    payment_reference = (subscription.payment_provider_subscription_ref or "").strip()
+    if not payment_reference:
+        return ClientPaymentConfirmOut(
+            payment_id=f"plan:{subscription.id}",
+            subscription_status=(subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)),
+            last_payment_status=subscription.last_payment_status,
+            paid=False,
+            cancelled=False,
+            failed=False,
+            processed=False,
+            message="Reference PSP absente",
+        )
+
+    provider = resolve_provider(db)
+    lookup = lookup_payment(db, provider=provider, payment_reference=payment_reference)
+    status_text = (lookup.status or "").strip().upper() or "UNKNOWN"
+
+    changed = False
+    if (subscription.last_payment_status or "") != status_text:
+        subscription.last_payment_status = status_text
+        changed = True
+
+    if lookup.paid:
+        if subscription.last_payment_at is None:
+            subscription.last_payment_at = _utcnow()
+            changed = True
+        if subscription.status in {SubscriptionStatus.PENDING, SubscriptionStatus.PAUSED, SubscriptionStatus.ACTIVE}:
+            if subscription.status != SubscriptionStatus.ACTIVE:
+                subscription.status = SubscriptionStatus.ACTIVE
+                changed = True
+        if plan.kind == PlanKind.SUBSCRIPTION and not subscription.auto_renew:
+            subscription.auto_renew = True
+            changed = True
+    elif lookup.cancelled:
+        if subscription.status == SubscriptionStatus.PENDING:
+            subscription.status = SubscriptionStatus.CANCELLED
+            subscription.auto_renew = False
+            subscription.next_payment_at = None
+            changed = True
+
+    if changed:
+        db.add(subscription)
+        db.commit()
+        db.refresh(subscription)
+    else:
+        db.rollback()
+
+    if lookup.paid and not was_paid_before:
+        owner = db.scalar(select(User).where(User.id == subscription.user_id))
+        if owner is not None and owner.email:
+            try:
+                amount_due, currency_code = _plan_amount_due_and_currency(
+                    db,
+                    plan=plan,
+                    country=(owner.residence_country or "FR").upper(),
+                    currency=(owner.preferred_currency or "EUR").upper(),
+                    on_date=subscription.started_at,
+                )
+                send_client_payment_success_notifications(
+                    db,
+                    to_email=owner.email,
+                    first_name=owner.first_name,
+                    last_name=owner.last_name,
+                    plan_name=plan.name,
+                    subscription_id=subscription.id,
+                    paid_at=subscription.last_payment_at or _utcnow(),
+                    amount_paid=amount_due,
+                    currency=currency_code,
+                )
+            except Exception:
+                logger.exception("Unable to send paid confirmation emails for subscription=%s", subscription.id)
+
+    return ClientPaymentConfirmOut(
+        payment_id=f"plan:{subscription.id}",
+        subscription_status=(subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)),
+        last_payment_status=subscription.last_payment_status,
+        paid=lookup.paid,
+        cancelled=lookup.cancelled,
+        failed=lookup.failed,
+        processed=lookup.success,
+        message=lookup.message,
     )
 
 
