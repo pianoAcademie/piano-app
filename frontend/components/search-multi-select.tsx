@@ -15,6 +15,7 @@ type Props = {
   placeholder: string;
   className?: string;
   emptySelectionLabel?: string;
+  maxSelections?: number;
 };
 
 function normalize(value: string): string {
@@ -32,6 +33,7 @@ export default function SearchMultiSelect({
   placeholder,
   className,
   emptySelectionLabel = "Aucune selection.",
+  maxSelections,
 }: Props): JSX.Element {
   const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
   const sortedOptions = useMemo(
@@ -59,11 +61,23 @@ export default function SearchMultiSelect({
   }, [query, selectedSet, sortedOptions]);
   const filteredOptions = matchingOptions.slice(0, 120);
   const hasHiddenOptions = matchingOptions.length > filteredOptions.length;
+  const singleSelection = maxSelections === 1;
   const addSelected = (id: string): void => {
     if (!optionById.has(id)) {
       return;
     }
-    setSelected((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setSelected((prev) => {
+      if (singleSelection) {
+        return prev[0] === id ? prev : [id];
+      }
+      if (prev.includes(id)) {
+        return prev;
+      }
+      if (typeof maxSelections === "number" && maxSelections > 0 && prev.length >= maxSelections) {
+        return prev;
+      }
+      return [...prev, id];
+    });
   };
 
   return (
@@ -134,9 +148,11 @@ export default function SearchMultiSelect({
         {hasHiddenOptions ? <small className="muted">Affichage limite a 120 resultats.</small> : null}
       </div>
 
-      {selected.map((value) => (
-        <input key={value} type="hidden" name={name} value={value} />
-      ))}
+      {singleSelection ? (
+        <input type="hidden" name={name} value={selected[0] ?? ""} />
+      ) : (
+        selected.map((value) => <input key={value} type="hidden" name={name} value={value} />)
+      )}
     </div>
   );
 }

@@ -752,6 +752,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     id: client.id,
     label: clientDisplayName(client),
   }));
+  const bookingClientOptions = clientsSorted.map((client) => ({
+    id: client.id,
+    label: `${clientDisplayName(client)} - ${client.email}`,
+  }));
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
@@ -1454,17 +1458,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <input type="hidden" name="session_id" value={selectedSession.id} />
                 <input type="hidden" name="return_to" value={modalHref} />
 
-                <label className="span-2">
-                  Eleve
-                  <select name="client_id" required>
-                    <option value="">Selectionner un eleve</option>
-                    {clientsSorted.map((client) => (
-                      <option key={client.id} value={client.id}>
-                        {clientDisplayName(client)} - {client.email}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <SearchMultiSelect
+                  className="span-2"
+                  label="Eleve"
+                  name="client_id"
+                  options={bookingClientOptions}
+                  selectedIds={[]}
+                  placeholder="Rechercher un eleve..."
+                  emptySelectionLabel="Aucun eleve selectionne."
+                  maxSelections={1}
+                />
 
                 <label className="checkline span-2">
                   <input type="checkbox" name="apply_recurrence" />
