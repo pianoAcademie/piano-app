@@ -1374,9 +1374,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   {selectedSessionBookings.map((booking, index) => (
                     <article key={booking.id} className="item row spread session-booking-row">
                       <div>
-                        <strong>Participant {index + 1}</strong>
+                        <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
                         <br />
-                        <small className="muted">Identite masquee</small>
+                        <small className="muted">{booking.client_email}</small>
                       </div>
                       <div className="row">
                         <span className={`status-badge ${statusClass(booking.status)}`}>
