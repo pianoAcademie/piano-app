@@ -1459,13 +1459,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 <div className="formula-info-col">
                                   <small>
                                     Tarif {formulaPriceModeLabel(formula.price_tax_mode)}:{" "}
-                                    {formatMoney(
-                                      formula.monthly_price_value ?? formula.monthly_price_excl_vat,
-                                      formula.currency_code ?? "EUR",
-                                    )}
+                                    {formula.kind === "FORFAIT" && formula.monthly_price_value == null && formula.monthly_price_excl_vat == null
+                                      ? "Calcule au reel"
+                                      : formatMoney(
+                                          formula.monthly_price_value ?? formula.monthly_price_excl_vat,
+                                          formula.currency_code ?? "EUR",
+                                        )}
                                   </small>
                                   <small>
-                                    Frais inscription {formulaPriceModeLabel(formula.price_tax_mode)}:{" "}
+                                    Frais de dossier {formulaPriceModeLabel(formula.price_tax_mode)}:{" "}
                                     {formatMoney(
                                       formula.signup_fee_value ?? formula.signup_fee_excl_vat,
                                       formula.currency_code ?? "EUR",

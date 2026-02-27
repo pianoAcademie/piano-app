@@ -150,8 +150,10 @@ export default function AdminFormulaEditor({
     return sum + parsed;
   }, 0);
 
+  const isForfait = kind === "FORFAIT";
   const priceLabel = priceTaxMode === "TTC" ? "Tarif TTC" : "Tarif HT";
-  const signupLabel = priceTaxMode === "TTC" ? "Frais d'inscription TTC" : "Frais d'inscription HT";
+  const signupLabel = priceTaxMode === "TTC" ? "Frais de dossier TTC" : "Frais de dossier HT";
+  const priceLabelWithOptional = isForfait ? `${priceLabel} (optionnel)` : priceLabel;
   const defaultPriceValue = formula?.monthly_price_value ?? formula?.monthly_price_excl_vat ?? "";
   const defaultSignupValue = formula?.signup_fee_value ?? formula?.signup_fee_excl_vat ?? "0";
 
@@ -224,14 +226,14 @@ export default function AdminFormulaEditor({
               </label>
 
               <label>
-                {priceLabel}
+                {priceLabelWithOptional}
                 <input
                   type="number"
                   name="monthly_price_value"
                   min={0}
                   step="0.01"
                   defaultValue={defaultPriceValue}
-                  required
+                  required={!isForfait}
                 />
               </label>
 

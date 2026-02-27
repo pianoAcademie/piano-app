@@ -863,7 +863,7 @@ def _validate_formula_payload(
     currency_code: str | None,
     credit_grants: list[tuple[UUID, int]] | None = None,
 ) -> None:
-    if monthly_price_value is None:
+    if kind != PlanKind.FORFAIT and monthly_price_value is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Formula price is required",

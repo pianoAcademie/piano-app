@@ -2285,7 +2285,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </label>
               <label>
                 Libelle (optionnel)
-                <input type="text" name="label" maxLength={255} placeholder="Ex: Frais inscription" />
+                <input type="text" name="label" maxLength={255} placeholder="Ex: Frais de dossier" />
               </label>
               <label>
                 Reference (optionnel)

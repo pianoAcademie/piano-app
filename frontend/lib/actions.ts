@@ -3343,7 +3343,7 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
   if (!name) {
     throw new Error("Nom de formule obligatoire");
   }
-  if (price === null) {
+  if (price === null && kind !== "FORFAIT") {
     throw new Error("Tarif formule obligatoire (TTC ou HT)");
   }
   if (!currency) {
