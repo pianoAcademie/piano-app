@@ -15,7 +15,7 @@ from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanK
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.booking import BookingCreateRequest, BookingOut, ClientBookingOut, SessionMiniOut
 from app.services.family_billing import resolve_billing_profile
-from app.services.pricing import compute_tax_totals, resolve_course_type_price, resolve_vat_rate
+from app.services.pricing import resolve_vat_rate
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.subscriptions import reconcile_subscription_status
 
@@ -389,7 +389,6 @@ def _resolve_booking_snapshot(
     currency = (billing_profile.preferred_currency or "EUR").upper()
 
     # For SUBSCRIPTION/PACK plan-backed bookings, there is no per-session pricing.
-    # FORFAIT keeps per-session pricing snapshots for invoice computation.
     if plan is not None and plan.kind in (PlanKind.SUBSCRIPTION, PlanKind.PACK):
         zero = Decimal("0.00")
         return zero, zero, zero, zero, currency
@@ -398,31 +397,34 @@ def _resolve_booking_snapshot(
     if course_type is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
 
-    resolved_price = resolve_course_type_price(
-        db,
-        course_type_id=course_type.id,
-        country=country,
-        currency=currency,
-        on_date=now.date(),
-    )
-    if resolved_price is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No pricing rule available for this course and country/currency",
-        )
-
     vat_rate = resolve_vat_rate(
         db,
         country=country,
         service_code=course_type.service_code,
         on_date=now.date(),
     )
-    price, vat_amount, total = compute_tax_totals(
-        price_excl_vat=Decimal(resolved_price.price_excl_vat),
-        vat_rate=vat_rate,
-    )
+    hourly_ttc = course_type.default_hourly_rate
+    if hourly_ttc is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tarif horaire TTC non defini sur cette activite",
+        )
 
-    return price, vat_rate, vat_amount, total, resolved_price.currency_code
+    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+    if duration_seconds <= 0:
+        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+    duration_hours = Decimal(duration_seconds) / Decimal("3600")
+    total_incl_vat = (Decimal(hourly_ttc) * duration_hours).quantize(Decimal("0.01"))
+
+    if vat_rate <= Decimal("0.00"):
+        amount_excl_vat = total_incl_vat
+        vat_amount = Decimal("0.00")
+    else:
+        divisor = Decimal("1.00") + (vat_rate / Decimal("100.00"))
+        amount_excl_vat = (total_incl_vat / divisor).quantize(Decimal("0.01")) if divisor > Decimal("0.00") else total_incl_vat
+        vat_amount = (total_incl_vat - amount_excl_vat).quantize(Decimal("0.01"))
+
+    return amount_excl_vat, vat_rate.quantize(Decimal("0.01")), vat_amount, total_incl_vat, currency
 
 
 def _promote_waitlist_if_possible(db: Session, session_obj: CourseSession, now: datetime) -> None:

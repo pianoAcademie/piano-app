@@ -3021,7 +3021,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         vat_amount = booking.vat_amount_snapshot
         total_incl_vat = booking.total_incl_vat_snapshot
         currency = booking.currency_snapshot
-        if plan is not None and plan.kind == PlanKind.FORFAIT:
+        if plan is None or (plan is not None and plan.kind == PlanKind.FORFAIT):
             is_billable = (
                 session_obj.status != SessionStatus.CANCELLED
                 and booking.status not in {BookingStatus.WAITLISTED, BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}

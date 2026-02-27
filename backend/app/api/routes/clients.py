@@ -263,6 +263,43 @@ def _forfait_booking_ids(db: Session, booking_ids: list[UUID]) -> set[UUID]:
     return {row[0] for row in rows}
 
 
+def _booking_amounts_from_activity(
+    *,
+    booking: Booking,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    billing_profile: User,
+    db: Session,
+) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
+    if course_type.default_hourly_rate is None:
+        return None
+
+    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+    if duration_seconds <= 0:
+        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+    duration_hours = Decimal(duration_seconds) / Decimal("3600")
+    total_incl_vat = (Decimal(course_type.default_hourly_rate) * duration_hours).quantize(Decimal("0.01"))
+
+    country_code = (billing_profile.residence_country or "FR").upper()
+    vat_rate = resolve_vat_rate(
+        db,
+        country=country_code,
+        service_code=course_type.service_code,
+        on_date=session_obj.start_at_utc.date(),
+    ).quantize(Decimal("0.01"))
+
+    if vat_rate <= Decimal("0.00"):
+        amount_excl_vat = total_incl_vat
+        vat_amount = Decimal("0.00")
+    else:
+        divisor = Decimal("1.00") + (vat_rate / Decimal("100.00"))
+        amount_excl_vat = (total_incl_vat / divisor).quantize(Decimal("0.01")) if divisor > Decimal("0.00") else total_incl_vat
+        vat_amount = (total_incl_vat - amount_excl_vat).quantize(Decimal("0.01"))
+
+    currency = (booking.currency_snapshot or billing_profile.preferred_currency or "EUR").upper()
+    return amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency
+
+
 def _managed_client_ids_for_sessions(db: Session, current_user: User) -> set[UUID]:
     managed_ids: set[UUID] = {current_user.id}
     if current_user.client_kind != ClientKind.ADULT:
@@ -869,13 +906,30 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
     for booking, session_obj, course_type, location, owner, plan in rows_bookings:
         status_value = booking.status.value if hasattr(booking.status, "value") else str(booking.status)
         is_billable = True
-        if plan is not None and plan.kind == PlanKind.FORFAIT:
+        amount_excl_vat = booking.price_excl_vat_snapshot
+        vat_rate = booking.vat_rate_snapshot
+        vat_amount = booking.vat_amount_snapshot
+        total_incl_vat = booking.total_incl_vat_snapshot
+        currency = booking.currency_snapshot
+
+        if plan is None or (plan is not None and plan.kind == PlanKind.FORFAIT):
             is_billable = (
                 session_obj.status != SessionStatus.CANCELLED
                 and booking.status not in {BookingStatus.WAITLISTED, BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
             )
             if not is_billable:
                 status_value = "NOT_BILLABLE"
+            else:
+                billing_profile = resolve_billing_profile(db, owner)
+                computed = _booking_amounts_from_activity(
+                    booking=booking,
+                    session_obj=session_obj,
+                    course_type=course_type,
+                    billing_profile=billing_profile,
+                    db=db,
+                )
+                if computed is not None:
+                    amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = computed
         elif booking.status == BookingStatus.EXCUSED_ABSENCE:
             is_billable = False
         items.append(
@@ -887,11 +941,11 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 occurred_at=booking.booked_at,
                 label=f"{course_type.name} - {location.name}",
                 status=status_value,
-                amount_excl_vat=Decimal("0.00") if not is_billable else booking.price_excl_vat_snapshot,
-                vat_rate=Decimal("0.00") if not is_billable else booking.vat_rate_snapshot,
-                vat_amount=Decimal("0.00") if not is_billable else booking.vat_amount_snapshot,
-                total_incl_vat=Decimal("0.00") if not is_billable else booking.total_incl_vat_snapshot,
-                currency=booking.currency_snapshot,
+                amount_excl_vat=Decimal("0.00") if not is_billable else amount_excl_vat,
+                vat_rate=Decimal("0.00") if not is_billable else vat_rate,
+                vat_amount=Decimal("0.00") if not is_billable else vat_amount,
+                total_incl_vat=Decimal("0.00") if not is_billable else total_incl_vat,
+                currency=currency,
                 reference=str(session_obj.id),
                 payment_url=None,
             )
