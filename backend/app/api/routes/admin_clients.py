@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -137,6 +138,7 @@ MANUAL_TRANSACTION_LABEL_BY_TYPE = {
     "CHARGE": "Montant facture",
     "REFUND": "Remboursement",
 }
+INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 
 COUNTRY_NAME_BY_CODE = {
     "FR": "France",
@@ -443,6 +445,47 @@ def _invoice_status_from_payment_status(status_value: str) -> str:
     if normalized in CANCELLED_PAYMENT_STATUSES:
         return "CANCELLED"
     return "PENDING"
+
+
+def _forfait_booking_amounts_from_activity(
+    *,
+    booking: Booking,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    billing_profile: User,
+    db: Session,
+) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
+    if course_type.default_hourly_rate is None:
+        return None
+
+    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+    if duration_seconds <= 0:
+        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+    duration_hours = Decimal(duration_seconds) / Decimal("3600")
+    hourly_ttc = _quantize_money(Decimal(course_type.default_hourly_rate))
+    total_incl_vat = _quantize_money(hourly_ttc * duration_hours)
+
+    country_code = (billing_profile.residence_country or "FR").upper()
+    vat_rate = resolve_vat_rate(
+        db,
+        country=country_code,
+        service_code=course_type.service_code,
+        on_date=session_obj.start_at_utc.date(),
+    ).quantize(Decimal("0.01"))
+
+    if vat_rate <= Decimal("0.00"):
+        amount_excl_vat = total_incl_vat
+        vat_amount = Decimal("0.00")
+    else:
+        divisor = Decimal("1.00") + (vat_rate / Decimal("100.00"))
+        amount_excl_vat = _quantize_money(total_incl_vat / divisor) if divisor > Decimal("0.00") else total_incl_vat
+        vat_amount = _quantize_money(total_incl_vat - amount_excl_vat)
+
+    currency = _normalize_currency(
+        booking.currency_snapshot,
+        fallback=(billing_profile.preferred_currency or "EUR").upper(),
+    )
+    return amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency
 
 
 def _payment_method_label(method_code: str | None) -> str:
@@ -2973,6 +3016,11 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
     for booking, session_obj, course_type, location, plan in rows_bookings:
         is_billable = True
         status_value = booking.status.value
+        amount_excl_vat = booking.price_excl_vat_snapshot
+        vat_rate = booking.vat_rate_snapshot
+        vat_amount = booking.vat_amount_snapshot
+        total_incl_vat = booking.total_incl_vat_snapshot
+        currency = booking.currency_snapshot
         if plan is not None and plan.kind == PlanKind.FORFAIT:
             is_billable = (
                 session_obj.status != SessionStatus.CANCELLED
@@ -2980,6 +3028,16 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             )
             if not is_billable:
                 status_value = "NOT_BILLABLE"
+            else:
+                computed = _forfait_booking_amounts_from_activity(
+                    booking=booking,
+                    session_obj=session_obj,
+                    course_type=course_type,
+                    billing_profile=billing_profile,
+                    db=db,
+                )
+                if computed is not None:
+                    amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = computed
         elif booking.status == BookingStatus.EXCUSED_ABSENCE:
             is_billable = False
             status_value = "NOT_BILLABLE"
@@ -2990,11 +3048,11 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 occurred_at=session_obj.start_at_utc,
                 label=f"{course_type.name} - {location.name}",
                 status=status_value,
-                amount_excl_vat=Decimal("0.00") if not is_billable else booking.price_excl_vat_snapshot,
-                vat_rate=Decimal("0.00") if not is_billable else booking.vat_rate_snapshot,
-                vat_amount=Decimal("0.00") if not is_billable else booking.vat_amount_snapshot,
-                total_incl_vat=Decimal("0.00") if not is_billable else booking.total_incl_vat_snapshot,
-                currency=booking.currency_snapshot,
+                amount_excl_vat=Decimal("0.00") if not is_billable else _quantize_money(Decimal(amount_excl_vat)),
+                vat_rate=Decimal("0.00") if not is_billable else Decimal(vat_rate).quantize(Decimal("0.01")),
+                vat_amount=Decimal("0.00") if not is_billable else _quantize_money(Decimal(vat_amount)),
+                total_incl_vat=Decimal("0.00") if not is_billable else _quantize_money(Decimal(total_incl_vat)),
+                currency=_normalize_currency(currency, fallback=(billing_profile.preferred_currency or "EUR").upper()),
                 reference=str(session_obj.id),
             )
         )
@@ -3157,6 +3215,8 @@ def download_admin_client_range_invoice(
     include_pending: bool = Query(default=True),
     include_cancelled: bool = Query(default=False),
     layout: str = Query(default="DETAILED"),
+    invoice_number: str | None = Query(default=None, max_length=120),
+    persist_note: bool = Query(default=True),
     public_note: str | None = Query(default=None, max_length=2000),
     private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
@@ -3262,31 +3322,55 @@ def download_admin_client_range_invoice(
             )
 
     issued_at = datetime.combine(issued_date, datetime.min.time(), tzinfo=timezone.utc)
-    invoice_number = reserve_next_invoice_number(db, issued_at=issued_at)
+    requested_invoice_number = _normalize_optional(invoice_number)
+    resolved_invoice_number = requested_invoice_number or reserve_next_invoice_number(db, issued_at=issued_at)
     normalized_public_note = _normalize_optional(public_note) or _normalize_optional(note)
     normalized_private_note = _normalize_optional(private_note)
-    db.commit()
     billing_profile = resolve_billing_profile(db, client)
     client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
     client_billing_address = _billing_address_label(billing_profile)
 
-    if normalized_private_note:
+    if persist_note:
+        totals_payload = {
+            currency: f"{_quantize_money(Decimal(values['total_incl_vat'])):.2f}"
+            for currency, values in sorted(totals_by_currency.items())
+        }
+        metadata: dict[str, object] = {
+            "kind": "INVOICE_RANGE",
+            "invoice_number": resolved_invoice_number,
+            "issued_date": issued_date.isoformat(),
+            "due_date": due_date.isoformat(),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "layout": normalized_layout,
+            "include_pending": bool(include_pending),
+            "include_cancelled": bool(include_cancelled),
+            "totals_by_currency": totals_payload,
+        }
+        if normalized_public_note:
+            metadata["public_note"] = normalized_public_note
+        if normalized_private_note:
+            metadata["private_note"] = normalized_private_note
+
         _create_client_note(
             db,
             client_id=client_id,
             author_user_id=actor.id,
             entry_type="MANUAL",
             message=(
-                f"Facture {invoice_number} generee ({start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}, "
-                f"emise le {issued_date.strftime('%d/%m/%Y')}, echeance {due_date.strftime('%d/%m/%Y')}). "
-                f"Note privee: {normalized_private_note}"
+                f"Facture {resolved_invoice_number} generee "
+                f"({start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}, "
+                f"emise le {issued_date.strftime('%d/%m/%Y')}, echeance {due_date.strftime('%d/%m/%Y')}).\n"
+                f"{INVOICE_RANGE_NOTE_PREFIX}{json.dumps(metadata, ensure_ascii=True, separators=(',', ':'))}"
             ),
         )
+        db.commit()
+    elif requested_invoice_number is None:
         db.commit()
 
     content = render_invoice_period_pdf(
         db,
-        invoice_number=invoice_number,
+        invoice_number=resolved_invoice_number,
         issued_at=issued_at,
         client_id=str(client.id),
         client_name=client_label,
@@ -3297,7 +3381,7 @@ def download_admin_client_range_invoice(
         client_billing_address=client_billing_address,
         due_date=due_date,
     )
-    file_name = f"{invoice_number}.pdf".replace('"', "")
+    file_name = f"{resolved_invoice_number}.pdf".replace('"', "")
     return Response(
         content=content,
         media_type="application/pdf",

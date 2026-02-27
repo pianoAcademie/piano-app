@@ -653,7 +653,9 @@ def render_invoice_period_pdf(
         )
         current_row_top += row_height
 
-    if current_row_top + 140 > 780:
+    normalized_note = _ascii_safe((note or "").strip())
+    reserved_note_space = 80.0 if normalized_note else 0.0
+    if current_row_top + 140 + reserved_note_space > 780:
         pdf.new_page()
         draw_header()
         current_row_top = 140.0
@@ -695,14 +697,21 @@ def render_invoice_period_pdf(
         )
         current_row_top += 22
 
-    normalized_note = _ascii_safe((note or "").strip())
     if normalized_note:
-        current_row_top += 10
-        pdf.text(x=left, top_y=current_row_top, value="Note", size=11, bold=True)
-        current_row_top += 16
-        for chunk in _wrap_text(normalized_note, 100):
-            pdf.text(x=left, top_y=current_row_top, value=chunk, size=10)
-            current_row_top += 13
+        note_title_top = 742.0
+        note_line_top = note_title_top + 16.0
+        max_note_bottom = 810.0
+        line_height = 12.0
+        max_lines = max(1, int((max_note_bottom - note_line_top) // line_height))
+        note_lines = _wrap_text(normalized_note, 100)
+        if len(note_lines) > max_lines:
+            note_lines = note_lines[:max_lines]
+            if note_lines:
+                note_lines[-1] = _truncate_text(note_lines[-1], 96) + "..."
+
+        pdf.text(x=left, top_y=note_title_top, value="Note", size=11, bold=True)
+        for index, chunk in enumerate(note_lines):
+            pdf.text(x=left, top_y=note_line_top + (index * line_height), value=chunk, size=10)
 
     footer_line_1 = f"{identity.company_name} | SIRET: {identity.company_siret} | Tel: {identity.company_phone}"
     footer_line_2 = f"{identity.company_email} | {identity.company_address}"

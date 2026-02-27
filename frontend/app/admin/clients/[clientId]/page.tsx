@@ -269,6 +269,138 @@ function invoiceStatusLabel(status: string | null): string {
   return "Facture";
 }
 
+const INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::";
+
+type RangeInvoiceNotePayload = {
+  kind: "INVOICE_RANGE";
+  invoice_number: string;
+  issued_date: string;
+  due_date: string;
+  start_date: string;
+  end_date: string;
+  layout: "DETAILED" | "COMPILED";
+  include_pending: boolean;
+  include_cancelled: boolean;
+  totals_by_currency: Record<string, string>;
+  public_note?: string;
+};
+
+type InvoiceListRow =
+  | {
+      kind: "payment";
+      key: string;
+      occurredAt: string;
+      invoiceNumber: string | null;
+      typeLabel: string;
+      label: string;
+      status: string | null;
+      total: string;
+      currency: string;
+      source: string;
+      paymentId: string;
+      paymentStatus: string;
+    }
+  | {
+      kind: "range";
+      key: string;
+      occurredAt: string;
+      invoiceNumber: string;
+      typeLabel: string;
+      label: string;
+      status: string;
+      totalLabel: string;
+      downloadHref: string;
+    };
+
+function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayload | null {
+  const rawMessage = (note.message || "").trim();
+  const prefixIndex = rawMessage.indexOf(INVOICE_RANGE_NOTE_PREFIX);
+  if (prefixIndex < 0) {
+    return null;
+  }
+  const rawPayload = rawMessage.slice(prefixIndex + INVOICE_RANGE_NOTE_PREFIX.length).trim();
+  if (!rawPayload) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(rawPayload) as Partial<RangeInvoiceNotePayload>;
+    if (payload.kind !== "INVOICE_RANGE") {
+      return null;
+    }
+    if (
+      typeof payload.invoice_number !== "string" ||
+      typeof payload.issued_date !== "string" ||
+      typeof payload.due_date !== "string" ||
+      typeof payload.start_date !== "string" ||
+      typeof payload.end_date !== "string"
+    ) {
+      return null;
+    }
+    if (payload.layout !== "DETAILED" && payload.layout !== "COMPILED") {
+      return null;
+    }
+    if (!payload.totals_by_currency || typeof payload.totals_by_currency !== "object") {
+      return null;
+    }
+
+    const totals: Record<string, string> = {};
+    for (const [currency, amount] of Object.entries(payload.totals_by_currency)) {
+      if (typeof amount !== "string") {
+        continue;
+      }
+      totals[currency.toUpperCase()] = amount;
+    }
+    if (Object.keys(totals).length === 0) {
+      return null;
+    }
+
+    return {
+      kind: "INVOICE_RANGE",
+      invoice_number: payload.invoice_number,
+      issued_date: payload.issued_date,
+      due_date: payload.due_date,
+      start_date: payload.start_date,
+      end_date: payload.end_date,
+      layout: payload.layout,
+      include_pending: Boolean(payload.include_pending),
+      include_cancelled: Boolean(payload.include_cancelled),
+      totals_by_currency: totals,
+      public_note: typeof payload.public_note === "string" ? payload.public_note : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function rangeInvoiceTotalLabel(totalsByCurrency: Record<string, string>): string {
+  const entries = Object.entries(totalsByCurrency);
+  if (entries.length === 0) {
+    return "-";
+  }
+  return entries
+    .map(([currency, amount]) => formatMoney(amount, currency))
+    .join(" | ");
+}
+
+function rangeInvoiceDownloadHref(clientId: string, payload: RangeInvoiceNotePayload): string {
+  const params = new URLSearchParams({
+    payment_return_tab: "factures",
+    start_date: payload.start_date,
+    end_date: payload.end_date,
+    issued_date: payload.issued_date,
+    due_date: payload.due_date,
+    include_pending: payload.include_pending ? "true" : "false",
+    include_cancelled: payload.include_cancelled ? "true" : "false",
+    layout: payload.layout,
+    invoice_number: payload.invoice_number,
+    persist_note: "false",
+  });
+  if (payload.public_note) {
+    params.set("public_note", payload.public_note);
+  }
+  return `/admin/clients/${clientId}/payments/invoice-range?${params.toString()}`;
+}
+
 function shortContractRef(value: string): string {
   const head = value.split("-")[0] ?? value;
   return `#${head}`;
@@ -649,12 +781,49 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     return occurredAtMs <= selectedBalanceDateEndMs;
   });
 
-  const invoices = payments
+  const paymentInvoices: InvoiceListRow[] = payments
     .filter((row) => {
       const normalizedInvoiceStatus = (row.invoice_status ?? "").toUpperCase();
       return normalizedInvoiceStatus === "PAID" || normalizedInvoiceStatus === "CANCELLED";
     })
-    .sort((a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at));
+    .map((row) => ({
+      kind: "payment",
+      key: `payment-${row.source}-${row.id}`,
+      occurredAt: row.occurred_at,
+      invoiceNumber: row.invoice_number,
+      typeLabel: paymentSourceLabel(row.source),
+      label: row.label,
+      status: row.invoice_status,
+      total: row.total_incl_vat,
+      currency: row.currency,
+      source: row.source,
+      paymentId: row.id,
+      paymentStatus: row.status,
+    }));
+
+  const generatedRangeInvoices: InvoiceListRow[] = notes
+    .map((note) => {
+      const payload = parseRangeInvoiceNote(note);
+      if (!payload) {
+        return null;
+      }
+      return {
+        kind: "range",
+        key: `range-${payload.invoice_number}-${note.id}`,
+        occurredAt: `${payload.issued_date}T00:00:00.000Z`,
+        invoiceNumber: payload.invoice_number,
+        typeLabel: "Facture periode",
+        label: `${formatDateInputLabel(payload.start_date)} - ${formatDateInputLabel(payload.end_date)}`,
+        status: "ISSUED",
+        totalLabel: rangeInvoiceTotalLabel(payload.totals_by_currency),
+        downloadHref: rangeInvoiceDownloadHref(client.id, payload),
+      } satisfies InvoiceListRow;
+    })
+    .filter((row): row is InvoiceListRow => row !== null);
+
+  const invoices = [...generatedRangeInvoices, ...paymentInvoices].sort(
+    (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
+  );
 
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
@@ -2321,48 +2490,56 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </thead>
                   <tbody>
                     {invoices.map((row) => (
-                      <tr key={`invoice-${row.source}-${row.id}`}>
-                        <td>{formatDate(row.occurred_at)}</td>
-                        <td>{row.invoice_number ?? "-"}</td>
-                        <td>{paymentSourceLabel(row.source)}</td>
+                      <tr key={row.key}>
+                        <td>{formatDate(row.occurredAt)}</td>
+                        <td>{row.invoiceNumber ?? "-"}</td>
+                        <td>{row.typeLabel}</td>
                         <td>{row.label}</td>
-                        <td>{invoiceStatusLabel(row.invoice_status)}</td>
-                        <td>{formatMoney(row.total_incl_vat, row.currency)}</td>
+                        <td>{row.kind === "range" ? "Facture emise" : invoiceStatusLabel(row.status)}</td>
+                        <td>{row.kind === "range" ? row.totalLabel : formatMoney(row.total, row.currency)}</td>
                         <td>
-                          <div className="row payment-row-actions">
-                            <a
-                              className="client-action-icon"
-                              href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.id}/invoice`}
-                              title="Telecharger la facture"
-                            >
-                              ↓
-                            </a>
-                            {row.status !== "REFUNDED" ? (
-                              <>
-                                <Link
-                                  className="client-action-icon"
-                                  href={invoicesHref(client.id, {
-                                    payment_modal: "refund",
-                                    payment_source: row.source.toUpperCase(),
-                                    payment_id: row.id,
-                                    payment_return_tab: "factures",
-                                  })}
-                                  title="Creer un avoir"
-                                >
-                                  A
-                                </Link>
-                                <form action={cancelAdminClientInvoiceAction}>
-                                  <input type="hidden" name="client_id" value={client.id} />
-                                  <input type="hidden" name="payment_source" value={row.source.toUpperCase()} />
-                                  <input type="hidden" name="payment_id" value={row.id} />
-                                  <input type="hidden" name="return_tab" value="factures" />
-                                  <button type="submit" className="client-action-icon danger" title="Annuler la facture">
-                                    ×
-                                  </button>
-                                </form>
-                              </>
-                            ) : null}
-                          </div>
+                          {row.kind === "range" ? (
+                            <div className="row payment-row-actions">
+                              <a className="client-action-icon" href={row.downloadHref} title="Telecharger la facture">
+                                ↓
+                              </a>
+                            </div>
+                          ) : (
+                            <div className="row payment-row-actions">
+                              <a
+                                className="client-action-icon"
+                                href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.paymentId}/invoice`}
+                                title="Telecharger la facture"
+                              >
+                                ↓
+                              </a>
+                              {row.paymentStatus !== "REFUNDED" ? (
+                                <>
+                                  <Link
+                                    className="client-action-icon"
+                                    href={invoicesHref(client.id, {
+                                      payment_modal: "refund",
+                                      payment_source: row.source.toUpperCase(),
+                                      payment_id: row.paymentId,
+                                      payment_return_tab: "factures",
+                                    })}
+                                    title="Creer un avoir"
+                                  >
+                                    A
+                                  </Link>
+                                  <form action={cancelAdminClientInvoiceAction}>
+                                    <input type="hidden" name="client_id" value={client.id} />
+                                    <input type="hidden" name="payment_source" value={row.source.toUpperCase()} />
+                                    <input type="hidden" name="payment_id" value={row.paymentId} />
+                                    <input type="hidden" name="return_tab" value="factures" />
+                                    <button type="submit" className="client-action-icon danger" title="Annuler la facture">
+                                      ×
+                                    </button>
+                                  </form>
+                                </>
+                              ) : null}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
