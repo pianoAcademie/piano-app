@@ -457,6 +457,17 @@ export type ClientPaymentCheckoutOut = {
   provider_reference: string | null;
 };
 
+export type ClientPaymentConfirmOut = {
+  payment_id: string;
+  subscription_status: string;
+  last_payment_status: string | null;
+  paid: boolean;
+  cancelled: boolean;
+  failed: boolean;
+  processed: boolean;
+  message: string | null;
+};
+
 export type AdminProfessorOut = {
   id: string;
   first_name: string;

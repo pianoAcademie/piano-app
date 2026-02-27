@@ -219,3 +219,14 @@ class ClientPaymentCheckoutOut(BaseModel):
     payment_id: str
     checkout_url: str
     provider_reference: str | None = None
+
+
+class ClientPaymentConfirmOut(BaseModel):
+    payment_id: str
+    subscription_status: str
+    last_payment_status: str | None = None
+    paid: bool
+    cancelled: bool
+    failed: bool
+    processed: bool
+    message: str | None = None

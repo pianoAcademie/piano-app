@@ -22,6 +22,7 @@ import {
 import type {
   ClientBookingOut,
   ClientFamilyOverviewOut,
+  ClientPaymentConfirmOut,
   ClientInvoiceOut,
   ClientMessageOut,
   ClientPaymentCheckoutOut,
@@ -204,6 +205,15 @@ function statusLabel(value: string): string {
   }
   if (normalized === "PAID") {
     return "PAYE";
+  }
+  if (
+    normalized === "PENDING" ||
+    normalized === "OPEN" ||
+    normalized === "CREATED" ||
+    normalized === "PROCESSING" ||
+    normalized === "WAITING_PAYMENT"
+  ) {
+    return "EN ATTENTE";
   }
   return normalized || "-";
 }
@@ -568,6 +578,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const paymentIdParam = readParam(searchParams, "payment_id").trim();
   const paymentReturnParam = readParam(searchParams, "payment_return").trim().toLowerCase();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
+  const preFetchErrors: string[] = [];
 
   const sessionQuery = new URLSearchParams();
   sessionQuery.set("timezone", timezone);
@@ -578,6 +589,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
   if (selectedLocation) {
     sessionQuery.set("location_id", selectedLocation);
+  }
+
+  if (tab === "transactions" && paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "success") {
+    const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
+    const confirm = await backendRequest<ClientPaymentConfirmOut>(
+      `/api/v1/clients/me/payments/${normalizedPaymentId}/confirm`,
+      { method: "POST" },
+      token,
+    );
+    if (!confirm.ok) {
+      preFetchErrors.push(`confirm-payment: ${confirm.message}`);
+    } else if (!confirm.data.paid) {
+      const reason = confirm.data.message ? ` (${confirm.data.message})` : "";
+      preFetchErrors.push(`confirm-payment: paiement non confirme${reason}`);
+    }
   }
 
   const [
@@ -604,7 +630,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     backendRequest<ClientInvoiceOut[]>("/api/v1/clients/me/invoices", {}, token),
   ]);
 
-  const errors: string[] = [];
+  const errors: string[] = [...preFetchErrors];
 
   const courseTypes = courseTypesResult.ok
     ? courseTypesResult.data
@@ -873,8 +899,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ? readParam(searchParams, "purchase_user_id")
     : me.id;
   const selectedOwnerSubscriptions = subscriptionsByOwner.get(selectedPurchaseOwner) ?? [];
+  const isPendingSubscription = (sub: { status: string }): boolean => {
+    const normalized = normalizeStatus(sub.status);
+    return (
+      normalized === "PENDING" ||
+      normalized === "OPEN" ||
+      normalized === "CREATED" ||
+      normalized === "PROCESSING" ||
+      normalized === "WAITING_PAYMENT"
+    );
+  };
   const visibleSelectedOwnerSubscriptions = selectedOwnerSubscriptions.filter(
-    (sub) => isSubscriptionActiveNow(sub, now) && (sub.plan.kind === "SUBSCRIPTION" || (sub.credits_remaining ?? 0) > 0),
+    (sub) =>
+      (isSubscriptionActiveNow(sub, now) && (sub.plan.kind === "SUBSCRIPTION" || (sub.credits_remaining ?? 0) > 0)) ||
+      isPendingSubscription(sub),
   );
 
   const filteredSessions = sessions.filter((session) => {
