@@ -754,7 +754,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   }));
   const bookingClientOptions = clientsSorted.map((client) => ({
     id: client.id,
-    label: `${clientDisplayName(client)} - ${client.email}`,
+    label: clientDisplayName(client),
   }));
 
   const okMessage = readParam(searchParams, "ok");
