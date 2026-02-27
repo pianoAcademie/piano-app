@@ -230,10 +230,14 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             "Mode de reglement: {payment_method}\n\n"
             "Lien de paiement: {payment_url}\n"
             "Reference abonnement: {subscription_reference}\n\n"
+            "Consulter les CGV: {legal_terms_url}\n\n"
             "Piano Academie"
         ),
         description="Demande de finalisation de paiement.",
-        variables_hint="{first_name} {plan_name} {amount_due} {currency} {payment_method} {payment_url} {subscription_reference}",
+        variables_hint=(
+            "{first_name} {plan_name} {amount_due} {currency} {payment_method} {payment_url} "
+            "{subscription_reference} {legal_terms_url}"
+        ),
     ),
     MessagingTemplateDefinition(
         code="PAYMENT_CONFIRMED",

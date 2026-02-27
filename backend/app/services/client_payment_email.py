@@ -36,6 +36,7 @@ def render_client_payment_email(
     payment_method: str,
     payment_url: str,
     subscription_reference: str,
+    legal_terms_url: str,
 ) -> tuple[str, str]:
     full_name = f"{first_name} {last_name}".strip() or email
     context = {
@@ -49,6 +50,7 @@ def render_client_payment_email(
         "payment_method": payment_method,
         "payment_url": payment_url,
         "subscription_reference": subscription_reference,
+        "legal_terms_url": legal_terms_url,
     }
     subject = _render_template(subject_template, context)
     body = _render_template(body_template, context)

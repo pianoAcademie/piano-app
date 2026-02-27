@@ -1869,6 +1869,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   const planId = String(formData.get("plan_id") ?? "").trim();
   const planKind = String(formData.get("plan_kind") ?? "").trim().toUpperCase();
   const planName = String(formData.get("plan_name") ?? "").trim() || "Formule";
+  const purchaseType = String(formData.get("purchase_type") ?? "FORMULA").trim().toUpperCase() || "FORMULA";
   const returnTabRaw = String(formData.get("return_tab") ?? "fiche").trim().toLowerCase();
   const returnTab =
     returnTabRaw === "paiements" || returnTabRaw === "messages" || returnTabRaw === "infos" || returnTabRaw === "famille" || returnTabRaw === "reservations"
@@ -1878,7 +1879,9 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   const discountedTotalRaw = String(formData.get("discounted_total_incl_vat") ?? "").trim();
   const discountedTotal = discountedTotalRaw ? parseNonNegativeDecimal(discountedTotalRaw.replace(",", ".")) : null;
   const signatureChannelRaw = String(formData.get("signature_channel") ?? "NONE").trim().toUpperCase();
-  const signatureChannel = signatureChannelRaw === "EMAIL" || signatureChannelRaw === "SMS" ? signatureChannelRaw : "NONE";
+  const isCardOnlinePayment = paymentMethodCode === "CARD_ONLINE";
+  const signatureChannel =
+    isCardOnlinePayment && (signatureChannelRaw === "EMAIL" || signatureChannelRaw === "SMS") ? signatureChannelRaw : "NONE";
   const acceptedCgv = checkboxField(formData, "cgv_accepted");
 
   if (!clientId || !planId) {
@@ -1886,6 +1889,9 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   }
   if (!paymentMethodCode) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Moyen%20de%20paiement%20invalide`);
+  }
+  if (isCardOnlinePayment && signatureChannel === "NONE") {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Choisir%20un%20canal%20email%20ou%20SMS`);
   }
   if (!acceptedCgv) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Vous%20devez%20accepter%20les%20CGV`);
@@ -1925,7 +1931,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
     }
   }
 
-  if (signatureChannel === "EMAIL") {
+  if (isCardOnlinePayment && signatureChannel === "EMAIL") {
     const emailResult = await backendRequest<{ message_id: string }>(
       `/api/v1/admin/clients/${clientId}/subscriptions/${subscriptionId}/send-payment-email`,
       {
@@ -1943,18 +1949,20 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   }
 
   const notes: string[] = [];
-  notes.push(`Nouvel achat: ${planName}.`);
+  notes.push(`Nouvel achat (${purchaseType === "PRODUCT" ? "produit catalogue" : "formule de cours"}): ${planName}.`);
   notes.push(`Reglement: ${paymentMethodCode}.`);
   if (discountedTotal !== null) {
     notes.push(`Prix remise saisi: ${discountedTotal.toFixed(2)} EUR TTC.`);
   }
   notes.push("CGV acceptees sur la fiche client.");
-  if (signatureChannel === "EMAIL") {
-    notes.push("Demande de signature: email (envoyee).");
+  if (!isCardOnlinePayment) {
+    notes.push("Lien de paiement: non envoye (reglement hors carte).");
+  } else if (signatureChannel === "EMAIL") {
+    notes.push("Lien de paiement: email envoye.");
   } else if (signatureChannel === "SMS") {
-    notes.push("Demande de signature: SMS (envoi manuel requis).");
+    notes.push("Lien de paiement: SMS (envoi manuel requis).");
   } else {
-    notes.push("Demande de signature: non envoyee.");
+    notes.push("Lien de paiement: non envoye.");
   }
 
   await backendRequest<{ id: string }>(
@@ -1970,7 +1978,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
 
   revalidatePath("/admin/clients");
   revalidatePath(`/admin/clients/${clientId}`);
-  const channelMessage = signatureChannel === "NONE" ? "sans envoi" : `envoi ${signatureChannel}`;
+  const channelMessage = !isCardOnlinePayment ? "paiement enregistre" : signatureChannel === "EMAIL" ? "lien email envoye" : "SMS a envoyer";
   redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=${encodeURIComponent(`Produit ajoute (${channelMessage})`)}`);
 }
 

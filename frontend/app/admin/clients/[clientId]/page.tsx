@@ -584,6 +584,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const hasDiscountedTotalForPurchase = Number.isFinite(discountedTotalForPurchase) && discountedTotalForPurchase >= 0;
   const selectedPlanBaseTotal = selectedPlanForPurchase?.monthly_price_excl_vat ?? null;
   const selectedPlanCurrency = selectedPlanForPurchase?.currency_code || client.preferred_currency || "EUR";
+  const isCardOnlinePurchase = purchasePaymentMethod === "CARD_ONLINE";
+  const purchaseTypeLabel = purchaseType === "PRODUCT" ? "Produits catalogues" : "Formule de cours";
 
   const activeSubscriptions = subscriptions.filter(
     (sub) => (sub.status === "ACTIVE" || sub.status === "PAUSED") && !isPendingSubscriptionCancellation(sub),
@@ -804,8 +806,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 +
               </Link>
             </div>
-            <p className="muted">Associer une formule (abonnement/carnet/forfait), avec reglement et validation CGV en popup.</p>
-            <p className="muted top-gap-sm">Flux: Offre -&gt; Prix remisé -&gt; Reglement -&gt; CGV -&gt; Signature email/SMS.</p>
+            <p className="muted">Associer une formule de cours ou un produit catalogue, avec mode de reglement et validation CGV.</p>
+            <p className="muted top-gap-sm">
+              Flux: Type d&apos;achat -&gt; Offre -&gt; Prix remisé -&gt; Reglement -&gt; Validation.
+            </p>
             <p className="muted">
               Regles appliquees: pas de doublon d&apos;abonnement sur le mois, pas de nouveau carnet si credits restants.
             </p>
@@ -1084,22 +1088,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ×
             </Link>
             <h3 className="modal-title">Nouvel achat</h3>
-            <p className="muted">Selectionnez l offre, le prix et le reglement avant validation CGV.</p>
+            <p className="muted">Selectionnez l offre, le prix et le reglement avant validation.</p>
             <form action={adminOpenClientPurchaseTermsAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value={purchaseReturnTab} />
               <label>
                 Type d achat
                 <select name="purchase_type" defaultValue="FORMULA">
-                  <option value="FORMULA">Formules adulte</option>
-                  <option value="PRODUCT">Produit ponctuel</option>
+                  <option value="FORMULA">Formule de cours</option>
+                  <option value="PRODUCT">Produits catalogues</option>
                 </select>
               </label>
               <label>
                 Offre
                 <select name="plan_id" required defaultValue="">
                   <option value="" disabled>
-                    Selectionner une formule
+                    Selectionner une offre active
                   </option>
                   {plans.map((plan) => (
                     <option key={plan.id} value={plan.id}>
@@ -1118,19 +1122,29 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <option value="" disabled>
                     Choisir un moyen de paiement
                   </option>
-                  <option value="CHECK">Cheque</option>
-                  <option value="CASH">Especes</option>
-                  <option value="BANK_TRANSFER">Virement bancaire</option>
-                  <option value="CARD_ONLINE">CB en ligne (Mollie / Payplug)</option>
-                  <option value="PAYPAL">PayPal</option>
-                  <option value="CARD_TERMINAL">CB sur place (TPE)</option>
+                  {enabledPaymentMethods.length > 0 ? (
+                    enabledPaymentMethods.map((method) => (
+                      <option key={method.code} value={method.code}>
+                        {method.label}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="CHECK">Cheque</option>
+                      <option value="CASH">Especes</option>
+                      <option value="BANK_TRANSFER">Virement bancaire</option>
+                      <option value="CARD_ONLINE">CB en ligne (Mollie / Payplug)</option>
+                      <option value="PAYPAL">PayPal</option>
+                      <option value="CARD_TERMINAL">CB sur place (TPE)</option>
+                    </>
+                  )}
                 </select>
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, purchaseReturnTab)}>
                   Annuler
                 </Link>
-                <button type="submit">Continuer vers CGV</button>
+                <button type="submit">Continuer</button>
               </div>
             </form>
           </article>
@@ -1149,7 +1163,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </Link>
             <h3 className="modal-title">{selectedPlanForPurchase.name}</h3>
             <p className="muted">
-              Reglement: {billingMethodLabel(purchasePaymentMethod)} | Type: {purchaseType === "PRODUCT" ? "Produit" : "Formule"}
+              Reglement: {billingMethodLabel(purchasePaymentMethod)} | Type d achat: {purchaseTypeLabel}
             </p>
             <article className="card modal-card">
               <h4>Recapitulatif de la commande</h4>
@@ -1179,6 +1193,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="plan_id" value={selectedPlanForPurchase.id} />
               <input type="hidden" name="plan_kind" value={selectedPlanForPurchase.kind} />
               <input type="hidden" name="plan_name" value={selectedPlanForPurchase.name} />
+              <input type="hidden" name="purchase_type" value={purchaseType} />
               <input type="hidden" name="payment_method_code" value={purchasePaymentMethod} />
               <input type="hidden" name="return_tab" value={purchaseReturnTab} />
               {hasDiscountedTotalForPurchase ? (
@@ -1199,14 +1214,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 J ai lu et j accepte les CGV.
               </label>
 
-              <label>
-                Envoyer la demande de signature
-                <select name="signature_channel" defaultValue="NONE">
-                  <option value="NONE">Ne pas envoyer maintenant</option>
-                  <option value="EMAIL">Envoyer par email</option>
-                  <option value="SMS">Envoyer par SMS</option>
-                </select>
-              </label>
+              {isCardOnlinePurchase ? (
+                <label>
+                  Canal d envoi du lien de paiement
+                  <select name="signature_channel" defaultValue="EMAIL">
+                    <option value="EMAIL">Envoyer par email</option>
+                    <option value="SMS">Envoyer par SMS</option>
+                  </select>
+                </label>
+              ) : (
+                <>
+                  <input type="hidden" name="signature_channel" value="NONE" />
+                  <p className="muted">
+                    Paiement hors carte: la transaction sera enregistree sans envoi de lien de paiement.
+                  </p>
+                </>
+              )}
 
               <div className="row modal-actions-end">
                 <Link
@@ -1215,7 +1238,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 >
                   Retour
                 </Link>
-                <button type="submit">Valider l achat</button>
+                <button type="submit">
+                  {isCardOnlinePurchase ? "Envoyer le lien de paiement par mail ou SMS" : "Valider le paiement"}
+                </button>
               </div>
             </form>
           </article>

@@ -2596,8 +2596,15 @@ def send_admin_client_subscription_payment_email(
     if method_code is None:
         method_code = sub.billing_method_code or _default_subscription_billing_method(plan)
     method_code = (method_code or "").strip().upper() or "CARD_ONLINE"
+    if method_code != "CARD_ONLINE":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le lien de paiement est reserve au reglement CB en ligne",
+        )
 
     website = _get_setting_value(db, "config_account_website", "")
+    legal_terms_url = _get_setting_value(db, "config_account_legal_terms", "")
+    resolved_legal_terms_url = legal_terms_url or _frontend_url(website, path="/cgv")
     payment_url = _fallback_dashboard_transactions_url(website)
     checkout_url = _create_checkout_for_subscription(
         db,
@@ -2625,7 +2632,10 @@ def send_admin_client_subscription_payment_email(
         payment_method=_payment_method_label_client(method_code),
         payment_url=payment_url,
         subscription_reference=str(sub.id),
+        legal_terms_url=resolved_legal_terms_url,
     )
+    if "cgv" not in body.lower() and "conditions generales" not in body.lower():
+        body = f"{body}\n\nConsulter les CGV: {resolved_legal_terms_url}"
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     message_id = send_client_payment_email(
