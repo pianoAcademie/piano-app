@@ -150,6 +150,18 @@ function formatPercent(value: number): string {
   return `${Math.round(value)}%`;
 }
 
+function formatVatRateLabel(value: string | null | undefined): string {
+  const rate = Number(value ?? "0");
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return "0%";
+  }
+  const hasDecimals = Math.abs(rate % 1) > 0.0001;
+  return `${new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 2,
+  }).format(rate)}%`;
+}
+
 function billingMethodLabel(code: string | null): string {
   const normalized = (code ?? "").toUpperCase();
   if (normalized === "CARD_ONLINE") {
@@ -2624,6 +2636,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <th>Type</th>
                       <th>Libelle</th>
                       <th>Reference</th>
+                      <th>Tarif prestation</th>
                       <th>Statut</th>
                       <th>Total</th>
                       <th>Actions</th>
@@ -2643,6 +2656,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           </div>
                         </td>
                         <td>{row.reference ?? "-"}</td>
+                        <td>
+                          <div className="stack-xs">
+                            <span>{formatMoney(row.total_incl_vat, row.currency)}</span>
+                            <small className="muted">
+                              HT {formatMoney(row.amount_excl_vat, row.currency)} + TVA {formatMoney(row.vat_amount, row.currency)} (
+                              {formatVatRateLabel(row.vat_rate)})
+                            </small>
+                          </div>
+                        </td>
                         <td>
                           <span className={`status-pill ${paymentStatusClass(row.status)}`}>{paymentStatusLabel(row.status)}</span>
                         </td>
