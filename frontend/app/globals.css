@@ -892,6 +892,18 @@ button.danger {
   gap: 6px;
 }
 
+.balance-date-form {
+  align-items: end;
+  gap: 8px;
+}
+
+.balance-date-label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .credit-row {
   align-items: center;
 }
