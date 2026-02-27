@@ -39,7 +39,7 @@ from app.schemas.user import (
 )
 from app.services.family_billing import resolve_billing_profile
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
-from app.services.invoice_documents import render_invoice_text
+from app.services.invoice_documents import InvoicePeriodLine, render_invoice_period_pdf
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
@@ -47,9 +47,21 @@ from app.services.pricing import compute_tax_totals, plan_service_code, resolve_
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"}
+PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
-PENDING_PAYMENT_STATUSES = {"PENDING", "WAITLISTED", "TRIAL", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT", "FAILED"}
+PENDING_PAYMENT_STATUSES = {
+    "PENDING",
+    "WAITLISTED",
+    "TRIAL",
+    "OPEN",
+    "CREATED",
+    "PROCESSING",
+    "WAITING_PAYMENT",
+    "FAILED",
+    "BOOKED",
+    "ATTENDED",
+    "NO_SHOW",
+}
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
 ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
 
@@ -1142,28 +1154,42 @@ def download_client_invoice(
     compact = raw_id.replace("-", "").upper()
     short = compact[:8] if compact else "XXXX0000"
     invoice_number = f"FAC-{payment.occurred_at.strftime('%Y%m%d')}-{short}"
-    content = render_invoice_text(
+    line = InvoicePeriodLine(
+        date_label=payment.occurred_at.strftime("%d/%m/%Y"),
+        type_label=_payment_source_label(payment.source),
+        label=payment.label,
+        quantity=1,
+        vat_amount=payment.vat_amount,
+        total_incl_vat=payment.total_incl_vat,
+        currency=payment.currency,
+    )
+    currency_code = (payment.currency or "EUR").upper()
+    totals = {
+        currency_code: {
+            "amount_excl_vat": payment.amount_excl_vat,
+            "vat_amount": payment.vat_amount,
+            "total_incl_vat": payment.total_incl_vat,
+        }
+    }
+    content = render_invoice_period_pdf(
         db,
         invoice_number=invoice_number,
         issued_at=payment.occurred_at,
         client_id=str(payment.owner_client_id),
         client_name=_display_name(payment_user),
-        payment_type=_payment_source_label(payment.source),
-        label=payment.label,
-        payment_status=payment.status,
-        amount_excl_vat=payment.amount_excl_vat,
-        vat_amount=payment.vat_amount,
-        total_incl_vat=payment.total_incl_vat,
-        currency=payment.currency,
-        reference=payment.reference,
-        refunded_at=None,
-        refund_reason=None,
+        period_label=payment.occurred_at.strftime("%d/%m/%Y"),
+        layout_label="Facture detaillee",
+        include_pending=True,
+        include_cancelled=True,
+        lines=[line],
+        totals_by_currency=totals,
+        note=f"Reference: {payment.reference or '-'}",
     )
 
-    file_name = f"{invoice_number}.txt".replace('"', "")
+    file_name = f"{invoice_number}.pdf".replace('"', "")
     return Response(
         content=content,
-        media_type="text/plain; charset=utf-8",
+        media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="{file_name}"',
             "Cache-Control": "no-store",

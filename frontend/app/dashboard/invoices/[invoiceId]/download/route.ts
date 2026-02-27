@@ -35,8 +35,8 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   }
 
   const buffer = await response.arrayBuffer();
-  const contentDisposition = response.headers.get("content-disposition") ?? 'attachment; filename="facture.txt"';
-  const contentType = response.headers.get("content-type") ?? "text/plain; charset=utf-8";
+  const contentDisposition = response.headers.get("content-disposition") ?? 'attachment; filename="facture.pdf"';
+  const contentType = response.headers.get("content-type") ?? "application/pdf";
 
   return new Response(buffer, {
     status: 200,

@@ -587,6 +587,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const archivedSubscriptions = subscriptions.filter(
     (sub) => (sub.status !== "ACTIVE" && sub.status !== "PAUSED") || isCancellationAlreadyEffective(sub),
   );
+  const hasForfaitPlan = subscriptions.some((sub) => sub.plan.kind === "FORFAIT");
   const visibleCurrentSubscriptions = [...activeSubscriptions, ...endingSubscriptions];
   const selectedSubscriptionForModal =
     subscriptionModalId &&
@@ -2679,6 +2680,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <h3 className="modal-title">Generer une facture</h3>
             <p className="muted">Genere un document pour une plage de dates.</p>
             <form method="get" action={`/admin/clients/${client.id}/payments/invoice-range`} className="grid top-gap-sm">
+              <input type="hidden" name="payment_return_tab" value={paymentReturnTab} />
               <label>
                 Date de debut
                 <input type="date" name="start_date" defaultValue={monthStartInputValue} required />
@@ -2701,6 +2703,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <option value="true">Inclure</option>
                 </select>
               </label>
+              {hasForfaitPlan ? (
+                <label className="span-2">
+                  Format de facture (forfait)
+                  <select name="layout" defaultValue="COMPILED">
+                    <option value="DETAILED">Facture detaillee (toutes les lignes)</option>
+                    <option value="COMPILED">Facture compilee (regroupee par prestation)</option>
+                  </select>
+                </label>
+              ) : (
+                <input type="hidden" name="layout" value="DETAILED" />
+              )}
               <label>
                 Note (optionnel)
                 <textarea name="note" rows={3} maxLength={2000} placeholder="Note de bas de facture." />

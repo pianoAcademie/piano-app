@@ -32,16 +32,17 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!response.ok) {
+    const returnTab = request.nextUrl.searchParams.get("payment_return_tab") === "factures" ? "factures" : "paiements";
     const fallback = new URL(
-      `/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`,
+      `/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`,
       request.url,
     );
     return NextResponse.redirect(fallback, 302);
   }
 
   const buffer = await response.arrayBuffer();
-  const contentDisposition = response.headers.get("content-disposition") ?? 'attachment; filename="facture-periode.txt"';
-  const contentType = response.headers.get("content-type") ?? "text/plain; charset=utf-8";
+  const contentDisposition = response.headers.get("content-disposition") ?? 'attachment; filename="facture-periode.pdf"';
+  const contentType = response.headers.get("content-type") ?? "application/pdf";
 
   return new Response(buffer, {
     status: 200,
