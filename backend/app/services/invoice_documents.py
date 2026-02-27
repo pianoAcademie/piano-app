@@ -536,10 +536,10 @@ def render_invoice_period_pdf(
 
     col_date_x = left + 6
     col_label_x = left + 86
-    col_qty_right = left + 378
-    col_ht_right = left + 434
-    col_vat_rate_right = left + 478
-    col_vat_right = left + 522
+    col_qty_right = left + 361
+    col_ht_right = left + 406
+    col_vat_rate_right = left + 446
+    col_vat_right = left + 486
     col_ttc_right = right - 6
 
     def draw_header() -> None:
@@ -630,7 +630,7 @@ def render_invoice_period_pdf(
 
     current_row_top = draw_table_header_for_new_page()
     for row in lines:
-        label_lines = _wrap_text(row.label, 40)
+        label_lines = _wrap_text(row.label, 44)
         row_height = max(20.0, (len(label_lines) * 12.0) + 8.0)
         if current_row_top + row_height > 760.0:
             pdf.new_page()
@@ -647,7 +647,7 @@ def render_invoice_period_pdf(
         pdf.text_right(
             right_x=col_ttc_right,
             top_y=current_row_top + 14,
-            value=f"{_format_amount(row.total_incl_vat)} {row.currency.upper()}",
+            value=_format_amount(row.total_incl_vat),
             size=9,
             bold=True,
         )
