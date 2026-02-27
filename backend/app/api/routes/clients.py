@@ -64,6 +64,19 @@ PENDING_PAYMENT_STATUSES = {
 }
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
 ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
+COUNTRY_NAME_BY_CODE = {
+    "FR": "France",
+    "BE": "Belgique",
+    "CH": "Suisse",
+    "LU": "Luxembourg",
+    "ES": "Espagne",
+    "IT": "Italie",
+    "GB": "Royaume-Uni",
+    "UK": "Royaume-Uni",
+    "US": "Etats-Unis",
+    "CA": "Canada",
+    "DE": "Allemagne",
+}
 
 
 def _utcnow() -> datetime:
@@ -153,10 +166,20 @@ def _display_name(user: User) -> str:
     return full_name or user.email
 
 
+def _country_display_name(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    code = value.upper()
+    if len(code) == 2:
+        return COUNTRY_NAME_BY_CODE.get(code, code)
+    return value[:1].upper() + value[1:].lower()
+
+
 def _billing_address_label(user: User) -> str:
     line_1 = (user.address_line or "").strip()
     city_line = " ".join(part for part in [(user.postal_code or "").strip(), (user.city or "").strip()] if part).strip()
-    country = (user.address_country or user.residence_country or "").strip().upper()
+    country = _country_display_name(user.address_country or user.residence_country)
     parts = [line_1, city_line, country]
     return ", ".join(part for part in parts if part) or "-"
 
@@ -1193,6 +1216,7 @@ def download_client_invoice(
         totals_by_currency=totals,
         note=f"Reference: {payment.reference or '-'}",
         client_billing_address=_billing_address_label(billing_profile),
+        due_date=payment.occurred_at.date(),
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")

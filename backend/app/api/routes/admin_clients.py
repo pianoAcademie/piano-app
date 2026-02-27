@@ -138,6 +138,20 @@ MANUAL_TRANSACTION_LABEL_BY_TYPE = {
     "REFUND": "Remboursement",
 }
 
+COUNTRY_NAME_BY_CODE = {
+    "FR": "France",
+    "BE": "Belgique",
+    "CH": "Suisse",
+    "LU": "Luxembourg",
+    "ES": "Espagne",
+    "IT": "Italie",
+    "GB": "Royaume-Uni",
+    "UK": "Royaume-Uni",
+    "US": "Etats-Unis",
+    "CA": "Canada",
+    "DE": "Allemagne",
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -295,10 +309,20 @@ def _display_name(first_name: str | None, last_name: str | None, email: str) -> 
     return full_name or email
 
 
+def _country_display_name(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    code = value.upper()
+    if len(code) == 2:
+        return COUNTRY_NAME_BY_CODE.get(code, code)
+    return value[:1].upper() + value[1:].lower()
+
+
 def _billing_address_label(user: User) -> str:
     line_1 = (user.address_line or "").strip()
     city_line = " ".join(part for part in [(user.postal_code or "").strip(), (user.city or "").strip()] if part).strip()
-    country = (user.address_country or user.residence_country or "").strip().upper()
+    country = _country_display_name(user.address_country or user.residence_country)
     parts = [line_1, city_line, country]
     return ", ".join(part for part in parts if part) or "-"
 
@@ -3118,6 +3142,7 @@ def download_admin_client_range_invoice(
     client_id: UUID,
     start_date: date = Query(...),
     end_date: date = Query(...),
+    due_date: date = Query(...),
     include_pending: bool = Query(default=True),
     include_cancelled: bool = Query(default=False),
     layout: str = Query(default="DETAILED"),
@@ -3238,6 +3263,7 @@ def download_admin_client_range_invoice(
         totals_by_currency=totals_by_currency,
         note=_normalize_optional(note),
         client_billing_address=client_billing_address,
+        due_date=due_date,
     )
     file_name = f"{invoice_number}.pdf".replace('"', "")
     return Response(
@@ -3400,6 +3426,7 @@ def download_admin_client_payment_invoice(
             + (f" Motif: {payment.refund_reason}." if payment.refund_reason else "")
         ),
         client_billing_address=_billing_address_label(billing_profile),
+        due_date=payment.occurred_at.date(),
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")

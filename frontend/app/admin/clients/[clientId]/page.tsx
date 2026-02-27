@@ -94,6 +94,12 @@ function formatDateInput(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
+function addDays(value: Date, days: number): Date {
+  const next = new Date(value.getTime());
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
 function formatDateForInput(value: string | null | undefined, fallback: string): string {
   if (!value) {
     return fallback;
@@ -457,6 +463,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const client = clientResult.data;
   const fullName = [client.first_name, client.last_name].filter(Boolean).join(" ");
   const todayInputValue = formatDateInput(new Date());
+  const dueDateInputValue = formatDateInput(addDays(new Date(), 10));
   const selectedBalanceDate = isDateInput(balanceDateParam) ? balanceDateParam : todayInputValue;
   const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
   const monthStartInputValue = `${todayInputValue.slice(0, 8)}01`;
@@ -2688,6 +2695,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <label>
                 Date de fin
                 <input type="date" name="end_date" defaultValue={todayInputValue} required />
+              </label>
+              <label>
+                Date d echeance (obligatoire)
+                <input type="date" name="due_date" defaultValue={dueDateInputValue} required />
               </label>
               <label>
                 Lignes en attente

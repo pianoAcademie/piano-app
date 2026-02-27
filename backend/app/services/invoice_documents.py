@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import re
 import unicodedata
@@ -455,6 +455,31 @@ def _truncate_text(value: str, max_chars: int) -> str:
     return safe[: max_chars - 3].rstrip() + "..."
 
 
+COUNTRY_NAME_BY_CODE = {
+    "FR": "France",
+    "BE": "Belgique",
+    "CH": "Suisse",
+    "LU": "Luxembourg",
+    "ES": "Espagne",
+    "IT": "Italie",
+    "GB": "Royaume-Uni",
+    "UK": "Royaume-Uni",
+    "US": "Etats-Unis",
+    "CA": "Canada",
+    "DE": "Allemagne",
+}
+
+
+def _country_display_name(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    normalized = value.upper()
+    if len(normalized) == 2:
+        return COUNTRY_NAME_BY_CODE.get(normalized, normalized)
+    return value[:1].upper() + value[1:].lower()
+
+
 @dataclass(frozen=True)
 class CompanyIdentity:
     company_name: str
@@ -475,7 +500,7 @@ def _company_identity(db: Session) -> CompanyIdentity:
         _setting_value(db, "config_account_address_line", ""),
         _setting_value(db, "config_account_postal_code", ""),
         _setting_value(db, "config_account_city", ""),
-        _setting_value(db, "config_account_country", ""),
+        _country_display_name(_setting_value(db, "config_account_country", "")),
     ]
     company_address = " ".join(part for part in address_parts if part).strip() or "-"
     return CompanyIdentity(
@@ -499,6 +524,7 @@ def render_invoice_period_pdf(
     totals_by_currency: dict[str, dict[str, Decimal]],
     note: str | None,
     client_billing_address: str | None = None,
+    due_date: date | None = None,
 ) -> bytes:
     identity = _company_identity(db)
     pdf = _SimplePdfDocument()
@@ -509,12 +535,11 @@ def render_invoice_period_pdf(
     row_top = table_top + 22.0
 
     col_date_x = left + 6
-    col_type_x = left + 72
-    col_label_x = left + 136
-    col_qty_right = left + 334
-    col_ht_right = left + 394
-    col_vat_rate_right = left + 438
-    col_vat_right = left + 486
+    col_label_x = left + 86
+    col_qty_right = left + 378
+    col_ht_right = left + 434
+    col_vat_rate_right = left + 478
+    col_vat_right = left + 522
     col_ttc_right = right - 6
 
     def draw_header() -> None:
@@ -574,7 +599,14 @@ def render_invoice_period_pdf(
         pdf.text(x=330.0, top_y=134.0, value=client_name, size=10, bold=True)
         for index, chunk in enumerate(_wrap_text(billing_address, 34)):
             pdf.text(x=330.0, top_y=150.0 + (index * 14.0), value=chunk, size=10)
-        pdf.text(x=330.0, top_y=196.0, value=f"Periode facturee: {period_label}", size=10, bold=True)
+        pdf.text(x=330.0, top_y=196.0, value=f"Date de la facture: {issued_at.strftime('%d/%m/%Y')}", size=10, bold=True)
+        pdf.text(
+            x=330.0,
+            top_y=212.0,
+            value=f"Date d echeance: {(due_date or issued_at.date()).strftime('%d/%m/%Y')}",
+            size=10,
+            bold=True,
+        )
 
         pdf.rect(
             x=left,
@@ -585,7 +617,6 @@ def render_invoice_period_pdf(
             fill_color=(0.95, 0.96, 0.98),
         )
         pdf.text(x=col_date_x, top_y=282.0, value="Date", size=9, bold=True)
-        pdf.text(x=col_type_x, top_y=282.0, value="Type", size=9, bold=True)
         pdf.text(x=col_label_x, top_y=282.0, value="Prestation", size=9, bold=True)
         pdf.text_right(right_x=col_qty_right, top_y=282.0, value="Qt", size=9, bold=True)
         pdf.text_right(right_x=col_ht_right, top_y=282.0, value="HT", size=9, bold=True)
@@ -599,7 +630,7 @@ def render_invoice_period_pdf(
 
     current_row_top = draw_table_header_for_new_page()
     for row in lines:
-        label_lines = _wrap_text(row.label, 32)
+        label_lines = _wrap_text(row.label, 40)
         row_height = max(20.0, (len(label_lines) * 12.0) + 8.0)
         if current_row_top + row_height > 760.0:
             pdf.new_page()
@@ -607,7 +638,6 @@ def render_invoice_period_pdf(
 
         pdf.rect(x=left, top_y=current_row_top, width=right - left, height=row_height, stroke_color=(0.90, 0.92, 0.95))
         pdf.text(x=col_date_x, top_y=current_row_top + 14, value=row.date_label, size=9)
-        pdf.text(x=col_type_x, top_y=current_row_top + 14, value=row.type_label, size=9)
         for idx, chunk in enumerate(label_lines):
             pdf.text(x=col_label_x, top_y=current_row_top + 14 + (idx * 12), value=chunk, size=9)
         pdf.text_right(right_x=col_qty_right, top_y=current_row_top + 14, value=str(row.quantity), size=9)
@@ -632,7 +662,7 @@ def render_invoice_period_pdf(
     pdf.text(x=left, top_y=current_row_top, value="Totaux", size=11, bold=True)
     current_row_top += 16
     pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.82, 0.86, 0.91), fill_color=(0.95, 0.96, 0.98))
-    pdf.text(x=col_type_x, top_y=current_row_top + 14, value="Devise", size=9, bold=True)
+    pdf.text(x=col_label_x, top_y=current_row_top + 14, value="Devise", size=9, bold=True)
     pdf.text_right(right_x=col_ht_right, top_y=current_row_top + 14, value="HT", size=9, bold=True)
     pdf.text_right(right_x=col_vat_right, top_y=current_row_top + 14, value="TVA", size=9, bold=True)
     pdf.text_right(right_x=col_ttc_right, top_y=current_row_top + 14, value="TTC", size=9, bold=True)
@@ -641,7 +671,7 @@ def render_invoice_period_pdf(
     for currency_code in sorted(totals_by_currency.keys()):
         totals = totals_by_currency[currency_code]
         pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.90, 0.92, 0.95))
-        pdf.text(x=col_type_x, top_y=current_row_top + 14, value=currency_code.upper(), size=10, bold=True)
+        pdf.text(x=col_label_x, top_y=current_row_top + 14, value=currency_code.upper(), size=10, bold=True)
         pdf.text_right(
             right_x=col_ht_right,
             top_y=current_row_top + 14,
