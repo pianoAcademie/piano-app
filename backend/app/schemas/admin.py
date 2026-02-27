@@ -722,6 +722,7 @@ class AdminClientSubscriptionPaymentEmailOut(BaseModel):
 
 class AdminClientPlanPurchaseRequest(BaseModel):
     payment_method_code: str | None = Field(default=None, max_length=40)
+    start_date: date | None = None
 
 
 class AdminClientManualCreditOut(BaseModel):

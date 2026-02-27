@@ -904,6 +904,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedPurchaseOwner = validMemberIds.has(readParam(searchParams, "purchase_user_id"))
     ? readParam(searchParams, "purchase_user_id")
     : me.id;
+  const selectedPurchaseStartDateRaw = readParam(searchParams, "purchase_start_date");
+  const selectedPurchaseStartDate = isDateKey(selectedPurchaseStartDateRaw)
+    ? selectedPurchaseStartDateRaw
+    : todayKeyInTimezone(timezone);
   const selectedOwnerSubscriptions = subscriptionsByOwner.get(selectedPurchaseOwner) ?? [];
   const isPendingSubscription = (sub: { status: string }): boolean => {
     const normalized = normalizeStatus(sub.status);
@@ -1682,6 +1686,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       ))}
                     </select>
                   </label>
+                  <label>
+                    Date de demarrage
+                    <input type="date" name="purchase_start_date" defaultValue={selectedPurchaseStartDate} />
+                  </label>
                   <button type="submit">👤</button>
                 </form>
               </section>
@@ -1747,6 +1755,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <form action={purchasePlanAction}>
                         <input type="hidden" name="plan_id" value={plan.id} />
                         <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
+                        <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
                         <button type="submit" title="Souscrire cette offre">
                           ✅
                         </button>

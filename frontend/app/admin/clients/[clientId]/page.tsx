@@ -598,6 +598,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const purchaseType = readParam(searchParams, "purchase_type").toUpperCase() || "FORMULA";
   const purchasePaymentMethod = readParam(searchParams, "purchase_payment_method").toUpperCase();
   const purchaseDiscountedTotalRaw = readParam(searchParams, "purchase_discounted_total").replace(",", ".");
+  const purchaseStartDateRaw = readParam(searchParams, "purchase_start_date").trim();
   const purchaseReturnTab = parseTab(readParam(searchParams, "purchase_return_tab") || currentTab);
   const paymentReturnTab = parseTab(paymentReturnTabRaw || currentTab);
   const balanceDateParam = readParam(searchParams, "balance_date");
@@ -647,6 +648,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const fullName = [client.first_name, client.last_name].filter(Boolean).join(" ");
   const todayInputValue = formatDateInput(new Date());
   const dueDateInputValue = formatDateInput(addDays(new Date(), 10));
+  const purchaseStartDateInputValue = isDateInput(purchaseStartDateRaw) ? purchaseStartDateRaw : todayInputValue;
   const selectedBalanceDate = isDateInput(balanceDateParam) ? balanceDateParam : todayInputValue;
   const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
   const monthStartInputValue = `${todayInputValue.slice(0, 8)}01`;
@@ -944,7 +946,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     { id: "infos", label: "Infos" },
     { id: "famille", label: "Famille" },
     { id: "messages", label: "Messages" },
-    { id: "paiements", label: "Paiements" },
+    { id: "paiements", label: "Compte" },
     { id: "factures", label: "Factures" },
     { id: "reservations", label: "Reservations" },
   ];
@@ -1361,6 +1363,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input type="text" name="discounted_total_incl_vat" placeholder="Ex: 115.00" />
               </label>
               <label>
+                Date de demarrage (abonnement mensuel)
+                <input type="date" name="start_date" defaultValue={purchaseStartDateInputValue} />
+              </label>
+              <label>
                 Reglement
                 <select name="payment_method_code" required defaultValue="">
                   <option value="" disabled>
@@ -1400,7 +1406,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           <article className="modal-panel">
             <Link
               className="modal-close-x"
-              href={`/admin/clients/${client.id}?tab=${purchaseReturnTab}&purchase_modal=wizard&purchase_return_tab=${purchaseReturnTab}`}
+              href={`/admin/clients/${client.id}?tab=${purchaseReturnTab}&purchase_modal=wizard&purchase_return_tab=${purchaseReturnTab}&purchase_start_date=${purchaseStartDateInputValue}`}
               aria-label="Fermer"
             >
               ×
@@ -1409,6 +1415,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <p className="muted">
               Reglement: {billingMethodLabel(purchasePaymentMethod)} | Type d achat: {purchaseTypeLabel}
             </p>
+            <p className="muted">Demarrage souhaite: {formatDateInputLabel(purchaseStartDateInputValue)}</p>
             <article className="card modal-card">
               <h4>Recapitulatif de la commande</h4>
               <p className="muted">
@@ -1440,6 +1447,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="purchase_type" value={purchaseType} />
               <input type="hidden" name="payment_method_code" value={purchasePaymentMethod} />
               <input type="hidden" name="return_tab" value={purchaseReturnTab} />
+              <input type="hidden" name="start_date" value={purchaseStartDateInputValue} />
               {hasDiscountedTotalForPurchase ? (
                 <input type="hidden" name="discounted_total_incl_vat" value={discountedTotalForPurchase.toFixed(2)} />
               ) : null}
@@ -1478,7 +1486,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <div className="row modal-actions-end">
                 <Link
                   className="reset-link"
-                  href={`/admin/clients/${client.id}?tab=${purchaseReturnTab}&purchase_modal=wizard&purchase_return_tab=${purchaseReturnTab}`}
+                  href={`/admin/clients/${client.id}?tab=${purchaseReturnTab}&purchase_modal=wizard&purchase_return_tab=${purchaseReturnTab}&purchase_start_date=${purchaseStartDateInputValue}`}
                 >
                   Retour
                 </Link>
@@ -2590,18 +2598,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               </a>
                               {row.paymentStatus !== "REFUNDED" ? (
                                 <>
-                                  <Link
-                                    className="client-action-icon"
-                                    href={invoicesHref(client.id, {
-                                      payment_modal: "refund",
-                                      payment_source: row.source.toUpperCase(),
-                                      payment_id: row.paymentId,
-                                      payment_return_tab: "factures",
-                                    })}
-                                    title="Creer un avoir"
-                                  >
-                                    A
-                                  </Link>
+                                  {row.source.toUpperCase() === "PLAN_PURCHASE" ? (
+                                    <Link
+                                      className="client-action-icon"
+                                      href={invoicesHref(client.id, {
+                                        payment_modal: "refund",
+                                        payment_source: row.source.toUpperCase(),
+                                        payment_id: row.paymentId,
+                                        payment_return_tab: "factures",
+                                      })}
+                                      title="Creer un avoir"
+                                    >
+                                      A
+                                    </Link>
+                                  ) : null}
                                   <form action={cancelAdminClientInvoiceAction}>
                                     <input type="hidden" name="client_id" value={client.id} />
                                     <input type="hidden" name="payment_source" value={row.source.toUpperCase()} />
@@ -2764,7 +2774,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             >
                               ↓
                             </a>
-                            {row.status !== "REFUNDED" && row.source.toUpperCase() !== "MANUAL" ? (
+                            {row.status !== "REFUNDED" && row.source.toUpperCase() === "PLAN_PURCHASE" ? (
                               <Link
                                 className="client-action-icon danger"
                                 href={paymentsHref(client.id, {
@@ -2778,9 +2788,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 ↔
                               </Link>
                             ) : null}
-                            <a className="client-action-icon" href="#payments-history" title="Voir l'historique">
-                              H
-                            </a>
                           </div>
                         </td>
                       </tr>

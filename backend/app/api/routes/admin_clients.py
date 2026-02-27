@@ -168,16 +168,21 @@ def _has_same_subscription_in_current_month(
     *,
     user_id: UUID,
     plan_id: UUID,
-    now: datetime,
+    reference_at: datetime,
 ) -> bool:
+    cycle_end = add_months_utc(reference_at, 1)
     existing = db.scalar(
         select(ClientPlanSubscription.id)
         .where(
             ClientPlanSubscription.user_id == user_id,
             ClientPlanSubscription.plan_id == plan_id,
             ClientPlanSubscription.status.in_([SubscriptionStatus.PENDING, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED]),
-            or_(ClientPlanSubscription.cancellation_effective_at.is_(None), ClientPlanSubscription.cancellation_effective_at > now),
-            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
+            ClientPlanSubscription.started_at < cycle_end,
+            or_(
+                ClientPlanSubscription.cancellation_effective_at.is_(None),
+                ClientPlanSubscription.cancellation_effective_at > reference_at,
+            ),
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > reference_at),
         )
         .limit(1)
         .with_for_update()
@@ -3416,30 +3421,18 @@ def refund_admin_client_payment(
 ) -> AdminClientPaymentRefundOut:
     _require_client(db, client_id)
     source_code = source.strip().upper()
-    if source_code not in {"PLAN_PURCHASE", "BOOKING", "MANUAL"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported payment source")
+    if source_code != "PLAN_PURCHASE":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le remboursement est autorise uniquement sur une ligne d'achat",
+        )
 
-    if source_code == "PLAN_PURCHASE":
-        exists = db.scalar(
-            select(ClientPlanSubscription.id).where(
-                ClientPlanSubscription.id == payment_id,
-                ClientPlanSubscription.user_id == client_id,
-            )
+    exists = db.scalar(
+        select(ClientPlanSubscription.id).where(
+            ClientPlanSubscription.id == payment_id,
+            ClientPlanSubscription.user_id == client_id,
         )
-    elif source_code == "BOOKING":
-        exists = db.scalar(
-            select(Booking.id).where(
-                Booking.id == payment_id,
-                Booking.user_id == client_id,
-            )
-        )
-    else:
-        exists = db.scalar(
-            select(ClientManualTransaction.id).where(
-                ClientManualTransaction.id == payment_id,
-                ClientManualTransaction.user_id == client_id,
-            )
-        )
+    )
     if exists is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
 
@@ -3585,14 +3578,23 @@ def admin_purchase_plan_for_client(
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
+    payload = payload or AdminClientPlanPurchaseRequest()
     now = _utcnow()
+    subscription_started_at = now
+    if plan.kind == PlanKind.SUBSCRIPTION and payload.start_date is not None:
+        if payload.start_date < now.date():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La date de demarrage d'un abonnement mensuel doit etre aujourd'hui ou dans le futur",
+            )
+        subscription_started_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
     _lock_user_purchase_scope(db, client.id)
 
     if plan.kind == PlanKind.SUBSCRIPTION and _has_same_subscription_in_current_month(
         db,
         user_id=client.id,
         plan_id=plan.id,
-        now=now,
+        reference_at=subscription_started_at,
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3608,7 +3610,6 @@ def admin_purchase_plan_for_client(
     credits_initial: int | None = None
     credits_remaining: int | None = None
     ends_at = None
-    payload = payload or AdminClientPlanPurchaseRequest()
     requested_method = _normalize_optional(payload.payment_method_code)
     method_code = (requested_method or _default_subscription_billing_method(plan) or "").strip().upper() or None
 
@@ -3617,14 +3618,14 @@ def admin_purchase_plan_for_client(
         credits_remaining = credits_initial
         ends_at = add_months_utc(now, int(plan.pack_validity_months or 12))
     elif plan.kind == PlanKind.SUBSCRIPTION:
-        ends_at = add_months_utc(now, 1)
+        ends_at = add_months_utc(subscription_started_at, 1)
 
     should_start_pending = _is_online_collection_method(method_code) and plan.kind != PlanKind.FORFAIT
     subscription = ClientPlanSubscription(
         user_id=client.id,
         plan_id=plan.id,
         status=SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE,
-        started_at=now,
+        started_at=subscription_started_at,
         ends_at=ends_at,
         credits_initial=credits_initial,
         credits_remaining=credits_remaining,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -60,6 +60,7 @@ class ClientSubscriptionOut(BaseModel):
 
 class PlanPurchaseRequest(BaseModel):
     user_id: UUID | None = None
+    start_date: date | None = None
 
 
 class PlanPricePreviewQuery(BaseModel):

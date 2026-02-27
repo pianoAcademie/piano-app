@@ -695,9 +695,16 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
 
   const planId = String(formData.get("plan_id") ?? "");
   const purchaseUserId = String(formData.get("purchase_user_id") ?? "").trim();
+  const startDateRaw = String(formData.get("start_date") ?? "").trim();
   const payload: Record<string, string> = {};
   if (purchaseUserId) {
     payload.user_id = purchaseUserId;
+  }
+  if (startDateRaw) {
+    if (!parseUtcStartOfDate(startDateRaw)) {
+      redirect("/dashboard?tab=offers&error=Date%20de%20demarrage%20invalide");
+    }
+    payload.start_date = startDateRaw;
   }
 
   const result = await backendRequest<{ id: string; checkout_url?: string | null }>(
@@ -1831,6 +1838,7 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
       : "fiche";
   const purchaseType = String(formData.get("purchase_type") ?? "FORMULA").trim().toUpperCase() || "FORMULA";
   const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
+  const startDateRaw = String(formData.get("start_date") ?? "").trim();
   const discountedTotalRaw = String(formData.get("discounted_total_incl_vat") ?? "").trim();
   const discountedTotal = discountedTotalRaw ? parseNonNegativeDecimal(discountedTotalRaw.replace(",", ".")) : null;
 
@@ -1843,6 +1851,9 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
   if (discountedTotalRaw && discountedTotal === null) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Prix%20remise%20invalide`);
   }
+  if (startDateRaw && !parseUtcStartOfDate(startDateRaw)) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Date%20de%20demarrage%20invalide`);
+  }
 
   const params = new URLSearchParams({
     tab: returnTab,
@@ -1853,6 +1864,9 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
   });
   if (discountedTotal !== null) {
     params.set("purchase_discounted_total", discountedTotal.toFixed(2));
+  }
+  if (startDateRaw) {
+    params.set("purchase_start_date", startDateRaw);
   }
 
   redirect(`/admin/clients/${clientId}?${params.toString()}`);
@@ -1870,6 +1884,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   const planKind = String(formData.get("plan_kind") ?? "").trim().toUpperCase();
   const planName = String(formData.get("plan_name") ?? "").trim() || "Formule";
   const purchaseType = String(formData.get("purchase_type") ?? "FORMULA").trim().toUpperCase() || "FORMULA";
+  const startDateRaw = String(formData.get("start_date") ?? "").trim();
   const returnTabRaw = String(formData.get("return_tab") ?? "fiche").trim().toLowerCase();
   const returnTab =
     returnTabRaw === "paiements" || returnTabRaw === "messages" || returnTabRaw === "infos" || returnTabRaw === "famille" || returnTabRaw === "reservations"
@@ -1899,6 +1914,9 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   if (discountedTotalRaw && discountedTotal === null) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Prix%20remise%20invalide`);
   }
+  if (startDateRaw && !parseUtcStartOfDate(startDateRaw)) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Date%20de%20demarrage%20invalide`);
+  }
 
   const purchaseResult = await backendRequest<{ id: string }>(
     `/api/v1/admin/clients/${clientId}/plans/${planId}/purchase`,
@@ -1906,6 +1924,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
       method: "POST",
       body: JSON.stringify({
         payment_method_code: paymentMethodCode,
+        start_date: startDateRaw || null,
       }),
     },
     token,

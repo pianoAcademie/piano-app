@@ -1077,7 +1077,16 @@ def confirm_client_payment(
         subscription.last_payment_status = status_text
         changed = True
 
+    mandate_missing_for_recurring = False
     if lookup.paid:
+        customer_reference = (lookup.metadata.get("customer_reference") or "").strip()
+        mandate_reference = (lookup.metadata.get("mandate_reference") or "").strip()
+        if customer_reference and subscription.payment_provider_customer_ref != customer_reference:
+            subscription.payment_provider_customer_ref = customer_reference
+            changed = True
+        if mandate_reference and subscription.payment_provider_mandate_ref != mandate_reference:
+            subscription.payment_provider_mandate_ref = mandate_reference
+            changed = True
         if subscription.last_payment_at is None:
             subscription.last_payment_at = _utcnow()
             changed = True
@@ -1085,9 +1094,22 @@ def confirm_client_payment(
             if subscription.status != SubscriptionStatus.ACTIVE:
                 subscription.status = SubscriptionStatus.ACTIVE
                 changed = True
-        if plan.kind == PlanKind.SUBSCRIPTION and not subscription.auto_renew:
-            subscription.auto_renew = True
-            changed = True
+        if plan.kind == PlanKind.SUBSCRIPTION:
+            billing_method_code = (subscription.billing_method_code or "").strip().upper()
+            has_customer_ref = bool((subscription.payment_provider_customer_ref or "").strip())
+            has_mandate_ref = bool((subscription.payment_provider_mandate_ref or "").strip())
+            requires_stored_card = billing_method_code == "CARD_ONLINE"
+            mandate_missing_for_recurring = requires_stored_card and (not has_customer_ref or not has_mandate_ref)
+            if mandate_missing_for_recurring:
+                if subscription.auto_renew:
+                    subscription.auto_renew = False
+                    changed = True
+                if (subscription.last_payment_status or "") != "PAID_MANDATE_MISSING":
+                    subscription.last_payment_status = "PAID_MANDATE_MISSING"
+                    changed = True
+            elif not subscription.auto_renew:
+                subscription.auto_renew = True
+                changed = True
     elif lookup.cancelled:
         if subscription.status == SubscriptionStatus.PENDING:
             subscription.status = SubscriptionStatus.CANCELLED
@@ -1135,7 +1157,11 @@ def confirm_client_payment(
         cancelled=lookup.cancelled,
         failed=lookup.failed,
         processed=lookup.success,
-        message=lookup.message,
+        message=(
+            "Paiement confirme mais mandat de prelevement recurrent introuvable. L auto-renouvellement est desactive."
+            if mandate_missing_for_recurring
+            else lookup.message
+        ),
     )
 
 

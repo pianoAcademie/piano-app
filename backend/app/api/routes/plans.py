@@ -69,16 +69,21 @@ def _has_same_subscription_in_current_month(
     *,
     user_id: UUID,
     plan_id: UUID,
-    now: datetime,
+    reference_at: datetime,
 ) -> bool:
+    cycle_end = add_months_utc(reference_at, 1)
     existing = db.scalar(
         select(ClientPlanSubscription.id)
         .where(
             ClientPlanSubscription.user_id == user_id,
             ClientPlanSubscription.plan_id == plan_id,
             ClientPlanSubscription.status.in_([SubscriptionStatus.PENDING, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED]),
-            or_(ClientPlanSubscription.cancellation_effective_at.is_(None), ClientPlanSubscription.cancellation_effective_at > now),
-            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
+            ClientPlanSubscription.started_at < cycle_end,
+            or_(
+                ClientPlanSubscription.cancellation_effective_at.is_(None),
+                ClientPlanSubscription.cancellation_effective_at > reference_at,
+            ),
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > reference_at),
         )
         .limit(1)
         .with_for_update()
@@ -351,13 +356,21 @@ def purchase_plan(
     )
 
     now = datetime.now(timezone.utc)
+    subscription_started_at = now
+    if plan.kind == PlanKind.SUBSCRIPTION and payload.start_date is not None:
+        if payload.start_date < now.date():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La date de demarrage d'un abonnement mensuel doit etre aujourd'hui ou dans le futur",
+            )
+        subscription_started_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
     _lock_user_purchase_scope(db, owner.id)
 
     if plan.kind == PlanKind.SUBSCRIPTION and _has_same_subscription_in_current_month(
         db,
         user_id=owner.id,
         plan_id=plan.id,
-        now=now,
+        reference_at=subscription_started_at,
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -383,7 +396,7 @@ def purchase_plan(
         plan=plan,
         country=(owner.residence_country or "FR").upper(),
         currency=(owner.preferred_currency or "EUR").upper(),
-        on_date=now.date(),
+        on_date=subscription_started_at.date(),
     )
     requires_online_checkout = amount_due > Decimal("0.00")
     if requires_online_checkout and not _is_online_collection_method(method_code):
@@ -398,13 +411,13 @@ def purchase_plan(
         credits_remaining = credits_initial
         ends_at = add_months_utc(now, int(plan.pack_validity_months or 12))
     elif plan.kind == PlanKind.SUBSCRIPTION:
-        ends_at = add_months_utc(now, 1)
+        ends_at = add_months_utc(subscription_started_at, 1)
 
     subscription = ClientPlanSubscription(
         user_id=owner.id,
         plan_id=plan.id,
         status=SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE,
-        started_at=now,
+        started_at=subscription_started_at,
         ends_at=ends_at,
         credits_initial=credits_initial,
         credits_remaining=credits_remaining,

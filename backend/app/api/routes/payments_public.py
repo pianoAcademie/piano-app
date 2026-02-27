@@ -96,11 +96,24 @@ async def payment_webhook(
         status_text = (lookup.status or "").strip().upper() or "UNKNOWN"
         sub.last_payment_status = status_text
         if lookup.paid:
+            customer_reference = (lookup.metadata.get("customer_reference") or "").strip()
+            mandate_reference = (lookup.metadata.get("mandate_reference") or "").strip()
+            if customer_reference:
+                sub.payment_provider_customer_ref = customer_reference
+            if mandate_reference:
+                sub.payment_provider_mandate_ref = mandate_reference
             sub.last_payment_at = _utcnow()
             if sub.status in {SubscriptionStatus.PENDING, SubscriptionStatus.PAUSED, SubscriptionStatus.ACTIVE}:
                 sub.status = SubscriptionStatus.ACTIVE
             if plan.kind == PlanKind.SUBSCRIPTION:
-                sub.auto_renew = True
+                billing_method_code = (sub.billing_method_code or "").strip().upper()
+                has_customer_ref = bool((sub.payment_provider_customer_ref or "").strip())
+                has_mandate_ref = bool((sub.payment_provider_mandate_ref or "").strip())
+                if billing_method_code == "CARD_ONLINE" and (not has_customer_ref or not has_mandate_ref):
+                    sub.auto_renew = False
+                    sub.last_payment_status = "PAID_MANDATE_MISSING"
+                else:
+                    sub.auto_renew = True
         elif lookup.cancelled:
             if sub.status == SubscriptionStatus.PENDING:
                 sub.status = SubscriptionStatus.CANCELLED

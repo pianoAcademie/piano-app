@@ -263,6 +263,14 @@ def _mollie_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
     paid = payment_status == "paid"
     cancelled = payment_status in {"canceled", "expired"}
     failed = payment_status in {"failed"} or (not paid and cancelled)
+    metadata = _normalize_metadata(parsed.get("metadata"))
+    customer_reference = str(parsed.get("customerId") or "").strip()
+    mandate_reference = str(parsed.get("mandateId") or "").strip()
+    if customer_reference:
+        metadata["customer_reference"] = customer_reference
+    if mandate_reference:
+        metadata["mandate_reference"] = mandate_reference
+
     return PaymentLookupResult(
         success=200 <= status_code < 300,
         provider=PaymentProvider.MOLLIE,
@@ -271,7 +279,7 @@ def _mollie_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
         paid=paid,
         cancelled=cancelled,
         failed=failed,
-        metadata=_normalize_metadata(parsed.get("metadata")),
+        metadata=metadata,
         message=message or "ok",
     )
 
