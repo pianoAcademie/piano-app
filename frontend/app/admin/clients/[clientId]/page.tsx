@@ -801,25 +801,24 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       paymentStatus: row.status,
     }));
 
-  const generatedRangeInvoices: InvoiceListRow[] = notes
-    .map((note) => {
-      const payload = parseRangeInvoiceNote(note);
-      if (!payload) {
-        return null;
-      }
-      return {
-        kind: "range",
-        key: `range-${payload.invoice_number}-${note.id}`,
-        occurredAt: `${payload.issued_date}T00:00:00.000Z`,
-        invoiceNumber: payload.invoice_number,
-        typeLabel: "Facture periode",
-        label: `${formatDateInputLabel(payload.start_date)} - ${formatDateInputLabel(payload.end_date)}`,
-        status: "ISSUED",
-        totalLabel: rangeInvoiceTotalLabel(payload.totals_by_currency),
-        downloadHref: rangeInvoiceDownloadHref(client.id, payload),
-      } satisfies InvoiceListRow;
-    })
-    .filter((row): row is InvoiceListRow => row !== null);
+  const generatedRangeInvoices: InvoiceListRow[] = notes.reduce<InvoiceListRow[]>((acc, note) => {
+    const payload = parseRangeInvoiceNote(note);
+    if (!payload) {
+      return acc;
+    }
+    acc.push({
+      kind: "range",
+      key: `range-${payload.invoice_number}-${note.id}`,
+      occurredAt: `${payload.issued_date}T00:00:00.000Z`,
+      invoiceNumber: payload.invoice_number,
+      typeLabel: "Facture periode",
+      label: `${formatDateInputLabel(payload.start_date)} - ${formatDateInputLabel(payload.end_date)}`,
+      status: "ISSUED",
+      totalLabel: rangeInvoiceTotalLabel(payload.totals_by_currency),
+      downloadHref: rangeInvoiceDownloadHref(client.id, payload),
+    });
+    return acc;
+  }, []);
 
   const invoices = [...generatedRangeInvoices, ...paymentInvoices].sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
