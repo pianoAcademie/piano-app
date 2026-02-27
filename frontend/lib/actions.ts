@@ -2226,6 +2226,8 @@ export async function refundAdminClientPaymentAction(formData: FormData): Promis
   const paymentSource = String(formData.get("payment_source") ?? "").trim().toUpperCase();
   const paymentId = String(formData.get("payment_id") ?? "").trim();
   const reason = optionalField(formData, "reason");
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "factures" ? "factures" : "paiements";
 
   if (!clientId || !paymentSource || !paymentId) {
     redirect("/admin/clients?error=Paiement%20invalide");
@@ -2243,11 +2245,47 @@ export async function refundAdminClientPaymentAction(formData: FormData): Promis
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Remboursement%20enregistre`);
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Avoir%20enregistre`);
+}
+
+export async function cancelAdminClientInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const paymentSource = String(formData.get("payment_source") ?? "").trim().toUpperCase();
+  const paymentId = String(formData.get("payment_id") ?? "").trim();
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "factures" ? "factures" : "paiements";
+
+  if (!clientId || !paymentSource || !paymentId) {
+    redirect("/admin/clients?error=Facture%20invalide");
+  }
+
+  const result = await backendRequest<{ source: string; payment_id: string }>(
+    `/api/v1/admin/clients/${clientId}/payments/${paymentSource}/${paymentId}/refund`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        reason: "FACTURE_ANNULEE_PAR_ADMIN",
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Facture%20annulee`);
 }
 
 export async function createAdminClientManualTransactionAction(formData: FormData): Promise<void> {

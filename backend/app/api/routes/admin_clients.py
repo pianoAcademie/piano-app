@@ -101,8 +101,20 @@ from app.services.subscriptions import (
 
 router = APIRouter(prefix="/admin/clients")
 
-PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"}
-PENDING_PAYMENT_STATUSES = {"PENDING", "WAITLISTED", "TRIAL", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT", "FAILED"}
+PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
+PENDING_PAYMENT_STATUSES = {
+    "PENDING",
+    "WAITLISTED",
+    "TRIAL",
+    "OPEN",
+    "CREATED",
+    "PROCESSING",
+    "WAITING_PAYMENT",
+    "FAILED",
+    "BOOKED",
+    "ATTENDED",
+    "NO_SHOW",
+}
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
 ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
@@ -2928,6 +2940,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 status_value = "NOT_BILLABLE"
         elif booking.status == BookingStatus.EXCUSED_ABSENCE:
             is_billable = False
+            status_value = "NOT_BILLABLE"
         items.append(
             AdminClientPaymentOut(
                 id=booking.id,
@@ -2979,8 +2992,9 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             item.status = "REFUNDED"
             item.refunded_at = refund.refunded_at
             item.refund_reason = refund.reason
-        item.invoice_number = _invoice_number_for_payment(item.id, item.occurred_at)
-        item.invoice_status = _invoice_status_from_payment_status(item.status)
+        invoice_status = _invoice_status_from_payment_status(item.status)
+        item.invoice_status = invoice_status
+        item.invoice_number = _invoice_number_for_payment(item.id, item.occurred_at) if invoice_status != "PENDING" else None
 
     items.sort(key=lambda item: item.occurred_at, reverse=True)
     return items
@@ -3213,7 +3227,7 @@ def refund_admin_client_payment(
 ) -> AdminClientPaymentRefundOut:
     _require_client(db, client_id)
     source_code = source.strip().upper()
-    if source_code not in {"PLAN_PURCHASE", "BOOKING"}:
+    if source_code not in {"PLAN_PURCHASE", "BOOKING", "MANUAL"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported payment source")
 
     if source_code == "PLAN_PURCHASE":
@@ -3223,11 +3237,18 @@ def refund_admin_client_payment(
                 ClientPlanSubscription.user_id == client_id,
             )
         )
-    else:
+    elif source_code == "BOOKING":
         exists = db.scalar(
             select(Booking.id).where(
                 Booking.id == payment_id,
                 Booking.user_id == client_id,
+            )
+        )
+    else:
+        exists = db.scalar(
+            select(ClientManualTransaction.id).where(
+                ClientManualTransaction.id == payment_id,
+                ClientManualTransaction.user_id == client_id,
             )
         )
     if exists is None:

@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  cancelAdminClientInvoiceAction,
   createAdultForChildAction,
   createAdminClientNoteAction,
   createChildForAdultAction,
@@ -56,7 +57,7 @@ type PageProps = {
   searchParams: SearchParams;
 };
 
-type ClientTab = "fiche" | "infos" | "famille" | "messages" | "paiements" | "reservations";
+type ClientTab = "fiche" | "infos" | "famille" | "messages" | "paiements" | "factures" | "reservations";
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -67,7 +68,7 @@ function readParam(params: SearchParams, key: string): string {
 }
 
 function parseTab(value: string): ClientTab {
-  if (value === "infos" || value === "famille" || value === "messages" || value === "paiements" || value === "reservations") {
+  if (value === "infos" || value === "famille" || value === "messages" || value === "paiements" || value === "factures" || value === "reservations") {
     return value;
   }
   return "fiche";
@@ -188,8 +189,11 @@ function paymentStatusLabel(status: string): string {
   if (normalized === "REFUNDED") {
     return "Rembourse";
   }
-  if (normalized === "PAID" || normalized === "BOOKED" || normalized === "ATTENDED") {
+  if (normalized === "PAID") {
     return "Paye";
+  }
+  if (normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "NO_SHOW") {
+    return "A facturer";
   }
   if (normalized === "FAILED") {
     return "Echec";
@@ -199,9 +203,6 @@ function paymentStatusLabel(status: string): string {
   }
   if (normalized === "ACTIVE") {
     return "Actif";
-  }
-  if (normalized === "NO_SHOW") {
-    return "Absence";
   }
   if (normalized === "EXCUSED_ABSENCE") {
     return "Absence excusee";
@@ -215,8 +216,20 @@ function paymentStatusLabel(status: string): string {
   return normalized || "Inconnu";
 }
 
-const PAID_PAYMENT_STATUSES = new Set(["PAID", "SUCCEEDED", "COMPLETED", "BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"]);
-const PENDING_PAYMENT_STATUSES = new Set(["PENDING", "WAITLISTED", "TRIAL", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT", "FAILED"]);
+const PAID_PAYMENT_STATUSES = new Set(["PAID", "SUCCEEDED", "COMPLETED"]);
+const PENDING_PAYMENT_STATUSES = new Set([
+  "PENDING",
+  "WAITLISTED",
+  "TRIAL",
+  "OPEN",
+  "CREATED",
+  "PROCESSING",
+  "WAITING_PAYMENT",
+  "FAILED",
+  "BOOKED",
+  "ATTENDED",
+  "NO_SHOW",
+]);
 const CANCELLED_PAYMENT_STATUSES = new Set(["CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"]);
 
 function normalizePaymentStatus(status: string): string {
@@ -279,6 +292,11 @@ function paymentsHref(clientId: string, params: Record<string, string>): string 
   return `/admin/clients/${clientId}?${search.toString()}`;
 }
 
+function invoicesHref(clientId: string, params: Record<string, string>): string {
+  const search = new URLSearchParams({ tab: "factures", ...params });
+  return `/admin/clients/${clientId}?${search.toString()}`;
+}
+
 const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount"] as const;
 type ManualTransactionModalType = (typeof MANUAL_TRANSACTION_MODAL_TYPES)[number];
 
@@ -301,6 +319,17 @@ function statusClass(status: string): string {
     return "status-warn";
   }
   return "status-off";
+}
+
+function paymentStatusClass(status: string): string {
+  const normalized = normalizePaymentStatus(status);
+  if (normalized === "NOT_BILLABLE" || normalized === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(normalized)) {
+    return "status-off";
+  }
+  if (PAID_PAYMENT_STATUSES.has(normalized)) {
+    return "status-ok";
+  }
+  return "status-warn";
 }
 
 function subscriptionStatusPill(sub: AdminClientSubscriptionOut): { label: string; toneClass: string } {
@@ -378,12 +407,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : null;
   const paymentModalSource = readParam(searchParams, "payment_source").toUpperCase();
   const paymentModalId = readParam(searchParams, "payment_id");
+  const paymentReturnTabRaw = readParam(searchParams, "payment_return_tab");
   const purchaseModalAction = readParam(searchParams, "purchase_modal");
   const purchasePlanId = readParam(searchParams, "purchase_plan_id");
   const purchaseType = readParam(searchParams, "purchase_type").toUpperCase() || "FORMULA";
   const purchasePaymentMethod = readParam(searchParams, "purchase_payment_method").toUpperCase();
   const purchaseDiscountedTotalRaw = readParam(searchParams, "purchase_discounted_total").replace(",", ".");
   const purchaseReturnTab = parseTab(readParam(searchParams, "purchase_return_tab") || currentTab);
+  const paymentReturnTab = parseTab(paymentReturnTabRaw || currentTab);
   const balanceDateParam = readParam(searchParams, "balance_date");
 
   const [
@@ -608,6 +639,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     return occurredAtMs <= selectedBalanceDateEndMs;
   });
 
+  const invoices = payments
+    .filter((row) => {
+      const normalizedInvoiceStatus = (row.invoice_status ?? "").toUpperCase();
+      return normalizedInvoiceStatus === "PAID" || normalizedInvoiceStatus === "CANCELLED";
+    })
+    .sort((a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at));
+
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
   const pendingTotalsByCurrency = new Map<string, number>();
@@ -653,6 +691,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     { id: "famille", label: "Famille" },
     { id: "messages", label: "Messages" },
     { id: "paiements", label: "Paiements" },
+    { id: "factures", label: "Factures" },
     { id: "reservations", label: "Reservations" },
   ];
 
@@ -2216,6 +2255,92 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
+      {currentTab === "factures" ? (
+        <section className="admin-page-grid">
+          <article className="card">
+            <div className="row spread">
+              <h3>Factures emises et annulees</h3>
+              <div className="row">
+                <Link
+                  className="mode-link"
+                  href={invoicesHref(client.id, { payment_modal: "invoice_range", payment_return_tab: "factures" })}
+                >
+                  Generer une facture
+                </Link>
+              </div>
+            </div>
+
+            {invoices.length === 0 ? (
+              <p className="muted">Aucune facture emise/annulee pour ce client.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Numero</th>
+                      <th>Type</th>
+                      <th>Libelle</th>
+                      <th>Statut facture</th>
+                      <th>Total</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoices.map((row) => (
+                      <tr key={`invoice-${row.source}-${row.id}`}>
+                        <td>{formatDate(row.occurred_at)}</td>
+                        <td>{row.invoice_number ?? "-"}</td>
+                        <td>{paymentSourceLabel(row.source)}</td>
+                        <td>{row.label}</td>
+                        <td>{invoiceStatusLabel(row.invoice_status)}</td>
+                        <td>{formatMoney(row.total_incl_vat, row.currency)}</td>
+                        <td>
+                          <div className="row payment-row-actions">
+                            <a
+                              className="client-action-icon"
+                              href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.id}/invoice`}
+                              title="Telecharger la facture"
+                            >
+                              ↓
+                            </a>
+                            {row.status !== "REFUNDED" ? (
+                              <>
+                                <Link
+                                  className="client-action-icon"
+                                  href={invoicesHref(client.id, {
+                                    payment_modal: "refund",
+                                    payment_source: row.source.toUpperCase(),
+                                    payment_id: row.id,
+                                    payment_return_tab: "factures",
+                                  })}
+                                  title="Creer un avoir"
+                                >
+                                  A
+                                </Link>
+                                <form action={cancelAdminClientInvoiceAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="payment_source" value={row.source.toUpperCase()} />
+                                  <input type="hidden" name="payment_id" value={row.id} />
+                                  <input type="hidden" name="return_tab" value="factures" />
+                                  <button type="submit" className="client-action-icon danger" title="Annuler la facture">
+                                    ×
+                                  </button>
+                                </form>
+                              </>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+        </section>
+      ) : null}
+
       {currentTab === "paiements" ? (
         <section className="admin-page-grid">
           <article className="card">
@@ -2310,7 +2435,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         </td>
                         <td>{row.reference ?? "-"}</td>
                         <td>
-                          <span className={`status-pill ${statusClass(row.status)}`}>{paymentStatusLabel(row.status)}</span>
+                          <span className={`status-pill ${paymentStatusClass(row.status)}`}>{paymentStatusLabel(row.status)}</span>
                         </td>
                         <td>{formatMoney(row.total_incl_vat, row.currency)}</td>
                         <td>
@@ -2329,6 +2454,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   payment_modal: "refund",
                                   payment_source: row.source.toUpperCase(),
                                   payment_id: row.id,
+                                  payment_return_tab: "paiements",
                                 })}
                                 title="Lancer un remboursement"
                               >
@@ -2544,10 +2670,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
-      {currentTab === "paiements" && paymentModalAction === "invoice_range" ? (
+      {(currentTab === "paiements" || currentTab === "factures") && paymentModalAction === "invoice_range" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, paymentReturnTab)} aria-label="Fermer">
               ×
             </Link>
             <h3 className="modal-title">Generer une facture</h3>
@@ -2580,7 +2706,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <textarea name="note" rows={3} maxLength={2000} placeholder="Note de bas de facture." />
               </label>
               <div className="row modal-actions-end">
-                <Link className="reset-link" href={tabHref(client.id, "paiements")}>
+                <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>
                   Annuler
                 </Link>
                 <button type="submit">Telecharger</button>
@@ -2590,10 +2716,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
-      {currentTab === "paiements" && selectedPaymentForModal ? (
+      {(currentTab === "paiements" || currentTab === "factures") && selectedPaymentForModal ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, paymentReturnTab)} aria-label="Fermer">
               ×
             </Link>
             <h3 className="modal-title">Rembourser le paiement</h3>
@@ -2604,12 +2730,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="payment_source" value={selectedPaymentForModal.source.toUpperCase()} />
               <input type="hidden" name="payment_id" value={selectedPaymentForModal.id} />
+              <input type="hidden" name="return_tab" value={paymentReturnTab} />
               <label>
                 Motif (optionnel)
                 <textarea name="reason" rows={3} maxLength={1000} placeholder="Ex: remboursement commercial" />
               </label>
               <div className="row modal-actions-end">
-                <Link className="reset-link" href={tabHref(client.id, "paiements")}>
+                <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>
                   Annuler
                 </Link>
                 <button type="submit" className="danger">

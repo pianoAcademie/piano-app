@@ -892,6 +892,14 @@ button.danger {
   gap: 6px;
 }
 
+.payment-row-actions form {
+  margin: 0;
+}
+
+.payment-row-actions button.client-action-icon {
+  cursor: pointer;
+}
+
 .balance-date-form {
   align-items: end;
   gap: 8px;
