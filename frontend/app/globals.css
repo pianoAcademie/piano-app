@@ -1538,30 +1538,74 @@ button.danger {
   display: grid;
 }
 
-.session-booking-row {
-  display: grid;
-  gap: 8px;
-}
-
-.session-bookings-list {
+.session-bookings-summary-list {
   max-height: 240px;
   overflow: auto;
   padding-right: 4px;
 }
 
-.session-attendance-form {
-  align-items: end;
+.session-booking-summary-row {
+  align-items: center;
+}
+
+.session-primary-actions {
+  margin-top: 10px;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.session-attendance-form label {
+.session-attendance-modal {
+  width: min(1100px, 95vw);
+}
+
+.attendance-modal-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 12px;
+  max-height: min(72vh, 760px);
+}
+
+.attendance-students-list {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.attendance-student-link {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fffdf9;
+  color: inherit;
+  text-decoration: none;
   display: grid;
   gap: 4px;
 }
 
-.session-booking-note-form {
-  gap: 6px;
+.attendance-student-link.active {
+  border-color: #d2b184;
+  background: #fff4df;
+}
+
+.attendance-focus-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: #fffdf9;
+  overflow: auto;
+}
+
+.attendance-focus-card h3 {
+  margin: 0;
+}
+
+.attendance-focus-nav {
+  margin-top: 8px;
+}
+
+.session-group-notes-modal textarea {
+  min-height: 240px;
 }
 
 .day-details-list {
@@ -1609,6 +1653,15 @@ button.danger {
     grid-column: auto;
   }
 
+  .attendance-modal-layout {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+
+  .attendance-students-list {
+    max-height: 220px;
+  }
+
   .agenda-columns {
     grid-template-columns: 1fr;
   }
@@ -1627,7 +1680,7 @@ button.danger {
     padding: 8px;
   }
 
-  .session-bookings-list {
+  .session-bookings-summary-list {
     max-height: 200px;
   }
 

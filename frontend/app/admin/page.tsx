@@ -516,6 +516,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const dayDetailsRaw = readParam(searchParams, "day_details");
   const dayDetails = isDateKey(dayDetailsRaw) ? dayDetailsRaw : "";
   const selectedSessionId = readParam(searchParams, "session_id");
+  const attendanceModalOpen = readParam(searchParams, "attendance") === "1";
+  const notesModal = readParam(searchParams, "notes").toLowerCase();
+  const groupNotesModalOpen = notesModal === "group";
+  const bookingFocusId = readParam(searchParams, "booking_focus");
   const confirmActionRaw = readParam(searchParams, "confirm_action").toLowerCase();
   const confirmAction: "" | "cancel" | "delete" = confirmActionRaw === "cancel" || confirmActionRaw === "delete" ? confirmActionRaw : "";
 
@@ -753,9 +757,23 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const errorMessage = readParam(searchParams, "error");
 
   const modalHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
+  const attendanceModalHref = selectedSession ? withQueryParam(modalHref, "attendance", "1") : modalHref;
+  const groupNotesModalHref = selectedSession ? withQueryParam(modalHref, "notes", "group") : modalHref;
+  const attendanceBookingHref = (bookingId: string): string => withQueryParam(attendanceModalHref, "booking_focus", bookingId);
   const confirmCloseHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const cancelConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "cancel") : baseHref;
   const deleteConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "delete") : baseHref;
+  const focusedAttendanceBooking =
+    selectedSessionBookings.find((booking) => booking.id === bookingFocusId) ?? selectedSessionBookings[0] ?? null;
+  const focusedAttendanceIndex = focusedAttendanceBooking
+    ? selectedSessionBookings.findIndex((booking) => booking.id === focusedAttendanceBooking.id)
+    : -1;
+  const previousAttendanceBooking =
+    focusedAttendanceIndex > 0 ? selectedSessionBookings[focusedAttendanceIndex - 1] : null;
+  const nextAttendanceBooking =
+    focusedAttendanceIndex >= 0 && focusedAttendanceIndex < selectedSessionBookings.length - 1
+      ? selectedSessionBookings[focusedAttendanceIndex + 1]
+      : null;
   const selectedCourseTypeName = selectedSession ? courseTypeById.get(selectedSession.course_type_id)?.name ?? "Type non defini" : "";
   const selectedLocationName = selectedSession ? locationById.get(selectedSession.location_id)?.name ?? "Lieu non defini" : "";
   const selectedProfessorDetail = selectedSession ? professorById.get(selectedSession.professor_id) : null;
@@ -1382,109 +1400,52 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               {selectedSessionBookings.length === 0 ? (
                 <p className="muted">Aucun eleve inscrit.</p>
               ) : (
-                <div className="list session-bookings-list">
-                  {selectedSessionBookings.map((booking, index) => {
-                    const canUpdateAttendance = ["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(booking.status);
-                    const attendanceDefault =
-                      booking.status === "BOOKED" ||
-                      booking.status === "ATTENDED" ||
-                      booking.status === "NO_SHOW" ||
-                      booking.status === "EXCUSED_ABSENCE"
-                        ? booking.status
-                        : "";
-
-                    return (
-                      <article key={booking.id} className="item session-booking-row">
-                        <div className="row spread">
-                          <div>
-                            <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
-                            <br />
-                            <small className="muted">{booking.client_email}</small>
-                          </div>
-                          <div className="row">
-                            <span className={`status-badge ${statusClass(booking.status)}`}>
-                              {booking.status}
-                              {booking.waitlist_position ? ` #${booking.waitlist_position}` : ""}
-                            </span>
-                            {isBookingRemovable(selectedSession, booking) ? (
-                              <form action={adminRemoveClientFromSessionAction} className="row">
-                                <input type="hidden" name="session_id" value={selectedSession.id} />
-                                <input type="hidden" name="booking_id" value={booking.id} />
-                                <input type="hidden" name="return_to" value={modalHref} />
-                                <button className="icon-btn danger" type="submit" title="Retirer l adherent">
-                                  🗑
-                                </button>
-                              </form>
-                            ) : (
-                              <span className="muted">Verrouille</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {canUpdateAttendance ? (
-                          <form action={adminUpdateSessionAttendanceAction} className="row session-attendance-form">
+                <div className="list session-bookings-summary-list">
+                  {selectedSessionBookings.map((booking, index) => (
+                    <article key={booking.id} className="item row spread session-booking-summary-row">
+                      <div>
+                        <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
+                        <br />
+                        <small className="muted">{booking.client_email}</small>
+                      </div>
+                      <div className="row">
+                        <span className={`status-badge ${statusClass(booking.status)}`}>
+                          {booking.status}
+                          {booking.waitlist_position ? ` #${booking.waitlist_position}` : ""}
+                        </span>
+                        <a className="mode-link" href={attendanceBookingHref(booking.id)}>
+                          Presence & note
+                        </a>
+                        {isBookingRemovable(selectedSession, booking) ? (
+                          <form action={adminRemoveClientFromSessionAction} className="row">
                             <input type="hidden" name="session_id" value={selectedSession.id} />
                             <input type="hidden" name="booking_id" value={booking.id} />
                             <input type="hidden" name="return_to" value={modalHref} />
-                            <label className="row">
-                              Presence
-                              <select name="attendance_status" defaultValue={attendanceDefault} required>
-                                <option value="">Selectionner...</option>
-                                <option value="BOOKED">Non renseigne</option>
-                                <option value="ATTENDED">Present</option>
-                                <option value="NO_SHOW">Absent</option>
-                                <option value="EXCUSED_ABSENCE">Absent excuse</option>
-                              </select>
-                            </label>
-                            <button type="submit" className="ghost small-btn">
-                              Enregistrer presence
+                            <button className="icon-btn danger" type="submit" title="Retirer l adherent">
+                              🗑
                             </button>
                           </form>
                         ) : (
-                          <p className="muted">Presence non editable pour ce statut.</p>
+                          <span className="muted">Verrouille</span>
                         )}
-
-                        <form action={adminUpdateSessionBookingNoteAction} className="grid session-booking-note-form">
-                          <input type="hidden" name="session_id" value={selectedSession.id} />
-                          <input type="hidden" name="booking_id" value={booking.id} />
-                          <input type="hidden" name="return_to" value={modalHref} />
-                          <label>
-                            Note eleve
-                            <textarea
-                              name="student_note"
-                              rows={2}
-                              placeholder="Saisir une note pour cet eleve..."
-                              defaultValue={booking.student_note ?? ""}
-                            />
-                          </label>
-                          <div className="row">
-                            <button type="submit" className="ghost small-btn">
-                              Sauvegarder note eleve
-                            </button>
-                          </div>
-                        </form>
-                      </article>
-                    );
-                  })}
+                      </div>
+                    </article>
+                  ))}
                 </div>
               )}
-            </section>
-
-            <section className="card modal-card">
-              <h3>Notes de groupe</h3>
-              <form action={adminUpdateSessionGroupNoteAction} className="grid">
-                <input type="hidden" name="session_id" value={selectedSession.id} />
-                <input type="hidden" name="return_to" value={modalHref} />
-                <label>
-                  Note du creneau (groupe)
-                  <textarea name="group_note" rows={4} placeholder="Saisir une note de groupe..." defaultValue={selectedSession.group_note ?? ""} />
-                </label>
-                <div className="row">
-                  <button type="submit" className="ghost small-btn">
-                    Sauvegarder note de groupe
-                  </button>
-                </div>
-              </form>
+              <div className="row session-primary-actions">
+                <a className="mode-link" href={attendanceModalHref}>
+                  Prendre les presences
+                </a>
+                <a className="mode-link" href={groupNotesModalHref}>
+                  Ajouter des notes de groupe
+                </a>
+              </div>
+              {selectedSession.group_note ? (
+                <p className="muted top-gap-sm">
+                  <strong>Note de groupe:</strong> {selectedSession.group_note}
+                </p>
+              ) : null}
             </section>
 
             <section className="card modal-card">
@@ -1686,6 +1647,133 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                   </details>
                 </section>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && attendanceModalOpen ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel session-attendance-modal">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Prendre les presences</h2>
+            <p className="muted">Saisie eleve par eleve dans une popup dediee.</p>
+
+            {selectedSessionBookings.length === 0 || !focusedAttendanceBooking ? (
+              <p className="muted">Aucun eleve inscrit sur ce creneau.</p>
+            ) : (
+              <div className="attendance-modal-layout">
+                <aside className="attendance-students-list">
+                  {selectedSessionBookings.map((booking, index) => (
+                    <a
+                      key={booking.id}
+                      href={attendanceBookingHref(booking.id)}
+                      className={`attendance-student-link ${booking.id === focusedAttendanceBooking.id ? "active" : ""}`}
+                    >
+                      <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
+                      <small className="muted">{booking.client_email}</small>
+                      <span className={`status-badge ${statusClass(booking.status)}`}>{booking.status}</span>
+                    </a>
+                  ))}
+                </aside>
+
+                <section className="attendance-focus-card">
+                  <div className="row spread">
+                    <div>
+                      <h3>{focusedAttendanceBooking.client_display_name || "Participant"}</h3>
+                      <small className="muted">{focusedAttendanceBooking.client_email}</small>
+                    </div>
+                    <span className={`status-badge ${statusClass(focusedAttendanceBooking.status)}`}>
+                      {focusedAttendanceBooking.status}
+                    </span>
+                  </div>
+
+                  {["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(focusedAttendanceBooking.status) ? (
+                    <form action={adminUpdateSessionAttendanceAction} className="grid top-gap-sm">
+                      <input type="hidden" name="session_id" value={selectedSession.id} />
+                      <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
+                      <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
+                      <label>
+                        Presence
+                        <select name="attendance_status" defaultValue={focusedAttendanceBooking.status} required>
+                          <option value="BOOKED">Non renseigne</option>
+                          <option value="ATTENDED">Present</option>
+                          <option value="NO_SHOW">Absent</option>
+                          <option value="EXCUSED_ABSENCE">Absent excuse</option>
+                        </select>
+                      </label>
+                      <div className="row">
+                        <button type="submit">Sauvegarder presence</button>
+                      </div>
+                    </form>
+                  ) : (
+                    <p className="muted top-gap-sm">Presence non editable pour ce statut.</p>
+                  )}
+
+                  <form action={adminUpdateSessionBookingNoteAction} className="grid top-gap-sm">
+                    <input type="hidden" name="session_id" value={selectedSession.id} />
+                    <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
+                    <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
+                    <label>
+                      Note eleve
+                      <textarea
+                        name="student_note"
+                        rows={6}
+                        placeholder="Saisir une note pour cet eleve..."
+                        defaultValue={focusedAttendanceBooking.student_note ?? ""}
+                      />
+                    </label>
+                    <div className="row">
+                      <button type="submit" className="ghost">
+                        Sauvegarder note eleve
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="row spread attendance-focus-nav">
+                    {previousAttendanceBooking ? (
+                      <a className="mode-link" href={attendanceBookingHref(previousAttendanceBooking.id)}>
+                        ← Eleve precedent
+                      </a>
+                    ) : (
+                      <span />
+                    )}
+                    {nextAttendanceBooking ? (
+                      <a className="mode-link" href={attendanceBookingHref(nextAttendanceBooking.id)}>
+                        Eleve suivant →
+                      </a>
+                    ) : null}
+                  </div>
+                </section>
+              </div>
+            )}
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && groupNotesModalOpen ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact session-group-notes-modal">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Notes de groupe</h2>
+            <p className="muted">Notes partagees pour le groupe de ce creneau.</p>
+            <form action={adminUpdateSessionGroupNoteAction} className="grid top-gap-sm">
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="return_to" value={groupNotesModalHref} />
+              <label>
+                Note du creneau (groupe)
+                <textarea name="group_note" rows={10} placeholder="Saisir une note de groupe..." defaultValue={selectedSession.group_note ?? ""} />
+              </label>
+              <div className="row spread">
+                <a className="reset-link" href={modalHref}>
+                  Fermer
+                </a>
+                <button type="submit">Sauvegarder note de groupe</button>
+              </div>
+            </form>
           </article>
         </section>
       ) : null}
