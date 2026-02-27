@@ -2689,6 +2689,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <form method="get" action={`/admin/clients/${client.id}/payments/invoice-range`} className="grid top-gap-sm">
               <input type="hidden" name="payment_return_tab" value={paymentReturnTab} />
               <label>
+                Date d emission (obligatoire)
+                <input type="date" name="issued_date" defaultValue={todayInputValue} required />
+              </label>
+              <label>
                 Date de debut
                 <input type="date" name="start_date" defaultValue={monthStartInputValue} required />
               </label>
@@ -2725,9 +2729,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ) : (
                 <input type="hidden" name="layout" value="DETAILED" />
               )}
-              <label>
-                Note (optionnel)
-                <textarea name="note" rows={3} maxLength={2000} placeholder="Note de bas de facture." />
+              <label className="span-2">
+                Note publique (optionnel)
+                <textarea name="public_note" rows={3} maxLength={2000} placeholder="Cette note apparaitra en bas de la facture." />
+              </label>
+              <label className="span-2">
+                Note privee (optionnel)
+                <textarea
+                  name="private_note"
+                  rows={3}
+                  maxLength={2000}
+                  placeholder="Visible uniquement dans le back-office (admin/comptable)."
+                />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>

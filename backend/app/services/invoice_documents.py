@@ -565,7 +565,7 @@ def render_invoice_period_pdf(
         pdf.text_right(
             right_x=right - 2.0,
             top_y=48.0,
-            value=f"Date: {issued_at.strftime('%d/%m/%Y %H:%M')}",
+            value=f"Date: {issued_at.strftime('%d/%m/%Y')}",
             size=10,
             color=(0.92, 0.93, 0.96),
         )

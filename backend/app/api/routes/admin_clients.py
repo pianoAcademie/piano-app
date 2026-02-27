@@ -3142,17 +3142,22 @@ def download_admin_client_range_invoice(
     client_id: UUID,
     start_date: date = Query(...),
     end_date: date = Query(...),
+    issued_date: date = Query(...),
     due_date: date = Query(...),
     include_pending: bool = Query(default=True),
     include_cancelled: bool = Query(default=False),
     layout: str = Query(default="DETAILED"),
+    public_note: str | None = Query(default=None, max_length=2000),
+    private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
     client = _require_client(db, client_id)
     if end_date < start_date:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid date range")
+    if due_date < issued_date:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Due date must be on or after issue date")
 
     start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
     end_at_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
@@ -3246,12 +3251,29 @@ def download_admin_client_range_invoice(
                 )
             )
 
-    issued_at = _utcnow()
+    issued_at = datetime.combine(issued_date, datetime.min.time(), tzinfo=timezone.utc)
     invoice_number = reserve_next_invoice_number(db, issued_at=issued_at)
+    normalized_public_note = _normalize_optional(public_note) or _normalize_optional(note)
+    normalized_private_note = _normalize_optional(private_note)
     db.commit()
     billing_profile = resolve_billing_profile(db, client)
     client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
     client_billing_address = _billing_address_label(billing_profile)
+
+    if normalized_private_note:
+        _create_client_note(
+            db,
+            client_id=client_id,
+            author_user_id=actor.id,
+            entry_type="MANUAL",
+            message=(
+                f"Facture {invoice_number} generee ({start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}, "
+                f"emise le {issued_date.strftime('%d/%m/%Y')}, echeance {due_date.strftime('%d/%m/%Y')}). "
+                f"Note privee: {normalized_private_note}"
+            ),
+        )
+        db.commit()
+
     content = render_invoice_period_pdf(
         db,
         invoice_number=invoice_number,
@@ -3261,7 +3283,7 @@ def download_admin_client_range_invoice(
         period_label=f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}",
         lines=invoice_lines,
         totals_by_currency=totals_by_currency,
-        note=_normalize_optional(note),
+        note=normalized_public_note,
         client_billing_address=client_billing_address,
         due_date=due_date,
     )
