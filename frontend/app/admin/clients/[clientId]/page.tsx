@@ -407,6 +407,7 @@ type InvoiceListRow =
       occurredAt: string;
       invoiceNumber: string;
       typeLabel: string;
+      modeLabel: string;
       label: string;
       status: string;
       emailedAt: string | null;
@@ -1109,8 +1110,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       noteId: note.id,
       occurredAt: `${payload.issued_date}T00:00:00.000Z`,
       invoiceNumber: payload.invoice_number,
-      typeLabel: "Facture periode",
-      label: `${formatDateInputLabel(payload.start_date)} - ${formatDateInputLabel(payload.end_date)}`,
+      typeLabel: payload.generation_mode === "AUTO" ? "Facture periode auto" : "Facture periode",
+      modeLabel: payload.generation_mode === "AUTO" ? "Auto" : "Manuel",
+      label: `${formatDateInputLabel(payload.start_date)} - ${formatDateInputLabel(payload.end_date)}${
+        payload.generation_mode === "AUTO"
+          ? payload.auto_period_scope === "FUTURE"
+            ? " | Prestations a venir"
+            : " | Prestations precedentes"
+          : ""
+      }`,
       status: payload.invoice_status,
       emailedAt: payload.emailed_at ?? null,
       remindedAt: payload.reminded_at ?? null,
@@ -2948,7 +2956,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <tr key={row.key}>
                         <td>{formatDate(row.occurredAt)}</td>
                         <td>{row.invoiceNumber ?? "-"}</td>
-                        <td>{row.typeLabel}</td>
+                        <td>
+                          {row.typeLabel}
+                          {row.kind === "range" ? (
+                            <div className="stack-xs">
+                              <span className={`status-pill ${row.modeLabel === "Auto" ? "status-warn" : "status-off"}`}>{row.modeLabel}</span>
+                            </div>
+                          ) : null}
+                        </td>
                         <td>{row.label}</td>
                         <td>
                           {row.kind === "range" ? (
@@ -3523,6 +3538,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <form action={createAdminClientRangeInvoiceAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value="factures" />
+              <p className="badge span-2">Etape 1: Details de la facture</p>
               <label>
                 Type de generation
                 <select name="generation_mode" defaultValue="MANUAL">
@@ -3544,7 +3560,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </label>
               <label>
                 Date d echeance (obligatoire)
-                <input type="date" name="due_date" defaultValue={dueDateInputValue} required />
+                <input type="date" name="due_date" defaultValue={dueDateInputValue} />
               </label>
               <label className="checkbox">
                 <input type="checkbox" name="no_due_date" value="on" />
@@ -3577,6 +3593,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               )}
               {hasForfaitPlan ? (
                 <>
+                  <p className="badge span-2">Etape 2: Options de facturation automatique</p>
                   <label>
                     Date de debut du cycle (auto)
                     <input type="date" name="auto_cycle_start_date" defaultValue={nextMonthCycleStartInputValue} />
