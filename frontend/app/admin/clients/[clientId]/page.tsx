@@ -1020,20 +1020,24 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     paymentModalAction === "invoice_email" && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
       : null;
-  const invoiceEmailPreviewResult =
-    paymentModalAction === "invoice_email" && selectedRangeInvoiceForModal
-      ? await backendRequest<AdminRangeInvoiceEmailPreviewOut>(
-          `/api/v1/admin/clients/${params.clientId}/invoices/range/${selectedRangeInvoiceForModal.noteId}/email/preview?kind=${encodeURIComponent(
-            invoiceEmailKind,
-          )}`,
-          {},
-          token,
-        )
+  let invoiceEmailPreviewResult: unknown = null;
+  if (paymentModalAction === "invoice_email" && selectedRangeInvoiceForModal) {
+    invoiceEmailPreviewResult = await backendRequest(
+      `/api/v1/admin/clients/${params.clientId}/invoices/range/${selectedRangeInvoiceForModal.noteId}/email/preview?kind=${encodeURIComponent(
+        invoiceEmailKind,
+      )}`,
+      {},
+      token,
+    );
+  }
+  const invoiceEmailPreviewResultRecord =
+    invoiceEmailPreviewResult && typeof invoiceEmailPreviewResult === "object"
+      ? (invoiceEmailPreviewResult as { ok?: boolean; data?: AdminRangeInvoiceEmailPreviewOut; message?: string })
       : null;
   const invoiceEmailPreview =
-    invoiceEmailPreviewResult && invoiceEmailPreviewResult.ok ? invoiceEmailPreviewResult.data : null;
-  if (invoiceEmailPreviewResult && !invoiceEmailPreviewResult.ok) {
-    errors.push(`invoice_email_preview: ${invoiceEmailPreviewResult.message}`);
+    invoiceEmailPreviewResultRecord && invoiceEmailPreviewResultRecord.ok ? invoiceEmailPreviewResultRecord.data ?? null : null;
+  if (invoiceEmailPreviewResultRecord && invoiceEmailPreviewResultRecord.ok === false) {
+    errors.push(`invoice_email_preview: ${invoiceEmailPreviewResultRecord.message ?? "Erreur preview courriel"}`);
   }
 
   const totalsByCurrency = new Map<string, number>();
@@ -2746,7 +2750,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 <span className="status-pill status-ok" title={`Envoye le ${formatDate(row.emailedAt)}`}>
                                   Envoye par mail
                                 </span>
-                              )}
+                              ) : null}
                               {row.remindedAt ? (
                                 <span className="status-pill status-warn" title={`Relance le ${formatDate(row.remindedAt)}`}>
                                   Relance
@@ -2811,7 +2815,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                     ↺
                                   </button>
                                 </form>
-                              ) : null}
+                              )}
                               {row.status !== "CANCELLED" ? (
                                 <form action={updateAdminClientRangeInvoiceStatusAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
