@@ -153,6 +153,47 @@ def _restore_pack_credit(subscription: ClientPlanSubscription, plan: Plan) -> No
     subscription.credits_remaining = min(current + 1, cap)
 
 
+def _non_negative_money(value: Decimal | float | int | None) -> Decimal:
+    if value is None:
+        return Decimal("0.00")
+    quantized = Decimal(value).quantize(Decimal("0.01"))
+    if quantized < Decimal("0.00"):
+        return Decimal("0.00")
+    return quantized
+
+
+def _forfait_subscription_pricing_applies(
+    subscription: ClientPlanSubscription | None,
+    *,
+    session_start_at: datetime,
+) -> bool:
+    if subscription is None:
+        return False
+    if session_start_at < subscription.started_at:
+        return False
+    if subscription.ends_at is not None and session_start_at >= subscription.ends_at:
+        return False
+    return True
+
+
+def _forfait_hourly_ttc_with_overrides(
+    *,
+    base_hourly_ttc: Decimal,
+    subscription: ClientPlanSubscription | None,
+    session_start_at: datetime,
+) -> Decimal:
+    if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
+        return base_hourly_ttc.quantize(Decimal("0.01"))
+
+    loyalty_discount = _non_negative_money(subscription.forfait_loyalty_discount_per_hour_ttc)
+    family_discount = _non_negative_money(subscription.forfait_family_discount_per_hour_ttc)
+    short_commitment_supplement = _non_negative_money(subscription.forfait_short_commitment_supplement_per_hour_ttc)
+    adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
+    if adjusted < Decimal("0.00"):
+        return Decimal("0.00")
+    return adjusted
+
+
 def _restriction_window_start(reference: datetime, period: PlanRestrictionPeriod) -> datetime:
     if period == PlanRestrictionPeriod.DAY:
         return reference.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -382,6 +423,7 @@ def _resolve_booking_snapshot(
     session_obj: CourseSession,
     user: User,
     now: datetime,
+    subscription: ClientPlanSubscription | None,
     plan: Plan | None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str]:
     billing_profile = resolve_billing_profile(db, user)
@@ -414,7 +456,14 @@ def _resolve_booking_snapshot(
     if duration_seconds <= 0:
         duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
     duration_hours = Decimal(duration_seconds) / Decimal("3600")
-    total_incl_vat = (Decimal(hourly_ttc) * duration_hours).quantize(Decimal("0.01"))
+    hourly_ttc_decimal = Decimal(hourly_ttc).quantize(Decimal("0.01"))
+    if plan is not None and plan.kind == PlanKind.FORFAIT:
+        hourly_ttc_decimal = _forfait_hourly_ttc_with_overrides(
+            base_hourly_ttc=hourly_ttc_decimal,
+            subscription=subscription,
+            session_start_at=session_obj.start_at_utc,
+        )
+    total_incl_vat = (hourly_ttc_decimal * duration_hours).quantize(Decimal("0.01"))
 
     if vat_rate <= Decimal("0.00"):
         amount_excl_vat = total_incl_vat
@@ -592,6 +641,7 @@ def book_session(
         session_obj=session_obj,
         user=booking_owner,
         now=now,
+        subscription=subscription,
         plan=plan,
     )
 

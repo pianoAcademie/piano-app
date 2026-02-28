@@ -263,12 +263,54 @@ def _forfait_booking_ids(db: Session, booking_ids: list[UUID]) -> set[UUID]:
     return {row[0] for row in rows}
 
 
+def _non_negative_money(value: Decimal | float | int | None) -> Decimal:
+    if value is None:
+        return Decimal("0.00")
+    quantized = Decimal(value).quantize(Decimal("0.01"))
+    if quantized < Decimal("0.00"):
+        return Decimal("0.00")
+    return quantized
+
+
+def _forfait_subscription_pricing_applies(
+    subscription: ClientPlanSubscription | None,
+    *,
+    session_start_at: datetime,
+) -> bool:
+    if subscription is None:
+        return False
+    if session_start_at < subscription.started_at:
+        return False
+    if subscription.ends_at is not None and session_start_at >= subscription.ends_at:
+        return False
+    return True
+
+
+def _forfait_hourly_ttc_with_overrides(
+    *,
+    base_hourly_ttc: Decimal,
+    subscription: ClientPlanSubscription | None,
+    session_start_at: datetime,
+) -> Decimal:
+    if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
+        return base_hourly_ttc.quantize(Decimal("0.01"))
+
+    loyalty_discount = _non_negative_money(subscription.forfait_loyalty_discount_per_hour_ttc)
+    family_discount = _non_negative_money(subscription.forfait_family_discount_per_hour_ttc)
+    short_commitment_supplement = _non_negative_money(subscription.forfait_short_commitment_supplement_per_hour_ttc)
+    adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
+    if adjusted < Decimal("0.00"):
+        return Decimal("0.00")
+    return adjusted
+
+
 def _booking_amounts_from_activity(
     *,
     booking: Booking,
     session_obj: CourseSession,
     course_type: CourseType,
     billing_profile: User,
+    forfait_subscription: ClientPlanSubscription | None,
     db: Session,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
     if course_type.default_hourly_rate is None:
@@ -278,7 +320,12 @@ def _booking_amounts_from_activity(
     if duration_seconds <= 0:
         duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
     duration_hours = Decimal(duration_seconds) / Decimal("3600")
-    total_incl_vat = (Decimal(course_type.default_hourly_rate) * duration_hours).quantize(Decimal("0.01"))
+    hourly_ttc = _forfait_hourly_ttc_with_overrides(
+        base_hourly_ttc=Decimal(course_type.default_hourly_rate).quantize(Decimal("0.01")),
+        subscription=forfait_subscription,
+        session_start_at=session_obj.start_at_utc,
+    )
+    total_incl_vat = (hourly_ttc * duration_hours).quantize(Decimal("0.01"))
 
     country_code = (billing_profile.residence_country or "FR").upper()
     vat_rate = resolve_vat_rate(
@@ -824,7 +871,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
     ).all()
 
     rows_bookings = db.execute(
-        select(Booking, CourseSession, CourseType, Location, User, Plan)
+        select(Booking, CourseSession, CourseType, Location, User, ClientPlanSubscription, Plan)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
@@ -903,7 +950,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
             )
         )
 
-    for booking, session_obj, course_type, location, owner, plan in rows_bookings:
+    for booking, session_obj, course_type, location, owner, forfait_subscription, plan in rows_bookings:
         status_value = booking.status.value if hasattr(booking.status, "value") else str(booking.status)
         is_billable = True
         amount_excl_vat = booking.price_excl_vat_snapshot
@@ -926,6 +973,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                     session_obj=session_obj,
                     course_type=course_type,
                     billing_profile=billing_profile,
+                    forfait_subscription=forfait_subscription,
                     db=db,
                 )
                 if computed is not None:

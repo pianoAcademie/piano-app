@@ -1480,6 +1480,7 @@ def add_admin_session_booking(
                 session_obj=target,
                 user=client,
                 now=now,
+                subscription=subscription,
                 plan=plan,
             )
             next_status = BookingStatus.BOOKED if _count_booked(db, target.id) < target.capacity_max else BookingStatus.WAITLISTED

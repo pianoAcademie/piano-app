@@ -212,6 +212,9 @@ export type AdminClientSubscriptionOut = {
   payment_provider_subscription_ref: string | null;
   payment_provider_customer_ref: string | null;
   payment_provider_mandate_ref: string | null;
+  forfait_loyalty_discount_per_hour_ttc: string | null;
+  forfait_family_discount_per_hour_ttc: string | null;
+  forfait_short_commitment_supplement_per_hour_ttc: string | null;
   last_payment_at: string | null;
   last_payment_status: string | null;
   suspension_starts_at: string | null;

@@ -222,6 +222,21 @@ class ClientPlanSubscription(Base):
     payment_provider_subscription_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     payment_provider_customer_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     payment_provider_mandate_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    forfait_loyalty_discount_per_hour_ttc: Mapped[float] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
+    forfait_family_discount_per_hour_ttc: Mapped[float] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
+    forfait_short_commitment_supplement_per_hour_ttc: Mapped[float] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
     suspension_starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     suspension_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     suspension_duration_value: Mapped[int | None] = mapped_column(Integer, nullable=True)

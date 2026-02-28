@@ -6,7 +6,6 @@ import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from string import Formatter
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -66,6 +65,7 @@ from app.schemas.admin import (
     AdminClientSubscriptionPaymentEmailRequest,
     AdminClientSubscriptionPaymentEmailOut,
     AdminClientPlanPurchaseRequest,
+    AdminClientForfaitPricingUpdateRequest,
     AdminClientManualCreditOut,
     AdminClientManualCreditUpdateRequest,
     AdminClientNoteOut,
@@ -151,6 +151,7 @@ MANUAL_TRANSACTION_LABEL_BY_TYPE = {
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 INVOICE_RANGE_STATUSES = {"ISSUED", "PAID", "CANCELLED"}
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+SIMPLE_PLACEHOLDER_RE = re.compile(r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}")
 EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 INVOICE_RANGE_PUBLIC_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
 
@@ -255,6 +256,48 @@ def _normalize_optional(value: str | None) -> str | None:
 
 def _quantize_money(value: Decimal) -> Decimal:
     return Decimal(value).quantize(Decimal("0.01"))
+
+
+def _non_negative_money(value: Decimal | float | int | None) -> Decimal:
+    if value is None:
+        return Decimal("0.00")
+    quantized = _quantize_money(Decimal(value))
+    if quantized < Decimal("0.00"):
+        return Decimal("0.00")
+    return quantized
+
+
+def _forfait_subscription_pricing_applies(
+    subscription: ClientPlanSubscription | None,
+    *,
+    session_start_at: datetime,
+) -> bool:
+    if subscription is None:
+        return False
+    if session_start_at < subscription.started_at:
+        return False
+    if subscription.ends_at is not None and session_start_at >= subscription.ends_at:
+        return False
+    return True
+
+
+def _forfait_hourly_ttc_with_overrides(
+    *,
+    base_hourly_ttc: Decimal,
+    subscription: ClientPlanSubscription | None,
+    session_start_at: datetime,
+) -> Decimal:
+    if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
+        return _quantize_money(base_hourly_ttc)
+
+    loyalty_discount = _non_negative_money(subscription.forfait_loyalty_discount_per_hour_ttc)
+    family_discount = _non_negative_money(subscription.forfait_family_discount_per_hour_ttc)
+    short_commitment_supplement = _non_negative_money(subscription.forfait_short_commitment_supplement_per_hour_ttc)
+
+    adjusted = _quantize_money(base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement)
+    if adjusted < Decimal("0.00"):
+        return Decimal("0.00")
+    return adjusted
 
 
 def _normalize_currency(value: str | None, *, fallback: str = "EUR") -> str:
@@ -388,25 +431,25 @@ def _create_client_note(
     return note
 
 
-class _SafeTemplateContext(dict[str, str]):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
 def _render_message_template(template: str, context: dict[str, str]) -> str:
     normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template or "")
-    try:
-        return normalized.format_map(_SafeTemplateContext(context)).strip()
-    except Exception:
-        return normalized.strip()
+
+    def _replace(match: re.Match[str]) -> str:
+        key = (match.group(1) or "").strip()
+        if not key:
+            return match.group(0)
+        return context.get(key, "{" + key + "}")
+
+    return SIMPLE_PLACEHOLDER_RE.sub(_replace, normalized).strip()
 
 
 def _extract_template_variables(template: str) -> set[str]:
     names: set[str] = set()
     normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template or "")
-    for _, field_name, _, _ in Formatter().parse(normalized):
-        if isinstance(field_name, str) and field_name:
-            names.add(field_name)
+    for match in SIMPLE_PLACEHOLDER_RE.finditer(normalized):
+        key = (match.group(1) or "").strip()
+        if key:
+            names.add(key)
     return names
 
 
@@ -577,10 +620,12 @@ def _build_range_invoice_email_defaults(
         "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email,
         "last_name": (billing_profile.last_name or client.last_name or "").strip(),
         "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
         "invoice_number": str(metadata.get("invoice_number") or ""),
         "invoice_url": invoice_url,
         "payment_url": payment_url,
         "amount_due": amount_due,
+        "total_incl_vat": amount_due,
         "currency": first_currency,
         "due_date": str(metadata.get("due_date") or ""),
         "issued_date": str(metadata.get("issued_date") or ""),
@@ -860,6 +905,7 @@ def _forfait_booking_amounts_from_activity(
     session_obj: CourseSession,
     course_type: CourseType,
     billing_profile: User,
+    forfait_subscription: ClientPlanSubscription | None,
     db: Session,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
     if course_type.default_hourly_rate is None:
@@ -869,7 +915,11 @@ def _forfait_booking_amounts_from_activity(
     if duration_seconds <= 0:
         duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
     duration_hours = Decimal(duration_seconds) / Decimal("3600")
-    hourly_ttc = _quantize_money(Decimal(course_type.default_hourly_rate))
+    hourly_ttc = _forfait_hourly_ttc_with_overrides(
+        base_hourly_ttc=_quantize_money(Decimal(course_type.default_hourly_rate)),
+        subscription=forfait_subscription,
+        session_start_at=session_obj.start_at_utc,
+    )
     total_incl_vat = _quantize_money(hourly_ttc * duration_hours)
 
     country_code = (billing_profile.residence_country or "FR").upper()
@@ -2468,6 +2518,72 @@ def delete_admin_client_family_link(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+def _admin_subscription_out(
+    db: Session,
+    *,
+    client: User,
+    sub: ClientPlanSubscription,
+    plan: Plan,
+    billing_profile: User | None = None,
+) -> AdminClientSubscriptionOut:
+    profile = billing_profile or resolve_billing_profile(db, client)
+
+    estimated_price_excl_vat: Decimal | None = None
+    estimated_vat_rate: Decimal | None = None
+    estimated_vat_amount: Decimal | None = None
+    estimated_total_incl_vat: Decimal | None = None
+    estimated_currency: str | None = None
+
+    pricing = _estimate_subscription_pricing(
+        db,
+        plan=plan,
+        residence_country=profile.residence_country or "FR",
+        preferred_currency=profile.preferred_currency or "EUR",
+        on_date=sub.started_at,
+    )
+    if pricing is not None:
+        estimated_price_excl_vat, estimated_vat_rate, estimated_vat_amount, estimated_total_incl_vat, estimated_currency = pricing
+
+    return AdminClientSubscriptionOut(
+        id=sub.id,
+        status=sub.status,
+        started_at=sub.started_at,
+        ends_at=sub.ends_at,
+        next_payment_at=sub.next_payment_at or sub.ends_at,
+        credits_initial=sub.credits_initial,
+        credits_remaining=sub.credits_remaining,
+        auto_renew=sub.auto_renew,
+        billing_method_code=sub.billing_method_code,
+        payment_provider_subscription_ref=sub.payment_provider_subscription_ref,
+        payment_provider_customer_ref=sub.payment_provider_customer_ref,
+        payment_provider_mandate_ref=sub.payment_provider_mandate_ref,
+        forfait_loyalty_discount_per_hour_ttc=_non_negative_money(sub.forfait_loyalty_discount_per_hour_ttc),
+        forfait_family_discount_per_hour_ttc=_non_negative_money(sub.forfait_family_discount_per_hour_ttc),
+        forfait_short_commitment_supplement_per_hour_ttc=_non_negative_money(
+            sub.forfait_short_commitment_supplement_per_hour_ttc
+        ),
+        last_payment_at=sub.last_payment_at,
+        last_payment_status=sub.last_payment_status,
+        suspension_starts_at=sub.suspension_starts_at,
+        suspension_ends_at=sub.suspension_ends_at,
+        suspension_duration_value=sub.suspension_duration_value,
+        suspension_duration_unit=sub.suspension_duration_unit,
+        cancellation_requested_at=sub.cancellation_requested_at,
+        cancellation_effective_at=sub.cancellation_effective_at,
+        plan=AdminClientSubscriptionMiniOut(
+            id=plan.id,
+            code=plan.code,
+            name=plan.name,
+            kind=plan.kind,
+        ),
+        estimated_price_excl_vat=estimated_price_excl_vat,
+        estimated_vat_rate=estimated_vat_rate,
+        estimated_vat_amount=estimated_vat_amount,
+        estimated_total_incl_vat=estimated_total_incl_vat,
+        estimated_currency=estimated_currency,
+    )
+
+
 @router.get("/{client_id}/subscriptions", response_model=list[AdminClientSubscriptionOut])
 def list_admin_client_subscriptions(
     client_id: UUID,
@@ -2490,58 +2606,7 @@ def list_admin_client_subscriptions(
     for sub, plan in rows:
         if reconcile_subscription_status(sub, now=now, plan_kind=plan.kind):
             has_state_changes = True
-
-        estimated_price_excl_vat: Decimal | None = None
-        estimated_vat_rate: Decimal | None = None
-        estimated_vat_amount: Decimal | None = None
-        estimated_total_incl_vat: Decimal | None = None
-        estimated_currency: str | None = None
-
-        pricing = _estimate_subscription_pricing(
-            db,
-            plan=plan,
-            residence_country=billing_profile.residence_country or "FR",
-            preferred_currency=billing_profile.preferred_currency or "EUR",
-            on_date=sub.started_at,
-        )
-        if pricing is not None:
-            estimated_price_excl_vat, estimated_vat_rate, estimated_vat_amount, estimated_total_incl_vat, estimated_currency = pricing
-
-        items.append(
-            AdminClientSubscriptionOut(
-                id=sub.id,
-                status=sub.status,
-                started_at=sub.started_at,
-                ends_at=sub.ends_at,
-                next_payment_at=sub.next_payment_at or sub.ends_at,
-                credits_initial=sub.credits_initial,
-                credits_remaining=sub.credits_remaining,
-                auto_renew=sub.auto_renew,
-                billing_method_code=sub.billing_method_code,
-                payment_provider_subscription_ref=sub.payment_provider_subscription_ref,
-                payment_provider_customer_ref=sub.payment_provider_customer_ref,
-                payment_provider_mandate_ref=sub.payment_provider_mandate_ref,
-                last_payment_at=sub.last_payment_at,
-                last_payment_status=sub.last_payment_status,
-                suspension_starts_at=sub.suspension_starts_at,
-                suspension_ends_at=sub.suspension_ends_at,
-                suspension_duration_value=sub.suspension_duration_value,
-                suspension_duration_unit=sub.suspension_duration_unit,
-                cancellation_requested_at=sub.cancellation_requested_at,
-                cancellation_effective_at=sub.cancellation_effective_at,
-                plan=AdminClientSubscriptionMiniOut(
-                    id=plan.id,
-                    code=plan.code,
-                    name=plan.name,
-                    kind=plan.kind,
-                ),
-                estimated_price_excl_vat=estimated_price_excl_vat,
-                estimated_vat_rate=estimated_vat_rate,
-                estimated_vat_amount=estimated_vat_amount,
-                estimated_total_incl_vat=estimated_total_incl_vat,
-                estimated_currency=estimated_currency,
-            )
-        )
+        items.append(_admin_subscription_out(db, client=client, sub=sub, plan=plan, billing_profile=billing_profile))
 
     if has_state_changes:
         db.commit()
@@ -2605,7 +2670,7 @@ def suspend_admin_client_subscription(
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientSubscriptionOut:
-    _require_client(db, client_id)
+    client = _require_client(db, client_id)
     sub, plan = _admin_subscription_with_plan_for_client(db, client_id=client_id, subscription_id=subscription_id)
     if plan.kind != PlanKind.SUBSCRIPTION:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only SUBSCRIPTION can be suspended")
@@ -2655,56 +2720,7 @@ def suspend_admin_client_subscription(
     db.commit()
     db.refresh(sub)
 
-    billing_profile = resolve_billing_profile(db, _require_client(db, client_id))
-
-    estimated_price_excl_vat: Decimal | None = None
-    estimated_vat_rate: Decimal | None = None
-    estimated_vat_amount: Decimal | None = None
-    estimated_total_incl_vat: Decimal | None = None
-    estimated_currency: str | None = None
-    pricing = _estimate_subscription_pricing(
-        db,
-        plan=plan,
-        residence_country=billing_profile.residence_country or "FR",
-        preferred_currency=billing_profile.preferred_currency or "EUR",
-        on_date=sub.started_at,
-    )
-    if pricing is not None:
-        estimated_price_excl_vat, estimated_vat_rate, estimated_vat_amount, estimated_total_incl_vat, estimated_currency = pricing
-
-    return AdminClientSubscriptionOut(
-        id=sub.id,
-        status=sub.status,
-        started_at=sub.started_at,
-        ends_at=sub.ends_at,
-        next_payment_at=sub.next_payment_at or sub.ends_at,
-        credits_initial=sub.credits_initial,
-        credits_remaining=sub.credits_remaining,
-        auto_renew=sub.auto_renew,
-        billing_method_code=sub.billing_method_code,
-        payment_provider_subscription_ref=sub.payment_provider_subscription_ref,
-        payment_provider_customer_ref=sub.payment_provider_customer_ref,
-        payment_provider_mandate_ref=sub.payment_provider_mandate_ref,
-        last_payment_at=sub.last_payment_at,
-        last_payment_status=sub.last_payment_status,
-        suspension_starts_at=sub.suspension_starts_at,
-        suspension_ends_at=sub.suspension_ends_at,
-        suspension_duration_value=sub.suspension_duration_value,
-        suspension_duration_unit=sub.suspension_duration_unit,
-        cancellation_requested_at=sub.cancellation_requested_at,
-        cancellation_effective_at=sub.cancellation_effective_at,
-        plan=AdminClientSubscriptionMiniOut(
-            id=plan.id,
-            code=plan.code,
-            name=plan.name,
-            kind=plan.kind,
-        ),
-        estimated_price_excl_vat=estimated_price_excl_vat,
-        estimated_vat_rate=estimated_vat_rate,
-        estimated_vat_amount=estimated_vat_amount,
-        estimated_total_incl_vat=estimated_total_incl_vat,
-        estimated_currency=estimated_currency,
-    )
+    return _admin_subscription_out(db, client=client, sub=sub, plan=plan)
 
 
 @router.post("/{client_id}/subscriptions/{subscription_id}/cancel", response_model=AdminClientSubscriptionOut)
@@ -2810,55 +2826,7 @@ def cancel_admin_client_subscription(
     db.commit()
     db.refresh(sub)
 
-    billing_profile = resolve_billing_profile(db, client)
-    estimated_price_excl_vat: Decimal | None = None
-    estimated_vat_rate: Decimal | None = None
-    estimated_vat_amount: Decimal | None = None
-    estimated_total_incl_vat: Decimal | None = None
-    estimated_currency: str | None = None
-    pricing = _estimate_subscription_pricing(
-        db,
-        plan=plan,
-        residence_country=billing_profile.residence_country or "FR",
-        preferred_currency=billing_profile.preferred_currency or "EUR",
-        on_date=sub.started_at,
-    )
-    if pricing is not None:
-        estimated_price_excl_vat, estimated_vat_rate, estimated_vat_amount, estimated_total_incl_vat, estimated_currency = pricing
-
-    return AdminClientSubscriptionOut(
-        id=sub.id,
-        status=sub.status,
-        started_at=sub.started_at,
-        ends_at=sub.ends_at,
-        next_payment_at=sub.next_payment_at or sub.ends_at,
-        credits_initial=sub.credits_initial,
-        credits_remaining=sub.credits_remaining,
-        auto_renew=sub.auto_renew,
-        billing_method_code=sub.billing_method_code,
-        payment_provider_subscription_ref=sub.payment_provider_subscription_ref,
-        payment_provider_customer_ref=sub.payment_provider_customer_ref,
-        payment_provider_mandate_ref=sub.payment_provider_mandate_ref,
-        last_payment_at=sub.last_payment_at,
-        last_payment_status=sub.last_payment_status,
-        suspension_starts_at=sub.suspension_starts_at,
-        suspension_ends_at=sub.suspension_ends_at,
-        suspension_duration_value=sub.suspension_duration_value,
-        suspension_duration_unit=sub.suspension_duration_unit,
-        cancellation_requested_at=sub.cancellation_requested_at,
-        cancellation_effective_at=sub.cancellation_effective_at,
-        plan=AdminClientSubscriptionMiniOut(
-            id=plan.id,
-            code=plan.code,
-            name=plan.name,
-            kind=plan.kind,
-        ),
-        estimated_price_excl_vat=estimated_price_excl_vat,
-        estimated_vat_rate=estimated_vat_rate,
-        estimated_vat_amount=estimated_vat_amount,
-        estimated_total_incl_vat=estimated_total_incl_vat,
-        estimated_currency=estimated_currency,
-    )
+    return _admin_subscription_out(db, client=client, sub=sub, plan=plan)
 
 
 @router.post("/{client_id}/subscriptions/{subscription_id}/expiry", response_model=AdminClientSubscriptionOut)
@@ -2914,55 +2882,7 @@ def update_admin_client_subscription_expiry(
     db.commit()
     db.refresh(sub)
 
-    billing_profile = resolve_billing_profile(db, client)
-    estimated_price_excl_vat: Decimal | None = None
-    estimated_vat_rate: Decimal | None = None
-    estimated_vat_amount: Decimal | None = None
-    estimated_total_incl_vat: Decimal | None = None
-    estimated_currency: str | None = None
-    pricing = _estimate_subscription_pricing(
-        db,
-        plan=plan,
-        residence_country=billing_profile.residence_country or "FR",
-        preferred_currency=billing_profile.preferred_currency or "EUR",
-        on_date=sub.started_at,
-    )
-    if pricing is not None:
-        estimated_price_excl_vat, estimated_vat_rate, estimated_vat_amount, estimated_total_incl_vat, estimated_currency = pricing
-
-    return AdminClientSubscriptionOut(
-        id=sub.id,
-        status=sub.status,
-        started_at=sub.started_at,
-        ends_at=sub.ends_at,
-        next_payment_at=sub.next_payment_at or sub.ends_at,
-        credits_initial=sub.credits_initial,
-        credits_remaining=sub.credits_remaining,
-        auto_renew=sub.auto_renew,
-        billing_method_code=sub.billing_method_code,
-        payment_provider_subscription_ref=sub.payment_provider_subscription_ref,
-        payment_provider_customer_ref=sub.payment_provider_customer_ref,
-        payment_provider_mandate_ref=sub.payment_provider_mandate_ref,
-        last_payment_at=sub.last_payment_at,
-        last_payment_status=sub.last_payment_status,
-        suspension_starts_at=sub.suspension_starts_at,
-        suspension_ends_at=sub.suspension_ends_at,
-        suspension_duration_value=sub.suspension_duration_value,
-        suspension_duration_unit=sub.suspension_duration_unit,
-        cancellation_requested_at=sub.cancellation_requested_at,
-        cancellation_effective_at=sub.cancellation_effective_at,
-        plan=AdminClientSubscriptionMiniOut(
-            id=plan.id,
-            code=plan.code,
-            name=plan.name,
-            kind=plan.kind,
-        ),
-        estimated_price_excl_vat=estimated_price_excl_vat,
-        estimated_vat_rate=estimated_vat_rate,
-        estimated_vat_amount=estimated_vat_amount,
-        estimated_total_incl_vat=estimated_total_incl_vat,
-        estimated_currency=estimated_currency,
-    )
+    return _admin_subscription_out(db, client=client, sub=sub, plan=plan)
 
 
 @router.post("/{client_id}/subscriptions/{subscription_id}/billing-setup", response_model=AdminClientSubscriptionOut)
@@ -2995,55 +2915,47 @@ def setup_admin_client_subscription_billing(
     db.commit()
     db.refresh(sub)
 
-    billing_profile = resolve_billing_profile(db, client)
-    estimated_price_excl_vat: Decimal | None = None
-    estimated_vat_rate: Decimal | None = None
-    estimated_vat_amount: Decimal | None = None
-    estimated_total_incl_vat: Decimal | None = None
-    estimated_currency: str | None = None
-    pricing = _estimate_subscription_pricing(
-        db,
-        plan=plan,
-        residence_country=billing_profile.residence_country or "FR",
-        preferred_currency=billing_profile.preferred_currency or "EUR",
-        on_date=sub.started_at,
-    )
-    if pricing is not None:
-        estimated_price_excl_vat, estimated_vat_rate, estimated_vat_amount, estimated_total_incl_vat, estimated_currency = pricing
+    return _admin_subscription_out(db, client=client, sub=sub, plan=plan)
 
-    return AdminClientSubscriptionOut(
-        id=sub.id,
-        status=sub.status,
-        started_at=sub.started_at,
-        ends_at=sub.ends_at,
-        next_payment_at=sub.next_payment_at or sub.ends_at,
-        credits_initial=sub.credits_initial,
-        credits_remaining=sub.credits_remaining,
-        auto_renew=sub.auto_renew,
-        billing_method_code=sub.billing_method_code,
-        payment_provider_subscription_ref=sub.payment_provider_subscription_ref,
-        payment_provider_customer_ref=sub.payment_provider_customer_ref,
-        payment_provider_mandate_ref=sub.payment_provider_mandate_ref,
-        last_payment_at=sub.last_payment_at,
-        last_payment_status=sub.last_payment_status,
-        suspension_starts_at=sub.suspension_starts_at,
-        suspension_ends_at=sub.suspension_ends_at,
-        suspension_duration_value=sub.suspension_duration_value,
-        suspension_duration_unit=sub.suspension_duration_unit,
-        cancellation_requested_at=sub.cancellation_requested_at,
-        cancellation_effective_at=sub.cancellation_effective_at,
-        plan=AdminClientSubscriptionMiniOut(
-            id=plan.id,
-            code=plan.code,
-            name=plan.name,
-            kind=plan.kind,
-        ),
-        estimated_price_excl_vat=estimated_price_excl_vat,
-        estimated_vat_rate=estimated_vat_rate,
-        estimated_vat_amount=estimated_vat_amount,
-        estimated_total_incl_vat=estimated_total_incl_vat,
-        estimated_currency=estimated_currency,
+
+@router.post("/{client_id}/subscriptions/{subscription_id}/forfait-pricing", response_model=AdminClientSubscriptionOut)
+def update_admin_client_forfait_pricing(
+    client_id: UUID,
+    subscription_id: UUID,
+    payload: AdminClientForfaitPricingUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientSubscriptionOut:
+    client = _require_client(db, client_id)
+    sub, plan = _admin_subscription_with_plan_for_client(db, client_id=client_id, subscription_id=subscription_id)
+    if plan.kind != PlanKind.FORFAIT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only FORFAIT pricing can be updated with this endpoint",
+        )
+
+    sub.forfait_loyalty_discount_per_hour_ttc = _non_negative_money(payload.forfait_loyalty_discount_per_hour_ttc)
+    sub.forfait_family_discount_per_hour_ttc = _non_negative_money(payload.forfait_family_discount_per_hour_ttc)
+    sub.forfait_short_commitment_supplement_per_hour_ttc = _non_negative_money(
+        payload.forfait_short_commitment_supplement_per_hour_ttc
     )
+    db.add(sub)
+    _create_client_note(
+        db,
+        client_id=client_id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=(
+            f"Mise a jour de la surcouche tarifaire forfait '{plan.name}' : "
+            f"fidelite -{sub.forfait_loyalty_discount_per_hour_ttc:.2f} EUR/h TTC, "
+            f"famille -{sub.forfait_family_discount_per_hour_ttc:.2f} EUR/h TTC, "
+            f"engagement court +{sub.forfait_short_commitment_supplement_per_hour_ttc:.2f} EUR/h TTC."
+        ),
+    )
+    db.commit()
+    db.refresh(sub)
+
+    return _admin_subscription_out(db, client=client, sub=sub, plan=plan)
 
 
 @router.post(
@@ -3434,7 +3346,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
     ).all()
 
     rows_bookings = db.execute(
-        select(Booking, CourseSession, CourseType, Location, Plan)
+        select(Booking, CourseSession, CourseType, Location, ClientPlanSubscription, Plan)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
@@ -3502,7 +3414,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             )
         )
 
-    for booking, session_obj, course_type, location, plan in rows_bookings:
+    for booking, session_obj, course_type, location, forfait_subscription, plan in rows_bookings:
         is_billable = True
         status_value = booking.status.value
         amount_excl_vat = booking.price_excl_vat_snapshot
@@ -3523,6 +3435,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                     session_obj=session_obj,
                     course_type=course_type,
                     billing_profile=billing_profile,
+                    forfait_subscription=forfait_subscription,
                     db=db,
                 )
                 if computed is not None:
@@ -4309,6 +4222,18 @@ def admin_purchase_plan_for_client(
                 detail="La date de demarrage d'un abonnement mensuel doit etre aujourd'hui ou dans le futur",
             )
         subscription_started_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
+    elif plan.kind == PlanKind.FORFAIT:
+        if payload.start_date is None or payload.end_date is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Les dates de debut et de fin sont obligatoires pour un forfait",
+            )
+        if payload.end_date <= payload.start_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La date de fin du forfait doit etre apres la date de debut",
+            )
+        subscription_started_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
     _lock_user_purchase_scope(db, client.id)
 
     if plan.kind == PlanKind.SUBSCRIPTION and _has_same_subscription_in_current_month(
@@ -4331,6 +4256,9 @@ def admin_purchase_plan_for_client(
     credits_initial: int | None = None
     credits_remaining: int | None = None
     ends_at = None
+    forfait_loyalty_discount = _non_negative_money(payload.forfait_loyalty_discount_per_hour_ttc)
+    forfait_family_discount = _non_negative_money(payload.forfait_family_discount_per_hour_ttc)
+    forfait_short_commitment_supplement = _non_negative_money(payload.forfait_short_commitment_supplement_per_hour_ttc)
     requested_method = _normalize_optional(payload.payment_method_code)
     method_code = (requested_method or _default_subscription_billing_method(plan) or "").strip().upper() or None
 
@@ -4340,12 +4268,17 @@ def admin_purchase_plan_for_client(
         ends_at = add_months_utc(now, int(plan.pack_validity_months or 12))
     elif plan.kind == PlanKind.SUBSCRIPTION:
         ends_at = add_months_utc(subscription_started_at, 1)
+    elif plan.kind == PlanKind.FORFAIT and payload.end_date is not None:
+        ends_at = datetime.combine(payload.end_date, datetime.min.time(), tzinfo=timezone.utc)
 
     should_start_pending = _is_online_collection_method(method_code) and plan.kind != PlanKind.FORFAIT
+    initial_status = SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE
+    if plan.kind == PlanKind.FORFAIT and ends_at is not None and ends_at <= now:
+        initial_status = SubscriptionStatus.EXPIRED
     subscription = ClientPlanSubscription(
         user_id=client.id,
         plan_id=plan.id,
-        status=SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE,
+        status=initial_status,
         started_at=subscription_started_at,
         ends_at=ends_at,
         credits_initial=credits_initial,
@@ -4353,6 +4286,9 @@ def admin_purchase_plan_for_client(
         auto_renew=(plan.kind == PlanKind.SUBSCRIPTION and not should_start_pending),
         billing_method_code=method_code,
         next_payment_at=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
+        forfait_loyalty_discount_per_hour_ttc=forfait_loyalty_discount,
+        forfait_family_discount_per_hour_ttc=forfait_family_discount,
+        forfait_short_commitment_supplement_per_hour_ttc=forfait_short_commitment_supplement,
     )
 
     db.add(subscription)
