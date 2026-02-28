@@ -2746,7 +2746,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 <span className="status-pill status-ok" title={`Envoye le ${formatDate(row.emailedAt)}`}>
                                   Envoye par mail
                                 </span>
-                              ) : null}
+                              )}
                               {row.remindedAt ? (
                                 <span className="status-pill status-warn" title={`Relance le ${formatDate(row.remindedAt)}`}>
                                   Relance
