@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
+import jwt
+from jwt import PyJWTError
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
@@ -150,6 +152,7 @@ INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 INVOICE_RANGE_STATUSES = {"ISSUED", "PAID", "CANCELLED"}
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+INVOICE_RANGE_PUBLIC_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
 
 COUNTRY_NAME_BY_CODE = {
     "FR": "France",
@@ -417,9 +420,20 @@ def _frontend_base_url() -> str:
 def _invoice_range_download_url(
     *,
     client_id: UUID,
+    note_id: UUID | None,
     metadata: dict[str, object],
     inline: bool = False,
 ) -> str:
+    if note_id is not None:
+        token = _create_invoice_range_public_download_token(client_id=client_id, note_id=note_id, metadata=metadata)
+        query = urlencode(
+            {
+                "token": token,
+                "inline": "true" if inline else "false",
+            }
+        )
+        return f"{_frontend_base_url()}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pdf?{query}"
+
     params = {
         "start_date": str(metadata.get("start_date") or ""),
         "end_date": str(metadata.get("end_date") or ""),
@@ -438,6 +452,50 @@ def _invoice_range_download_url(
         params["public_note"] = public_note
     query = urlencode(params)
     return f"{_frontend_base_url()}/admin/clients/{client_id}/payments/invoice-range?{query}"
+
+
+def _create_invoice_range_public_download_token(
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    metadata: dict[str, object],
+) -> str:
+    payload = {
+        "scope": INVOICE_RANGE_PUBLIC_TOKEN_SCOPE,
+        "client_id": str(client_id),
+        "note_id": str(note_id),
+        "invoice_number": str(metadata.get("invoice_number") or ""),
+        "exp": int((_utcnow() + timedelta(days=365)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def _assert_invoice_range_public_download_token(
+    *,
+    token: str,
+    client_id: UUID,
+    note_id: UUID,
+    metadata: dict[str, object],
+) -> None:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except PyJWTError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de facture invalide ou expire") from exc
+
+    if str(payload.get("scope") or "") != INVOICE_RANGE_PUBLIC_TOKEN_SCOPE:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de facture invalide")
+    if str(payload.get("client_id") or "") != str(client_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de facture invalide")
+    if str(payload.get("note_id") or "") != str(note_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de facture invalide")
+
+    expected_invoice_number = str(metadata.get("invoice_number") or "")
+    if expected_invoice_number and str(payload.get("invoice_number") or "") != expected_invoice_number:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de facture invalide")
 
 
 def _invoice_range_payment_url(*, metadata: dict[str, object]) -> str:
@@ -487,9 +545,10 @@ def _build_range_invoice_email_defaults(
     db: Session,
     *,
     client: User,
+    note_id: UUID,
     metadata: dict[str, object],
     kind: str,
-) -> tuple[list[str], str, str]:
+) -> tuple[list[str], str, str, str]:
     billing_profile = resolve_billing_profile(db, client)
     default_recipients = _normalize_email_recipients([billing_profile.email, client.email])
     if not default_recipients:
@@ -509,7 +568,7 @@ def _build_range_invoice_email_defaults(
     if not subject_template or not body_template:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
 
-    invoice_url = _invoice_range_download_url(client_id=client.id, metadata=metadata, inline=True)
+    invoice_url = _invoice_range_download_url(client_id=client.id, note_id=note_id, metadata=metadata, inline=True)
     payment_url = _invoice_range_payment_url(metadata=metadata)
     totals_by_currency = dict(metadata.get("totals_by_currency") or {})
     first_currency = next(iter(sorted(totals_by_currency.keys())), "EUR")
@@ -531,7 +590,8 @@ def _build_range_invoice_email_defaults(
     body = _render_message_template(body_template, context)
     if not subject or not body:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
-    return default_recipients, subject, body
+    body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
+    return default_recipients, subject, body, body_format
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -549,6 +609,27 @@ def _parse_iso_datetime(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _parse_invoice_range_metadata_date(metadata: dict[str, object], key: str) -> date:
+    raw = str(metadata.get(key) or "").strip()
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Champ facture manquant: {key}")
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Date facture invalide: {key}") from exc
+
+
+def _parse_invoice_range_metadata_bool(metadata: dict[str, object], key: str, *, default: bool) -> bool:
+    raw = metadata.get(key)
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw)
 
 
 def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, object] | None:
@@ -1495,6 +1576,7 @@ def update_admin_client_password_email_template(
             code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
             subject=subject,
             body=body,
+            body_format="TEXT",
             active=True,
         )
     except (KeyError, ValueError) as exc:
@@ -2207,6 +2289,7 @@ def send_admin_client_password_email(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     subject_template = str(template.get("subject") or "")
     body_template = str(template.get("body") or "")
+    body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
     if not subject_template or not body_template:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2228,6 +2311,7 @@ def send_admin_client_password_email(
         to_email=client.email,
         subject=subject,
         body=body,
+        body_format=body_format,
         from_email=sender.from_email,
         from_name=sender.from_name,
         reply_to=sender.reply_to,
@@ -2988,6 +3072,7 @@ def send_admin_client_subscription_payment_email(
 
     subject_template = str(template.get("subject") or "")
     body_template = str(template.get("body") or "")
+    body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
     if not subject_template or not body_template:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="PAYMENT email template is incomplete")
 
@@ -3058,6 +3143,7 @@ def send_admin_client_subscription_payment_email(
         to_email=client.email,
         subject=subject,
         body=body,
+        body_format=body_format,
         from_email=sender.from_email,
         from_name=sender.from_name,
         reply_to=sender.reply_to,
@@ -3677,9 +3763,10 @@ def send_admin_client_range_invoice_email(
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
     normalized_kind = "REMINDER" if payload.kind == "REMINDER" else "INVOICE"
-    default_recipients, default_subject, default_body = _build_range_invoice_email_defaults(
+    default_recipients, default_subject, default_body, default_body_format = _build_range_invoice_email_defaults(
         db,
         client=client,
+        note_id=note.id,
         metadata=metadata,
         kind=normalized_kind,
     )
@@ -3689,6 +3776,7 @@ def send_admin_client_range_invoice_email(
 
     subject = _normalize_optional(payload.subject) or default_subject
     body = _normalize_optional(payload.body) or default_body
+    body_format = payload.body_format if payload.body is not None else default_body_format
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     message_ids: list[str] = []
@@ -3698,7 +3786,7 @@ def send_admin_client_range_invoice_email(
                 to_email=recipient,
                 subject=subject,
                 body=body,
-                body_format="TEXT",
+                body_format=body_format,
                 context=f"RANGE_INVOICE_{normalized_kind}",
                 from_email=sender.from_email,
                 from_name=sender.from_name,
@@ -3737,9 +3825,10 @@ def preview_admin_client_range_invoice_email(
     client = _require_client(db, client_id)
     _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
     normalized_kind = "REMINDER" if kind.strip().upper() == "REMINDER" else "INVOICE"
-    recipients, subject, body = _build_range_invoice_email_defaults(
+    recipients, subject, body, body_format = _build_range_invoice_email_defaults(
         db,
         client=client,
+        note_id=note_id,
         metadata=metadata,
         kind=normalized_kind,
     )
@@ -3749,6 +3838,7 @@ def preview_admin_client_range_invoice_email(
         to_emails=recipients,
         subject=subject,
         body=body,
+        body_format=body_format,
     )
 
 
@@ -3939,6 +4029,43 @@ def download_admin_client_range_invoice(
             "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{file_name}"',
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.get("/{client_id}/invoices/range/{note_id}/public-pdf")
+def download_admin_client_range_invoice_public(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    inline: bool = Query(default=True),
+    db: Session = Depends(get_db),
+) -> Response:
+    client = _require_client(db, client_id)
+    _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    _assert_invoice_range_public_download_token(
+        token=token,
+        client_id=client_id,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    return download_admin_client_range_invoice(
+        client_id=client_id,
+        start_date=_parse_invoice_range_metadata_date(metadata, "start_date"),
+        end_date=_parse_invoice_range_metadata_date(metadata, "end_date"),
+        issued_date=_parse_invoice_range_metadata_date(metadata, "issued_date"),
+        due_date=_parse_invoice_range_metadata_date(metadata, "due_date"),
+        include_pending=_parse_invoice_range_metadata_bool(metadata, "include_pending", default=True),
+        include_cancelled=_parse_invoice_range_metadata_bool(metadata, "include_cancelled", default=False),
+        layout=str(metadata.get("layout") or "DETAILED"),
+        invoice_number=str(metadata.get("invoice_number") or ""),
+        persist_note=False,
+        public_note=_normalize_optional(str(metadata.get("public_note") or "")),
+        private_note=_normalize_optional(str(metadata.get("private_note") or "")),
+        note=None,
+        invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        inline=inline,
+        db=db,
+        actor=client,
     )
 
 

@@ -935,6 +935,7 @@ def _serialize_messaging_template(raw: dict[str, object]) -> AdminMessagingTempl
         kind=AdminMessagingTemplateKind(str(raw.get("kind") or "CUSTOM")),
         subject=(str(raw["subject"]) if raw.get("subject") is not None else None),
         body=str(raw.get("body") or ""),
+        body_format="HTML" if str(raw.get("body_format") or "").strip().upper() == "HTML" else "TEXT",
         active=bool(raw.get("active", True)),
         description=(str(raw["description"]) if raw.get("description") is not None else None),
         variables_hint=(str(raw["variables_hint"]) if raw.get("variables_hint") is not None else None),
@@ -1464,6 +1465,7 @@ def update_admin_predefined_messaging_template(
             code=template_code,
             subject=payload.subject,
             body=payload.body,
+            body_format=payload.body_format,
             active=payload.active,
         )
     except KeyError as exc:
@@ -1501,6 +1503,7 @@ def create_admin_custom_messaging_template(
             name=payload.name,
             subject=payload.subject,
             body=payload.body,
+            body_format=payload.body_format,
             active=payload.active,
         )
     except ValueError as exc:
@@ -1523,6 +1526,7 @@ def update_admin_custom_messaging_template(
             name=payload.name,
             subject=payload.subject,
             body=payload.body,
+            body_format=payload.body_format,
             active=payload.active,
         )
     except KeyError as exc:

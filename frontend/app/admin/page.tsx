@@ -15,6 +15,7 @@ import {
   updateAdminSessionAction,
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
+import RichMessageEditor from "../../components/rich-message-editor";
 import SearchMultiSelect from "../../components/search-multi-select";
 import type {
   AdminClientOut,
@@ -1847,24 +1848,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 />
               </label>
 
-              <label>
-                Format eleves
-                <select name="students_format" defaultValue="TEXT">
-                  <option value="TEXT">Texte</option>
-                  <option value="HTML">HTML</option>
-                </select>
-              </label>
-
               <label className="session-edit-span">
                 Message eleves
-                <textarea
+                <RichMessageEditor
                   name="students_message"
-                  rows={4}
+                  formatName="students_format"
+                  rows={8}
+                  maxLength={12000}
                   defaultValue={
                     confirmAction === "delete"
                       ? `Bonjour,\n\nLe creneau \"${selectedSession.title}\" du ${formatDate(selectedSession.start_at_utc)} a ete supprime.\n\nPiano Academie`
                       : `Bonjour,\n\nLe creneau \"${selectedSession.title}\" du ${formatDate(selectedSession.start_at_utc)} a ete annule.\n\nPiano Academie`
                   }
+                  placeholder="Message eleves"
                 />
               </label>
 
@@ -1883,17 +1879,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <input type="text" name="professor_subject" maxLength={255} />
               </label>
 
-              <label>
-                Format professeur
-                <select name="professor_format" defaultValue="TEXT">
-                  <option value="TEXT">Texte</option>
-                  <option value="HTML">HTML</option>
-                </select>
-              </label>
-
               <label className="session-edit-span">
                 Message professeur (si message distinct)
-                <textarea name="professor_message" rows={4} />
+                <RichMessageEditor
+                  name="professor_message"
+                  formatName="professor_format"
+                  rows={8}
+                  maxLength={12000}
+                  placeholder="Message professeur"
+                />
               </label>
 
               <div className="row quick-actions-row">

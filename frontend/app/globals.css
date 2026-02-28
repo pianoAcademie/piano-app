@@ -1920,6 +1920,92 @@ button.danger {
   align-items: center;
 }
 
+.rich-message-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.rich-message-editor-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.segmented-inline {
+  display: inline-flex;
+  border: 1px solid #d6c3a8;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.segmented-inline button {
+  border: 0;
+  border-right: 1px solid #d6c3a8;
+  background: #fff;
+  color: #4d3b26;
+  font-weight: 700;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.segmented-inline button:last-child {
+  border-right: 0;
+}
+
+.segmented-inline button.active {
+  background: #f1ddba;
+}
+
+.rich-message-textarea {
+  min-height: 220px;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.rich-message-source {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.rich-message-shell {
+  border: 1px solid #dcc6a4;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fffdfa;
+}
+
+.rich-message-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #eadcc8;
+  background: #f9f3e8;
+  padding: 8px 10px;
+}
+
+.rich-message-toolbar button {
+  border: 1px solid #d6c3a8;
+  border-radius: 8px;
+  background: #fff;
+  color: #3b2e1d;
+  min-width: 34px;
+  padding: 4px 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rich-message-surface {
+  min-height: 260px;
+  padding: 10px;
+  outline: none;
+  background: #fff;
+  white-space: pre-wrap;
+}
+
+.rich-message-surface:focus {
+  box-shadow: inset 0 0 0 1px #d9b98a;
+}
+
 .client-create-modal {
   width: min(1180px, 97vw);
   max-height: 90vh;

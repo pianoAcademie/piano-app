@@ -169,6 +169,9 @@ class AdminMessagingTemplateKind(str, enum.Enum):
     CUSTOM = "CUSTOM"
 
 
+AdminMessageBodyFormat = Literal["TEXT", "HTML"]
+
+
 class AdminMessagingTemplateOut(BaseModel):
     id: str
     code: str | None = None
@@ -177,6 +180,7 @@ class AdminMessagingTemplateOut(BaseModel):
     kind: AdminMessagingTemplateKind
     subject: str | None = None
     body: str
+    body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
     description: str | None = None
     variables_hint: str | None = None
@@ -187,6 +191,7 @@ class AdminMessagingTemplateOut(BaseModel):
 class AdminMessagingPredefinedTemplateUpdateRequest(BaseModel):
     subject: str | None = Field(default=None, max_length=255)
     body: str = Field(min_length=1, max_length=12000)
+    body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
 
 
@@ -195,6 +200,7 @@ class AdminMessagingCustomTemplateCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     subject: str | None = Field(default=None, max_length=255)
     body: str = Field(min_length=1, max_length=12000)
+    body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
 
 
@@ -202,6 +208,7 @@ class AdminMessagingCustomTemplateUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     subject: str | None = Field(default=None, max_length=255)
     body: str = Field(min_length=1, max_length=12000)
+    body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
 
 
@@ -792,6 +799,7 @@ class AdminRangeInvoiceEmailRequest(BaseModel):
     to_emails: list[str] | None = None
     subject: str | None = Field(default=None, max_length=255)
     body: str | None = Field(default=None, max_length=20000)
+    body_format: Literal["TEXT", "HTML"] = "TEXT"
 
 
 class AdminRangeInvoiceEmailOut(BaseModel):
@@ -808,6 +816,7 @@ class AdminRangeInvoiceEmailPreviewOut(BaseModel):
     to_emails: list[str]
     subject: str
     body: str
+    body_format: Literal["TEXT", "HTML"] = "TEXT"
 
 
 class AdminClientBookingOut(BaseModel):

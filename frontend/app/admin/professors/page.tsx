@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { createAdminCollaboratorAction, sendAdminCollaboratorsMessageAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
+import RichMessageEditor from "../../../components/rich-message-editor";
 import type { AdminProfessorDetailOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -207,14 +208,13 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                 </label>
                 <label className="span-2">
                   Message
-                  <textarea name="body" rows={4} placeholder="Contenu du message" />
-                </label>
-                <label>
-                  Format
-                  <select name="body_format" defaultValue="TEXT">
-                    <option value="TEXT">Texte</option>
-                    <option value="HTML">HTML</option>
-                  </select>
+                  <RichMessageEditor
+                    name="body"
+                    formatName="body_format"
+                    rows={8}
+                    maxLength={12000}
+                    placeholder="Contenu du message"
+                  />
                 </label>
                 <div className="row">
                   <button type="submit">Envoyer le message</button>

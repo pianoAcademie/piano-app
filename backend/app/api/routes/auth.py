@@ -101,16 +101,17 @@ def _frontend_url(db: Session, *, path: str) -> str:
     return candidate.rstrip("/") + path
 
 
-def _password_reset_template(db: Session) -> tuple[str, str]:
+def _password_reset_template(db: Session) -> tuple[str, str, str]:
     try:
         template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET)
         if not template.get("active", True):
-            return DEFAULT_PASSWORD_RESET_SUBJECT, DEFAULT_PASSWORD_RESET_BODY
+            return DEFAULT_PASSWORD_RESET_SUBJECT, DEFAULT_PASSWORD_RESET_BODY, "TEXT"
         subject = str(template.get("subject") or "").strip() or DEFAULT_PASSWORD_RESET_SUBJECT
         body = str(template.get("body") or "").strip() or DEFAULT_PASSWORD_RESET_BODY
-        return subject, body
+        body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
+        return subject, body, body_format
     except Exception:
-        return DEFAULT_PASSWORD_RESET_SUBJECT, DEFAULT_PASSWORD_RESET_BODY
+        return DEFAULT_PASSWORD_RESET_SUBJECT, DEFAULT_PASSWORD_RESET_BODY, "TEXT"
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -229,7 +230,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
             "reset_url": reset_url,
             "login_url": login_url,
         }
-        subject_template, body_template = _password_reset_template(db)
+        subject_template, body_template, body_format = _password_reset_template(db)
         subject = _render_template(subject_template, context)
         body = _render_template(body_template, context)
         sender = resolve_sender_profile(db, sender_kind="STUDIO")
@@ -237,7 +238,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
             to_email=user.email,
             subject=subject,
             body=body,
-            body_format="TEXT",
+            body_format=body_format,
             context="PASSWORD_RESET",
             from_email=sender.from_email,
             from_name=sender.from_name,

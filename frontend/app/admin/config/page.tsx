@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import ColorHexInput from "../../../components/color-hex-input";
+import RichMessageEditor from "../../../components/rich-message-editor";
 import {
   createAdminActivityAction,
   createAdminCreditTypeAction,
@@ -1354,26 +1355,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
                             <label className="messaging-editor-label">
                               Message
-                              <div className="messaging-editor-shell">
-                                {editingTemplate.channel === "EMAIL" ? (
-                                  <div className="messaging-editor-toolbar" aria-hidden>
-                                    <span>B</span>
-                                    <span>I</span>
-                                    <span>U</span>
-                                    <span>UL</span>
-                                    <span>1.</span>
-                                    <span>LNK</span>
-                                    <span>IMG</span>
-                                  </div>
-                                ) : null}
-                                <textarea
-                                  className="messaging-editor-body"
-                                  name="body"
-                                  defaultValue={editingTemplate.body}
-                                  rows={20}
-                                  required
-                                />
-                              </div>
+                              <RichMessageEditor
+                                name="body"
+                                formatName="body_format"
+                                defaultValue={editingTemplate.body}
+                                defaultFormat={editingTemplate.body_format}
+                                rows={20}
+                                maxLength={12000}
+                              />
                             </label>
 
                             <label className="checkline">
@@ -1401,18 +1390,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             </label>
                             <label className="messaging-editor-label">
                               Message
-                              <div className="messaging-editor-shell">
-                                <div className="messaging-editor-toolbar" aria-hidden>
-                                  <span>B</span>
-                                  <span>I</span>
-                                  <span>U</span>
-                                  <span>UL</span>
-                                  <span>1.</span>
-                                  <span>LNK</span>
-                                  <span>IMG</span>
-                                </div>
-                                <textarea className="messaging-editor-body" name="body" rows={20} required />
-                              </div>
+                              <RichMessageEditor name="body" formatName="body_format" rows={20} maxLength={12000} />
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="active" defaultChecked />

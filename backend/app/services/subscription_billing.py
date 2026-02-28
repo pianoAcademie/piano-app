@@ -89,12 +89,13 @@ def _send_template_email(
 
     subject = _render_template(subject_template, context)
     body = _render_template(body_template, context)
+    body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     return send_email(
         to_email=recipient,
         subject=subject,
         body=body,
-        body_format="TEXT",
+        body_format=body_format,
         context=delivery_context,
         from_email=sender.from_email,
         from_name=sender.from_name,

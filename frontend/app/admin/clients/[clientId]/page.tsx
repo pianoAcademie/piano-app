@@ -38,6 +38,7 @@ import {
   TIMEZONE_OPTIONS,
   labelFromOptions,
 } from "../../../../lib/reference-data";
+import RichMessageEditor from "../../../../components/rich-message-editor";
 import type {
   AdminClientBookingOut,
   AdminClientFamilyOut,
@@ -3414,7 +3415,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </label>
               <label className="span-2">
                 Message
-                <textarea name="body" rows={10} maxLength={20000} defaultValue={invoiceEmailPreview?.body ?? ""} />
+                <RichMessageEditor
+                  name="body"
+                  formatName="body_format"
+                  defaultValue={invoiceEmailPreview?.body ?? ""}
+                  defaultFormat={invoiceEmailPreview?.body_format ?? "TEXT"}
+                  rows={12}
+                  maxLength={20000}
+                  placeholder="Contenu du courriel"
+                />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>

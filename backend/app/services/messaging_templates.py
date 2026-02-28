@@ -121,6 +121,11 @@ def _parse_iso_datetime(raw: object) -> datetime | None:
         return None
 
 
+def _normalize_body_format(raw: object, *, default: str = "TEXT") -> str:
+    candidate = str(raw or default).strip().upper()
+    return "HTML" if candidate == "HTML" else "TEXT"
+
+
 PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
@@ -537,6 +542,7 @@ def _custom_templates(db: Session) -> list[dict[str, object]]:
                 "channel": channel,
                 "subject": _sanitize_optional_text(row.get("subject"), max_length=255),
                 "body": _sanitize_text(str(row.get("body", "")), max_length=12000),
+                "body_format": _normalize_body_format(row.get("body_format"), default="TEXT"),
                 "active": bool(row.get("active", True)),
                 "created_at": str(row.get("created_at", "")),
                 "updated_at": str(row.get("updated_at", "")),
@@ -580,6 +586,9 @@ def resolve_predefined_template(
         subject = None
 
     body = _sanitize_text(str(override.get("body") or legacy_body or definition.body), max_length=12000) or definition.body
+    body_format = _normalize_body_format(override.get("body_format"), default="TEXT")
+    if definition.channel != "EMAIL":
+        body_format = "TEXT"
     active = bool(override.get("active", True))
     updated_at = _parse_iso_datetime(override.get("updated_at"))
 
@@ -591,6 +600,7 @@ def resolve_predefined_template(
         "kind": "PREDEFINED",
         "subject": subject,
         "body": body,
+        "body_format": body_format,
         "active": active,
         "description": definition.description,
         "variables_hint": definition.variables_hint,
@@ -605,6 +615,7 @@ def upsert_predefined_template(
     code: str,
     subject: str | None,
     body: str,
+    body_format: str,
     active: bool,
 ) -> dict[str, object]:
     normalized_code = code.strip().upper()
@@ -617,16 +628,20 @@ def upsert_predefined_template(
         raise ValueError("Template body is required")
 
     cleaned_subject: str | None = None
+    cleaned_body_format = _normalize_body_format(body_format, default="TEXT")
     if definition.channel == "EMAIL":
         cleaned_subject = _sanitize_optional_text(subject, max_length=255)
         if not cleaned_subject:
             raise ValueError("Template subject is required")
+    else:
+        cleaned_body_format = "TEXT"
 
     overrides = _predefined_overrides(db)
     now = _utcnow()
     overrides[normalized_code] = {
         "subject": cleaned_subject,
         "body": cleaned_body,
+        "body_format": cleaned_body_format,
         "active": bool(active),
         "updated_at": now.isoformat(),
     }
@@ -686,6 +701,7 @@ def list_messaging_templates(
                     "kind": "CUSTOM",
                     "subject": row["subject"] if row["channel"] == "EMAIL" else None,
                     "body": row["body"],
+                    "body_format": _normalize_body_format(row.get("body_format"), default="TEXT"),
                     "active": bool(row["active"]),
                     "description": "Modele personnalise",
                     "variables_hint": "",
@@ -705,6 +721,7 @@ def create_custom_template(
     name: str,
     subject: str | None,
     body: str,
+    body_format: str,
     active: bool,
 ) -> dict[str, object]:
     cleaned_name = _sanitize_text(name, max_length=180)
@@ -716,8 +733,11 @@ def create_custom_template(
         raise ValueError("Template body is required")
 
     cleaned_subject = _sanitize_optional_text(subject, max_length=255) if channel == "EMAIL" else None
+    cleaned_body_format = _normalize_body_format(body_format, default="TEXT")
     if channel == "EMAIL" and not cleaned_subject:
         raise ValueError("Template subject is required for email")
+    if channel != "EMAIL":
+        cleaned_body_format = "TEXT"
 
     now = _utcnow()
     template_id = uuid4().hex
@@ -729,6 +749,7 @@ def create_custom_template(
             "channel": channel,
             "subject": cleaned_subject,
             "body": cleaned_body,
+            "body_format": cleaned_body_format,
             "active": bool(active),
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
@@ -748,6 +769,7 @@ def update_custom_template(
     name: str,
     subject: str | None,
     body: str,
+    body_format: str,
     active: bool,
 ) -> dict[str, object]:
     rows = _custom_templates(db)
@@ -770,12 +792,16 @@ def update_custom_template(
 
     channel = str(match.get("channel", "")).strip().upper()
     cleaned_subject = _sanitize_optional_text(subject, max_length=255) if channel == "EMAIL" else None
+    cleaned_body_format = _normalize_body_format(body_format, default="TEXT")
     if channel == "EMAIL" and not cleaned_subject:
         raise ValueError("Template subject is required for email")
+    if channel != "EMAIL":
+        cleaned_body_format = "TEXT"
 
     match["name"] = cleaned_name
     match["subject"] = cleaned_subject
     match["body"] = cleaned_body
+    match["body_format"] = cleaned_body_format
     match["active"] = bool(active)
     match["updated_at"] = now.isoformat()
     _save_custom_templates(db, rows)

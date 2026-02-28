@@ -194,6 +194,7 @@ def _send_professor_activation(db: Session, *, to_email: str, first_name: str, l
         login_url=_activation_login_url(db),
         subject_template=str(template.get("subject") or DEFAULT_PROFESSOR_ACTIVATION_SUBJECT),
         body_template=str(template.get("body") or DEFAULT_PROFESSOR_ACTIVATION_BODY),
+        body_format="HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT",
         from_email=sender.from_email,
         from_name=sender.from_name,
         reply_to=sender.reply_to,

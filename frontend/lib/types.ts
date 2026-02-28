@@ -337,6 +337,7 @@ export type AdminRangeInvoiceEmailPreviewOut = {
   to_emails: string[];
   subject: string;
   body: string;
+  body_format: "TEXT" | "HTML";
 };
 
 export type FamilyMemberOut = {
@@ -948,6 +949,7 @@ export type AdminMessagingTemplateOut = {
   kind: AdminMessagingTemplateKind;
   subject: string | null;
   body: string;
+  body_format: "TEXT" | "HTML";
   active: boolean;
   description: string | null;
   variables_hint: string | null;

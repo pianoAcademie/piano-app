@@ -2481,6 +2481,7 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
   const toEmails = emailListField(formData, "to_emails");
   const subject = optionalField(formData, "subject");
   const body = optionalField(formData, "body");
+  const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const result = await backendRequest<AdminRangeInvoiceEmailOut>(
     `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/email`,
     {
@@ -2490,6 +2491,7 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
         to_emails: toEmails,
         subject,
         body,
+        body_format: bodyFormat,
       }),
     },
     token,
@@ -4394,6 +4396,7 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
   const name = String(formData.get("name") ?? "").trim();
   const subject = optionalField(formData, "subject");
   const body = String(formData.get("body") ?? "").trim();
+  const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const active = checkboxField(formData, "active");
 
   if (!body) {
@@ -4409,7 +4412,7 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
       `/api/v1/admin/config/messaging-templates/predefined/${encodeURIComponent(templateCode)}`,
       {
         method: "PUT",
-        body: JSON.stringify({ subject, body, active }),
+        body: JSON.stringify({ subject, body, body_format: bodyFormat, active }),
       },
       token,
     );
@@ -4441,6 +4444,7 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
     name,
     subject,
     body,
+    body_format: bodyFormat,
     active,
   };
 
