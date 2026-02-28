@@ -15,6 +15,8 @@ class PlanOut(BaseModel):
     name: str
     kind: PlanKind
     credits_count: int | None
+    forfait_start_date: date | None = None
+    forfait_end_date: date | None = None
     monthly_price_excl_vat: Decimal | None
     currency_code: str | None
     active: bool

@@ -309,6 +309,8 @@ class AdminFormulaOut(BaseModel):
     description: str | None
     credits_count: int | None
     pack_validity_months: int | None
+    forfait_start_date: date | None
+    forfait_end_date: date | None
     credit_grants: list[AdminFormulaCreditGrantOut] = Field(default_factory=list)
     credit_grants_relation: PlanCreditGrantsRelation
     monthly_price_value: Decimal | None
@@ -334,6 +336,8 @@ class AdminFormulaUpsertRequest(BaseModel):
     description: str | None = None
     credits_count: int | None = Field(default=None, ge=1)
     pack_validity_months: int | None = Field(default=None, ge=1, le=12)
+    forfait_start_date: date | None = None
+    forfait_end_date: date | None = None
     credit_grants: list[AdminFormulaCreditGrantIn] = Field(default_factory=list)
     credit_grants_relation: PlanCreditGrantsRelation = PlanCreditGrantsRelation.OR
     monthly_price_value: Decimal | None = Field(default=None, ge=0)
@@ -356,6 +360,8 @@ class AdminFormulaUpdateRequest(BaseModel):
     description: str | None = None
     credits_count: int | None = Field(default=None, ge=1)
     pack_validity_months: int | None = Field(default=None, ge=1, le=12)
+    forfait_start_date: date | None = None
+    forfait_end_date: date | None = None
     credit_grants: list[AdminFormulaCreditGrantIn] | None = None
     credit_grants_relation: PlanCreditGrantsRelation | None = None
     monthly_price_value: Decimal | None = Field(default=None, ge=0)
@@ -678,6 +684,7 @@ class AdminClientSubscriptionOut(BaseModel):
     forfait_loyalty_discount_per_hour_ttc: Decimal | None = None
     forfait_family_discount_per_hour_ttc: Decimal | None = None
     forfait_short_commitment_supplement_per_hour_ttc: Decimal | None = None
+    forfait_activity_pricing: list["AdminClientForfaitActivityPricingOut"] = Field(default_factory=list)
     last_payment_at: datetime | None = None
     last_payment_status: str | None = None
     suspension_starts_at: datetime | None = None
@@ -733,16 +740,27 @@ class AdminClientSubscriptionPaymentEmailOut(BaseModel):
 class AdminClientPlanPurchaseRequest(BaseModel):
     payment_method_code: str | None = Field(default=None, max_length=40)
     start_date: date | None = None
-    end_date: date | None = None
-    forfait_loyalty_discount_per_hour_ttc: Decimal | None = Field(default=None, ge=0)
-    forfait_family_discount_per_hour_ttc: Decimal | None = Field(default=None, ge=0)
-    forfait_short_commitment_supplement_per_hour_ttc: Decimal | None = Field(default=None, ge=0)
+
+
+class AdminClientForfaitActivityPricingIn(BaseModel):
+    course_type_id: UUID
+    loyalty_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    family_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    short_commitment_supplement_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+
+
+class AdminClientForfaitActivityPricingOut(BaseModel):
+    course_type_id: UUID
+    course_type_name: str
+    base_hourly_rate_ttc: Decimal | None = None
+    loyalty_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    family_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    short_commitment_supplement_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    effective_hourly_rate_ttc: Decimal | None = None
 
 
 class AdminClientForfaitPricingUpdateRequest(BaseModel):
-    forfait_loyalty_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
-    forfait_family_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
-    forfait_short_commitment_supplement_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    activities: list[AdminClientForfaitActivityPricingIn] = Field(default_factory=list)
 
 
 class AdminClientManualCreditOut(BaseModel):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -252,6 +252,22 @@ def _effective_pack_credits_for_plan(db: Session, *, plan: Plan) -> int | None:
     return int(plan.credits_count or 0)
 
 
+def _forfait_period_bounds(plan: Plan) -> tuple[datetime, datetime]:
+    if plan.forfait_start_date is None or plan.forfait_end_date is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La formule forfait doit avoir une date de debut et une date de fin configurees",
+        )
+    if plan.forfait_end_date <= plan.forfait_start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La date de fin de la formule forfait doit etre apres la date de debut",
+        )
+    started_at = datetime.combine(plan.forfait_start_date, datetime.min.time(), tzinfo=timezone.utc)
+    ends_at = datetime.combine(plan.forfait_end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    return started_at, ends_at
+
+
 @router.get("/plans", response_model=list[PlanOut])
 def list_plans(active: bool = True, db: Session = Depends(get_db)) -> list[PlanOut]:
     stmt = select(Plan)
@@ -267,6 +283,8 @@ def list_plans(active: bool = True, db: Session = Depends(get_db)) -> list[PlanO
             name=plan.name,
             kind=plan.kind,
             credits_count=_effective_pack_credits_for_plan(db, plan=plan),
+            forfait_start_date=plan.forfait_start_date,
+            forfait_end_date=plan.forfait_end_date,
             monthly_price_excl_vat=plan.monthly_price_excl_vat,
             currency_code=plan.currency_code,
             active=plan.active,
@@ -412,11 +430,16 @@ def purchase_plan(
         ends_at = add_months_utc(now, int(plan.pack_validity_months or 12))
     elif plan.kind == PlanKind.SUBSCRIPTION:
         ends_at = add_months_utc(subscription_started_at, 1)
+    elif plan.kind == PlanKind.FORFAIT:
+        subscription_started_at, ends_at = _forfait_period_bounds(plan)
 
+    initial_status = SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE
+    if plan.kind == PlanKind.FORFAIT and ends_at is not None and ends_at <= now:
+        initial_status = SubscriptionStatus.EXPIRED
     subscription = ClientPlanSubscription(
         user_id=owner.id,
         plan_id=plan.id,
-        status=SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE,
+        status=initial_status,
         started_at=subscription_started_at,
         ends_at=ends_at,
         credits_initial=credits_initial,

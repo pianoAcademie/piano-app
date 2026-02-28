@@ -156,6 +156,8 @@ export default function AdminFormulaEditor({
   const priceLabelWithOptional = isForfait ? `${priceLabel} (optionnel)` : priceLabel;
   const defaultPriceValue = formula?.monthly_price_value ?? formula?.monthly_price_excl_vat ?? "";
   const defaultSignupValue = formula?.signup_fee_value ?? formula?.signup_fee_excl_vat ?? "0";
+  const defaultForfaitStartDate = formula?.forfait_start_date ?? "";
+  const defaultForfaitEndDate = formula?.forfait_end_date ?? "";
 
   return (
     <section className="admin-page-grid">
@@ -412,6 +414,16 @@ export default function AdminFormulaEditor({
                 </section>
               ) : kind === "FORFAIT" ? (
                 <section className="span-2 config-dynamic-section">
+                  <div className="grid cols-2 config-form-grid">
+                    <label>
+                      Date de debut de la formule
+                      <input type="date" name="forfait_start_date" defaultValue={defaultForfaitStartDate} required />
+                    </label>
+                    <label>
+                      Date de fin de la formule
+                      <input type="date" name="forfait_end_date" defaultValue={defaultForfaitEndDate} required />
+                    </label>
+                  </div>
                   <p className="muted">
                     Le forfait n&apos;a pas de credits. Les transactions seront calculees depuis les cours reserves.
                   </p>

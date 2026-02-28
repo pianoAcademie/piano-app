@@ -22,7 +22,15 @@ from app.models.professor_contract import (
     ProfessorContractGridLineRule,
     ProfessorContractLineMode,
 )
-from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanRestrictionPeriod, SubscriptionStatus
+from app.models.plan import (
+    ClientForfaitActivityPricing,
+    ClientPlanSubscription,
+    Plan,
+    PlanEntitlement,
+    PlanKind,
+    PlanRestrictionPeriod,
+    SubscriptionStatus,
+)
 from app.models.pricing import CourseTypePrice, PlanPrice, VatRule
 from app.models.professor_access import ProfessorPermission
 from app.models.user import ClientKind, ClientStatus, User, UserRole
@@ -39,6 +47,7 @@ __all__ = [
     "ClientManualCreditBalance",
     "ClientManualTransaction",
     "ClientNoteEntry",
+    "ClientForfaitActivityPricing",
     "ClientPaymentRefund",
     "ClientStatus",
     "ClientPlanSubscription",

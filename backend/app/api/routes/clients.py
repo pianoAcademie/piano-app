@@ -16,7 +16,7 @@ from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.family import ClientFamilyLink
-from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
+from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
 from app.models.ops import EmailReminder
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
@@ -291,17 +291,68 @@ def _forfait_hourly_ttc_with_overrides(
     base_hourly_ttc: Decimal,
     subscription: ClientPlanSubscription | None,
     session_start_at: datetime,
+    course_type_id: UUID,
+    db: Session,
+    pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] | None = None,
 ) -> Decimal:
     if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
         return base_hourly_ttc.quantize(Decimal("0.01"))
 
-    loyalty_discount = _non_negative_money(subscription.forfait_loyalty_discount_per_hour_ttc)
-    family_discount = _non_negative_money(subscription.forfait_family_discount_per_hour_ttc)
-    short_commitment_supplement = _non_negative_money(subscription.forfait_short_commitment_supplement_per_hour_ttc)
+    loyalty_discount = Decimal("0.00")
+    family_discount = Decimal("0.00")
+    short_commitment_supplement = Decimal("0.00")
+    if subscription is not None:
+        key = (subscription.id, course_type_id)
+        values = pricing_map.get(key) if pricing_map is not None else None
+        if values is None:
+            row = db.execute(
+                select(
+                    ClientForfaitActivityPricing.loyalty_discount_per_hour_ttc,
+                    ClientForfaitActivityPricing.family_discount_per_hour_ttc,
+                    ClientForfaitActivityPricing.short_commitment_supplement_per_hour_ttc,
+                ).where(
+                    ClientForfaitActivityPricing.subscription_id == subscription.id,
+                    ClientForfaitActivityPricing.course_type_id == course_type_id,
+                )
+            ).first()
+            if row is not None:
+                values = (
+                    _non_negative_money(row[0]),
+                    _non_negative_money(row[1]),
+                    _non_negative_money(row[2]),
+                )
+        if values is not None:
+            loyalty_discount, family_discount, short_commitment_supplement = values
     adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
     if adjusted < Decimal("0.00"):
         return Decimal("0.00")
     return adjusted
+
+
+def _forfait_activity_pricing_map(
+    db: Session,
+    *,
+    subscription_ids: set[UUID],
+) -> dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]]:
+    if not subscription_ids:
+        return {}
+    rows = db.execute(
+        select(
+            ClientForfaitActivityPricing.subscription_id,
+            ClientForfaitActivityPricing.course_type_id,
+            ClientForfaitActivityPricing.loyalty_discount_per_hour_ttc,
+            ClientForfaitActivityPricing.family_discount_per_hour_ttc,
+            ClientForfaitActivityPricing.short_commitment_supplement_per_hour_ttc,
+        ).where(ClientForfaitActivityPricing.subscription_id.in_(subscription_ids))
+    ).all()
+    out: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] = {}
+    for subscription_id, course_type_id, loyalty_discount, family_discount, short_commitment_supplement in rows:
+        out[(subscription_id, course_type_id)] = (
+            _non_negative_money(loyalty_discount),
+            _non_negative_money(family_discount),
+            _non_negative_money(short_commitment_supplement),
+        )
+    return out
 
 
 def _booking_amounts_from_activity(
@@ -312,6 +363,7 @@ def _booking_amounts_from_activity(
     billing_profile: User,
     forfait_subscription: ClientPlanSubscription | None,
     db: Session,
+    pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] | None = None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
     if course_type.default_hourly_rate is None:
         return None
@@ -324,6 +376,9 @@ def _booking_amounts_from_activity(
         base_hourly_ttc=Decimal(course_type.default_hourly_rate).quantize(Decimal("0.01")),
         subscription=forfait_subscription,
         session_start_at=session_obj.start_at_utc,
+        course_type_id=course_type.id,
+        db=db,
+        pricing_map=pricing_map,
     )
     total_incl_vat = (hourly_ttc * duration_hours).quantize(Decimal("0.01"))
 
@@ -882,6 +937,14 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
     ).all()
 
     items: list[ClientPaymentOut] = []
+    forfait_pricing_map = _forfait_activity_pricing_map(
+        db,
+        subscription_ids={
+            forfait_subscription.id
+            for _, _, _, _, _, forfait_subscription, plan in rows_bookings
+            if forfait_subscription is not None and (plan is None or plan.kind == PlanKind.FORFAIT)
+        },
+    )
 
     for sub, plan, owner in rows_subs:
         if plan.kind == PlanKind.FORFAIT:
@@ -975,6 +1038,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                     billing_profile=billing_profile,
                     forfait_subscription=forfait_subscription,
                     db=db,
+                    pricing_map=forfait_pricing_map,
                 )
                 if computed is not None:
                     amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = computed

@@ -11,7 +11,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, SessionStatus
 from app.models.family import ClientFamilyLink
-from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanRestrictionPeriod, SubscriptionStatus
+from app.models.plan import (
+    ClientForfaitActivityPricing,
+    ClientPlanSubscription,
+    Plan,
+    PlanEntitlement,
+    PlanKind,
+    PlanRestrictionPeriod,
+    SubscriptionStatus,
+)
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.booking import BookingCreateRequest, BookingOut, ClientBookingOut, SessionMiniOut
 from app.services.family_billing import resolve_billing_profile
@@ -181,13 +189,30 @@ def _forfait_hourly_ttc_with_overrides(
     base_hourly_ttc: Decimal,
     subscription: ClientPlanSubscription | None,
     session_start_at: datetime,
+    course_type_id: UUID,
+    db: Session,
 ) -> Decimal:
     if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
         return base_hourly_ttc.quantize(Decimal("0.01"))
 
-    loyalty_discount = _non_negative_money(subscription.forfait_loyalty_discount_per_hour_ttc)
-    family_discount = _non_negative_money(subscription.forfait_family_discount_per_hour_ttc)
-    short_commitment_supplement = _non_negative_money(subscription.forfait_short_commitment_supplement_per_hour_ttc)
+    loyalty_discount = Decimal("0.00")
+    family_discount = Decimal("0.00")
+    short_commitment_supplement = Decimal("0.00")
+    if subscription is not None:
+        row = db.execute(
+            select(
+                ClientForfaitActivityPricing.loyalty_discount_per_hour_ttc,
+                ClientForfaitActivityPricing.family_discount_per_hour_ttc,
+                ClientForfaitActivityPricing.short_commitment_supplement_per_hour_ttc,
+            ).where(
+                ClientForfaitActivityPricing.subscription_id == subscription.id,
+                ClientForfaitActivityPricing.course_type_id == course_type_id,
+            )
+        ).first()
+        if row is not None:
+            loyalty_discount = _non_negative_money(row[0])
+            family_discount = _non_negative_money(row[1])
+            short_commitment_supplement = _non_negative_money(row[2])
     adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
     if adjusted < Decimal("0.00"):
         return Decimal("0.00")
@@ -462,6 +487,8 @@ def _resolve_booking_snapshot(
             base_hourly_ttc=hourly_ttc_decimal,
             subscription=subscription,
             session_start_at=session_obj.start_at_utc,
+            course_type_id=course_type.id,
+            db=db,
         )
     total_incl_vat = (hourly_ttc_decimal * duration_hours).quantize(Decimal("0.01"))
 

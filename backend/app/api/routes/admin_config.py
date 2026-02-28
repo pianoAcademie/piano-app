@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import re
 from uuid import UUID, uuid4
@@ -866,6 +866,8 @@ def _serialize_formula(
         description=plan.description,
         credits_count=effective_credits_count,
         pack_validity_months=plan.pack_validity_months,
+        forfait_start_date=plan.forfait_start_date,
+        forfait_end_date=plan.forfait_end_date,
         credit_grants=credit_grants_out,
         credit_grants_relation=plan.credit_grants_relation,
         monthly_price_value=monthly_price_value,
@@ -889,6 +891,8 @@ def _validate_formula_payload(
     kind: PlanKind,
     credits_count: int | None,
     pack_validity_months: int | None,
+    forfait_start_date: date | None,
+    forfait_end_date: date | None,
     monthly_price_value: Decimal | None,
     currency_code: str | None,
     credit_grants: list[tuple[UUID, int]] | None = None,
@@ -919,6 +923,17 @@ def _validate_formula_payload(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="At least one credit type is required for PACK formulas",
         )
+    if kind == PlanKind.FORFAIT:
+        if forfait_start_date is None or forfait_end_date is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="forfait_start_date and forfait_end_date are required for FORFAIT formulas",
+            )
+        if forfait_end_date <= forfait_start_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="forfait_end_date must be after forfait_start_date",
+            )
 
 
 def _course_name_map(db: Session) -> dict[UUID, str]:
@@ -1723,6 +1738,8 @@ def create_admin_formula(
         kind=payload.kind,
         credits_count=payload.credits_count,
         pack_validity_months=payload.pack_validity_months if payload.kind == PlanKind.PACK else None,
+        forfait_start_date=payload.forfait_start_date if payload.kind == PlanKind.FORFAIT else None,
+        forfait_end_date=payload.forfait_end_date if payload.kind == PlanKind.FORFAIT else None,
         monthly_price_value=monthly_price_value,
         currency_code=currency_code,
         credit_grants=_normalize_credit_grants(db, payload.credit_grants) if payload.kind == PlanKind.PACK else [],
@@ -1752,6 +1769,8 @@ def create_admin_formula(
         kind=payload.kind,
         credits_count=effective_credits_count if payload.kind == PlanKind.PACK else None,
         pack_validity_months=payload.pack_validity_months if payload.kind == PlanKind.PACK else None,
+        forfait_start_date=payload.forfait_start_date if payload.kind == PlanKind.FORFAIT else None,
+        forfait_end_date=payload.forfait_end_date if payload.kind == PlanKind.FORFAIT else None,
         credit_grants_relation=payload.credit_grants_relation if payload.kind == PlanKind.PACK else PlanCreditGrantsRelation.OR,
         monthly_price_value=monthly_price_value,
         price_tax_mode=payload.price_tax_mode,
@@ -1836,6 +1855,10 @@ def update_admin_formula(
         kind=target_kind,
         credits_count=target_credits,
         pack_validity_months=target_pack_validity_months,
+        forfait_start_date=(
+            updates.get("forfait_start_date", plan.forfait_start_date) if target_kind == PlanKind.FORFAIT else None
+        ),
+        forfait_end_date=updates.get("forfait_end_date", plan.forfait_end_date) if target_kind == PlanKind.FORFAIT else None,
         monthly_price_value=target_monthly_price_value,
         currency_code=target_currency,
         credit_grants=target_credit_grants if target_kind == PlanKind.PACK else [],
@@ -1847,6 +1870,9 @@ def update_admin_formula(
         plan.kind = target_kind
         if target_kind != PlanKind.PACK:
             plan.pack_validity_months = None
+        if target_kind != PlanKind.FORFAIT:
+            plan.forfait_start_date = None
+            plan.forfait_end_date = None
     if "credit_grants_relation" in updates:
         plan.credit_grants_relation = updates["credit_grants_relation"] or PlanCreditGrantsRelation.OR
     if "active" in updates:
@@ -1871,6 +1897,10 @@ def update_admin_formula(
         plan.credits_count = updates["credits_count"]
     if target_kind == PlanKind.PACK and ("pack_validity_months" in updates or "kind" in updates):
         plan.pack_validity_months = target_pack_validity_months
+    if target_kind == PlanKind.FORFAIT and ("forfait_start_date" in updates or "kind" in updates):
+        plan.forfait_start_date = updates.get("forfait_start_date", plan.forfait_start_date)
+    if target_kind == PlanKind.FORFAIT and ("forfait_end_date" in updates or "kind" in updates):
+        plan.forfait_end_date = updates.get("forfait_end_date", plan.forfait_end_date)
     if "options" in updates:
         plan.options_json = _normalize_option_values(updates["options"])
     if "payment_methods" in updates:
@@ -1942,6 +1972,8 @@ def duplicate_admin_formula(
         kind=source.kind,
         credits_count=source.credits_count,
         pack_validity_months=source.pack_validity_months,
+        forfait_start_date=source.forfait_start_date,
+        forfait_end_date=source.forfait_end_date,
         credit_grants_relation=source.credit_grants_relation,
         monthly_price_value=source.monthly_price_value,
         price_tax_mode=source.price_tax_mode,

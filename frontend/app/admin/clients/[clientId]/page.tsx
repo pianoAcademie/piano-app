@@ -679,10 +679,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const purchasePaymentMethod = readParam(searchParams, "purchase_payment_method").toUpperCase();
   const purchaseDiscountedTotalRaw = readParam(searchParams, "purchase_discounted_total").replace(",", ".");
   const purchaseStartDateRaw = readParam(searchParams, "purchase_start_date").trim();
-  const purchaseEndDateRaw = readParam(searchParams, "purchase_end_date").trim();
-  const purchaseForfaitLoyaltyDiscountRaw = readParam(searchParams, "purchase_forfait_loyalty_discount").replace(",", ".");
-  const purchaseForfaitFamilyDiscountRaw = readParam(searchParams, "purchase_forfait_family_discount").replace(",", ".");
-  const purchaseForfaitShortCommitmentSupplementRaw = readParam(searchParams, "purchase_forfait_short_commitment_supplement").replace(",", ".");
   const purchaseReturnTab = parseTab(readParam(searchParams, "purchase_return_tab") || currentTab);
   const paymentReturnTab = parseTab(paymentReturnTabRaw || currentTab);
   const balanceDateParam = readParam(searchParams, "balance_date");
@@ -733,8 +729,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const todayInputValue = formatDateInput(new Date());
   const dueDateInputValue = formatDateInput(addDays(new Date(), 10));
   const purchaseStartDateInputValue = isDateInput(purchaseStartDateRaw) ? purchaseStartDateRaw : todayInputValue;
-  const purchaseDefaultEndDate = formatDateInput(addMonths(new Date(`${purchaseStartDateInputValue}T00:00:00.000Z`), 1));
-  const purchaseEndDateInputValue = isDateInput(purchaseEndDateRaw) ? purchaseEndDateRaw : purchaseDefaultEndDate;
   const selectedBalanceDate = isDateInput(balanceDateParam) ? balanceDateParam : todayInputValue;
   const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
   const monthStartInputValue = `${todayInputValue.slice(0, 8)}01`;
@@ -862,16 +856,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const selectedPlanForPurchase = purchasePlanId ? plans.find((plan) => plan.id === purchasePlanId) ?? null : null;
   const discountedTotalForPurchase = purchaseDiscountedTotalRaw ? Number(purchaseDiscountedTotalRaw) : Number.NaN;
   const hasDiscountedTotalForPurchase = Number.isFinite(discountedTotalForPurchase) && discountedTotalForPurchase >= 0;
-  const purchaseForfaitLoyaltyDiscount = purchaseForfaitLoyaltyDiscountRaw ? Number(purchaseForfaitLoyaltyDiscountRaw) : Number.NaN;
-  const hasPurchaseForfaitLoyaltyDiscount =
-    Number.isFinite(purchaseForfaitLoyaltyDiscount) && purchaseForfaitLoyaltyDiscount >= 0;
-  const purchaseForfaitFamilyDiscount = purchaseForfaitFamilyDiscountRaw ? Number(purchaseForfaitFamilyDiscountRaw) : Number.NaN;
-  const hasPurchaseForfaitFamilyDiscount = Number.isFinite(purchaseForfaitFamilyDiscount) && purchaseForfaitFamilyDiscount >= 0;
-  const purchaseForfaitShortCommitmentSupplement = purchaseForfaitShortCommitmentSupplementRaw
-    ? Number(purchaseForfaitShortCommitmentSupplementRaw)
-    : Number.NaN;
-  const hasPurchaseForfaitShortCommitmentSupplement =
-    Number.isFinite(purchaseForfaitShortCommitmentSupplement) && purchaseForfaitShortCommitmentSupplement >= 0;
   const selectedPlanBaseTotal = selectedPlanForPurchase?.monthly_price_excl_vat ?? null;
   const selectedPlanCurrency = selectedPlanForPurchase?.currency_code || client.preferred_currency || "EUR";
   const isCardOnlinePurchase = purchasePaymentMethod === "CARD_ONLINE";
@@ -882,18 +866,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     purchase_return_tab: purchaseReturnTab,
     purchase_start_date: purchaseStartDateInputValue,
   });
-  if (isDateInput(purchaseEndDateInputValue)) {
-    purchaseWizardReturnSearch.set("purchase_end_date", purchaseEndDateInputValue);
-  }
-  if (hasPurchaseForfaitLoyaltyDiscount) {
-    purchaseWizardReturnSearch.set("purchase_forfait_loyalty_discount", purchaseForfaitLoyaltyDiscount.toFixed(2));
-  }
-  if (hasPurchaseForfaitFamilyDiscount) {
-    purchaseWizardReturnSearch.set("purchase_forfait_family_discount", purchaseForfaitFamilyDiscount.toFixed(2));
-  }
-  if (hasPurchaseForfaitShortCommitmentSupplement) {
-    purchaseWizardReturnSearch.set("purchase_forfait_short_commitment_supplement", purchaseForfaitShortCommitmentSupplement.toFixed(2));
-  }
   const purchaseWizardReturnHref = `/admin/clients/${client.id}?${purchaseWizardReturnSearch.toString()}`;
 
   const activeSubscriptions = subscriptions.filter(
@@ -1387,16 +1359,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <small className="muted">
                           TVA {sub.estimated_vat_rate ?? "-"}% incluse
                           {sub.plan.kind === "FORFAIT"
-                            ? ` | Fidelite: -${formatMoney(
-                                sub.forfait_loyalty_discount_per_hour_ttc ?? "0",
-                                sub.estimated_currency || client.preferred_currency,
-                              )}/h, Famille: -${formatMoney(
-                                sub.forfait_family_discount_per_hour_ttc ?? "0",
-                                sub.estimated_currency || client.preferred_currency,
-                              )}/h, Engagement court: +${formatMoney(
-                                sub.forfait_short_commitment_supplement_per_hour_ttc ?? "0",
-                                sub.estimated_currency || client.preferred_currency,
-                              )}/h`
+                            ? ` | Activites configurees: ${
+                                sub.forfait_activity_pricing.filter(
+                                  (row) =>
+                                    Number.parseFloat(row.loyalty_discount_per_hour_ttc || "0") > 0 ||
+                                    Number.parseFloat(row.family_discount_per_hour_ttc || "0") > 0 ||
+                                    Number.parseFloat(row.short_commitment_supplement_per_hour_ttc || "0") > 0,
+                                ).length
+                              }/${sub.forfait_activity_pricing.length}`
                             : ""}
                         </small>
                       </article>
@@ -1594,39 +1564,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 />
               </label>
               <label>
-                Date de debut (abonnement/forfait)
+                Date de debut (abonnement)
                 <input type="date" name="start_date" defaultValue={purchaseStartDateInputValue} />
-              </label>
-              <label>
-                Date de fin (forfait)
-                <input type="date" name="end_date" defaultValue={purchaseEndDateInputValue} />
-              </label>
-              <label>
-                Remise fidelite / h TTC (forfait)
-                <input
-                  type="text"
-                  name="forfait_loyalty_discount_per_hour_ttc"
-                  placeholder="Ex: 2.50"
-                  defaultValue={hasPurchaseForfaitLoyaltyDiscount ? purchaseForfaitLoyaltyDiscount.toFixed(2) : ""}
-                />
-              </label>
-              <label>
-                Remise famille / h TTC (forfait)
-                <input
-                  type="text"
-                  name="forfait_family_discount_per_hour_ttc"
-                  placeholder="Ex: 1.00"
-                  defaultValue={hasPurchaseForfaitFamilyDiscount ? purchaseForfaitFamilyDiscount.toFixed(2) : ""}
-                />
-              </label>
-              <label>
-                Supplement engagement court / h TTC (forfait)
-                <input
-                  type="text"
-                  name="forfait_short_commitment_supplement_per_hour_ttc"
-                  placeholder="Ex: 3.00"
-                  defaultValue={hasPurchaseForfaitShortCommitmentSupplement ? purchaseForfaitShortCommitmentSupplement.toFixed(2) : ""}
-                />
               </label>
               <label>
                 Reglement
@@ -1679,7 +1618,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </p>
             <p className="muted">
               {selectedPlanForPurchase.kind === "FORFAIT"
-                ? `Periode forfait: ${formatDateInputLabel(purchaseStartDateInputValue)} - ${formatDateInputLabel(purchaseEndDateInputValue)}`
+                ? `Periode forfait: ${selectedPlanForPurchase.forfait_start_date ? formatDateInputLabel(selectedPlanForPurchase.forfait_start_date) : "-"} - ${selectedPlanForPurchase.forfait_end_date ? formatDateInputLabel(selectedPlanForPurchase.forfait_end_date) : "-"}`
                 : `Demarrage souhaite: ${formatDateInputLabel(purchaseStartDateInputValue)}`}
             </p>
             <article className="card modal-card">
@@ -1695,28 +1634,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ) : (
                 <p className="muted">Prix remisé: aucun</p>
               )}
-              {selectedPlanForPurchase.kind === "FORFAIT" ? (
-                <>
-                  <p className="muted">
-                    Remise fidelite / h TTC:{" "}
-                    {hasPurchaseForfaitLoyaltyDiscount
-                      ? formatMoney(String(purchaseForfaitLoyaltyDiscount), selectedPlanCurrency)
-                      : formatMoney("0", selectedPlanCurrency)}
-                  </p>
-                  <p className="muted">
-                    Remise famille / h TTC:{" "}
-                    {hasPurchaseForfaitFamilyDiscount
-                      ? formatMoney(String(purchaseForfaitFamilyDiscount), selectedPlanCurrency)
-                      : formatMoney("0", selectedPlanCurrency)}
-                  </p>
-                  <p className="muted">
-                    Supplement engagement court / h TTC:{" "}
-                    {hasPurchaseForfaitShortCommitmentSupplement
-                      ? formatMoney(String(purchaseForfaitShortCommitmentSupplement), selectedPlanCurrency)
-                      : formatMoney("0", selectedPlanCurrency)}
-                  </p>
-                </>
-              ) : null}
               <p className="purchase-total-line">
                 Total a payer aujourd hui:{" "}
                 {hasDiscountedTotalForPurchase
@@ -1736,22 +1653,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="payment_method_code" value={purchasePaymentMethod} />
               <input type="hidden" name="return_tab" value={purchaseReturnTab} />
               <input type="hidden" name="start_date" value={purchaseStartDateInputValue} />
-              <input type="hidden" name="end_date" value={purchaseEndDateInputValue} />
-              <input
-                type="hidden"
-                name="forfait_loyalty_discount_per_hour_ttc"
-                value={hasPurchaseForfaitLoyaltyDiscount ? purchaseForfaitLoyaltyDiscount.toFixed(2) : ""}
-              />
-              <input
-                type="hidden"
-                name="forfait_family_discount_per_hour_ttc"
-                value={hasPurchaseForfaitFamilyDiscount ? purchaseForfaitFamilyDiscount.toFixed(2) : ""}
-              />
-              <input
-                type="hidden"
-                name="forfait_short_commitment_supplement_per_hour_ttc"
-                value={hasPurchaseForfaitShortCommitmentSupplement ? purchaseForfaitShortCommitmentSupplement.toFixed(2) : ""}
-              />
               {hasDiscountedTotalForPurchase ? (
                 <input type="hidden" name="discounted_total_incl_vat" value={discountedTotalForPurchase.toFixed(2)} />
               ) : null}
@@ -1888,33 +1789,61 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </Link>
             <h3 className="modal-title">Tarification client (forfait)</h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
+            <p className="muted">Etape optionnelle: laissez vide pour conserver 0 sur chaque activite.</p>
             <form action={updateAdminClientForfaitPricingAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
-              <label>
-                Remise fidelite / heure TTC
-                <input
-                  type="text"
-                  name="forfait_loyalty_discount_per_hour_ttc"
-                  defaultValue={selectedSubscriptionForModal.forfait_loyalty_discount_per_hour_ttc ?? "0"}
-                />
-              </label>
-              <label>
-                Remise famille / heure TTC
-                <input
-                  type="text"
-                  name="forfait_family_discount_per_hour_ttc"
-                  defaultValue={selectedSubscriptionForModal.forfait_family_discount_per_hour_ttc ?? "0"}
-                />
-              </label>
-              <label>
-                Supplement engagement court / heure TTC
-                <input
-                  type="text"
-                  name="forfait_short_commitment_supplement_per_hour_ttc"
-                  defaultValue={selectedSubscriptionForModal.forfait_short_commitment_supplement_per_hour_ttc ?? "0"}
-                />
-              </label>
+              {selectedSubscriptionForModal.forfait_activity_pricing.length === 0 ? (
+                <p className="muted">Aucune activite associee a cette formule forfait.</p>
+              ) : (
+                selectedSubscriptionForModal.forfait_activity_pricing.map((row) => (
+                  <article key={row.course_type_id} className="card modal-card">
+                    <input type="hidden" name="forfait_activity_row_key" value={row.course_type_id} />
+                    <input type="hidden" name={`forfait_course_type_id_${row.course_type_id}`} value={row.course_type_id} />
+                    <h4>{row.course_type_name}</h4>
+                    <p className="muted">
+                      Tarif activite:{" "}
+                      {row.base_hourly_rate_ttc
+                        ? `${formatMoney(row.base_hourly_rate_ttc, selectedSubscriptionForModal.estimated_currency || client.preferred_currency)}/h`
+                        : "n/a"}{" "}
+                      |
+                      Apres surcouche:{" "}
+                      {row.effective_hourly_rate_ttc
+                        ? `${formatMoney(
+                            row.effective_hourly_rate_ttc,
+                            selectedSubscriptionForModal.estimated_currency || client.preferred_currency,
+                          )}/h`
+                        : "n/a"}
+                    </p>
+                    <div className="grid cols-3 config-form-grid">
+                      <label>
+                        Remise fidelite / h TTC
+                        <input
+                          type="text"
+                          name={`forfait_loyalty_discount_per_hour_ttc_${row.course_type_id}`}
+                          defaultValue={row.loyalty_discount_per_hour_ttc ?? "0"}
+                        />
+                      </label>
+                      <label>
+                        Remise famille / h TTC
+                        <input
+                          type="text"
+                          name={`forfait_family_discount_per_hour_ttc_${row.course_type_id}`}
+                          defaultValue={row.family_discount_per_hour_ttc ?? "0"}
+                        />
+                      </label>
+                      <label>
+                        Supplement sans engagement / h TTC
+                        <input
+                          type="text"
+                          name={`forfait_short_commitment_supplement_per_hour_ttc_${row.course_type_id}`}
+                          defaultValue={row.short_commitment_supplement_per_hour_ttc ?? "0"}
+                        />
+                      </label>
+                    </div>
+                  </article>
+                ))
+              )}
               <p className="muted">
                 Cette surcouche s applique uniquement aux reservations facturees dans la periode active du forfait.
               </p>

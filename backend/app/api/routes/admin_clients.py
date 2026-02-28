@@ -25,10 +25,12 @@ from app.models.family import ClientFamilyLink
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, Location, SessionStatus
 from app.models.ops import AppSetting, EmailReminder
 from app.models.plan import (
+    ClientForfaitActivityPricing,
     ClientPlanSubscription,
     Plan,
     PlanCreditGrant,
     PlanCreditGrantsRelation,
+    PlanEntitlement,
     PlanKind,
     PlanPriceTaxMode,
     SubscriptionStatus,
@@ -66,6 +68,7 @@ from app.schemas.admin import (
     AdminClientSubscriptionPaymentEmailOut,
     AdminClientPlanPurchaseRequest,
     AdminClientForfaitPricingUpdateRequest,
+    AdminClientForfaitActivityPricingOut,
     AdminClientManualCreditOut,
     AdminClientManualCreditUpdateRequest,
     AdminClientNoteOut,
@@ -267,6 +270,48 @@ def _non_negative_money(value: Decimal | float | int | None) -> Decimal:
     return quantized
 
 
+def _forfait_period_bounds(plan: Plan) -> tuple[datetime, datetime]:
+    if plan.forfait_start_date is None or plan.forfait_end_date is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La formule forfait doit avoir une date de debut et une date de fin configurees",
+        )
+    if plan.forfait_end_date <= plan.forfait_start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La date de fin de la formule forfait doit etre apres la date de debut",
+        )
+    started_at = datetime.combine(plan.forfait_start_date, datetime.min.time(), tzinfo=timezone.utc)
+    ends_at = datetime.combine(plan.forfait_end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    return started_at, ends_at
+
+
+def _forfait_activity_pricing_map(
+    db: Session,
+    *,
+    subscription_ids: set[UUID],
+) -> dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]]:
+    if not subscription_ids:
+        return {}
+    rows = db.execute(
+        select(
+            ClientForfaitActivityPricing.subscription_id,
+            ClientForfaitActivityPricing.course_type_id,
+            ClientForfaitActivityPricing.loyalty_discount_per_hour_ttc,
+            ClientForfaitActivityPricing.family_discount_per_hour_ttc,
+            ClientForfaitActivityPricing.short_commitment_supplement_per_hour_ttc,
+        ).where(ClientForfaitActivityPricing.subscription_id.in_(subscription_ids))
+    ).all()
+    out: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] = {}
+    for subscription_id, course_type_id, loyalty_discount, family_discount, short_commitment_supplement in rows:
+        out[(subscription_id, course_type_id)] = (
+            _non_negative_money(loyalty_discount),
+            _non_negative_money(family_discount),
+            _non_negative_money(short_commitment_supplement),
+        )
+    return out
+
+
 def _forfait_subscription_pricing_applies(
     subscription: ClientPlanSubscription | None,
     *,
@@ -286,13 +331,38 @@ def _forfait_hourly_ttc_with_overrides(
     base_hourly_ttc: Decimal,
     subscription: ClientPlanSubscription | None,
     session_start_at: datetime,
+    course_type_id: UUID,
+    db: Session,
+    pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] | None = None,
 ) -> Decimal:
     if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
         return _quantize_money(base_hourly_ttc)
 
-    loyalty_discount = _non_negative_money(subscription.forfait_loyalty_discount_per_hour_ttc)
-    family_discount = _non_negative_money(subscription.forfait_family_discount_per_hour_ttc)
-    short_commitment_supplement = _non_negative_money(subscription.forfait_short_commitment_supplement_per_hour_ttc)
+    loyalty_discount = Decimal("0.00")
+    family_discount = Decimal("0.00")
+    short_commitment_supplement = Decimal("0.00")
+    if subscription is not None:
+        key = (subscription.id, course_type_id)
+        values = pricing_map.get(key) if pricing_map is not None else None
+        if values is None:
+            row = db.execute(
+                select(
+                    ClientForfaitActivityPricing.loyalty_discount_per_hour_ttc,
+                    ClientForfaitActivityPricing.family_discount_per_hour_ttc,
+                    ClientForfaitActivityPricing.short_commitment_supplement_per_hour_ttc,
+                ).where(
+                    ClientForfaitActivityPricing.subscription_id == subscription.id,
+                    ClientForfaitActivityPricing.course_type_id == course_type_id,
+                )
+            ).first()
+            if row is not None:
+                values = (
+                    _non_negative_money(row[0]),
+                    _non_negative_money(row[1]),
+                    _non_negative_money(row[2]),
+                )
+        if values is not None:
+            loyalty_discount, family_discount, short_commitment_supplement = values
 
     adjusted = _quantize_money(base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement)
     if adjusted < Decimal("0.00"):
@@ -907,6 +977,7 @@ def _forfait_booking_amounts_from_activity(
     billing_profile: User,
     forfait_subscription: ClientPlanSubscription | None,
     db: Session,
+    pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] | None = None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
     if course_type.default_hourly_rate is None:
         return None
@@ -919,6 +990,9 @@ def _forfait_booking_amounts_from_activity(
         base_hourly_ttc=_quantize_money(Decimal(course_type.default_hourly_rate)),
         subscription=forfait_subscription,
         session_start_at=session_obj.start_at_utc,
+        course_type_id=course_type.id,
+        db=db,
+        pricing_map=pricing_map,
     )
     total_incl_vat = _quantize_money(hourly_ttc * duration_hours)
 
@@ -2544,6 +2618,45 @@ def _admin_subscription_out(
     if pricing is not None:
         estimated_price_excl_vat, estimated_vat_rate, estimated_vat_amount, estimated_total_incl_vat, estimated_currency = pricing
 
+    forfait_activity_pricing: list[AdminClientForfaitActivityPricingOut] = []
+    if plan.kind == PlanKind.FORFAIT:
+        entitlement_rows = db.execute(
+            select(CourseType.id, CourseType.name, CourseType.default_hourly_rate)
+            .join(PlanEntitlement, PlanEntitlement.course_type_id == CourseType.id)
+            .where(PlanEntitlement.plan_id == plan.id)
+            .order_by(CourseType.name.asc())
+        ).all()
+        override_map = _forfait_activity_pricing_map(db, subscription_ids={sub.id})
+        for course_type_id, course_type_name, default_hourly_rate in entitlement_rows:
+            loyalty_discount, family_discount, short_commitment_supplement = override_map.get(
+                (sub.id, course_type_id),
+                (Decimal("0.00"), Decimal("0.00"), Decimal("0.00")),
+            )
+            base_hourly_rate_ttc = (
+                _non_negative_money(default_hourly_rate)
+                if default_hourly_rate is not None
+                else None
+            )
+            effective_hourly_rate_ttc: Decimal | None = None
+            if base_hourly_rate_ttc is not None:
+                effective_hourly_rate_ttc = _quantize_money(
+                    max(
+                        Decimal("0.00"),
+                        base_hourly_rate_ttc - loyalty_discount - family_discount + short_commitment_supplement,
+                    )
+                )
+            forfait_activity_pricing.append(
+                AdminClientForfaitActivityPricingOut(
+                    course_type_id=course_type_id,
+                    course_type_name=course_type_name,
+                    base_hourly_rate_ttc=base_hourly_rate_ttc,
+                    loyalty_discount_per_hour_ttc=loyalty_discount,
+                    family_discount_per_hour_ttc=family_discount,
+                    short_commitment_supplement_per_hour_ttc=short_commitment_supplement,
+                    effective_hourly_rate_ttc=effective_hourly_rate_ttc,
+                )
+            )
+
     return AdminClientSubscriptionOut(
         id=sub.id,
         status=sub.status,
@@ -2562,6 +2675,7 @@ def _admin_subscription_out(
         forfait_short_commitment_supplement_per_hour_ttc=_non_negative_money(
             sub.forfait_short_commitment_supplement_per_hour_ttc
         ),
+        forfait_activity_pricing=forfait_activity_pricing,
         last_payment_at=sub.last_payment_at,
         last_payment_status=sub.last_payment_status,
         suspension_starts_at=sub.suspension_starts_at,
@@ -2934,23 +3048,74 @@ def update_admin_client_forfait_pricing(
             detail="Only FORFAIT pricing can be updated with this endpoint",
         )
 
-    sub.forfait_loyalty_discount_per_hour_ttc = _non_negative_money(payload.forfait_loyalty_discount_per_hour_ttc)
-    sub.forfait_family_discount_per_hour_ttc = _non_negative_money(payload.forfait_family_discount_per_hour_ttc)
-    sub.forfait_short_commitment_supplement_per_hour_ttc = _non_negative_money(
-        payload.forfait_short_commitment_supplement_per_hour_ttc
-    )
+    entitlement_rows = db.execute(
+        select(PlanEntitlement.course_type_id, CourseType.name)
+        .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
+        .where(PlanEntitlement.plan_id == plan.id)
+        .order_by(CourseType.name.asc())
+    ).all()
+    if not entitlement_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Ce forfait n'a aucune activite associee",
+        )
+    allowed_course_type_ids = {course_type_id for course_type_id, _ in entitlement_rows}
+    activity_name_by_id = {course_type_id: course_type_name for course_type_id, course_type_name in entitlement_rows}
+
+    normalized_by_course_type: dict[UUID, tuple[Decimal, Decimal, Decimal]] = {}
+    for activity in payload.activities:
+        if activity.course_type_id not in allowed_course_type_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Activite hors formule pour la tarification forfait",
+            )
+        normalized_by_course_type[activity.course_type_id] = (
+            _non_negative_money(activity.loyalty_discount_per_hour_ttc),
+            _non_negative_money(activity.family_discount_per_hour_ttc),
+            _non_negative_money(activity.short_commitment_supplement_per_hour_ttc),
+        )
+
+    db.execute(delete(ClientForfaitActivityPricing).where(ClientForfaitActivityPricing.subscription_id == sub.id))
+    now = _utcnow()
+    updated_count = 0
+    for course_type_id, values in normalized_by_course_type.items():
+        loyalty_discount, family_discount, short_commitment_supplement = values
+        if loyalty_discount <= Decimal("0.00") and family_discount <= Decimal("0.00") and short_commitment_supplement <= Decimal("0.00"):
+            continue
+        db.add(
+            ClientForfaitActivityPricing(
+                subscription_id=sub.id,
+                course_type_id=course_type_id,
+                loyalty_discount_per_hour_ttc=loyalty_discount,
+                family_discount_per_hour_ttc=family_discount,
+                short_commitment_supplement_per_hour_ttc=short_commitment_supplement,
+                updated_at=now,
+            )
+        )
+        updated_count += 1
+
+    # Legacy aggregate fields are reset and no longer used for calculations.
+    sub.forfait_loyalty_discount_per_hour_ttc = Decimal("0.00")
+    sub.forfait_family_discount_per_hour_ttc = Decimal("0.00")
+    sub.forfait_short_commitment_supplement_per_hour_ttc = Decimal("0.00")
     db.add(sub)
+
+    details: list[str] = []
+    for course_type_id, values in normalized_by_course_type.items():
+        loyalty_discount, family_discount, short_commitment_supplement = values
+        if loyalty_discount <= Decimal("0.00") and family_discount <= Decimal("0.00") and short_commitment_supplement <= Decimal("0.00"):
+            continue
+        details.append(
+            f"{activity_name_by_id.get(course_type_id, str(course_type_id))}: "
+            f"fidelite -{loyalty_discount:.2f}, famille -{family_discount:.2f}, engagement court +{short_commitment_supplement:.2f}"
+        )
+    detail_suffix = " | ".join(details) if details else "aucune surcouche (valeurs a 0)."
     _create_client_note(
         db,
         client_id=client_id,
         author_user_id=actor.id,
         entry_type="AUTO",
-        message=(
-            f"Mise a jour de la surcouche tarifaire forfait '{plan.name}' : "
-            f"fidelite -{sub.forfait_loyalty_discount_per_hour_ttc:.2f} EUR/h TTC, "
-            f"famille -{sub.forfait_family_discount_per_hour_ttc:.2f} EUR/h TTC, "
-            f"engagement court +{sub.forfait_short_commitment_supplement_per_hour_ttc:.2f} EUR/h TTC."
-        ),
+        message=f"Mise a jour de la tarification forfait '{plan.name}' sur {updated_count} activite(s): {detail_suffix}",
     )
     db.commit()
     db.refresh(sub)
@@ -3371,6 +3536,14 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
     refund_by_key = {(row.source.strip().upper(), row.source_payment_id): row for row in refunds}
 
     items: list[AdminClientPaymentOut] = []
+    forfait_pricing_map = _forfait_activity_pricing_map(
+        db,
+        subscription_ids={
+            forfait_subscription.id
+            for _, _, _, _, forfait_subscription, plan in rows_bookings
+            if forfait_subscription is not None and (plan is None or plan.kind == PlanKind.FORFAIT)
+        },
+    )
 
     for sub, plan in rows_subs:
         if plan.kind == PlanKind.FORFAIT:
@@ -3437,6 +3610,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                     billing_profile=billing_profile,
                     forfait_subscription=forfait_subscription,
                     db=db,
+                    pricing_map=forfait_pricing_map,
                 )
                 if computed is not None:
                     amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = computed
@@ -4223,17 +4397,7 @@ def admin_purchase_plan_for_client(
             )
         subscription_started_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
     elif plan.kind == PlanKind.FORFAIT:
-        if payload.start_date is None or payload.end_date is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Les dates de debut et de fin sont obligatoires pour un forfait",
-            )
-        if payload.end_date <= payload.start_date:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="La date de fin du forfait doit etre apres la date de debut",
-            )
-        subscription_started_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
+        subscription_started_at, _ = _forfait_period_bounds(plan)
     _lock_user_purchase_scope(db, client.id)
 
     if plan.kind == PlanKind.SUBSCRIPTION and _has_same_subscription_in_current_month(
@@ -4256,9 +4420,6 @@ def admin_purchase_plan_for_client(
     credits_initial: int | None = None
     credits_remaining: int | None = None
     ends_at = None
-    forfait_loyalty_discount = _non_negative_money(payload.forfait_loyalty_discount_per_hour_ttc)
-    forfait_family_discount = _non_negative_money(payload.forfait_family_discount_per_hour_ttc)
-    forfait_short_commitment_supplement = _non_negative_money(payload.forfait_short_commitment_supplement_per_hour_ttc)
     requested_method = _normalize_optional(payload.payment_method_code)
     method_code = (requested_method or _default_subscription_billing_method(plan) or "").strip().upper() or None
 
@@ -4268,8 +4429,8 @@ def admin_purchase_plan_for_client(
         ends_at = add_months_utc(now, int(plan.pack_validity_months or 12))
     elif plan.kind == PlanKind.SUBSCRIPTION:
         ends_at = add_months_utc(subscription_started_at, 1)
-    elif plan.kind == PlanKind.FORFAIT and payload.end_date is not None:
-        ends_at = datetime.combine(payload.end_date, datetime.min.time(), tzinfo=timezone.utc)
+    elif plan.kind == PlanKind.FORFAIT:
+        _, ends_at = _forfait_period_bounds(plan)
 
     should_start_pending = _is_online_collection_method(method_code) and plan.kind != PlanKind.FORFAIT
     initial_status = SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE
@@ -4286,9 +4447,6 @@ def admin_purchase_plan_for_client(
         auto_renew=(plan.kind == PlanKind.SUBSCRIPTION and not should_start_pending),
         billing_method_code=method_code,
         next_payment_at=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
-        forfait_loyalty_discount_per_hour_ttc=forfait_loyalty_discount,
-        forfait_family_discount_per_hour_ttc=forfait_family_discount,
-        forfait_short_commitment_supplement_per_hour_ttc=forfait_short_commitment_supplement,
     )
 
     db.add(subscription)

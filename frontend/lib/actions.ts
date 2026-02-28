@@ -1864,17 +1864,6 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
   const purchaseType = String(formData.get("purchase_type") ?? "FORMULA").trim().toUpperCase() || "FORMULA";
   const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
   const startDateRaw = String(formData.get("start_date") ?? "").trim();
-  const endDateRaw = String(formData.get("end_date") ?? "").trim();
-  const forfaitLoyaltyDiscountRaw = String(formData.get("forfait_loyalty_discount_per_hour_ttc") ?? "").trim();
-  const forfaitFamilyDiscountRaw = String(formData.get("forfait_family_discount_per_hour_ttc") ?? "").trim();
-  const forfaitShortCommitmentSupplementRaw = String(formData.get("forfait_short_commitment_supplement_per_hour_ttc") ?? "").trim();
-  const forfaitLoyaltyDiscount = forfaitLoyaltyDiscountRaw
-    ? parseNonNegativeDecimal(forfaitLoyaltyDiscountRaw.replace(",", "."))
-    : null;
-  const forfaitFamilyDiscount = forfaitFamilyDiscountRaw ? parseNonNegativeDecimal(forfaitFamilyDiscountRaw.replace(",", ".")) : null;
-  const forfaitShortCommitmentSupplement = forfaitShortCommitmentSupplementRaw
-    ? parseNonNegativeDecimal(forfaitShortCommitmentSupplementRaw.replace(",", "."))
-    : null;
   const discountedTotalRaw = String(formData.get("discounted_total_incl_vat") ?? "").trim();
   const discountedTotal = discountedTotalRaw ? parseNonNegativeDecimal(discountedTotalRaw.replace(",", ".")) : null;
 
@@ -1890,18 +1879,6 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
   if (startDateRaw && !parseUtcStartOfDate(startDateRaw)) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Date%20de%20demarrage%20invalide`);
   }
-  if (endDateRaw && !parseUtcStartOfDate(endDateRaw)) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Date%20de%20fin%20invalide`);
-  }
-  if (forfaitLoyaltyDiscountRaw && forfaitLoyaltyDiscount === null) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Remise%20fidelite%20invalide`);
-  }
-  if (forfaitFamilyDiscountRaw && forfaitFamilyDiscount === null) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Remise%20famille%20invalide`);
-  }
-  if (forfaitShortCommitmentSupplementRaw && forfaitShortCommitmentSupplement === null) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Supplement%20engagement%20court%20invalide`);
-  }
 
   const params = new URLSearchParams({
     tab: returnTab,
@@ -1915,18 +1892,6 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
   }
   if (startDateRaw) {
     params.set("purchase_start_date", startDateRaw);
-  }
-  if (endDateRaw) {
-    params.set("purchase_end_date", endDateRaw);
-  }
-  if (forfaitLoyaltyDiscount !== null) {
-    params.set("purchase_forfait_loyalty_discount", forfaitLoyaltyDiscount.toFixed(2));
-  }
-  if (forfaitFamilyDiscount !== null) {
-    params.set("purchase_forfait_family_discount", forfaitFamilyDiscount.toFixed(2));
-  }
-  if (forfaitShortCommitmentSupplement !== null) {
-    params.set("purchase_forfait_short_commitment_supplement", forfaitShortCommitmentSupplement.toFixed(2));
   }
 
   redirect(`/admin/clients/${clientId}?${params.toString()}`);
@@ -1945,17 +1910,6 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   const planName = String(formData.get("plan_name") ?? "").trim() || "Formule";
   const purchaseType = String(formData.get("purchase_type") ?? "FORMULA").trim().toUpperCase() || "FORMULA";
   const startDateRaw = String(formData.get("start_date") ?? "").trim();
-  const endDateRaw = String(formData.get("end_date") ?? "").trim();
-  const forfaitLoyaltyDiscountRaw = String(formData.get("forfait_loyalty_discount_per_hour_ttc") ?? "").trim();
-  const forfaitFamilyDiscountRaw = String(formData.get("forfait_family_discount_per_hour_ttc") ?? "").trim();
-  const forfaitShortCommitmentSupplementRaw = String(formData.get("forfait_short_commitment_supplement_per_hour_ttc") ?? "").trim();
-  const forfaitLoyaltyDiscount = forfaitLoyaltyDiscountRaw
-    ? parseNonNegativeDecimal(forfaitLoyaltyDiscountRaw.replace(",", "."))
-    : null;
-  const forfaitFamilyDiscount = forfaitFamilyDiscountRaw ? parseNonNegativeDecimal(forfaitFamilyDiscountRaw.replace(",", ".")) : null;
-  const forfaitShortCommitmentSupplement = forfaitShortCommitmentSupplementRaw
-    ? parseNonNegativeDecimal(forfaitShortCommitmentSupplementRaw.replace(",", "."))
-    : null;
   const returnTabRaw = String(formData.get("return_tab") ?? "fiche").trim().toLowerCase();
   const returnTab =
     returnTabRaw === "paiements" || returnTabRaw === "messages" || returnTabRaw === "infos" || returnTabRaw === "famille" || returnTabRaw === "reservations"
@@ -1983,26 +1937,6 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   if (startDateRaw && !parseUtcStartOfDate(startDateRaw)) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Date%20de%20demarrage%20invalide`);
   }
-  if (endDateRaw && !parseUtcStartOfDate(endDateRaw)) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Date%20de%20fin%20invalide`);
-  }
-  if (forfaitLoyaltyDiscountRaw && forfaitLoyaltyDiscount === null) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Remise%20fidelite%20invalide`);
-  }
-  if (forfaitFamilyDiscountRaw && forfaitFamilyDiscount === null) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Remise%20famille%20invalide`);
-  }
-  if (forfaitShortCommitmentSupplementRaw && forfaitShortCommitmentSupplement === null) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Supplement%20engagement%20court%20invalide`);
-  }
-  if (planKind === "FORFAIT") {
-    if (!startDateRaw || !endDateRaw) {
-      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Dates%20de%20debut%20et%20de%20fin%20obligatoires%20pour%20un%20forfait`);
-    }
-    if (startDateRaw >= endDateRaw) {
-      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=La%20date%20de%20fin%20doit%20etre%20apres%20la%20date%20de%20debut`);
-    }
-  }
 
   const purchaseResult = await backendRequest<{ id: string }>(
     `/api/v1/admin/clients/${clientId}/plans/${planId}/purchase`,
@@ -2011,11 +1945,6 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
       body: JSON.stringify({
         payment_method_code: paymentMethodCode,
         start_date: startDateRaw || null,
-        end_date: endDateRaw || null,
-        forfait_loyalty_discount_per_hour_ttc: forfaitLoyaltyDiscount !== null ? forfaitLoyaltyDiscount.toFixed(2) : null,
-        forfait_family_discount_per_hour_ttc: forfaitFamilyDiscount !== null ? forfaitFamilyDiscount.toFixed(2) : null,
-        forfait_short_commitment_supplement_per_hour_ttc:
-          forfaitShortCommitmentSupplement !== null ? forfaitShortCommitmentSupplement.toFixed(2) : null,
       }),
     },
     token,
@@ -2065,12 +1994,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
     notes.push(`Prix remise saisi: ${discountedTotal.toFixed(2)} EUR TTC.`);
   }
   if (planKind === "FORFAIT") {
-    notes.push(`Periode forfait: ${startDateRaw || "-"} -> ${endDateRaw || "-"}.`);
-    if (forfaitLoyaltyDiscount !== null || forfaitFamilyDiscount !== null || forfaitShortCommitmentSupplement !== null) {
-      notes.push(
-        `Surcouche forfait (EUR/h TTC): fidelite=${(forfaitLoyaltyDiscount ?? 0).toFixed(2)}, famille=${(forfaitFamilyDiscount ?? 0).toFixed(2)}, engagement_court=${(forfaitShortCommitmentSupplement ?? 0).toFixed(2)}.`,
-      );
-    }
+    notes.push("Tarification forfait: surcouche par activite disponible en etape optionnelle.");
   }
   notes.push("Achat valide depuis le back-office.");
   if (!isCardOnlinePayment) {
@@ -2097,6 +2021,13 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   revalidatePath("/admin/clients");
   revalidatePath(`/admin/clients/${clientId}`);
   const channelMessage = !isCardOnlinePayment ? "paiement enregistre" : signatureChannel === "EMAIL" ? "lien email envoye" : "SMS a envoyer";
+  if (planKind === "FORFAIT") {
+    redirect(
+      `/admin/clients/${clientId}?tab=fiche&subscription_modal=forfait_pricing&subscription_id=${subscriptionId}&ok=${encodeURIComponent(
+        `Produit ajoute (${channelMessage}). Etape optionnelle: ajustez la tarification par activite.`,
+      )}`,
+    );
+  }
   redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=${encodeURIComponent(`Produit ajoute (${channelMessage})`)}`);
 }
 
@@ -2194,17 +2125,32 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
     redirect("/admin/clients?error=Forfait%20invalide");
   }
 
-  const loyaltyRaw = String(formData.get("forfait_loyalty_discount_per_hour_ttc") ?? "").trim();
-  const familyRaw = String(formData.get("forfait_family_discount_per_hour_ttc") ?? "").trim();
-  const shortCommitmentRaw = String(formData.get("forfait_short_commitment_supplement_per_hour_ttc") ?? "").trim();
-  const loyalty = loyaltyRaw ? parseNonNegativeDecimal(loyaltyRaw.replace(",", ".")) : 0;
-  const family = familyRaw ? parseNonNegativeDecimal(familyRaw.replace(",", ".")) : 0;
-  const shortCommitment = shortCommitmentRaw ? parseNonNegativeDecimal(shortCommitmentRaw.replace(",", ".")) : 0;
-
-  if (loyalty === null || family === null || shortCommitment === null) {
-    redirect(
-      `/admin/clients/${clientId}?tab=fiche&subscription_modal=forfait_pricing&subscription_id=${subscriptionId}&error=Valeurs%20tarifaires%20invalides`,
-    );
+  const rowKeys = parseStringList(formData.getAll("forfait_activity_row_key"));
+  const activities: Array<{
+    course_type_id: string;
+    loyalty_discount_per_hour_ttc: string;
+    family_discount_per_hour_ttc: string;
+    short_commitment_supplement_per_hour_ttc: string;
+  }> = [];
+  for (const rowKey of rowKeys) {
+    const courseTypeId = String(formData.get(`forfait_course_type_id_${rowKey}`) ?? "").trim();
+    const loyaltyRaw = String(formData.get(`forfait_loyalty_discount_per_hour_ttc_${rowKey}`) ?? "").trim();
+    const familyRaw = String(formData.get(`forfait_family_discount_per_hour_ttc_${rowKey}`) ?? "").trim();
+    const shortCommitmentRaw = String(formData.get(`forfait_short_commitment_supplement_per_hour_ttc_${rowKey}`) ?? "").trim();
+    const loyalty = loyaltyRaw ? parseNonNegativeDecimal(loyaltyRaw.replace(",", ".")) : 0;
+    const family = familyRaw ? parseNonNegativeDecimal(familyRaw.replace(",", ".")) : 0;
+    const shortCommitment = shortCommitmentRaw ? parseNonNegativeDecimal(shortCommitmentRaw.replace(",", ".")) : 0;
+    if (!courseTypeId || loyalty === null || family === null || shortCommitment === null) {
+      redirect(
+        `/admin/clients/${clientId}?tab=fiche&subscription_modal=forfait_pricing&subscription_id=${subscriptionId}&error=Valeurs%20tarifaires%20invalides`,
+      );
+    }
+    activities.push({
+      course_type_id: courseTypeId,
+      loyalty_discount_per_hour_ttc: loyalty.toFixed(2),
+      family_discount_per_hour_ttc: family.toFixed(2),
+      short_commitment_supplement_per_hour_ttc: shortCommitment.toFixed(2),
+    });
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -2212,9 +2158,7 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
     {
       method: "POST",
       body: JSON.stringify({
-        forfait_loyalty_discount_per_hour_ttc: loyalty.toFixed(2),
-        forfait_family_discount_per_hour_ttc: family.toFixed(2),
-        forfait_short_commitment_supplement_per_hour_ttc: shortCommitment.toFixed(2),
+        activities,
       }),
     },
     token,
@@ -3853,6 +3797,8 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
   );
   const packValidityMonthsRaw = String(formData.get("pack_validity_months") ?? "").trim();
   const packValidityMonths = packValidityMonthsRaw ? parsePositiveInt(packValidityMonthsRaw) : null;
+  const forfaitStartDateRaw = String(formData.get("forfait_start_date") ?? "").trim();
+  const forfaitEndDateRaw = String(formData.get("forfait_end_date") ?? "").trim();
   const creditGrants = parseFormulaCreditGrants(formData);
   const creditsCount = creditGrants.reduce((sum, grant) => sum + grant.credits_count, 0);
   const entitlementIds = parseStringList(formData.getAll("entitlement_course_type_ids"));
@@ -3878,6 +3824,17 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
   if (kind === "PACK" && (packValidityMonths === null || packValidityMonths < 1 || packValidityMonths > 12)) {
     throw new Error("La duree de validite du carnet doit etre comprise entre 1 et 12 mois");
   }
+  if (kind === "FORFAIT") {
+    if (!forfaitStartDateRaw || !forfaitEndDateRaw) {
+      throw new Error("Dates de debut et de fin obligatoires pour une formule forfait");
+    }
+    if (!parseUtcStartOfDate(forfaitStartDateRaw) || !parseUtcStartOfDate(forfaitEndDateRaw)) {
+      throw new Error("Dates forfait invalides");
+    }
+    if (forfaitEndDateRaw <= forfaitStartDateRaw) {
+      throw new Error("La date de fin du forfait doit etre apres la date de debut");
+    }
+  }
   if (entitlementIds.length === 0) {
     throw new Error("Selectionnez au moins un type de cours");
   }
@@ -3890,6 +3847,8 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
     description: optionalField(formData, "description"),
     credits_count: kind === "PACK" ? creditsCount : null,
     pack_validity_months: kind === "PACK" ? packValidityMonths : null,
+    forfait_start_date: kind === "FORFAIT" ? forfaitStartDateRaw : null,
+    forfait_end_date: kind === "FORFAIT" ? forfaitEndDateRaw : null,
     credit_grants: kind === "PACK" ? creditGrants : [],
     credit_grants_relation: kind === "PACK" ? creditGrantsRelation : "OR",
     price_tax_mode: priceTaxMode,

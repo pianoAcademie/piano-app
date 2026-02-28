@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -64,6 +64,8 @@ class Plan(Base):
     )
     credits_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pack_validity_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    forfait_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    forfait_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     monthly_price_value: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     price_tax_mode: Mapped[PlanPriceTaxMode] = mapped_column(
         Enum(
@@ -244,6 +246,53 @@ class ClientPlanSubscription(Base):
     cancellation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancellation_effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
+class ClientForfaitActivityPricing(Base):
+    __tablename__ = "client_forfait_activity_pricing"
+    __table_args__ = (UniqueConstraint("subscription_id", "course_type_id", name="uq_client_forfait_activity_pricing"),)
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    subscription_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("client_plan_subscriptions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    course_type_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("course_types.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    loyalty_discount_per_hour_ttc: Mapped[float] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
+    family_discount_per_hour_ttc: Mapped[float] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
+    short_commitment_supplement_per_hour_ttc: Mapped[float] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),

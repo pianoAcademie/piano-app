@@ -104,6 +104,8 @@ export type PlanOut = {
   name: string;
   kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
   credits_count: number | null;
+  forfait_start_date: string | null;
+  forfait_end_date: string | null;
   monthly_price_excl_vat: string | null;
   currency_code: string | null;
   active: boolean;
@@ -215,6 +217,15 @@ export type AdminClientSubscriptionOut = {
   forfait_loyalty_discount_per_hour_ttc: string | null;
   forfait_family_discount_per_hour_ttc: string | null;
   forfait_short_commitment_supplement_per_hour_ttc: string | null;
+  forfait_activity_pricing: Array<{
+    course_type_id: string;
+    course_type_name: string;
+    base_hourly_rate_ttc: string | null;
+    loyalty_discount_per_hour_ttc: string;
+    family_discount_per_hour_ttc: string;
+    short_commitment_supplement_per_hour_ttc: string;
+    effective_hourly_rate_ttc: string | null;
+  }>;
   last_payment_at: string | null;
   last_payment_status: string | null;
   suspension_starts_at: string | null;
@@ -1026,6 +1037,8 @@ export type AdminFormulaOut = {
   description: string | null;
   credits_count: number | null;
   pack_validity_months: number | null;
+  forfait_start_date: string | null;
+  forfait_end_date: string | null;
   credit_grants: AdminFormulaCreditGrantOut[];
   credit_grants_relation: AdminFormulaCreditGrantsRelation;
   monthly_price_value: string | null;
