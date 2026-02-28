@@ -5,11 +5,15 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 from email.utils import formataddr
+from typing import Iterable
 from uuid import uuid4
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+EmailAttachment = tuple[str, bytes, str]
 
 
 def _normalized_provider() -> str:
@@ -49,6 +53,7 @@ def _build_message(
     from_name: str | None = None,
     reply_to: str | None = None,
     subject_prefix: str | None = None,
+    attachments: Iterable[EmailAttachment] | None = None,
 ) -> EmailMessage:
     message = EmailMessage()
     sender_email = (from_email or settings.email_from).strip()
@@ -67,6 +72,15 @@ def _build_message(
     else:
         message.set_content(body)
 
+    for attachment in attachments or ():
+        file_name, content, mime_type = attachment
+        maintained_name = (file_name or "").strip() or "attachment.bin"
+        maintained_mime = (mime_type or "").strip().lower() or "application/octet-stream"
+        maintype, _, subtype = maintained_mime.partition("/")
+        if not maintype or not subtype:
+            maintype, subtype = "application", "octet-stream"
+        message.add_attachment(content, maintype=maintype, subtype=subtype, filename=maintained_name)
+
     return message
 
 
@@ -81,6 +95,7 @@ def send_email(
     from_name: str | None = None,
     reply_to: str | None = None,
     subject_prefix: str | None = None,
+    attachments: Iterable[EmailAttachment] | None = None,
 ) -> str:
     message_id = f"mail-{uuid4()}"
     provider = _normalized_provider()
@@ -128,6 +143,7 @@ def send_email(
         from_name=from_name,
         reply_to=reply_to,
         subject_prefix=subject_prefix,
+        attachments=attachments,
     )
 
     try:
