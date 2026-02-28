@@ -795,9 +795,23 @@ class AdminRangeInvoiceCreateRequest(BaseModel):
     start_date: date
     end_date: date
     due_date: date
+    no_due_date: bool = False
     include_pending: bool = True
     include_cancelled: bool = False
-    layout: Literal["DETAILED", "COMPILED"] = "DETAILED"
+    layout: str = "DETAILED"
+    generation_mode: Literal["MANUAL", "AUTO"] = "MANUAL"
+    group_adjustments_by_type: bool = False
+    include_discount_adjustments: bool = True
+    include_supplement_adjustments: bool = True
+    auto_cycle_start_date: date | None = None
+    auto_period_scope: Literal["FUTURE", "PAST"] = "PAST"
+    auto_frequency: Literal["WEEKLY", "MONTHLY"] = "MONTHLY"
+    auto_repeat_every: int = Field(default=1, ge=1, le=6)
+    auto_layout_style: Literal["NORMAL", "CONDENSED"] = "NORMAL"
+    auto_include_previous_balance: bool = True
+    auto_send_email: bool = False
+    auto_footer_note: str | None = Field(default=None, max_length=2000)
+    auto_exclude_pack_subscription_lines: bool = True
     invoice_number: str | None = Field(default=None, max_length=120)
     public_note: str | None = Field(default=None, max_length=2000)
     private_note: str | None = Field(default=None, max_length=2000)
@@ -808,9 +822,23 @@ class AdminRangeInvoiceOut(BaseModel):
     invoice_number: str
     issued_date: date
     due_date: date
+    no_due_date: bool = False
     start_date: date
     end_date: date
     layout: Literal["DETAILED", "COMPILED"]
+    generation_mode: Literal["MANUAL", "AUTO"] = "MANUAL"
+    group_adjustments_by_type: bool = False
+    include_discount_adjustments: bool = True
+    include_supplement_adjustments: bool = True
+    auto_cycle_start_date: date | None = None
+    auto_period_scope: Literal["FUTURE", "PAST"] = "PAST"
+    auto_frequency: Literal["WEEKLY", "MONTHLY"] = "MONTHLY"
+    auto_repeat_every: int = Field(default=1, ge=1, le=6)
+    auto_layout_style: Literal["NORMAL", "CONDENSED"] = "NORMAL"
+    auto_include_previous_balance: bool = True
+    auto_send_email: bool = False
+    auto_footer_note: str | None = None
+    auto_exclude_pack_subscription_lines: bool = True
     include_pending: bool
     include_cancelled: bool
     totals_by_currency: dict[str, str]

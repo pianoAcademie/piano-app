@@ -350,11 +350,26 @@ function parsePaymentMethodCode(raw: string): string | null {
     normalized === "CARD_ONLINE" ||
     normalized === "PAYPAL" ||
     normalized === "CARD_TERMINAL" ||
-    normalized === "SEPA_DEBIT"
+    normalized === "SEPA_DEBIT" ||
+    normalized === "FACTURATION_AUTO"
   ) {
     return normalized;
   }
   return null;
+}
+
+function parseCheckboxFlag(formData: FormData, key: string, defaultValue = false): boolean {
+  const values = formData.getAll(key).map((entry) => String(entry).trim().toLowerCase());
+  if (values.length === 0) {
+    return defaultValue;
+  }
+  if (values.includes("on") || values.includes("true") || values.includes("1") || values.includes("yes")) {
+    return true;
+  }
+  if (values.includes("off") || values.includes("false") || values.includes("0") || values.includes("no")) {
+    return false;
+  }
+  return defaultValue;
 }
 
 function parseProfessorContractLocationCode(raw: string): string | null {
@@ -2434,14 +2449,38 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   const startDate = String(formData.get("start_date") ?? "").trim();
   const endDate = String(formData.get("end_date") ?? "").trim();
   const dueDate = String(formData.get("due_date") ?? "").trim();
-  if (!issuedDate || !startDate || !endDate || !dueDate) {
+  const noDueDate = parseCheckboxFlag(formData, "no_due_date", false);
+  if (!issuedDate || !startDate || !endDate || (!noDueDate && !dueDate)) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Dates%20de%20facture%20incompletes`);
   }
 
+  const generationModeRaw = String(formData.get("generation_mode") ?? "MANUAL").trim().toUpperCase();
+  const generationMode = generationModeRaw === "AUTO" ? "AUTO" : "MANUAL";
   const includePending = String(formData.get("include_pending") ?? "true").trim().toLowerCase() !== "false";
   const includeCancelled = String(formData.get("include_cancelled") ?? "false").trim().toLowerCase() === "true";
   const layoutRaw = String(formData.get("layout") ?? "DETAILED").trim().toUpperCase();
-  const layout = layoutRaw === "COMPILED" ? "COMPILED" : "DETAILED";
+  const layout = layoutRaw === "COMPILED" || layoutRaw === "CONDENSED" || layoutRaw === "GROUPED" ? "COMPILED" : "DETAILED";
+  const groupAdjustmentsByType = parseCheckboxFlag(formData, "group_adjustments_by_type", false);
+  const includeDiscountAdjustments = parseCheckboxFlag(formData, "include_discount_adjustments", true);
+  const includeSupplementAdjustments = parseCheckboxFlag(formData, "include_supplement_adjustments", true);
+
+  const autoCycleStartDate = optionalField(formData, "auto_cycle_start_date");
+  const autoPeriodScopeRaw = String(formData.get("auto_period_scope") ?? "PAST").trim().toUpperCase();
+  const autoPeriodScope = autoPeriodScopeRaw === "FUTURE" ? "FUTURE" : "PAST";
+  const autoFrequencyRaw = String(formData.get("auto_frequency") ?? "MONTHLY").trim().toUpperCase();
+  const autoFrequency = autoFrequencyRaw === "WEEKLY" ? "WEEKLY" : "MONTHLY";
+  const autoRepeatEveryRaw = String(formData.get("auto_repeat_every") ?? "1").trim();
+  const autoRepeatEveryParsed = Number.parseInt(autoRepeatEveryRaw, 10);
+  const autoRepeatEvery =
+    Number.isFinite(autoRepeatEveryParsed) && autoRepeatEveryParsed >= 1 && autoRepeatEveryParsed <= 6
+      ? autoRepeatEveryParsed
+      : 1;
+  const autoLayoutStyleRaw = String(formData.get("auto_layout_style") ?? "NORMAL").trim().toUpperCase();
+  const autoLayoutStyle = autoLayoutStyleRaw === "CONDENSED" ? "CONDENSED" : "NORMAL";
+  const autoIncludePreviousBalance = parseCheckboxFlag(formData, "auto_include_previous_balance", true);
+  const autoSendEmail = parseCheckboxFlag(formData, "auto_send_email", false);
+  const autoExcludePackSubscriptionLines = parseCheckboxFlag(formData, "auto_exclude_pack_subscription_lines", true);
+  const autoFooterNote = optionalField(formData, "auto_footer_note");
 
   const result = await backendRequest<AdminRangeInvoiceOut>(
     `/api/v1/admin/clients/${clientId}/payments/invoice-range`,
@@ -2451,10 +2490,24 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
         issued_date: issuedDate,
         start_date: startDate,
         end_date: endDate,
-        due_date: dueDate,
+        due_date: dueDate || issuedDate,
+        no_due_date: noDueDate,
         include_pending: includePending,
         include_cancelled: includeCancelled,
         layout,
+        generation_mode: generationMode,
+        group_adjustments_by_type: groupAdjustmentsByType,
+        include_discount_adjustments: includeDiscountAdjustments,
+        include_supplement_adjustments: includeSupplementAdjustments,
+        auto_cycle_start_date: autoCycleStartDate,
+        auto_period_scope: autoPeriodScope,
+        auto_frequency: autoFrequency,
+        auto_repeat_every: autoRepeatEvery,
+        auto_layout_style: autoLayoutStyle,
+        auto_include_previous_balance: autoIncludePreviousBalance,
+        auto_send_email: autoSendEmail,
+        auto_footer_note: autoFooterNote,
+        auto_exclude_pack_subscription_lines: autoExcludePackSubscriptionLines,
         invoice_number: optionalField(formData, "invoice_number"),
         public_note: optionalField(formData, "public_note"),
         private_note: optionalField(formData, "private_note"),
@@ -2472,9 +2525,30 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   pdfUrl.searchParams.set("end_date", result.data.end_date);
   pdfUrl.searchParams.set("issued_date", result.data.issued_date);
   pdfUrl.searchParams.set("due_date", result.data.due_date);
+  pdfUrl.searchParams.set("no_due_date", result.data.no_due_date ? "true" : "false");
   pdfUrl.searchParams.set("include_pending", result.data.include_pending ? "true" : "false");
   pdfUrl.searchParams.set("include_cancelled", result.data.include_cancelled ? "true" : "false");
   pdfUrl.searchParams.set("layout", result.data.layout);
+  pdfUrl.searchParams.set("generation_mode", result.data.generation_mode);
+  pdfUrl.searchParams.set("group_adjustments_by_type", result.data.group_adjustments_by_type ? "true" : "false");
+  pdfUrl.searchParams.set("include_discount_adjustments", result.data.include_discount_adjustments ? "true" : "false");
+  pdfUrl.searchParams.set("include_supplement_adjustments", result.data.include_supplement_adjustments ? "true" : "false");
+  if (result.data.auto_cycle_start_date) {
+    pdfUrl.searchParams.set("auto_cycle_start_date", result.data.auto_cycle_start_date);
+  }
+  pdfUrl.searchParams.set("auto_period_scope", result.data.auto_period_scope);
+  pdfUrl.searchParams.set("auto_frequency", result.data.auto_frequency);
+  pdfUrl.searchParams.set("auto_repeat_every", String(result.data.auto_repeat_every));
+  pdfUrl.searchParams.set("auto_layout_style", result.data.auto_layout_style);
+  pdfUrl.searchParams.set("auto_include_previous_balance", result.data.auto_include_previous_balance ? "true" : "false");
+  pdfUrl.searchParams.set("auto_send_email", result.data.auto_send_email ? "true" : "false");
+  pdfUrl.searchParams.set(
+    "auto_exclude_pack_subscription_lines",
+    result.data.auto_exclude_pack_subscription_lines ? "true" : "false",
+  );
+  if (result.data.auto_footer_note) {
+    pdfUrl.searchParams.set("auto_footer_note", result.data.auto_footer_note);
+  }
   pdfUrl.searchParams.set("invoice_number", result.data.invoice_number);
   pdfUrl.searchParams.set("invoice_status", result.data.invoice_status);
   pdfUrl.searchParams.set("persist_note", "false");

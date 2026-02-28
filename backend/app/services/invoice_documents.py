@@ -522,6 +522,7 @@ def render_invoice_period_pdf(
     period_label: str,
     lines: list[InvoicePeriodLine],
     totals_by_currency: dict[str, dict[str, Decimal]],
+    adjustment_summary: list[tuple[str, str, Decimal]] | None = None,
     note: str | None,
     client_billing_address: str | None = None,
     due_date: date | None = None,
@@ -654,9 +655,23 @@ def render_invoice_period_pdf(
         )
         current_row_top += row_height
 
+    normalized_adjustments: list[tuple[str, str, Decimal]] = []
+    for raw in adjustment_summary or []:
+        if not isinstance(raw, tuple) or len(raw) != 3:
+            continue
+        label, currency, amount = raw
+        normalized_adjustments.append(
+            (
+                _ascii_safe(str(label).strip()) or "Ajustement",
+                _ascii_safe(str(currency).strip().upper()) or "EUR",
+                Decimal(amount).quantize(Decimal("0.01")),
+            )
+        )
+
     normalized_note = _ascii_safe((note or "").strip())
+    reserved_adjustment_space = (len(normalized_adjustments) * 18.0) + 34.0 if normalized_adjustments else 0.0
     reserved_note_space = 80.0 if normalized_note else 0.0
-    if current_row_top + 140 + reserved_note_space > 780:
+    if current_row_top + 140 + reserved_adjustment_space + reserved_note_space > 780:
         pdf.new_page()
         draw_header()
         current_row_top = 140.0
@@ -697,6 +712,26 @@ def render_invoice_period_pdf(
             bold=True,
         )
         current_row_top += 22
+
+    if normalized_adjustments:
+        if current_row_top + 34.0 + (len(normalized_adjustments) * 18.0) + reserved_note_space > 780:
+            pdf.new_page()
+            draw_header()
+            current_row_top = 140.0
+        current_row_top += 16.0
+        pdf.text(x=left, top_y=current_row_top, value="Remises et supplements (detail par type)", size=10, bold=True)
+        current_row_top += 14.0
+        for label, currency, amount in normalized_adjustments:
+            pdf.rect(x=left, top_y=current_row_top, width=right - left, height=18.0, stroke_color=(0.90, 0.92, 0.95))
+            pdf.text(x=col_label_x, top_y=current_row_top + 12.0, value=label, size=9)
+            pdf.text_right(
+                right_x=col_ttc_right,
+                top_y=current_row_top + 12.0,
+                value=f"{_format_amount(amount)} {currency}",
+                size=9,
+                bold=True,
+            )
+            current_row_top += 18.0
 
     if normalized_note:
         note_title_top = 742.0

@@ -153,6 +153,15 @@ MANUAL_TRANSACTION_LABEL_BY_TYPE = {
 }
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 INVOICE_RANGE_STATUSES = {"ISSUED", "PAID", "CANCELLED"}
+INVOICE_RANGE_LAYOUT_ALIASES = {
+    "DETAILED": "DETAILED",
+    "DETAIL": "DETAILED",
+    "NORMAL": "DETAILED",
+    "COMPILED": "COMPILED",
+    "CONDENSED": "COMPILED",
+    "GROUPED": "COMPILED",
+}
+INVOICE_RANGE_GENERATION_MODES = {"MANUAL", "AUTO"}
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 SIMPLE_PLACEHOLDER_RE = re.compile(r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}")
 EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -259,6 +268,16 @@ def _normalize_optional(value: str | None) -> str | None:
 
 def _quantize_money(value: Decimal) -> Decimal:
     return Decimal(value).quantize(Decimal("0.01"))
+
+
+def _normalize_invoice_layout(value: str | None) -> str:
+    normalized = (value or "").strip().upper()
+    return INVOICE_RANGE_LAYOUT_ALIASES.get(normalized, "DETAILED")
+
+
+def _normalize_invoice_generation_mode(value: str | None) -> str:
+    normalized = (value or "").strip().upper()
+    return normalized if normalized in INVOICE_RANGE_GENERATION_MODES else "MANUAL"
 
 
 def _non_negative_money(value: Decimal | float | int | None) -> Decimal:
@@ -552,14 +571,46 @@ def _invoice_range_download_url(
         "end_date": str(metadata.get("end_date") or ""),
         "issued_date": str(metadata.get("issued_date") or ""),
         "due_date": str(metadata.get("due_date") or ""),
+        "no_due_date": "true" if bool(metadata.get("no_due_date")) else "false",
         "include_pending": "true" if bool(metadata.get("include_pending")) else "false",
         "include_cancelled": "true" if bool(metadata.get("include_cancelled")) else "false",
-        "layout": str(metadata.get("layout") or "DETAILED"),
+        "layout": _normalize_invoice_layout(str(metadata.get("layout") or "DETAILED")),
+        "generation_mode": _normalize_invoice_generation_mode(str(metadata.get("generation_mode") or "MANUAL")),
+        "group_adjustments_by_type": "true" if bool(metadata.get("group_adjustments_by_type")) else "false",
+        "include_discount_adjustments": (
+            "true" if (bool(metadata.get("include_discount_adjustments")) if "include_discount_adjustments" in metadata else True) else "false"
+        ),
+        "include_supplement_adjustments": (
+            "true" if (bool(metadata.get("include_supplement_adjustments")) if "include_supplement_adjustments" in metadata else True) else "false"
+        ),
+        "auto_exclude_pack_subscription_lines": (
+            "true"
+            if (bool(metadata.get("auto_exclude_pack_subscription_lines")) if "auto_exclude_pack_subscription_lines" in metadata else True)
+            else "false"
+        ),
         "invoice_number": str(metadata.get("invoice_number") or ""),
         "persist_note": "false",
         "inline": "true" if inline else "false",
         "invoice_status": str(metadata.get("invoice_status") or "ISSUED"),
     }
+    auto_cycle_start_date = _normalize_optional(str(metadata.get("auto_cycle_start_date") or ""))
+    if auto_cycle_start_date:
+        params["auto_cycle_start_date"] = auto_cycle_start_date
+    params["auto_period_scope"] = "FUTURE" if str(metadata.get("auto_period_scope") or "").strip().upper() == "FUTURE" else "PAST"
+    params["auto_frequency"] = "WEEKLY" if str(metadata.get("auto_frequency") or "").strip().upper() == "WEEKLY" else "MONTHLY"
+    params["auto_repeat_every"] = str(
+        _parse_invoice_range_metadata_int(metadata, "auto_repeat_every", default=1, minimum=1, maximum=6)
+    )
+    params["auto_layout_style"] = (
+        "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
+    )
+    params["auto_include_previous_balance"] = (
+        "true" if (bool(metadata.get("auto_include_previous_balance")) if "auto_include_previous_balance" in metadata else True) else "false"
+    )
+    params["auto_send_email"] = "true" if bool(metadata.get("auto_send_email")) else "false"
+    auto_footer_note = _normalize_optional(str(metadata.get("auto_footer_note") or ""))
+    if auto_footer_note:
+        params["auto_footer_note"] = auto_footer_note
     public_note = _normalize_optional(str(metadata.get("public_note") or ""))
     if public_note:
         params["public_note"] = public_note
@@ -747,6 +798,24 @@ def _parse_invoice_range_metadata_bool(metadata: dict[str, object], key: str, *,
     return bool(raw)
 
 
+def _parse_invoice_range_metadata_int(
+    metadata: dict[str, object],
+    key: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = metadata.get(key)
+    if raw is None:
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(value, maximum))
+
+
 def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, object] | None:
     kind = str(payload.get("kind") or "").strip().upper()
     if kind != "INVOICE_RANGE":
@@ -763,10 +832,7 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
             return None
         normalized[field] = value
 
-    layout = str(normalized["layout"]).upper()
-    if layout not in {"DETAILED", "COMPILED"}:
-        return None
-    normalized["layout"] = layout
+    normalized["layout"] = _normalize_invoice_layout(str(normalized["layout"]))
 
     totals_raw = payload.get("totals_by_currency")
     if not isinstance(totals_raw, dict):
@@ -784,6 +850,42 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
 
     normalized["include_pending"] = bool(payload.get("include_pending"))
     normalized["include_cancelled"] = bool(payload.get("include_cancelled"))
+    normalized["no_due_date"] = bool(payload.get("no_due_date"))
+    normalized["generation_mode"] = _normalize_invoice_generation_mode(str(payload.get("generation_mode") or "MANUAL"))
+    normalized["group_adjustments_by_type"] = bool(payload.get("group_adjustments_by_type"))
+    normalized["include_discount_adjustments"] = (
+        bool(payload.get("include_discount_adjustments")) if "include_discount_adjustments" in payload else True
+    )
+    normalized["include_supplement_adjustments"] = (
+        bool(payload.get("include_supplement_adjustments")) if "include_supplement_adjustments" in payload else True
+    )
+    normalized["auto_exclude_pack_subscription_lines"] = (
+        bool(payload.get("auto_exclude_pack_subscription_lines"))
+        if "auto_exclude_pack_subscription_lines" in payload
+        else True
+    )
+
+    auto_cycle_start_date = _normalize_optional(str(payload.get("auto_cycle_start_date") or ""))
+    if auto_cycle_start_date:
+        normalized["auto_cycle_start_date"] = auto_cycle_start_date
+    auto_period_scope = str(payload.get("auto_period_scope") or "PAST").strip().upper()
+    normalized["auto_period_scope"] = auto_period_scope if auto_period_scope in {"FUTURE", "PAST"} else "PAST"
+    auto_frequency = str(payload.get("auto_frequency") or "MONTHLY").strip().upper()
+    normalized["auto_frequency"] = auto_frequency if auto_frequency in {"WEEKLY", "MONTHLY"} else "MONTHLY"
+    try:
+        auto_repeat_every = int(str(payload.get("auto_repeat_every") or "1").strip())
+    except ValueError:
+        auto_repeat_every = 1
+    normalized["auto_repeat_every"] = max(1, min(auto_repeat_every, 6))
+    auto_layout_style = str(payload.get("auto_layout_style") or "NORMAL").strip().upper()
+    normalized["auto_layout_style"] = auto_layout_style if auto_layout_style in {"NORMAL", "CONDENSED"} else "NORMAL"
+    normalized["auto_include_previous_balance"] = (
+        bool(payload.get("auto_include_previous_balance")) if "auto_include_previous_balance" in payload else True
+    )
+    normalized["auto_send_email"] = bool(payload.get("auto_send_email"))
+    auto_footer_note = _normalize_optional(str(payload.get("auto_footer_note") or ""))
+    if auto_footer_note:
+        normalized["auto_footer_note"] = auto_footer_note
 
     public_note = _normalize_optional(str(payload.get("public_note") or ""))
     private_note = _normalize_optional(str(payload.get("private_note") or ""))
@@ -842,9 +944,49 @@ def _invoice_range_out(*, note_id: UUID, metadata: dict[str, object]) -> AdminRa
         invoice_number=str(metadata.get("invoice_number")),
         issued_date=date.fromisoformat(str(metadata.get("issued_date"))),
         due_date=date.fromisoformat(str(metadata.get("due_date"))),
+        no_due_date=bool(metadata.get("no_due_date")),
         start_date=date.fromisoformat(str(metadata.get("start_date"))),
         end_date=date.fromisoformat(str(metadata.get("end_date"))),
-        layout=str(metadata.get("layout")),
+        layout=_normalize_invoice_layout(str(metadata.get("layout"))),
+        generation_mode=_normalize_invoice_generation_mode(str(metadata.get("generation_mode") or "MANUAL")),
+        group_adjustments_by_type=bool(metadata.get("group_adjustments_by_type")),
+        include_discount_adjustments=(
+            bool(metadata.get("include_discount_adjustments")) if "include_discount_adjustments" in metadata else True
+        ),
+        include_supplement_adjustments=(
+            bool(metadata.get("include_supplement_adjustments")) if "include_supplement_adjustments" in metadata else True
+        ),
+        auto_cycle_start_date=(
+            date.fromisoformat(str(metadata.get("auto_cycle_start_date")))
+            if _normalize_optional(str(metadata.get("auto_cycle_start_date") or ""))
+            else None
+        ),
+        auto_period_scope=(
+            "FUTURE" if str(metadata.get("auto_period_scope") or "").strip().upper() == "FUTURE" else "PAST"
+        ),
+        auto_frequency=(
+            "WEEKLY" if str(metadata.get("auto_frequency") or "").strip().upper() == "WEEKLY" else "MONTHLY"
+        ),
+        auto_repeat_every=_parse_invoice_range_metadata_int(
+            metadata,
+            "auto_repeat_every",
+            default=1,
+            minimum=1,
+            maximum=6,
+        ),
+        auto_layout_style=(
+            "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
+        ),
+        auto_include_previous_balance=(
+            bool(metadata.get("auto_include_previous_balance")) if "auto_include_previous_balance" in metadata else True
+        ),
+        auto_send_email=bool(metadata.get("auto_send_email")),
+        auto_footer_note=_normalize_optional(str(metadata.get("auto_footer_note") or "")),
+        auto_exclude_pack_subscription_lines=(
+            bool(metadata.get("auto_exclude_pack_subscription_lines"))
+            if "auto_exclude_pack_subscription_lines" in metadata
+            else True
+        ),
         include_pending=bool(metadata.get("include_pending")),
         include_cancelled=bool(metadata.get("include_cancelled")),
         totals_by_currency=dict(metadata.get("totals_by_currency") or {}),
@@ -948,6 +1090,11 @@ def _linked_plan_label(plan: Plan | None) -> str | None:
     return plan.name
 
 
+def _is_pack_or_subscription_booking_reference(reference: str | None) -> bool:
+    normalized = (reference or "").strip().lower()
+    return normalized.startswith("pack -") or normalized.startswith("abonnement -")
+
+
 def _invoice_number_for_payment(payment_id: UUID, occurred_at: datetime) -> str:
     compact = str(payment_id).replace("-", "").upper()
     short = compact[:8] if compact else "XXXX0000"
@@ -1019,6 +1166,75 @@ def _forfait_booking_amounts_from_activity(
     return amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency
 
 
+def _forfait_adjustments_grouped_by_type(
+    db: Session,
+    *,
+    booking_ids: set[UUID],
+    include_discounts: bool,
+    include_supplements: bool,
+    fallback_currency: str,
+) -> list[tuple[str, str, Decimal]]:
+    if not booking_ids:
+        return []
+
+    rows = db.execute(
+        select(Booking, CourseSession, CourseType, ClientPlanSubscription, Plan)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .outerjoin(ClientPlanSubscription, ClientPlanSubscription.id == Booking.client_plan_subscription_id)
+        .outerjoin(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .where(Booking.id.in_(booking_ids))
+    ).all()
+
+    subscription_ids = {
+        subscription.id
+        for _, _, _, subscription, plan in rows
+        if subscription is not None and (plan is None or plan.kind == PlanKind.FORFAIT)
+    }
+    pricing_map = _forfait_activity_pricing_map(db, subscription_ids=subscription_ids)
+
+    totals: dict[tuple[str, str], Decimal] = {}
+    for booking, session_obj, course_type, subscription, plan in rows:
+        if subscription is None:
+            continue
+        if plan is not None and plan.kind != PlanKind.FORFAIT:
+            continue
+        if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_obj.start_at_utc):
+            continue
+
+        pricing = pricing_map.get((subscription.id, course_type.id))
+        if pricing is None:
+            continue
+        loyalty_discount, family_discount, short_commitment_supplement = pricing
+
+        duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+        if duration_seconds <= 0:
+            duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+        if duration_seconds <= 0:
+            continue
+        duration_hours = Decimal(duration_seconds) / Decimal("3600")
+        currency = _normalize_currency(booking.currency_snapshot, fallback=fallback_currency)
+
+        if include_discounts and loyalty_discount > Decimal("0.00"):
+            key = ("Remise fidelite", currency)
+            totals[key] = _quantize_money(totals.get(key, Decimal("0.00")) - _quantize_money(loyalty_discount * duration_hours))
+        if include_discounts and family_discount > Decimal("0.00"):
+            key = ("Remise famille", currency)
+            totals[key] = _quantize_money(totals.get(key, Decimal("0.00")) - _quantize_money(family_discount * duration_hours))
+        if include_supplements and short_commitment_supplement > Decimal("0.00"):
+            key = ("Supplement sans engagement", currency)
+            totals[key] = _quantize_money(
+                totals.get(key, Decimal("0.00")) + _quantize_money(short_commitment_supplement * duration_hours)
+            )
+
+    out: list[tuple[str, str, Decimal]] = []
+    for (label, currency), amount in sorted(totals.items(), key=lambda item: (item[0][0], item[0][1])):
+        if amount == Decimal("0.00"):
+            continue
+        out.append((label, currency, _quantize_money(amount)))
+    return out
+
+
 def _payment_method_label(method_code: str | None) -> str:
     normalized = (method_code or "").strip().upper()
     labels = {
@@ -1029,6 +1245,7 @@ def _payment_method_label(method_code: str | None) -> str:
         "CHECK": "Cheque",
         "CASH": "Especes",
         "PAYPAL": "PayPal",
+        "FACTURATION_AUTO": "Facturation automatique",
     }
     return labels.get(normalized, normalized or "Non defini")
 
@@ -1042,6 +1259,7 @@ def _payment_method_label_client(method_code: str | None) -> str:
         "CHECK": "Cheque",
         "CASH": "Especes",
         "PAYPAL": "PayPal",
+        "FACTURATION_AUTO": "Facturation automatique",
     }
     return labels.get(normalized, normalized or "Non defini")
 
@@ -3798,9 +4016,18 @@ def create_admin_client_range_invoice(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminRangeInvoiceOut:
     _require_client(db, client_id)
+    normalized_layout = _normalize_invoice_layout(payload.layout)
+    generation_mode = _normalize_invoice_generation_mode(payload.generation_mode)
+    if generation_mode == "AUTO":
+        normalized_layout = "COMPILED" if payload.auto_layout_style == "CONDENSED" else "DETAILED"
+    issued_date_value = payload.issued_date
+    if generation_mode == "AUTO" and payload.auto_cycle_start_date is not None:
+        issued_date_value = payload.auto_cycle_start_date
+    due_date_value = issued_date_value if payload.no_due_date else payload.due_date
+
     if payload.end_date < payload.start_date:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid date range")
-    if payload.due_date < payload.issued_date:
+    if due_date_value < issued_date_value:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Due date must be on or after issue date")
 
     start_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
@@ -3814,6 +4041,12 @@ def create_admin_client_range_invoice(
         payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "PENDING"]
     if not payload.include_cancelled:
         payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "CANCELLED"]
+    if generation_mode == "AUTO" and payload.auto_exclude_pack_subscription_lines:
+        payments = [
+            row
+            for row in payments
+            if row.source.strip().upper() == "BOOKING" and not _is_pack_or_subscription_booking_reference(row.reference)
+        ]
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
 
@@ -3826,22 +4059,38 @@ def create_admin_client_range_invoice(
     for currency, total in sorted(totals_precise.items()):
         totals_by_currency[currency] = f"{_quantize_money(total):.2f}"
 
-    issued_at = datetime.combine(payload.issued_date, datetime.min.time(), tzinfo=timezone.utc)
+    issued_at = datetime.combine(issued_date_value, datetime.min.time(), tzinfo=timezone.utc)
     requested_invoice_number = _normalize_optional(payload.invoice_number)
     resolved_invoice_number = requested_invoice_number or reserve_next_invoice_number(db, issued_at=issued_at)
     metadata: dict[str, object] = {
         "kind": "INVOICE_RANGE",
         "invoice_number": resolved_invoice_number,
-        "issued_date": payload.issued_date.isoformat(),
-        "due_date": payload.due_date.isoformat(),
+        "issued_date": issued_date_value.isoformat(),
+        "due_date": due_date_value.isoformat(),
+        "no_due_date": bool(payload.no_due_date),
         "start_date": payload.start_date.isoformat(),
         "end_date": payload.end_date.isoformat(),
-        "layout": payload.layout,
+        "layout": normalized_layout,
+        "generation_mode": generation_mode,
+        "group_adjustments_by_type": bool(payload.group_adjustments_by_type),
+        "include_discount_adjustments": bool(payload.include_discount_adjustments),
+        "include_supplement_adjustments": bool(payload.include_supplement_adjustments),
+        "auto_cycle_start_date": payload.auto_cycle_start_date.isoformat() if payload.auto_cycle_start_date is not None else None,
+        "auto_period_scope": payload.auto_period_scope,
+        "auto_frequency": payload.auto_frequency,
+        "auto_repeat_every": payload.auto_repeat_every,
+        "auto_layout_style": payload.auto_layout_style,
+        "auto_include_previous_balance": bool(payload.auto_include_previous_balance),
+        "auto_send_email": bool(payload.auto_send_email),
+        "auto_exclude_pack_subscription_lines": bool(payload.auto_exclude_pack_subscription_lines),
         "include_pending": bool(payload.include_pending),
         "include_cancelled": bool(payload.include_cancelled),
         "totals_by_currency": totals_by_currency,
         "invoice_status": "ISSUED",
     }
+    auto_footer_note = _normalize_optional(payload.auto_footer_note)
+    if auto_footer_note:
+        metadata["auto_footer_note"] = auto_footer_note
     public_note = _normalize_optional(payload.public_note)
     private_note = _normalize_optional(payload.private_note)
     if public_note:
@@ -3910,9 +4159,47 @@ def send_admin_client_range_invoice_email(
         end_date=_parse_invoice_range_metadata_date(metadata, "end_date"),
         issued_date=_parse_invoice_range_metadata_date(metadata, "issued_date"),
         due_date=_parse_invoice_range_metadata_date(metadata, "due_date"),
+        no_due_date=_parse_invoice_range_metadata_bool(metadata, "no_due_date", default=False),
         include_pending=_parse_invoice_range_metadata_bool(metadata, "include_pending", default=True),
         include_cancelled=_parse_invoice_range_metadata_bool(metadata, "include_cancelled", default=False),
         layout=str(metadata.get("layout") or "DETAILED"),
+        generation_mode=str(metadata.get("generation_mode") or "MANUAL"),
+        group_adjustments_by_type=_parse_invoice_range_metadata_bool(metadata, "group_adjustments_by_type", default=False),
+        include_discount_adjustments=_parse_invoice_range_metadata_bool(
+            metadata, "include_discount_adjustments", default=True
+        ),
+        include_supplement_adjustments=_parse_invoice_range_metadata_bool(
+            metadata, "include_supplement_adjustments", default=True
+        ),
+        auto_cycle_start_date=(
+            date.fromisoformat(str(metadata.get("auto_cycle_start_date")))
+            if _normalize_optional(str(metadata.get("auto_cycle_start_date") or ""))
+            else None
+        ),
+        auto_period_scope=(
+            "FUTURE" if str(metadata.get("auto_period_scope") or "").strip().upper() == "FUTURE" else "PAST"
+        ),
+        auto_frequency=(
+            "WEEKLY" if str(metadata.get("auto_frequency") or "").strip().upper() == "WEEKLY" else "MONTHLY"
+        ),
+        auto_repeat_every=_parse_invoice_range_metadata_int(
+            metadata,
+            "auto_repeat_every",
+            default=1,
+            minimum=1,
+            maximum=6,
+        ),
+        auto_layout_style=(
+            "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
+        ),
+        auto_include_previous_balance=_parse_invoice_range_metadata_bool(
+            metadata, "auto_include_previous_balance", default=True
+        ),
+        auto_send_email=_parse_invoice_range_metadata_bool(metadata, "auto_send_email", default=False),
+        auto_footer_note=_normalize_optional(str(metadata.get("auto_footer_note") or "")),
+        auto_exclude_pack_subscription_lines=_parse_invoice_range_metadata_bool(
+            metadata, "auto_exclude_pack_subscription_lines", default=True
+        ),
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
@@ -3999,10 +4286,24 @@ def download_admin_client_range_invoice(
     start_date: date = Query(...),
     end_date: date = Query(...),
     issued_date: date = Query(...),
-    due_date: date = Query(...),
+    due_date: date | None = Query(default=None),
+    no_due_date: bool = Query(default=False),
     include_pending: bool = Query(default=True),
     include_cancelled: bool = Query(default=False),
     layout: str = Query(default="DETAILED"),
+    generation_mode: str = Query(default="MANUAL"),
+    group_adjustments_by_type: bool = Query(default=False),
+    include_discount_adjustments: bool = Query(default=True),
+    include_supplement_adjustments: bool = Query(default=True),
+    auto_cycle_start_date: date | None = Query(default=None),
+    auto_period_scope: str = Query(default="PAST"),
+    auto_frequency: str = Query(default="MONTHLY"),
+    auto_repeat_every: int = Query(default=1, ge=1, le=6),
+    auto_layout_style: str = Query(default="NORMAL"),
+    auto_include_previous_balance: bool = Query(default=True),
+    auto_send_email: bool = Query(default=False),
+    auto_footer_note: str | None = Query(default=None, max_length=2000),
+    auto_exclude_pack_subscription_lines: bool = Query(default=True),
     invoice_number: str | None = Query(default=None, max_length=120),
     persist_note: bool = Query(default=True),
     public_note: str | None = Query(default=None, max_length=2000),
@@ -4014,9 +4315,19 @@ def download_admin_client_range_invoice(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
     client = _require_client(db, client_id)
+    normalized_layout = _normalize_invoice_layout(layout)
+    normalized_generation_mode = _normalize_invoice_generation_mode(generation_mode)
+    normalized_auto_layout_style = "CONDENSED" if auto_layout_style.strip().upper() == "CONDENSED" else "NORMAL"
+    if normalized_generation_mode == "AUTO":
+        normalized_layout = "COMPILED" if normalized_auto_layout_style == "CONDENSED" else "DETAILED"
+    issued_date_value = issued_date
+    if normalized_generation_mode == "AUTO" and auto_cycle_start_date is not None:
+        issued_date_value = auto_cycle_start_date
+    due_date_value = issued_date_value if no_due_date else (due_date or issued_date_value)
+
     if end_date < start_date:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid date range")
-    if due_date < issued_date:
+    if due_date_value < issued_date_value:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Due date must be on or after issue date")
 
     start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
@@ -4028,12 +4339,15 @@ def download_admin_client_range_invoice(
         payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "PENDING"]
     if not include_cancelled:
         payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "CANCELLED"]
+    if normalized_generation_mode == "AUTO" and auto_exclude_pack_subscription_lines:
+        payments = [
+            row
+            for row in payments
+            if row.source.strip().upper() == "BOOKING" and not _is_pack_or_subscription_booking_reference(row.reference)
+        ]
 
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
-    normalized_layout = layout.strip().upper()
-    if normalized_layout not in {"DETAILED", "COMPILED"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported invoice layout")
 
     payments.sort(key=lambda row: row.occurred_at)
     totals_by_currency: dict[str, dict[str, Decimal]] = {}
@@ -4111,10 +4425,22 @@ def download_admin_client_range_invoice(
                 )
             )
 
-    issued_at = datetime.combine(issued_date, datetime.min.time(), tzinfo=timezone.utc)
+    adjustment_summary: list[tuple[str, str, Decimal]] = []
+    if group_adjustments_by_type:
+        booking_ids = {row.id for row in payments if row.source.strip().upper() == "BOOKING"}
+        adjustment_summary = _forfait_adjustments_grouped_by_type(
+            db,
+            booking_ids=booking_ids,
+            include_discounts=include_discount_adjustments,
+            include_supplements=include_supplement_adjustments,
+            fallback_currency=_normalize_currency(client.preferred_currency, fallback="EUR"),
+        )
+
+    issued_at = datetime.combine(issued_date_value, datetime.min.time(), tzinfo=timezone.utc)
     requested_invoice_number = _normalize_optional(invoice_number)
     resolved_invoice_number = requested_invoice_number or reserve_next_invoice_number(db, issued_at=issued_at)
-    normalized_public_note = _normalize_optional(public_note) or _normalize_optional(note)
+    normalized_auto_footer_note = _normalize_optional(auto_footer_note)
+    normalized_public_note = _normalize_optional(public_note) or _normalize_optional(note) or normalized_auto_footer_note
     normalized_private_note = _normalize_optional(private_note)
     billing_profile = resolve_billing_profile(db, client)
     client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
@@ -4128,16 +4454,31 @@ def download_admin_client_range_invoice(
         metadata: dict[str, object] = {
             "kind": "INVOICE_RANGE",
             "invoice_number": resolved_invoice_number,
-            "issued_date": issued_date.isoformat(),
-            "due_date": due_date.isoformat(),
+            "issued_date": issued_date_value.isoformat(),
+            "due_date": due_date_value.isoformat(),
+            "no_due_date": bool(no_due_date),
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "layout": normalized_layout,
+            "generation_mode": normalized_generation_mode,
+            "group_adjustments_by_type": bool(group_adjustments_by_type),
+            "include_discount_adjustments": bool(include_discount_adjustments),
+            "include_supplement_adjustments": bool(include_supplement_adjustments),
+            "auto_cycle_start_date": auto_cycle_start_date.isoformat() if auto_cycle_start_date is not None else None,
+            "auto_period_scope": "FUTURE" if auto_period_scope.strip().upper() == "FUTURE" else "PAST",
+            "auto_frequency": "WEEKLY" if auto_frequency.strip().upper() == "WEEKLY" else "MONTHLY",
+            "auto_repeat_every": max(1, min(int(auto_repeat_every), 6)),
+            "auto_layout_style": normalized_auto_layout_style,
+            "auto_include_previous_balance": bool(auto_include_previous_balance),
+            "auto_send_email": bool(auto_send_email),
+            "auto_exclude_pack_subscription_lines": bool(auto_exclude_pack_subscription_lines),
             "include_pending": bool(include_pending),
             "include_cancelled": bool(include_cancelled),
             "totals_by_currency": totals_payload,
             "invoice_status": "ISSUED",
         }
+        if normalized_auto_footer_note:
+            metadata["auto_footer_note"] = normalized_auto_footer_note
         if normalized_public_note:
             metadata["public_note"] = normalized_public_note
         if normalized_private_note:
@@ -4163,9 +4504,10 @@ def download_admin_client_range_invoice(
         period_label=f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}",
         lines=invoice_lines,
         totals_by_currency=totals_by_currency,
+        adjustment_summary=adjustment_summary,
         note=normalized_public_note,
         client_billing_address=client_billing_address,
-        due_date=due_date,
+        due_date=(None if no_due_date else due_date_value),
         watermark=(
             "PAYE"
             if ((invoice_status or "").strip().upper() in {"PAID", "PAYE"})
@@ -4205,9 +4547,47 @@ def download_admin_client_range_invoice_public(
         end_date=_parse_invoice_range_metadata_date(metadata, "end_date"),
         issued_date=_parse_invoice_range_metadata_date(metadata, "issued_date"),
         due_date=_parse_invoice_range_metadata_date(metadata, "due_date"),
+        no_due_date=_parse_invoice_range_metadata_bool(metadata, "no_due_date", default=False),
         include_pending=_parse_invoice_range_metadata_bool(metadata, "include_pending", default=True),
         include_cancelled=_parse_invoice_range_metadata_bool(metadata, "include_cancelled", default=False),
         layout=str(metadata.get("layout") or "DETAILED"),
+        generation_mode=str(metadata.get("generation_mode") or "MANUAL"),
+        group_adjustments_by_type=_parse_invoice_range_metadata_bool(metadata, "group_adjustments_by_type", default=False),
+        include_discount_adjustments=_parse_invoice_range_metadata_bool(
+            metadata, "include_discount_adjustments", default=True
+        ),
+        include_supplement_adjustments=_parse_invoice_range_metadata_bool(
+            metadata, "include_supplement_adjustments", default=True
+        ),
+        auto_cycle_start_date=(
+            date.fromisoformat(str(metadata.get("auto_cycle_start_date")))
+            if _normalize_optional(str(metadata.get("auto_cycle_start_date") or ""))
+            else None
+        ),
+        auto_period_scope=(
+            "FUTURE" if str(metadata.get("auto_period_scope") or "").strip().upper() == "FUTURE" else "PAST"
+        ),
+        auto_frequency=(
+            "WEEKLY" if str(metadata.get("auto_frequency") or "").strip().upper() == "WEEKLY" else "MONTHLY"
+        ),
+        auto_repeat_every=_parse_invoice_range_metadata_int(
+            metadata,
+            "auto_repeat_every",
+            default=1,
+            minimum=1,
+            maximum=6,
+        ),
+        auto_layout_style=(
+            "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
+        ),
+        auto_include_previous_balance=_parse_invoice_range_metadata_bool(
+            metadata, "auto_include_previous_balance", default=True
+        ),
+        auto_send_email=_parse_invoice_range_metadata_bool(metadata, "auto_send_email", default=False),
+        auto_footer_note=_normalize_optional(str(metadata.get("auto_footer_note") or "")),
+        auto_exclude_pack_subscription_lines=_parse_invoice_range_metadata_bool(
+            metadata, "auto_exclude_pack_subscription_lines", default=True
+        ),
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),

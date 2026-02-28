@@ -358,9 +358,23 @@ type RangeInvoiceNotePayload = {
   invoice_number: string;
   issued_date: string;
   due_date: string;
+  no_due_date: boolean;
   start_date: string;
   end_date: string;
   layout: "DETAILED" | "COMPILED";
+  generation_mode: "MANUAL" | "AUTO";
+  group_adjustments_by_type: boolean;
+  include_discount_adjustments: boolean;
+  include_supplement_adjustments: boolean;
+  auto_cycle_start_date?: string;
+  auto_period_scope: "FUTURE" | "PAST";
+  auto_frequency: "WEEKLY" | "MONTHLY";
+  auto_repeat_every: number;
+  auto_layout_style: "NORMAL" | "CONDENSED";
+  auto_include_previous_balance: boolean;
+  auto_send_email: boolean;
+  auto_footer_note?: string;
+  auto_exclude_pack_subscription_lines: boolean;
   include_pending: boolean;
   include_cancelled: boolean;
   totals_by_currency: Record<string, string>;
@@ -428,9 +442,15 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
     ) {
       return null;
     }
-    if (payload.layout !== "DETAILED" && payload.layout !== "COMPILED") {
+    const layoutRaw = typeof payload.layout === "string" ? payload.layout.trim().toUpperCase() : "";
+    const normalizedLayout =
+      layoutRaw === "COMPILED" || layoutRaw === "CONDENSED" || layoutRaw === "GROUPED" ? "COMPILED" : layoutRaw;
+    if (normalizedLayout !== "DETAILED" && normalizedLayout !== "NORMAL" && normalizedLayout !== "DETAIL" && normalizedLayout !== "COMPILED") {
       return null;
     }
+    const normalizedGenerationMode =
+      typeof payload.generation_mode === "string" && payload.generation_mode.trim().toUpperCase() === "AUTO" ? "AUTO" : "MANUAL";
+    const resolvedLayout = normalizedLayout === "COMPILED" ? "COMPILED" : "DETAILED";
     if (!payload.totals_by_currency || typeof payload.totals_by_currency !== "object") {
       return null;
     }
@@ -451,9 +471,41 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
       invoice_number: payload.invoice_number,
       issued_date: payload.issued_date,
       due_date: payload.due_date,
+      no_due_date: Boolean(payload.no_due_date),
       start_date: payload.start_date,
       end_date: payload.end_date,
-      layout: payload.layout,
+      layout: resolvedLayout,
+      generation_mode: normalizedGenerationMode,
+      group_adjustments_by_type: Boolean(payload.group_adjustments_by_type),
+      include_discount_adjustments:
+        typeof payload.include_discount_adjustments === "boolean" ? payload.include_discount_adjustments : true,
+      include_supplement_adjustments:
+        typeof payload.include_supplement_adjustments === "boolean" ? payload.include_supplement_adjustments : true,
+      auto_cycle_start_date: typeof payload.auto_cycle_start_date === "string" ? payload.auto_cycle_start_date : undefined,
+      auto_period_scope:
+        typeof payload.auto_period_scope === "string" && payload.auto_period_scope.trim().toUpperCase() === "FUTURE"
+          ? "FUTURE"
+          : "PAST",
+      auto_frequency:
+        typeof payload.auto_frequency === "string" && payload.auto_frequency.trim().toUpperCase() === "WEEKLY"
+          ? "WEEKLY"
+          : "MONTHLY",
+      auto_repeat_every:
+        typeof payload.auto_repeat_every === "number" && Number.isFinite(payload.auto_repeat_every)
+          ? Math.max(1, Math.min(6, Math.trunc(payload.auto_repeat_every)))
+          : 1,
+      auto_layout_style:
+        typeof payload.auto_layout_style === "string" && payload.auto_layout_style.trim().toUpperCase() === "CONDENSED"
+          ? "CONDENSED"
+          : "NORMAL",
+      auto_include_previous_balance:
+        typeof payload.auto_include_previous_balance === "boolean" ? payload.auto_include_previous_balance : true,
+      auto_send_email: Boolean(payload.auto_send_email),
+      auto_footer_note: typeof payload.auto_footer_note === "string" ? payload.auto_footer_note : undefined,
+      auto_exclude_pack_subscription_lines:
+        typeof payload.auto_exclude_pack_subscription_lines === "boolean"
+          ? payload.auto_exclude_pack_subscription_lines
+          : true,
       include_pending: Boolean(payload.include_pending),
       include_cancelled: Boolean(payload.include_cancelled),
       totals_by_currency: totals,
@@ -488,14 +540,32 @@ function rangeInvoicePdfHref(clientId: string, payload: RangeInvoiceNotePayload,
     end_date: payload.end_date,
     issued_date: payload.issued_date,
     due_date: payload.due_date,
+    no_due_date: payload.no_due_date ? "true" : "false",
     include_pending: payload.include_pending ? "true" : "false",
     include_cancelled: payload.include_cancelled ? "true" : "false",
     layout: payload.layout,
+    generation_mode: payload.generation_mode,
+    group_adjustments_by_type: payload.group_adjustments_by_type ? "true" : "false",
+    include_discount_adjustments: payload.include_discount_adjustments ? "true" : "false",
+    include_supplement_adjustments: payload.include_supplement_adjustments ? "true" : "false",
+    auto_period_scope: payload.auto_period_scope,
+    auto_frequency: payload.auto_frequency,
+    auto_repeat_every: String(payload.auto_repeat_every),
+    auto_layout_style: payload.auto_layout_style,
+    auto_include_previous_balance: payload.auto_include_previous_balance ? "true" : "false",
+    auto_send_email: payload.auto_send_email ? "true" : "false",
+    auto_exclude_pack_subscription_lines: payload.auto_exclude_pack_subscription_lines ? "true" : "false",
     invoice_number: payload.invoice_number,
     persist_note: "false",
     invoice_status: payload.invoice_status,
     inline: inline ? "true" : "false",
   });
+  if (payload.auto_cycle_start_date) {
+    params.set("auto_cycle_start_date", payload.auto_cycle_start_date);
+  }
+  if (payload.auto_footer_note) {
+    params.set("auto_footer_note", payload.auto_footer_note);
+  }
   if (payload.public_note) {
     params.set("public_note", payload.public_note);
   }
@@ -732,6 +802,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const selectedBalanceDate = isDateInput(balanceDateParam) ? balanceDateParam : todayInputValue;
   const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
   const monthStartInputValue = `${todayInputValue.slice(0, 8)}01`;
+  const nextMonthCycleStartInputValue = formatDateInput(addMonths(new Date(`${monthStartInputValue}T00:00:00.000Z`), 1));
 
   const errors: string[] = [];
 
@@ -3453,6 +3524,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value="factures" />
               <label>
+                Type de generation
+                <select name="generation_mode" defaultValue="MANUAL">
+                  <option value="MANUAL">Facture manuelle</option>
+                  <option value="AUTO">Facturation automatique (forfait)</option>
+                </select>
+              </label>
+              <label>
                 Date d emission (obligatoire)
                 <input type="date" name="issued_date" defaultValue={todayInputValue} required />
               </label>
@@ -3467,6 +3545,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <label>
                 Date d echeance (obligatoire)
                 <input type="date" name="due_date" defaultValue={dueDateInputValue} required />
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" name="no_due_date" value="on" />
+                Pas de date d echeance (utilise la date d emission)
               </label>
               <label>
                 Lignes en attente
@@ -3492,6 +3574,82 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </label>
               ) : (
                 <input type="hidden" name="layout" value="DETAILED" />
+              )}
+              {hasForfaitPlan ? (
+                <>
+                  <label>
+                    Date de debut du cycle (auto)
+                    <input type="date" name="auto_cycle_start_date" defaultValue={nextMonthCycleStartInputValue} />
+                  </label>
+                  <label>
+                    Facturer les prestations
+                    <select name="auto_period_scope" defaultValue="PAST">
+                      <option value="PAST">Precedentes (postpayees)</option>
+                      <option value="FUTURE">A venir (prepayees)</option>
+                    </select>
+                  </label>
+                  <label>
+                    Frequence automatique
+                    <select name="auto_frequency" defaultValue="MONTHLY">
+                      <option value="MONTHLY">Mensuelle</option>
+                      <option value="WEEKLY">Hebdomadaire</option>
+                    </select>
+                  </label>
+                  <label>
+                    Repete chaque (1-6)
+                    <input type="number" name="auto_repeat_every" min={1} max={6} step={1} defaultValue={1} />
+                  </label>
+                  <label className="span-2">
+                    Style d affichage auto
+                    <select name="auto_layout_style" defaultValue="NORMAL">
+                      <option value="NORMAL">Normal (chaque element sur sa ligne)</option>
+                      <option value="CONDENSED">Condense (elements identiques regroupes)</option>
+                    </select>
+                  </label>
+                  <input type="hidden" name="auto_include_previous_balance" value="off" />
+                  <label className="checkbox span-2">
+                    <input type="checkbox" name="auto_include_previous_balance" value="on" defaultChecked />
+                    Inclure le solde precedent et paiements
+                  </label>
+                  <label className="checkbox span-2">
+                    <input type="checkbox" name="auto_send_email" value="on" />
+                    Envoyer automatiquement la facture par courriel
+                  </label>
+                  <input type="hidden" name="auto_exclude_pack_subscription_lines" value="off" />
+                  <label className="checkbox span-2">
+                    <input type="checkbox" name="auto_exclude_pack_subscription_lines" value="on" defaultChecked />
+                    Exclure les lignes carnet / abonnement (ne garder que hors abonnement/carnet)
+                  </label>
+                  <label className="span-2">
+                    Note de bas de page (auto)
+                    <textarea
+                      name="auto_footer_note"
+                      rows={2}
+                      maxLength={2000}
+                      placeholder="Cette note apparaitra en bas de la facture automatique."
+                    />
+                  </label>
+                  <input type="hidden" name="include_discount_adjustments" value="off" />
+                  <input type="hidden" name="include_supplement_adjustments" value="off" />
+                  <label className="checkbox span-2">
+                    <input type="checkbox" name="group_adjustments_by_type" value="on" />
+                    Regrouper les remises/supplements par type
+                  </label>
+                  <label className="checkbox">
+                    <input type="checkbox" name="include_discount_adjustments" value="on" defaultChecked />
+                    Inclure les remises (fidelite, famille)
+                  </label>
+                  <label className="checkbox">
+                    <input type="checkbox" name="include_supplement_adjustments" value="on" defaultChecked />
+                    Inclure les supplements
+                  </label>
+                </>
+              ) : (
+                <>
+                  <input type="hidden" name="group_adjustments_by_type" value="off" />
+                  <input type="hidden" name="include_discount_adjustments" value="on" />
+                  <input type="hidden" name="include_supplement_adjustments" value="on" />
+                </>
               )}
               <label className="span-2">
                 Note publique (optionnel)
