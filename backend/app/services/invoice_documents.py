@@ -632,14 +632,17 @@ def render_invoice_period_pdf(
 
     current_row_top = draw_table_header_for_new_page()
     for row in lines:
+        date_lines = _wrap_text(row.date_label, 18)
         label_lines = _wrap_text(row.label, 44)
-        row_height = max(20.0, (len(label_lines) * 12.0) + 8.0)
+        max_lines = max(len(date_lines), len(label_lines))
+        row_height = max(20.0, (max_lines * 12.0) + 8.0)
         if current_row_top + row_height > 760.0:
             pdf.new_page()
             current_row_top = draw_table_header_for_new_page()
 
         pdf.rect(x=left, top_y=current_row_top, width=right - left, height=row_height, stroke_color=(0.90, 0.92, 0.95))
-        pdf.text(x=col_date_x, top_y=current_row_top + 14, value=row.date_label, size=9)
+        for idx, chunk in enumerate(date_lines):
+            pdf.text(x=col_date_x, top_y=current_row_top + 14 + (idx * 12), value=chunk, size=9)
         for idx, chunk in enumerate(label_lines):
             pdf.text(x=col_label_x, top_y=current_row_top + 14 + (idx * 12), value=chunk, size=9)
         pdf.text_right(right_x=col_qty_right, top_y=current_row_top + 14, value=str(row.quantity), size=9)
