@@ -2415,7 +2415,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <article key={link.id} className="item">
                       <div className="row spread">
                         <strong>
-                          Enfant: {([link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email)}
+                          Enfant:{" "}
+                          <Link className="client-name-link" href={tabHref(link.child.id, "fiche")}>
+                            {([link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email)}
+                          </Link>
                         </strong>
                         <span className={`status-pill ${link.is_billing_recipient ? "status-ok" : "status-off"}`}>
                           {link.is_billing_recipient ? "Destinataire facture" : "Facture autre adulte"}
