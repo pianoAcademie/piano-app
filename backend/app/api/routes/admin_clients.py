@@ -70,6 +70,7 @@ from app.schemas.admin import (
     AdminClientNoteCreateRequest,
     AdminRangeInvoiceCreateRequest,
     AdminRangeInvoiceEmailOut,
+    AdminRangeInvoiceEmailPreviewOut,
     AdminRangeInvoiceEmailRequest,
     AdminRangeInvoiceOut,
     AdminRangeInvoiceStatusUpdateRequest,
@@ -148,6 +149,7 @@ MANUAL_TRANSACTION_LABEL_BY_TYPE = {
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 INVOICE_RANGE_STATUSES = {"ISSUED", "PAID", "CANCELLED"}
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 COUNTRY_NAME_BY_CODE = {
     "FR": "France",
@@ -457,6 +459,79 @@ def _invoice_range_payment_url(*, metadata: dict[str, object]) -> str:
         }
     )
     return f"{_frontend_base_url()}/dashboard?{params}"
+
+
+def _normalize_email_recipients(raw_values: list[str] | None) -> list[str]:
+    if raw_values is None:
+        return []
+    recipients: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        candidate = _normalize_optional(str(raw))
+        if candidate is None:
+            continue
+        normalized_key = candidate.casefold()
+        if normalized_key in seen:
+            continue
+        if EMAIL_RECIPIENT_RE.match(candidate) is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Adresse email invalide: {candidate}",
+            )
+        seen.add(normalized_key)
+        recipients.append(candidate)
+    return recipients
+
+
+def _build_range_invoice_email_defaults(
+    db: Session,
+    *,
+    client: User,
+    metadata: dict[str, object],
+    kind: str,
+) -> tuple[list[str], str, str]:
+    billing_profile = resolve_billing_profile(db, client)
+    default_recipients = _normalize_email_recipients([billing_profile.email, client.email])
+    if not default_recipients:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
+
+    normalized_kind = "REMINDER" if kind == "REMINDER" else "INVOICE"
+    template_code = "INVOICE" if normalized_kind == "INVOICE" else "INVOICE_REMINDER"
+    try:
+        template = resolve_predefined_template(db, code=template_code)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if not bool(template.get("active", True)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le template est desactive")
+
+    subject_template = str(template.get("subject") or "").strip()
+    body_template = str(template.get("body") or "").strip()
+    if not subject_template or not body_template:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
+
+    invoice_url = _invoice_range_download_url(client_id=client.id, metadata=metadata, inline=True)
+    payment_url = _invoice_range_payment_url(metadata=metadata)
+    totals_by_currency = dict(metadata.get("totals_by_currency") or {})
+    first_currency = next(iter(sorted(totals_by_currency.keys())), "EUR")
+    amount_due = str(totals_by_currency.get(first_currency) or "0.00")
+    context = {
+        "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email,
+        "last_name": (billing_profile.last_name or client.last_name or "").strip(),
+        "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "invoice_number": str(metadata.get("invoice_number") or ""),
+        "invoice_url": invoice_url,
+        "payment_url": payment_url,
+        "amount_due": amount_due,
+        "currency": first_currency,
+        "due_date": str(metadata.get("due_date") or ""),
+        "issued_date": str(metadata.get("issued_date") or ""),
+    }
+
+    subject = _render_message_template(subject_template, context)
+    body = _render_message_template(body_template, context)
+    if not subject or not body:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
+    return default_recipients, subject, body
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -3601,58 +3676,40 @@ def send_admin_client_range_invoice_email(
 ) -> AdminRangeInvoiceEmailOut:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
-
-    billing_profile = resolve_billing_profile(db, client)
-    to_email = _normalize_optional(billing_profile.email) or _normalize_optional(client.email)
-    if to_email is None:
+    normalized_kind = "REMINDER" if payload.kind == "REMINDER" else "INVOICE"
+    default_recipients, default_subject, default_body = _build_range_invoice_email_defaults(
+        db,
+        client=client,
+        metadata=metadata,
+        kind=normalized_kind,
+    )
+    recipients = default_recipients if payload.to_emails is None else _normalize_email_recipients(payload.to_emails)
+    if not recipients:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
 
-    template_code = "INVOICE" if payload.kind == "INVOICE" else "INVOICE_REMINDER"
-    template = resolve_predefined_template(db, code=template_code)
-    if not bool(template.get("active", True)):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le template est desactive")
-
-    subject_template = str(template.get("subject") or "").strip()
-    body_template = str(template.get("body") or "").strip()
-    if not subject_template or not body_template:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
-
-    invoice_url = _invoice_range_download_url(client_id=client_id, metadata=metadata, inline=True)
-    payment_url = _invoice_range_payment_url(metadata=metadata)
-    totals_by_currency = dict(metadata.get("totals_by_currency") or {})
-    first_currency = next(iter(sorted(totals_by_currency.keys())), "EUR")
-    amount_due = str(totals_by_currency.get(first_currency) or "0.00")
-    context = {
-        "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email,
-        "last_name": (billing_profile.last_name or client.last_name or "").strip(),
-        "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
-        "invoice_number": str(metadata.get("invoice_number") or ""),
-        "invoice_url": invoice_url,
-        "payment_url": payment_url,
-        "amount_due": amount_due,
-        "currency": first_currency,
-        "due_date": str(metadata.get("due_date") or ""),
-        "issued_date": str(metadata.get("issued_date") or ""),
-    }
-
-    subject = _render_message_template(subject_template, context)
-    body = _render_message_template(body_template, context)
+    subject = _normalize_optional(payload.subject) or default_subject
+    body = _normalize_optional(payload.body) or default_body
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
-    message_id = send_email(
-        to_email=to_email,
-        subject=subject,
-        body=body,
-        body_format="TEXT",
-        context=f"RANGE_INVOICE_{payload.kind}",
-        from_email=sender.from_email,
-        from_name=sender.from_name,
-        reply_to=sender.reply_to,
-        subject_prefix=sender.subject_prefix,
-    )
+    message_ids: list[str] = []
+    for recipient in recipients:
+        message_ids.append(
+            send_email(
+                to_email=recipient,
+                subject=subject,
+                body=body,
+                body_format="TEXT",
+                context=f"RANGE_INVOICE_{normalized_kind}",
+                from_email=sender.from_email,
+                from_name=sender.from_name,
+                reply_to=sender.reply_to,
+                subject_prefix=sender.subject_prefix,
+            )
+        )
+    message_id = message_ids[0] if message_ids else None
 
     now = _utcnow()
-    if payload.kind == "INVOICE":
+    if normalized_kind == "INVOICE":
         metadata["emailed_at"] = now.isoformat()
     else:
         metadata["reminded_at"] = now.isoformat()
@@ -3662,9 +3719,36 @@ def send_admin_client_range_invoice_email(
 
     return AdminRangeInvoiceEmailOut(
         note_id=note_id,
-        kind=payload.kind,
+        kind=normalized_kind,
         sent_at=now,
         message_id=message_id,
+        recipients=recipients,
+    )
+
+
+@router.get("/{client_id}/invoices/range/{note_id}/email/preview", response_model=AdminRangeInvoiceEmailPreviewOut)
+def preview_admin_client_range_invoice_email(
+    client_id: UUID,
+    note_id: UUID,
+    kind: str = Query(default="INVOICE"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminRangeInvoiceEmailPreviewOut:
+    client = _require_client(db, client_id)
+    _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    normalized_kind = "REMINDER" if kind.strip().upper() == "REMINDER" else "INVOICE"
+    recipients, subject, body = _build_range_invoice_email_defaults(
+        db,
+        client=client,
+        metadata=metadata,
+        kind=normalized_kind,
+    )
+    return AdminRangeInvoiceEmailPreviewOut(
+        note_id=note_id,
+        kind=normalized_kind,
+        to_emails=recipients,
+        subject=subject,
+        body=body,
     )
 
 

@@ -47,6 +47,7 @@ import type {
   AdminClientNoteOut,
   AdminClientOut,
   AdminClientPaymentOut,
+  AdminRangeInvoiceEmailPreviewOut,
   AdminClientSubscriptionOut,
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
@@ -1019,6 +1020,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     paymentModalAction === "invoice_email" && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
       : null;
+  const invoiceEmailPreviewResult =
+    paymentModalAction === "invoice_email" && selectedRangeInvoiceForModal
+      ? await backendRequest<AdminRangeInvoiceEmailPreviewOut>(
+          `/api/v1/admin/clients/${params.clientId}/invoices/range/${selectedRangeInvoiceForModal.noteId}/email/preview?kind=${encodeURIComponent(
+            invoiceEmailKind,
+          )}`,
+          {},
+          token,
+        )
+      : null;
+  const invoiceEmailPreview =
+    invoiceEmailPreviewResult && invoiceEmailPreviewResult.ok ? invoiceEmailPreviewResult.data : null;
+  if (invoiceEmailPreviewResult && !invoiceEmailPreviewResult.ok) {
+    errors.push(`invoice_email_preview: ${invoiceEmailPreviewResult.message}`);
+  }
 
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
@@ -2785,6 +2801,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                     €
                                   </button>
                                 </form>
+                              ) : (
+                                <form action={updateAdminClientRangeInvoiceStatusAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <input type="hidden" name="status" value="ISSUED" />
+                                  <input type="hidden" name="return_tab" value="factures" />
+                                  <button type="submit" className="client-action-icon" title="Retirer la mention payee (remettre en emise)">
+                                    ↺
+                                  </button>
+                                </form>
                               ) : null}
                               {row.status !== "CANCELLED" ? (
                                 <form action={updateAdminClientRangeInvoiceStatusAction}>
@@ -3357,9 +3383,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ×
             </Link>
             <h3 className="modal-title">Courriel facture</h3>
-            <p className="muted">
-              Facture {selectedRangeInvoiceForModal.invoiceNumber}. Les contenus utilises proviennent des templates de messagerie du BO.
-            </p>
+            <p className="muted">Facture {selectedRangeInvoiceForModal.invoiceNumber}. Vous pouvez modifier destinataires, objet et message.</p>
             <form action={sendAdminClientRangeInvoiceEmailAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="note_id" value={selectedRangeInvoiceForModal.noteId} />
@@ -3370,6 +3394,23 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <option value="INVOICE">Facture</option>
                   <option value="REMINDER">Relance facture</option>
                 </select>
+              </label>
+              <label className="span-2">
+                Destinataires (un email par ligne)
+                <textarea
+                  name="to_emails"
+                  rows={3}
+                  defaultValue={(invoiceEmailPreview?.to_emails ?? []).join("\n")}
+                  placeholder="client@exemple.com"
+                />
+              </label>
+              <label className="span-2">
+                Objet
+                <input type="text" name="subject" maxLength={255} defaultValue={invoiceEmailPreview?.subject ?? ""} />
+              </label>
+              <label className="span-2">
+                Message
+                <textarea name="body" rows={10} maxLength={20000} defaultValue={invoiceEmailPreview?.body ?? ""} />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>

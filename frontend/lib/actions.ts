@@ -61,6 +61,18 @@ function optionalField(formData: FormData, fieldName: string): string | null {
   return value || null;
 }
 
+function emailListField(formData: FormData, fieldName: string): string[] | null {
+  const value = String(formData.get(fieldName) ?? "").trim();
+  if (!value) {
+    return null;
+  }
+  const parsed = value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return parsed.length > 0 ? parsed : null;
+}
+
 function checkboxField(formData: FormData, fieldName: string): boolean {
   return String(formData.get(fieldName) ?? "").toLowerCase() === "on";
 }
@@ -2466,19 +2478,33 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
   }
 
   const kind = kindRaw === "REMINDER" ? "REMINDER" : "INVOICE";
+  const toEmails = emailListField(formData, "to_emails");
+  const subject = optionalField(formData, "subject");
+  const body = optionalField(formData, "body");
   const result = await backendRequest<AdminRangeInvoiceEmailOut>(
     `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/email`,
     {
       method: "POST",
       body: JSON.stringify({
         kind,
+        to_emails: toEmails,
+        subject,
+        body,
       }),
     },
     token,
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+    const modalUrl = new URLSearchParams({
+      tab: returnTab,
+      payment_modal: "invoice_email",
+      payment_return_tab: returnTab,
+      invoice_note_id: noteId,
+      invoice_email_kind: kind,
+      error: result.message,
+    });
+    redirect(`/admin/clients/${clientId}?${modalUrl.toString()}`);
   }
 
   revalidatePath(`/admin/clients/${clientId}`);

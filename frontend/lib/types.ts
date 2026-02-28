@@ -328,6 +328,15 @@ export type AdminRangeInvoiceEmailOut = {
   kind: "INVOICE" | "REMINDER";
   sent_at: string;
   message_id: string | null;
+  recipients: string[];
+};
+
+export type AdminRangeInvoiceEmailPreviewOut = {
+  note_id: string;
+  kind: "INVOICE" | "REMINDER";
+  to_emails: string[];
+  subject: string;
+  body: string;
 };
 
 export type FamilyMemberOut = {

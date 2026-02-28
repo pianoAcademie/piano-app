@@ -789,6 +789,9 @@ class AdminRangeInvoiceStatusUpdateRequest(BaseModel):
 
 class AdminRangeInvoiceEmailRequest(BaseModel):
     kind: Literal["INVOICE", "REMINDER"] = "INVOICE"
+    to_emails: list[str] | None = None
+    subject: str | None = Field(default=None, max_length=255)
+    body: str | None = Field(default=None, max_length=20000)
 
 
 class AdminRangeInvoiceEmailOut(BaseModel):
@@ -796,6 +799,15 @@ class AdminRangeInvoiceEmailOut(BaseModel):
     kind: Literal["INVOICE", "REMINDER"]
     sent_at: datetime
     message_id: str | None = None
+    recipients: list[str] = Field(default_factory=list)
+
+
+class AdminRangeInvoiceEmailPreviewOut(BaseModel):
+    note_id: UUID
+    kind: Literal["INVOICE", "REMINDER"]
+    to_emails: list[str]
+    subject: str
+    body: str
 
 
 class AdminClientBookingOut(BaseModel):
