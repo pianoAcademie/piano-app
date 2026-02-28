@@ -34,6 +34,10 @@ function plainTextToHtml(value: string): string {
   return escapeHtml(value).replace(/\n/g, "<br>");
 }
 
+function looksLikeHtml(value: string): boolean {
+  return /<\s*[a-z!/][^>]*>/i.test(value);
+}
+
 function htmlToPlainText(value: string): string {
   if (!value) {
     return "";
@@ -86,19 +90,32 @@ export default function RichMessageEditor({
     }
   }, [format, sourceMode, value]);
 
-  const setFormatWithConversion = (next: MessageBodyFormat) => {
-    if (next === format) {
+  const switchToTextView = () => {
+    if (format === "HTML") {
+      setSourceMode(false);
       return;
     }
-    if (next === "HTML") {
-      setValue(plainTextToHtml(value));
-      setSourceMode(false);
-      setFormat("HTML");
+    setFormat("TEXT");
+    setSourceMode(false);
+  };
+
+  const switchToHtmlSource = () => {
+    if (format === "HTML") {
+      setSourceMode(true);
+      return;
+    }
+    setValue(looksLikeHtml(value) ? value : plainTextToHtml(value));
+    setFormat("HTML");
+    setSourceMode(true);
+  };
+
+  const convertHtmlToPlainText = () => {
+    if (format !== "HTML") {
       return;
     }
     setValue(htmlToPlainText(value));
-    setSourceMode(false);
     setFormat("TEXT");
+    setSourceMode(false);
   };
 
   const applyCommand = (command: string) => {
@@ -129,22 +146,22 @@ export default function RichMessageEditor({
         <div className="segmented-inline" role="tablist" aria-label="Format du message">
           <button
             type="button"
-            className={format === "TEXT" ? "active" : ""}
-            onClick={() => setFormatWithConversion("TEXT")}
+            className={format === "TEXT" || (format === "HTML" && !sourceMode) ? "active" : ""}
+            onClick={switchToTextView}
           >
-            Texte
+            {format === "HTML" ? "Apercu" : "Texte"}
           </button>
           <button
             type="button"
-            className={format === "HTML" ? "active" : ""}
-            onClick={() => setFormatWithConversion("HTML")}
+            className={format === "HTML" && sourceMode ? "active" : ""}
+            onClick={switchToHtmlSource}
           >
             HTML
           </button>
         </div>
         {format === "HTML" ? (
-          <button type="button" className="ghost compact" onClick={() => setSourceMode((current) => !current)}>
-            {sourceMode ? "Apercu" : "Code HTML"}
+          <button type="button" className="ghost compact" onClick={convertHtmlToPlainText}>
+            Convertir en texte brut
           </button>
         ) : null}
       </div>
