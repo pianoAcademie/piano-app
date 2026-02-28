@@ -2410,6 +2410,34 @@ def _admin_subscription_with_plan_for_client(
     return row
 
 
+def _future_subscription_bookings_after(
+    db: Session,
+    *,
+    client_id: UUID,
+    subscription_id: UUID,
+    effective_at: datetime,
+    preview_limit: int = 3,
+) -> tuple[int, list[datetime]]:
+    active_statuses = (BookingStatus.BOOKED, BookingStatus.WAITLISTED)
+    base_stmt = (
+        select(CourseSession.start_at_utc)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .where(
+            Booking.user_id == client_id,
+            Booking.client_plan_subscription_id == subscription_id,
+            Booking.status.in_(active_statuses),
+            CourseSession.status != SessionStatus.CANCELLED,
+            CourseSession.start_at_utc > effective_at,
+        )
+    )
+    count = int(db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0)
+    if count == 0:
+        return 0, []
+
+    preview_rows = db.scalars(base_stmt.order_by(CourseSession.start_at_utc.asc()).limit(max(preview_limit, 1))).all()
+    return count, list(preview_rows)
+
+
 @router.post("/{client_id}/subscriptions/{subscription_id}/suspend", response_model=AdminClientSubscriptionOut)
 def suspend_admin_client_subscription(
     client_id: UUID,
@@ -2557,6 +2585,25 @@ def cancel_admin_client_subscription(
         effective_at = now if immediate else cycle_end
     else:
         effective_at = now if immediate else max(requested, now)
+
+    conflicts_count, conflicts_preview = _future_subscription_bookings_after(
+        db,
+        client_id=client_id,
+        subscription_id=sub.id,
+        effective_at=effective_at,
+    )
+    if conflicts_count > 0:
+        effective_label = effective_at.strftime("%d/%m/%Y")
+        preview_label = ", ".join(start_at.strftime("%d/%m/%Y %H:%M") for start_at in conflicts_preview)
+        preview_suffix = f" ({preview_label})" if preview_label else ""
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Annulation impossible: des reservations futures existent sur ce produit apres la date effective de fin "
+                f"({effective_label}). Nombre de reservations bloquees: {conflicts_count}{preview_suffix}. "
+                "Supprimez ces reservations, puis relancez la resiliation."
+            ),
+        )
 
     sub.cancellation_requested_at = requested
     sub.cancellation_effective_at = effective_at

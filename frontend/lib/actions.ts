@@ -2100,11 +2100,16 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
     redirect("/admin/clients?error=Abonnement%20invalide");
   }
   const requestedAt = parseUtcStartOfDate(requestedRaw);
+  const modalName = immediateCancel ? "cancel_now" : "cancel";
   if (!requestedAt) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=Date%20de%20resiliation%20invalide`);
+    redirect(
+      `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}&error=Date%20de%20resiliation%20invalide`,
+    );
   }
   if (immediateCancel && !confirmImmediate) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=Confirmation%20obligatoire%20pour%20une%20resiliation%20immediate`);
+    redirect(
+      `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}&error=Confirmation%20obligatoire%20pour%20une%20resiliation%20immediate`,
+    );
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -2121,7 +2126,12 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=${encodeURIComponent(result.message)}`);
+    const conflictFlag = result.status === 409 ? "&cancel_conflict=1" : "";
+    redirect(
+      `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}${conflictFlag}&error=${encodeURIComponent(
+        result.message,
+      )}`,
+    );
   }
 
   revalidatePath(`/admin/clients/${clientId}`);

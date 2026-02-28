@@ -103,6 +103,16 @@ function addDays(value: Date, days: number): Date {
   return next;
 }
 
+function addMonths(value: Date, months: number): Date {
+  const next = new Date(value.getTime());
+  const sourceDay = next.getDate();
+  next.setDate(1);
+  next.setMonth(next.getMonth() + months);
+  const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  next.setDate(Math.min(sourceDay, daysInMonth));
+  return next;
+}
+
 function formatDateForInput(value: string | null | undefined, fallback: string): string {
   if (!value) {
     return fallback;
@@ -287,6 +297,7 @@ const PENDING_PAYMENT_STATUSES = new Set([
   "NO_SHOW",
 ]);
 const CANCELLED_PAYMENT_STATUSES = new Set(["CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"]);
+const ACTIVE_SUBSCRIPTION_BOOKING_STATUSES = new Set(["BOOKED", "WAITLISTED"]);
 
 function normalizePaymentStatus(status: string): string {
   return (status || "").trim().toUpperCase();
@@ -369,6 +380,8 @@ type InvoiceListRow =
       downloadHref: string;
       viewHref: string;
     };
+
+type RangeInvoiceListRow = Extract<InvoiceListRow, { kind: "range" }>;
 
 function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayload | null {
   const rawMessage = (note.message || "").trim();
@@ -638,6 +651,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceEmailKindRaw = readParam(searchParams, "invoice_email_kind").toUpperCase();
   const invoiceEmailKind = invoiceEmailKindRaw === "REMINDER" ? "REMINDER" : "INVOICE";
   const paymentReturnTabRaw = readParam(searchParams, "payment_return_tab");
+  const cancelConflictAlert = readParam(searchParams, "cancel_conflict") === "1";
   const purchaseModalAction = readParam(searchParams, "purchase_modal");
   const purchasePlanId = readParam(searchParams, "purchase_plan_id");
   const purchaseType = readParam(searchParams, "purchase_type").toUpperCase() || "FORMULA";
@@ -844,6 +858,57 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     paymentModalAction === "refund"
       ? payments.find((row) => row.id === paymentModalId && row.source.toUpperCase() === paymentModalSource) ?? null
       : null;
+  const cancellationEffectiveAtMs = (() => {
+    if (!selectedSubscriptionForModal) {
+      return Number.NaN;
+    }
+    if (subscriptionModalAction === "cancel_now") {
+      return Date.now();
+    }
+    if (selectedSubscriptionForModal.plan.kind === "SUBSCRIPTION") {
+      const cycleEndRaw =
+        selectedSubscriptionForModal.next_payment_at ??
+        selectedSubscriptionForModal.ends_at ??
+        addMonths(new Date(selectedSubscriptionForModal.started_at), 1).toISOString();
+      const parsed = Date.parse(cycleEndRaw);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+      return Date.now();
+    }
+    const fallbackRequestedDate = formatDateForInput(selectedSubscriptionForModal.cancellation_requested_at, todayInputValue);
+    const requestedAt = Date.parse(`${fallbackRequestedDate}T00:00:00.000Z`);
+    const now = Date.now();
+    if (!Number.isFinite(requestedAt)) {
+      return now;
+    }
+    return Math.max(requestedAt, now);
+  })();
+  const blockingFutureBookingsForCancellation = selectedSubscriptionForModal
+    ? bookings
+        .filter((row) => {
+          if (row.client_plan_subscription_id !== selectedSubscriptionForModal.id) {
+            return false;
+          }
+          if (!ACTIVE_SUBSCRIPTION_BOOKING_STATUSES.has((row.status || "").trim().toUpperCase())) {
+            return false;
+          }
+          if ((row.session_status || "").trim().toUpperCase() === "CANCELLED") {
+            return false;
+          }
+          const startAtMs = Date.parse(row.session_start_at_utc);
+          if (!Number.isFinite(startAtMs) || !Number.isFinite(cancellationEffectiveAtMs)) {
+            return false;
+          }
+          return startAtMs > cancellationEffectiveAtMs;
+        })
+        .sort((a, b) => a.session_start_at_utc.localeCompare(b.session_start_at_utc))
+    : [];
+  const hasBlockingFutureBookingsForCancellation = blockingFutureBookingsForCancellation.length > 0;
+  const cancellationConflictPreview = blockingFutureBookingsForCancellation
+    .slice(0, 3)
+    .map((row) => formatDate(row.session_start_at_utc))
+    .join(", ");
   const openManualTransactionSelector = paymentModalAction === "manual" && manualTransactionModalType === null;
   const openManualTransactionForm = paymentModalAction === "manual" && manualTransactionModalType !== null;
   const openPaymentFiltersModal = paymentModalAction === "filters";
@@ -924,7 +989,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       paymentStatus: row.status,
     }));
 
-  const generatedRangeInvoices: InvoiceListRow[] = notes.reduce<InvoiceListRow[]>((acc, note) => {
+  const generatedRangeInvoices: RangeInvoiceListRow[] = notes.reduce<RangeInvoiceListRow[]>((acc, note) => {
     const payload = parseRangeInvoiceNote(note);
     if (!payload) {
       return acc;
@@ -1702,6 +1767,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <form action={cancelAdminClientSubscriptionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
+              {hasBlockingFutureBookingsForCancellation ? (
+                <p className="muted">
+                  <strong>Annulation impossible.</strong> {blockingFutureBookingsForCancellation.length} reservation(s) future(s) sont deja
+                  rattachee(s) a cet abonnement apres la date effective de fin. Supprimez-les d abord.
+                  {cancellationConflictPreview ? ` Exemples: ${cancellationConflictPreview}.` : ""}
+                </p>
+              ) : null}
+              {cancelConflictAlert ? (
+                <p className="muted">
+                  <strong>Annulation refusee.</strong> Des reservations futures liees a ce produit existent encore apres la date de fin.
+                </p>
+              ) : null}
               <label>
                 Date de resiliation
                 <input
@@ -1715,7 +1792,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
                   Annuler
                 </Link>
-                <button type="submit" className="danger">
+                <button type="submit" className="danger" disabled={hasBlockingFutureBookingsForCancellation}>
                   Confirmer la resiliation
                 </button>
               </div>
@@ -1748,6 +1825,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
               <input type="hidden" name="immediate_cancel" value="on" />
+              {hasBlockingFutureBookingsForCancellation ? (
+                <p className="muted">
+                  <strong>Annulation impossible.</strong> {blockingFutureBookingsForCancellation.length} reservation(s) future(s) sont deja
+                  rattachee(s) a ce produit apres la date effective de fin. Supprimez-les d abord.
+                  {cancellationConflictPreview ? ` Exemples: ${cancellationConflictPreview}.` : ""}
+                </p>
+              ) : null}
+              {cancelConflictAlert ? (
+                <p className="muted">
+                  <strong>Annulation refusee.</strong> Des reservations futures liees a ce produit existent encore apres la date de fin.
+                </p>
+              ) : null}
               <label>
                 Date de demande
                 <input
@@ -1769,7 +1858,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
                   Annuler
                 </Link>
-                <button type="submit" className="danger">
+                <button type="submit" className="danger" disabled={hasBlockingFutureBookingsForCancellation}>
                   {selectedSubscriptionForModal.plan.kind === "PACK"
                     ? "Annuler immediatement"
                     : selectedSubscriptionForModal.plan.kind === "FORFAIT"
