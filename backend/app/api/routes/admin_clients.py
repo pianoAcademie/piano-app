@@ -3758,7 +3758,7 @@ def send_admin_client_range_invoice_email(
     note_id: UUID,
     payload: AdminRangeInvoiceEmailRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminRangeInvoiceEmailOut:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
@@ -3778,6 +3778,30 @@ def send_admin_client_range_invoice_email(
     body = _normalize_optional(payload.body) or default_body
     body_format = payload.body_format if payload.body is not None else default_body_format
 
+    pdf_response = download_admin_client_range_invoice(
+        client_id=client_id,
+        start_date=_parse_invoice_range_metadata_date(metadata, "start_date"),
+        end_date=_parse_invoice_range_metadata_date(metadata, "end_date"),
+        issued_date=_parse_invoice_range_metadata_date(metadata, "issued_date"),
+        due_date=_parse_invoice_range_metadata_date(metadata, "due_date"),
+        include_pending=_parse_invoice_range_metadata_bool(metadata, "include_pending", default=True),
+        include_cancelled=_parse_invoice_range_metadata_bool(metadata, "include_cancelled", default=False),
+        layout=str(metadata.get("layout") or "DETAILED"),
+        invoice_number=str(metadata.get("invoice_number") or ""),
+        persist_note=False,
+        public_note=_normalize_optional(str(metadata.get("public_note") or "")),
+        private_note=_normalize_optional(str(metadata.get("private_note") or "")),
+        note=None,
+        invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        inline=False,
+        db=db,
+        actor=actor,
+    )
+    pdf_content = pdf_response.body if isinstance(pdf_response.body, (bytes, bytearray)) else bytes(pdf_response.body or b"")
+    if not pdf_content:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Impossible de generer le PDF de facture")
+    attachment_file_name = f"{str(metadata.get('invoice_number') or 'facture')}.pdf".replace('"', "")
+
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     message_ids: list[str] = []
     for recipient in recipients:
@@ -3792,6 +3816,7 @@ def send_admin_client_range_invoice_email(
                 from_name=sender.from_name,
                 reply_to=sender.reply_to,
                 subject_prefix=sender.subject_prefix,
+                attachments=[(attachment_file_name, pdf_content, "application/pdf")],
             )
         )
     message_id = message_ids[0] if message_ids else None
