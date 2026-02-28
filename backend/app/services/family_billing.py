@@ -24,7 +24,16 @@ def resolve_billing_profile(db: Session, client: User) -> User:
         .limit(1)
     )
     if billing_adult_id is None:
-        return client
+        # Safety net: if no explicit billing recipient is flagged, keep billing on an
+        # attached adult rather than falling back to the child profile.
+        billing_adult_id = db.scalar(
+            select(ClientFamilyLink.adult_user_id)
+            .where(ClientFamilyLink.child_user_id == client.id)
+            .order_by(ClientFamilyLink.created_at.asc())
+            .limit(1)
+        )
+        if billing_adult_id is None:
+            return client
 
     adult = db.scalar(
         select(User).where(
@@ -36,4 +45,3 @@ def resolve_billing_profile(db: Session, client: User) -> User:
     if adult is None:
         return client
     return adult
-

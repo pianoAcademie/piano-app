@@ -2420,9 +2420,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             {([link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email)}
                           </Link>
                         </strong>
-                        <span className={`status-pill ${link.is_billing_recipient ? "status-ok" : "status-off"}`}>
-                          {link.is_billing_recipient ? "Destinataire facture" : "Facture autre adulte"}
-                        </span>
+                      <span className={`status-pill ${link.is_billing_recipient ? "status-ok" : "status-off"}`}>
+                          {link.is_billing_recipient ? "Facture envoyee a cet adulte" : "Facture envoyee a un autre adulte"}
+                      </span>
                       </div>
                       <p className="muted">
                         {link.child.email} | Mobile 1: {link.child.mobile_phone_1 ?? "-"} | Relation: {link.relationship_label ?? "non precisee"}
@@ -2457,10 +2457,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <article key={link.id} className="item">
                     <div className="row spread">
                       <strong>
-                        Adulte: {([link.adult.first_name, link.adult.last_name].filter(Boolean).join(" ") || link.adult.email)}
+                        Adulte:{" "}
+                        <Link className="client-name-link" href={tabHref(link.adult.id, "fiche")}>
+                          {([link.adult.first_name, link.adult.last_name].filter(Boolean).join(" ") || link.adult.email)}
+                        </Link>
                       </strong>
                       <span className={`status-pill ${link.is_billing_recipient ? "status-ok" : "status-off"}`}>
-                        {link.is_billing_recipient ? "Destinataire facture" : "Coparent"}
+                        {link.is_billing_recipient ? "Adulte destinataire facture" : "Coparent"}
                       </span>
                     </div>
                     <p className="muted">
