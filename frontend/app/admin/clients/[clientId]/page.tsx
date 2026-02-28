@@ -3580,17 +3580,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <option value="true">Inclure</option>
                 </select>
               </label>
-              {hasForfaitPlan ? (
-                <label className="span-2">
-                  Format de facture (forfait)
-                  <select name="layout" defaultValue="COMPILED">
-                    <option value="DETAILED">Facture detaillee (toutes les lignes)</option>
-                    <option value="COMPILED">Facture compilee (regroupee par prestation)</option>
-                  </select>
-                </label>
-              ) : (
-                <input type="hidden" name="layout" value="DETAILED" />
-              )}
+              <label className="span-2">
+                Style d affichage de la facture
+                <select name="layout" defaultValue={hasForfaitPlan ? "COMPILED" : "DETAILED"}>
+                  <option value="DETAILED">Detaillee: chaque prestation sur sa propre ligne</option>
+                  <option value="COMPILED">Groupee: regrouper les prestations identiques + quantite</option>
+                </select>
+              </label>
               {hasForfaitPlan ? (
                 <>
                   <p className="badge span-2">Etape 2: Options de facturation automatique</p>
