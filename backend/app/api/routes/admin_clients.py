@@ -4447,6 +4447,9 @@ def admin_purchase_plan_for_client(
         auto_renew=(plan.kind == PlanKind.SUBSCRIPTION and not should_start_pending),
         billing_method_code=method_code,
         next_payment_at=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
+        forfait_loyalty_discount_per_hour_ttc=Decimal("0.00"),
+        forfait_family_discount_per_hour_ttc=Decimal("0.00"),
+        forfait_short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
     )
 
     db.add(subscription)
