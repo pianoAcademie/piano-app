@@ -50,17 +50,17 @@ def upgrade() -> None:
     )
 
     op.create_check_constraint(
-        "ck_client_plan_subscriptions_forfait_loyalty_non_negative",
+        "ck_cps_forfait_loyalty_nn",
         "client_plan_subscriptions",
         "forfait_loyalty_discount_per_hour_ttc >= 0",
     )
     op.create_check_constraint(
-        "ck_client_plan_subscriptions_forfait_family_non_negative",
+        "ck_cps_forfait_family_nn",
         "client_plan_subscriptions",
         "forfait_family_discount_per_hour_ttc >= 0",
     )
     op.create_check_constraint(
-        "ck_client_plan_subscriptions_forfait_short_commitment_non_negative",
+        "ck_cps_forfait_short_commit_nn",
         "client_plan_subscriptions",
         "forfait_short_commitment_supplement_per_hour_ttc >= 0",
     )
@@ -72,17 +72,17 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint(
-        "ck_client_plan_subscriptions_forfait_short_commitment_non_negative",
+        "ck_cps_forfait_short_commit_nn",
         "client_plan_subscriptions",
         type_="check",
     )
     op.drop_constraint(
-        "ck_client_plan_subscriptions_forfait_family_non_negative",
+        "ck_cps_forfait_family_nn",
         "client_plan_subscriptions",
         type_="check",
     )
     op.drop_constraint(
-        "ck_client_plan_subscriptions_forfait_loyalty_non_negative",
+        "ck_cps_forfait_loyalty_nn",
         "client_plan_subscriptions",
         type_="check",
     )
