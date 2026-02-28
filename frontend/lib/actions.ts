@@ -4,12 +4,14 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { backendRequest } from "./backend";
+import { backendRequest, backendUrl } from "./backend";
 import type {
   AdminActivityOut,
   AdminInvoiceNumberingOut,
   AdminInvoiceTemplateOut,
   AdminClientPasswordEmailTemplateOut,
+  AdminRangeInvoiceEmailOut,
+  AdminRangeInvoiceOut,
   AdminCreditTypeOut,
   AdminFormulaOut,
   AdminMessagingSettingsOut,
@@ -2314,6 +2316,164 @@ export async function cancelAdminClientInvoiceAction(formData: FormData): Promis
 
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Facture%20annulee`);
+}
+
+export async function createAdminClientRangeInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "paiements" ? "paiements" : "factures";
+  if (!clientId) {
+    redirect("/admin/clients?error=Client%20invalide");
+  }
+
+  const issuedDate = String(formData.get("issued_date") ?? "").trim();
+  const startDate = String(formData.get("start_date") ?? "").trim();
+  const endDate = String(formData.get("end_date") ?? "").trim();
+  const dueDate = String(formData.get("due_date") ?? "").trim();
+  if (!issuedDate || !startDate || !endDate || !dueDate) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Dates%20de%20facture%20incompletes`);
+  }
+
+  const includePending = String(formData.get("include_pending") ?? "true").trim().toLowerCase() !== "false";
+  const includeCancelled = String(formData.get("include_cancelled") ?? "false").trim().toLowerCase() === "true";
+  const layoutRaw = String(formData.get("layout") ?? "DETAILED").trim().toUpperCase();
+  const layout = layoutRaw === "COMPILED" ? "COMPILED" : "DETAILED";
+
+  const result = await backendRequest<AdminRangeInvoiceOut>(
+    `/api/v1/admin/clients/${clientId}/payments/invoice-range`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        issued_date: issuedDate,
+        start_date: startDate,
+        end_date: endDate,
+        due_date: dueDate,
+        include_pending: includePending,
+        include_cancelled: includeCancelled,
+        layout,
+        invoice_number: optionalField(formData, "invoice_number"),
+        public_note: optionalField(formData, "public_note"),
+        private_note: optionalField(formData, "private_note"),
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  const pdfUrl = new URL(`${backendUrl()}/api/v1/admin/clients/${clientId}/payments/invoice-range`);
+  pdfUrl.searchParams.set("start_date", result.data.start_date);
+  pdfUrl.searchParams.set("end_date", result.data.end_date);
+  pdfUrl.searchParams.set("issued_date", result.data.issued_date);
+  pdfUrl.searchParams.set("due_date", result.data.due_date);
+  pdfUrl.searchParams.set("include_pending", result.data.include_pending ? "true" : "false");
+  pdfUrl.searchParams.set("include_cancelled", result.data.include_cancelled ? "true" : "false");
+  pdfUrl.searchParams.set("layout", result.data.layout);
+  pdfUrl.searchParams.set("invoice_number", result.data.invoice_number);
+  pdfUrl.searchParams.set("invoice_status", result.data.invoice_status);
+  pdfUrl.searchParams.set("persist_note", "false");
+  if (result.data.public_note) {
+    pdfUrl.searchParams.set("public_note", result.data.public_note);
+  }
+  if (result.data.private_note) {
+    pdfUrl.searchParams.set("private_note", result.data.private_note);
+  }
+
+  await fetch(pdfUrl.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    cache: "no-store",
+  }).catch(() => undefined);
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Facture%20cree%20et%20ajoutee%20a%20la%20liste`);
+}
+
+export async function updateAdminClientRangeInvoiceStatusAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const noteId = String(formData.get("note_id") ?? "").trim();
+  const statusRaw = String(formData.get("status") ?? "").trim().toUpperCase();
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "paiements" ? "paiements" : "factures";
+
+  if (!clientId || !noteId) {
+    redirect("/admin/clients?error=Facture%20invalide");
+  }
+  if (statusRaw !== "ISSUED" && statusRaw !== "PAID" && statusRaw !== "CANCELLED") {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Statut%20de%20facture%20invalide`);
+  }
+
+  const result = await backendRequest<AdminRangeInvoiceOut>(
+    `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/status`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        status: statusRaw,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Statut%20facture%20mis%20a%20jour`);
+}
+
+export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const noteId = String(formData.get("note_id") ?? "").trim();
+  const kindRaw = String(formData.get("kind") ?? "INVOICE").trim().toUpperCase();
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "paiements" ? "paiements" : "factures";
+
+  if (!clientId || !noteId) {
+    redirect("/admin/clients?error=Facture%20invalide");
+  }
+
+  const kind = kindRaw === "REMINDER" ? "REMINDER" : "INVOICE";
+  const result = await backendRequest<AdminRangeInvoiceEmailOut>(
+    `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/email`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        kind,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  const okMessage = kind === "REMINDER" ? "Relance%20envoyee" : "Facture%20envoyee";
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=${okMessage}`);
 }
 
 export async function createAdminClientManualTransactionAction(formData: FormData): Promise<void> {

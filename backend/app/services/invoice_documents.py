@@ -525,6 +525,7 @@ def render_invoice_period_pdf(
     note: str | None,
     client_billing_address: str | None = None,
     due_date: date | None = None,
+    watermark: str | None = None,
 ) -> bytes:
     identity = _company_identity(db)
     pdf = _SimplePdfDocument()
@@ -712,6 +713,19 @@ def render_invoice_period_pdf(
         pdf.text(x=left, top_y=note_title_top, value="Note", size=11, bold=True)
         for index, chunk in enumerate(note_lines):
             pdf.text(x=left, top_y=note_line_top + (index * line_height), value=chunk, size=10)
+
+    normalized_watermark = _ascii_safe((watermark or "").strip())
+    if normalized_watermark:
+        safe_watermark = _pdf_escape(normalized_watermark.upper()[:24])
+        for page_idx in range(len(pdf._pages)):
+            pdf._push_on_page(
+                page_idx,
+                (
+                    "q 0.93 0.38 0.38 rg 0.93 0.38 0.38 RG "
+                    "BT /F2 84 Tf 1 0 0 1 120.00 320.00 Tm 0.35 0.35 Td "
+                    f"({safe_watermark}) Tj ET Q"
+                ),
+            )
 
     footer_line_1 = f"{identity.company_name} | SIRET: {identity.company_siret} | Tel: {identity.company_phone}"
     footer_line_2 = f"{identity.company_email} | {identity.company_address}"

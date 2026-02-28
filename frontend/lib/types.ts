@@ -305,6 +305,31 @@ export type AdminClientNoteOut = {
   created_at: string;
 };
 
+export type AdminRangeInvoiceOut = {
+  note_id: string;
+  invoice_number: string;
+  issued_date: string;
+  due_date: string;
+  start_date: string;
+  end_date: string;
+  layout: "DETAILED" | "COMPILED";
+  include_pending: boolean;
+  include_cancelled: boolean;
+  totals_by_currency: Record<string, string>;
+  invoice_status: "ISSUED" | "PAID" | "CANCELLED";
+  emailed_at: string | null;
+  reminded_at: string | null;
+  public_note: string | null;
+  private_note: string | null;
+};
+
+export type AdminRangeInvoiceEmailOut = {
+  note_id: string;
+  kind: "INVOICE" | "REMINDER";
+  sent_at: string;
+  message_id: string | null;
+};
+
 export type FamilyMemberOut = {
   id: string;
   email: string;

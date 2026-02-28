@@ -6,6 +6,8 @@ import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from string import Formatter
+from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -66,6 +68,11 @@ from app.schemas.admin import (
     AdminClientManualCreditUpdateRequest,
     AdminClientNoteOut,
     AdminClientNoteCreateRequest,
+    AdminRangeInvoiceCreateRequest,
+    AdminRangeInvoiceEmailOut,
+    AdminRangeInvoiceEmailRequest,
+    AdminRangeInvoiceOut,
+    AdminRangeInvoiceStatusUpdateRequest,
     AdminClientUpdateRequest,
     AdminClientGroupCreateRequest,
     AdminClientGroupOut,
@@ -139,6 +146,8 @@ MANUAL_TRANSACTION_LABEL_BY_TYPE = {
     "REFUND": "Remboursement",
 }
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
+INVOICE_RANGE_STATUSES = {"ISSUED", "PAID", "CANCELLED"}
+MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 COUNTRY_NAME_BY_CODE = {
     "FR": "France",
@@ -372,6 +381,230 @@ def _create_client_note(
     )
     db.add(note)
     return note
+
+
+class _SafeTemplateContext(dict[str, str]):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _render_message_template(template: str, context: dict[str, str]) -> str:
+    normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template or "")
+    try:
+        return normalized.format_map(_SafeTemplateContext(context)).strip()
+    except Exception:
+        return normalized.strip()
+
+
+def _extract_template_variables(template: str) -> set[str]:
+    names: set[str] = set()
+    normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template or "")
+    for _, field_name, _, _ in Formatter().parse(normalized):
+        if isinstance(field_name, str) and field_name:
+            names.add(field_name)
+    return names
+
+
+def _frontend_base_url() -> str:
+    raw = (settings.frontend_base_url or "").strip() or "http://localhost:3000"
+    if not raw.startswith("http://") and not raw.startswith("https://"):
+        raw = "https://" + raw
+    return raw.rstrip("/")
+
+
+def _invoice_range_download_url(
+    *,
+    client_id: UUID,
+    metadata: dict[str, object],
+    inline: bool = False,
+) -> str:
+    params = {
+        "start_date": str(metadata.get("start_date") or ""),
+        "end_date": str(metadata.get("end_date") or ""),
+        "issued_date": str(metadata.get("issued_date") or ""),
+        "due_date": str(metadata.get("due_date") or ""),
+        "include_pending": "true" if bool(metadata.get("include_pending")) else "false",
+        "include_cancelled": "true" if bool(metadata.get("include_cancelled")) else "false",
+        "layout": str(metadata.get("layout") or "DETAILED"),
+        "invoice_number": str(metadata.get("invoice_number") or ""),
+        "persist_note": "false",
+        "inline": "true" if inline else "false",
+        "invoice_status": str(metadata.get("invoice_status") or "ISSUED"),
+    }
+    public_note = _normalize_optional(str(metadata.get("public_note") or ""))
+    if public_note:
+        params["public_note"] = public_note
+    query = urlencode(params)
+    return f"{_frontend_base_url()}/admin/clients/{client_id}/payments/invoice-range?{query}"
+
+
+def _invoice_range_payment_url(*, metadata: dict[str, object]) -> str:
+    totals = metadata.get("totals_by_currency")
+    amount = "0.00"
+    currency = "EUR"
+    if isinstance(totals, dict) and totals:
+        first_currency = next(iter(sorted(totals.keys())))
+        first_amount = totals.get(first_currency)
+        if isinstance(first_amount, str) and first_amount.strip():
+            amount = first_amount.strip()
+        currency = str(first_currency).upper() or "EUR"
+    params = urlencode(
+        {
+            "tab": "paiements",
+            "invoice_number": str(metadata.get("invoice_number") or ""),
+            "amount": amount,
+            "currency": currency,
+        }
+    )
+    return f"{_frontend_base_url()}/dashboard?{params}"
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, object] | None:
+    kind = str(payload.get("kind") or "").strip().upper()
+    if kind != "INVOICE_RANGE":
+        return None
+
+    required_str_fields = ["invoice_number", "issued_date", "due_date", "start_date", "end_date", "layout"]
+    normalized: dict[str, object] = {"kind": "INVOICE_RANGE"}
+    for field in required_str_fields:
+        raw = payload.get(field)
+        if not isinstance(raw, str):
+            return None
+        value = raw.strip()
+        if not value:
+            return None
+        normalized[field] = value
+
+    layout = str(normalized["layout"]).upper()
+    if layout not in {"DETAILED", "COMPILED"}:
+        return None
+    normalized["layout"] = layout
+
+    totals_raw = payload.get("totals_by_currency")
+    if not isinstance(totals_raw, dict):
+        return None
+    totals: dict[str, str] = {}
+    for key, value in totals_raw.items():
+        currency = str(key or "").strip().upper()
+        amount = str(value or "").strip()
+        if len(currency) != 3 or not currency.isalpha() or not amount:
+            continue
+        totals[currency] = amount
+    if not totals:
+        return None
+    normalized["totals_by_currency"] = totals
+
+    normalized["include_pending"] = bool(payload.get("include_pending"))
+    normalized["include_cancelled"] = bool(payload.get("include_cancelled"))
+
+    public_note = _normalize_optional(str(payload.get("public_note") or ""))
+    private_note = _normalize_optional(str(payload.get("private_note") or ""))
+    if public_note:
+        normalized["public_note"] = public_note
+    if private_note:
+        normalized["private_note"] = private_note
+
+    status_value = str(payload.get("invoice_status") or "ISSUED").strip().upper()
+    normalized["invoice_status"] = status_value if status_value in INVOICE_RANGE_STATUSES else "ISSUED"
+
+    emailed_at = _parse_iso_datetime(payload.get("emailed_at"))
+    reminded_at = _parse_iso_datetime(payload.get("reminded_at"))
+    if emailed_at is not None:
+        normalized["emailed_at"] = emailed_at.isoformat()
+    if reminded_at is not None:
+        normalized["reminded_at"] = reminded_at.isoformat()
+
+    return normalized
+
+
+def _parse_invoice_range_note_entry(note: ClientNoteEntry) -> dict[str, object] | None:
+    message = (note.message or "").strip()
+    prefix_index = message.find(INVOICE_RANGE_NOTE_PREFIX)
+    if prefix_index < 0:
+        return None
+    raw_payload = message[prefix_index + len(INVOICE_RANGE_NOTE_PREFIX) :].strip()
+    if not raw_payload:
+        return None
+    try:
+        parsed = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return _normalize_invoice_range_metadata(parsed)
+
+
+def _build_invoice_range_note_message(metadata: dict[str, object]) -> str:
+    start_date = str(metadata.get("start_date") or "")
+    end_date = str(metadata.get("end_date") or "")
+    issued_date = str(metadata.get("issued_date") or "")
+    due_date = str(metadata.get("due_date") or "")
+    invoice_number = str(metadata.get("invoice_number") or "")
+    summary = (
+        f"Facture {invoice_number} generee ({start_date} - {end_date}, "
+        f"emise le {issued_date}, echeance {due_date})."
+    )
+    payload_json = json.dumps(metadata, ensure_ascii=True, separators=(",", ":"))
+    return f"{summary}\n{INVOICE_RANGE_NOTE_PREFIX}{payload_json}"
+
+
+def _invoice_range_out(*, note_id: UUID, metadata: dict[str, object]) -> AdminRangeInvoiceOut:
+    return AdminRangeInvoiceOut(
+        note_id=note_id,
+        invoice_number=str(metadata.get("invoice_number")),
+        issued_date=date.fromisoformat(str(metadata.get("issued_date"))),
+        due_date=date.fromisoformat(str(metadata.get("due_date"))),
+        start_date=date.fromisoformat(str(metadata.get("start_date"))),
+        end_date=date.fromisoformat(str(metadata.get("end_date"))),
+        layout=str(metadata.get("layout")),
+        include_pending=bool(metadata.get("include_pending")),
+        include_cancelled=bool(metadata.get("include_cancelled")),
+        totals_by_currency=dict(metadata.get("totals_by_currency") or {}),
+        invoice_status=str(metadata.get("invoice_status") or "ISSUED"),
+        emailed_at=_parse_iso_datetime(metadata.get("emailed_at")),
+        reminded_at=_parse_iso_datetime(metadata.get("reminded_at")),
+        public_note=_normalize_optional(str(metadata.get("public_note") or "")),
+        private_note=_normalize_optional(str(metadata.get("private_note") or "")),
+    )
+
+
+def _load_range_invoice_note(
+    db: Session,
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    for_update: bool = False,
+) -> tuple[ClientNoteEntry, dict[str, object]]:
+    stmt = select(ClientNoteEntry).where(
+        ClientNoteEntry.id == note_id,
+        ClientNoteEntry.user_id == client_id,
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    note = db.scalar(stmt)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture introuvable")
+    metadata = _parse_invoice_range_note_entry(note)
+    if metadata is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture de plage introuvable")
+    return note, metadata
 
 
 def _manual_transaction_allowed_student_ids(db: Session, *, client: User) -> set[UUID]:
@@ -3223,6 +3456,171 @@ def create_admin_client_manual_transaction(
     return created
 
 
+@router.post("/{client_id}/payments/invoice-range", response_model=AdminRangeInvoiceOut, status_code=status.HTTP_201_CREATED)
+def create_admin_client_range_invoice(
+    client_id: UUID,
+    payload: AdminRangeInvoiceCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminRangeInvoiceOut:
+    _require_client(db, client_id)
+    if payload.end_date < payload.start_date:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid date range")
+    if payload.due_date < payload.issued_date:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Due date must be on or after issue date")
+
+    start_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
+    end_at_exclusive = datetime.combine(payload.end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    payments = [
+        row
+        for row in _build_admin_client_payments(db, client_id=client_id)
+        if start_at <= row.occurred_at < end_at_exclusive
+    ]
+    if not payload.include_pending:
+        payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "PENDING"]
+    if not payload.include_cancelled:
+        payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "CANCELLED"]
+    if not payments:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
+
+    totals_by_currency: dict[str, str] = {}
+    totals_precise: dict[str, Decimal] = {}
+    for row in payments:
+        currency = _normalize_currency(row.currency, fallback="EUR")
+        current = totals_precise.get(currency, Decimal("0.00"))
+        totals_precise[currency] = _quantize_money(current + Decimal(row.total_incl_vat))
+    for currency, total in sorted(totals_precise.items()):
+        totals_by_currency[currency] = f"{_quantize_money(total):.2f}"
+
+    issued_at = datetime.combine(payload.issued_date, datetime.min.time(), tzinfo=timezone.utc)
+    requested_invoice_number = _normalize_optional(payload.invoice_number)
+    resolved_invoice_number = requested_invoice_number or reserve_next_invoice_number(db, issued_at=issued_at)
+    metadata: dict[str, object] = {
+        "kind": "INVOICE_RANGE",
+        "invoice_number": resolved_invoice_number,
+        "issued_date": payload.issued_date.isoformat(),
+        "due_date": payload.due_date.isoformat(),
+        "start_date": payload.start_date.isoformat(),
+        "end_date": payload.end_date.isoformat(),
+        "layout": payload.layout,
+        "include_pending": bool(payload.include_pending),
+        "include_cancelled": bool(payload.include_cancelled),
+        "totals_by_currency": totals_by_currency,
+        "invoice_status": "ISSUED",
+    }
+    public_note = _normalize_optional(payload.public_note)
+    private_note = _normalize_optional(payload.private_note)
+    if public_note:
+        metadata["public_note"] = public_note
+    if private_note:
+        metadata["private_note"] = private_note
+
+    note = _create_client_note(
+        db,
+        client_id=client_id,
+        author_user_id=actor.id,
+        entry_type="MANUAL",
+        message=_build_invoice_range_note_message(metadata),
+    )
+    db.commit()
+    db.refresh(note)
+    return _invoice_range_out(note_id=note.id, metadata=metadata)
+
+
+@router.post("/{client_id}/invoices/range/{note_id}/status", response_model=AdminRangeInvoiceOut)
+def update_admin_client_range_invoice_status(
+    client_id: UUID,
+    note_id: UUID,
+    payload: AdminRangeInvoiceStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminRangeInvoiceOut:
+    _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    metadata["invoice_status"] = payload.status
+    note.message = _build_invoice_range_note_message(metadata)
+    db.add(note)
+    db.commit()
+    return _invoice_range_out(note_id=note.id, metadata=metadata)
+
+
+@router.post("/{client_id}/invoices/range/{note_id}/email", response_model=AdminRangeInvoiceEmailOut)
+def send_admin_client_range_invoice_email(
+    client_id: UUID,
+    note_id: UUID,
+    payload: AdminRangeInvoiceEmailRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminRangeInvoiceEmailOut:
+    client = _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+
+    billing_profile = resolve_billing_profile(db, client)
+    to_email = _normalize_optional(billing_profile.email) or _normalize_optional(client.email)
+    if to_email is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
+
+    template_code = "INVOICE" if payload.kind == "INVOICE" else "INVOICE_REMINDER"
+    template = resolve_predefined_template(db, code=template_code)
+    if not bool(template.get("active", True)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le template est desactive")
+
+    subject_template = str(template.get("subject") or "").strip()
+    body_template = str(template.get("body") or "").strip()
+    if not subject_template or not body_template:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
+
+    invoice_url = _invoice_range_download_url(client_id=client_id, metadata=metadata, inline=True)
+    payment_url = _invoice_range_payment_url(metadata=metadata)
+    totals_by_currency = dict(metadata.get("totals_by_currency") or {})
+    first_currency = next(iter(sorted(totals_by_currency.keys())), "EUR")
+    amount_due = str(totals_by_currency.get(first_currency) or "0.00")
+    context = {
+        "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email,
+        "last_name": (billing_profile.last_name or client.last_name or "").strip(),
+        "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "invoice_number": str(metadata.get("invoice_number") or ""),
+        "invoice_url": invoice_url,
+        "payment_url": payment_url,
+        "amount_due": amount_due,
+        "currency": first_currency,
+        "due_date": str(metadata.get("due_date") or ""),
+        "issued_date": str(metadata.get("issued_date") or ""),
+    }
+
+    subject = _render_message_template(subject_template, context)
+    body = _render_message_template(body_template, context)
+
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    message_id = send_email(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        body_format="TEXT",
+        context=f"RANGE_INVOICE_{payload.kind}",
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
+    )
+
+    now = _utcnow()
+    if payload.kind == "INVOICE":
+        metadata["emailed_at"] = now.isoformat()
+    else:
+        metadata["reminded_at"] = now.isoformat()
+    note.message = _build_invoice_range_note_message(metadata)
+    db.add(note)
+    db.commit()
+
+    return AdminRangeInvoiceEmailOut(
+        note_id=note_id,
+        kind=payload.kind,
+        sent_at=now,
+        message_id=message_id,
+    )
+
+
 @router.get("/{client_id}/payments/invoice-range")
 def download_admin_client_range_invoice(
     client_id: UUID,
@@ -3238,6 +3636,8 @@ def download_admin_client_range_invoice(
     public_note: str | None = Query(default=None, max_length=2000),
     private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
+    invoice_status: str | None = Query(default=None, max_length=20),
+    inline: bool = Query(default=False),
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
@@ -3364,6 +3764,7 @@ def download_admin_client_range_invoice(
             "include_pending": bool(include_pending),
             "include_cancelled": bool(include_cancelled),
             "totals_by_currency": totals_payload,
+            "invoice_status": "ISSUED",
         }
         if normalized_public_note:
             metadata["public_note"] = normalized_public_note
@@ -3375,12 +3776,7 @@ def download_admin_client_range_invoice(
             client_id=client_id,
             author_user_id=actor.id,
             entry_type="MANUAL",
-            message=(
-                f"Facture {resolved_invoice_number} generee "
-                f"({start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}, "
-                f"emise le {issued_date.strftime('%d/%m/%Y')}, echeance {due_date.strftime('%d/%m/%Y')}).\n"
-                f"{INVOICE_RANGE_NOTE_PREFIX}{json.dumps(metadata, ensure_ascii=True, separators=(',', ':'))}"
-            ),
+            message=_build_invoice_range_note_message(metadata),
         )
         db.commit()
     elif requested_invoice_number is None:
@@ -3398,13 +3794,18 @@ def download_admin_client_range_invoice(
         note=normalized_public_note,
         client_billing_address=client_billing_address,
         due_date=due_date,
+        watermark=(
+            "PAYE"
+            if ((invoice_status or "").strip().upper() in {"PAID", "PAYE"})
+            else None
+        ),
     )
     file_name = f"{resolved_invoice_number}.pdf".replace('"', "")
     return Response(
         content=content,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{file_name}"',
             "Cache-Control": "no-store",
         },
     )
@@ -3493,6 +3894,7 @@ def download_admin_client_payment_invoice(
     client_id: UUID,
     source: str,
     payment_id: UUID,
+    inline: bool = Query(default=False),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
@@ -3542,13 +3944,10 @@ def download_admin_client_payment_invoice(
         period_label=payment.occurred_at.strftime("%d/%m/%Y"),
         lines=[line],
         totals_by_currency=totals,
-        note=(
-            f"Reference: {payment.reference}."
-            + (f" Rembourse le {payment.refunded_at.strftime('%d/%m/%Y %H:%M')}." if payment.refunded_at else "")
-            + (f" Motif: {payment.refund_reason}." if payment.refund_reason else "")
-        ),
+        note=None,
         client_billing_address=_billing_address_label(billing_profile),
         due_date=payment.occurred_at.date(),
+        watermark=("PAYE" if (payment.invoice_status or "").strip().upper() == "PAID" else None),
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")
@@ -3556,7 +3955,7 @@ def download_admin_client_payment_invoice(
         content=content,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{file_name}"',
             "Cache-Control": "no-store",
         },
     )

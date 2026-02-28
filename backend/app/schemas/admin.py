@@ -752,6 +752,52 @@ class AdminClientNoteCreateRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+class AdminRangeInvoiceCreateRequest(BaseModel):
+    issued_date: date
+    start_date: date
+    end_date: date
+    due_date: date
+    include_pending: bool = True
+    include_cancelled: bool = False
+    layout: Literal["DETAILED", "COMPILED"] = "DETAILED"
+    invoice_number: str | None = Field(default=None, max_length=120)
+    public_note: str | None = Field(default=None, max_length=2000)
+    private_note: str | None = Field(default=None, max_length=2000)
+
+
+class AdminRangeInvoiceOut(BaseModel):
+    note_id: UUID
+    invoice_number: str
+    issued_date: date
+    due_date: date
+    start_date: date
+    end_date: date
+    layout: Literal["DETAILED", "COMPILED"]
+    include_pending: bool
+    include_cancelled: bool
+    totals_by_currency: dict[str, str]
+    invoice_status: Literal["ISSUED", "PAID", "CANCELLED"]
+    emailed_at: datetime | None = None
+    reminded_at: datetime | None = None
+    public_note: str | None = None
+    private_note: str | None = None
+
+
+class AdminRangeInvoiceStatusUpdateRequest(BaseModel):
+    status: Literal["ISSUED", "PAID", "CANCELLED"]
+
+
+class AdminRangeInvoiceEmailRequest(BaseModel):
+    kind: Literal["INVOICE", "REMINDER"] = "INVOICE"
+
+
+class AdminRangeInvoiceEmailOut(BaseModel):
+    note_id: UUID
+    kind: Literal["INVOICE", "REMINDER"]
+    sent_at: datetime
+    message_id: str | None = None
+
+
 class AdminClientBookingOut(BaseModel):
     id: UUID
     session_id: UUID

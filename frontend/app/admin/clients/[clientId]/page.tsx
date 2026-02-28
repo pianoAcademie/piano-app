@@ -13,14 +13,17 @@ import {
   cancelAdminClientSubscriptionAction,
   linkExistingFamilyMembersAction,
   adminPurchasePlanForClientAction,
+  createAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
   refundAdminClientPaymentAction,
+  sendAdminClientRangeInvoiceEmailAction,
   sendAdminClientPasswordAction,
   setFamilyBillingRecipientAction,
   setupAdminClientSubscriptionBillingAction,
   suspendAdminClientSubscriptionAction,
   unlinkFamilyMembersAction,
   updateAdminClientSubscriptionExpiryAction,
+  updateAdminClientRangeInvoiceStatusAction,
   updateAdminClientManualCreditAction,
   updateAdminClientAction,
   updateAdminClientGroupsAction,
@@ -329,7 +332,11 @@ type RangeInvoiceNotePayload = {
   include_pending: boolean;
   include_cancelled: boolean;
   totals_by_currency: Record<string, string>;
+  invoice_status: "ISSUED" | "PAID" | "CANCELLED";
+  emailed_at?: string;
+  reminded_at?: string;
   public_note?: string;
+  private_note?: string;
 };
 
 type InvoiceListRow =
@@ -350,13 +357,17 @@ type InvoiceListRow =
   | {
       kind: "range";
       key: string;
+      noteId: string;
       occurredAt: string;
       invoiceNumber: string;
       typeLabel: string;
       label: string;
       status: string;
+      emailedAt: string | null;
+      remindedAt: string | null;
       totalLabel: string;
       downloadHref: string;
+      viewHref: string;
     };
 
 function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayload | null {
@@ -412,7 +423,14 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
       include_pending: Boolean(payload.include_pending),
       include_cancelled: Boolean(payload.include_cancelled),
       totals_by_currency: totals,
+      invoice_status:
+        payload.invoice_status === "PAID" || payload.invoice_status === "CANCELLED" || payload.invoice_status === "ISSUED"
+          ? payload.invoice_status
+          : "ISSUED",
+      emailed_at: typeof payload.emailed_at === "string" ? payload.emailed_at : undefined,
+      reminded_at: typeof payload.reminded_at === "string" ? payload.reminded_at : undefined,
       public_note: typeof payload.public_note === "string" ? payload.public_note : undefined,
+      private_note: typeof payload.private_note === "string" ? payload.private_note : undefined,
     };
   } catch {
     return null;
@@ -429,7 +447,7 @@ function rangeInvoiceTotalLabel(totalsByCurrency: Record<string, string>): strin
     .join(" | ");
 }
 
-function rangeInvoiceDownloadHref(clientId: string, payload: RangeInvoiceNotePayload): string {
+function rangeInvoicePdfHref(clientId: string, payload: RangeInvoiceNotePayload, inline = false): string {
   const params = new URLSearchParams({
     payment_return_tab: "factures",
     start_date: payload.start_date,
@@ -441,11 +459,35 @@ function rangeInvoiceDownloadHref(clientId: string, payload: RangeInvoiceNotePay
     layout: payload.layout,
     invoice_number: payload.invoice_number,
     persist_note: "false",
+    invoice_status: payload.invoice_status,
+    inline: inline ? "true" : "false",
   });
   if (payload.public_note) {
     params.set("public_note", payload.public_note);
   }
   return `/admin/clients/${clientId}/payments/invoice-range?${params.toString()}`;
+}
+
+function rangeInvoiceStatusLabel(status: string): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "PAID") {
+    return "Paye";
+  }
+  if (normalized === "CANCELLED") {
+    return "Annulee";
+  }
+  return "Emise";
+}
+
+function rangeInvoiceStatusClass(status: string): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "PAID") {
+    return "status-ok";
+  }
+  if (normalized === "CANCELLED") {
+    return "status-off";
+  }
+  return "status-warn";
 }
 
 function shortContractRef(value: string): string {
@@ -592,6 +634,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : null;
   const paymentModalSource = readParam(searchParams, "payment_source").toUpperCase();
   const paymentModalId = readParam(searchParams, "payment_id");
+  const invoiceNoteId = readParam(searchParams, "invoice_note_id");
+  const invoiceEmailKindRaw = readParam(searchParams, "invoice_email_kind").toUpperCase();
+  const invoiceEmailKind = invoiceEmailKindRaw === "REMINDER" ? "REMINDER" : "INVOICE";
   const paymentReturnTabRaw = readParam(searchParams, "payment_return_tab");
   const purchaseModalAction = readParam(searchParams, "purchase_modal");
   const purchasePlanId = readParam(searchParams, "purchase_plan_id");
@@ -887,13 +932,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     acc.push({
       kind: "range",
       key: `range-${payload.invoice_number}-${note.id}`,
+      noteId: note.id,
       occurredAt: `${payload.issued_date}T00:00:00.000Z`,
       invoiceNumber: payload.invoice_number,
       typeLabel: "Facture periode",
       label: `${formatDateInputLabel(payload.start_date)} - ${formatDateInputLabel(payload.end_date)}`,
-      status: "ISSUED",
+      status: payload.invoice_status,
+      emailedAt: payload.emailed_at ?? null,
+      remindedAt: payload.reminded_at ?? null,
       totalLabel: rangeInvoiceTotalLabel(payload.totals_by_currency),
-      downloadHref: rangeInvoiceDownloadHref(client.id, payload),
+      downloadHref: rangeInvoicePdfHref(client.id, payload, false),
+      viewHref: rangeInvoicePdfHref(client.id, payload, true),
     });
     return acc;
   }, []);
@@ -901,6 +950,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoices = [...generatedRangeInvoices, ...paymentInvoices].sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
   );
+  const selectedRangeInvoiceForModal =
+    paymentModalAction === "invoice_email" && invoiceNoteId
+      ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
+      : null;
 
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
@@ -2578,17 +2631,105 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <td>{row.invoiceNumber ?? "-"}</td>
                         <td>{row.typeLabel}</td>
                         <td>{row.label}</td>
-                        <td>{row.kind === "range" ? "Facture emise" : invoiceStatusLabel(row.status)}</td>
+                        <td>
+                          {row.kind === "range" ? (
+                            <div className="stack-xs">
+                              <span className={`status-pill ${rangeInvoiceStatusClass(row.status)}`}>
+                                {rangeInvoiceStatusLabel(row.status)}
+                              </span>
+                              {row.emailedAt ? (
+                                <span className="status-pill status-ok" title={`Envoye le ${formatDate(row.emailedAt)}`}>
+                                  Envoye par mail
+                                </span>
+                              ) : null}
+                              {row.remindedAt ? (
+                                <span className="status-pill status-warn" title={`Relance le ${formatDate(row.remindedAt)}`}>
+                                  Relance
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (
+                            invoiceStatusLabel(row.status)
+                          )}
+                        </td>
                         <td>{row.kind === "range" ? row.totalLabel : formatMoney(row.total, row.currency)}</td>
                         <td>
                           {row.kind === "range" ? (
                             <div className="row payment-row-actions">
+                              <a className="client-action-icon" href={row.viewHref} target="_blank" rel="noreferrer" title="Voir la facture">
+                                V
+                              </a>
                               <a className="client-action-icon" href={row.downloadHref} title="Telecharger la facture">
                                 ↓
                               </a>
+                              <Link
+                                className="client-action-icon"
+                                href={invoicesHref(client.id, {
+                                  payment_modal: "invoice_email",
+                                  payment_return_tab: "factures",
+                                  invoice_note_id: row.noteId,
+                                  invoice_email_kind: "INVOICE",
+                                })}
+                                title="Envoyer la facture par courriel"
+                              >
+                                ✉
+                              </Link>
+                              <Link
+                                className="client-action-icon"
+                                href={invoicesHref(client.id, {
+                                  payment_modal: "invoice_email",
+                                  payment_return_tab: "factures",
+                                  invoice_note_id: row.noteId,
+                                  invoice_email_kind: "REMINDER",
+                                })}
+                                title="Envoyer une relance"
+                              >
+                                R
+                              </Link>
+                              {row.status !== "PAID" ? (
+                                <form action={updateAdminClientRangeInvoiceStatusAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <input type="hidden" name="status" value="PAID" />
+                                  <input type="hidden" name="return_tab" value="factures" />
+                                  <button type="submit" className="client-action-icon" title="Marquer comme payee">
+                                    €
+                                  </button>
+                                </form>
+                              ) : null}
+                              {row.status !== "CANCELLED" ? (
+                                <form action={updateAdminClientRangeInvoiceStatusAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <input type="hidden" name="status" value="CANCELLED" />
+                                  <input type="hidden" name="return_tab" value="factures" />
+                                  <button type="submit" className="client-action-icon danger" title="Annuler la facture">
+                                    ×
+                                  </button>
+                                </form>
+                              ) : (
+                                <form action={updateAdminClientRangeInvoiceStatusAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <input type="hidden" name="status" value="ISSUED" />
+                                  <input type="hidden" name="return_tab" value="factures" />
+                                  <button type="submit" className="client-action-icon" title="Remettre en statut emise">
+                                    ↺
+                                  </button>
+                                </form>
+                              )}
                             </div>
                           ) : (
                             <div className="row payment-row-actions">
+                              <a
+                                className="client-action-icon"
+                                href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.paymentId}/invoice?inline=true`}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Voir la facture"
+                              >
+                                V
+                              </a>
                               <a
                                 className="client-action-icon"
                                 href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.paymentId}/invoice`}
@@ -3050,8 +3191,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </Link>
             <h3 className="modal-title">Generer une facture</h3>
             <p className="muted">Genere un document pour une plage de dates.</p>
-            <form method="get" action={`/admin/clients/${client.id}/payments/invoice-range`} className="grid top-gap-sm">
-              <input type="hidden" name="payment_return_tab" value={paymentReturnTab} />
+            <form action={createAdminClientRangeInvoiceAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="return_tab" value="factures" />
               <label>
                 Date d emission (obligatoire)
                 <input type="date" name="issued_date" defaultValue={todayInputValue} required />
@@ -3110,7 +3252,41 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>
                   Annuler
                 </Link>
-                <button type="submit">Telecharger</button>
+                <button type="submit">Creer</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {(currentTab === "paiements" || currentTab === "factures") &&
+      paymentModalAction === "invoice_email" &&
+      selectedRangeInvoiceForModal ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, paymentReturnTab)} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Courriel facture</h3>
+            <p className="muted">
+              Facture {selectedRangeInvoiceForModal.invoiceNumber}. Les contenus utilises proviennent des templates de messagerie du BO.
+            </p>
+            <form action={sendAdminClientRangeInvoiceEmailAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="note_id" value={selectedRangeInvoiceForModal.noteId} />
+              <input type="hidden" name="return_tab" value={paymentReturnTab} />
+              <label>
+                Type d envoi
+                <select name="kind" defaultValue={invoiceEmailKind}>
+                  <option value="INVOICE">Facture</option>
+                  <option value="REMINDER">Relance facture</option>
+                </select>
+              </label>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>
+                  Annuler
+                </Link>
+                <button type="submit">Envoyer</button>
               </div>
             </form>
           </article>
