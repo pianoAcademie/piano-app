@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import AdultLinkSelector from "../../../components/adult-link-selector";
+import ClientKindCreateSync from "../../../components/client-kind-create-sync";
 import ClientBulkControls from "../../../components/client-bulk-controls";
 import {
   bulkAdminClientsAction,
@@ -728,8 +729,9 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
             </header>
 
             <section className="card modal-card">
-              <form action={createAdminClientAction} className="grid cols-3 config-form-grid">
+              <form id="create-client-form" action={createAdminClientAction} className="grid cols-3 config-form-grid">
                 <input type="hidden" name="return_to" value={closeHref} />
+                <ClientKindCreateSync formId="create-client-form" />
 
                 <label>
                   Email (optionnel)
@@ -973,10 +975,6 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           </option>
                         ))}
                       </select>
-                    </label>
-                    <label className="checkline">
-                      <input type="checkbox" name="new_adult_billing_recipient" />
-                      Nouvel adulte destinataire facture
                     </label>
                   </div>
                 </article>

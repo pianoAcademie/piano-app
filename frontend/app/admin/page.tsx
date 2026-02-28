@@ -15,8 +15,10 @@ import {
   updateAdminSessionAction,
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
+import AutoSubmitSelect from "../../components/auto-submit-select";
 import RichMessageEditor from "../../components/rich-message-editor";
 import SearchMultiSelect from "../../components/search-multi-select";
+import SessionVisibilityFields from "../../components/session-visibility-fields";
 import type {
   AdminClientOut,
   AdminProfessorOut,
@@ -855,37 +857,37 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
           <label>
             Lieu
-            <select name="location_id" defaultValue={focusedLocationId} required>
-              {locations.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
+            <AutoSubmitSelect
+              name="location_id"
+              defaultValue={focusedLocationId}
+              required
+              options={locations.map((row) => ({ value: row.id, label: row.name }))}
+            />
           </label>
 
           <label>
             Vue agenda
-            <select name="agenda_view" defaultValue={agendaView}>
-              <option value="month">Mois</option>
-              <option value="week">Semaine</option>
-              <option value="day">Jour</option>
-            </select>
+            <AutoSubmitSelect
+              name="agenda_view"
+              defaultValue={agendaView}
+              options={[
+                { value: "month", label: "Mois" },
+                { value: "week", label: "Semaine" },
+                { value: "day", label: "Jour" },
+              ]}
+            />
           </label>
 
           <label>
             Fuseau horaire
-            <select name="timezone" defaultValue={timezone}>
-              {timezoneOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <AutoSubmitSelect
+              name="timezone"
+              defaultValue={timezone}
+              options={timezoneOptions.map((option) => ({ value: option.value, label: option.label }))}
+            />
           </label>
 
           <div className="row">
-            <button type="submit">Mettre a jour</button>
             <a className="reset-link" href={filtersResetHref}>
               Reset filtres
             </a>
@@ -1141,15 +1143,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <section className="create-session-section">
                 <h3 className="create-session-section-title">Visibilite et descriptions</h3>
                 <div className="grid cols-2 create-session-visibility-grid">
-                  <label className="checkline create-session-toggle">
-                    <input type="checkbox" name="is_private" />
-                    Creneau prive
-                  </label>
-
-                  <label className="checkline create-session-toggle">
-                    <input type="checkbox" name="allow_online_booking" defaultChecked />
-                    Autoriser la reservation en ligne (creneau public)
-                  </label>
+                  <SessionVisibilityFields initialIsPrivate={false} initialAllowOnlineBooking />
 
                   <label>
                     Description publique (vue client)
@@ -1608,15 +1602,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         </select>
                       </label>
 
-                      <label className="checkline">
-                        <input type="checkbox" name="is_private" defaultChecked={selectedSession.is_private} />
-                        Creneau prive
-                      </label>
-
-                      <label className="checkline">
-                        <input type="checkbox" name="allow_online_booking" defaultChecked={selectedSession.allow_online_booking} />
-                        Autoriser la reservation en ligne (creneau public)
-                      </label>
+                      <SessionVisibilityFields
+                        initialIsPrivate={selectedSession.is_private}
+                        initialAllowOnlineBooking={selectedSession.allow_online_booking}
+                      />
 
                       <label className="session-edit-span">
                         Description publique (vue client)

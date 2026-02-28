@@ -89,6 +89,15 @@ function checkboxFieldWithDefault(formData: FormData, fieldName: string, default
   return normalized === "on" || normalized === "true" || normalized === "1";
 }
 
+function parseSessionVisibility(formData: FormData): { isPrivate: boolean; allowOnlineBooking: boolean } {
+  const raw = String(formData.get("session_visibility") ?? "")
+    .trim()
+    .toUpperCase();
+  const isPrivate = raw === "PRIVATE" || (raw !== "PUBLIC" && checkboxField(formData, "is_private"));
+  const allowOnlineBooking = !isPrivate && checkboxFieldWithDefault(formData, "allow_online_booking", true);
+  return { isPrivate, allowOnlineBooking };
+}
+
 function parseApplyScope(raw: string): ApplyScope {
   const value = raw.trim().toUpperCase();
   if (value === "SERIES_FUTURE" || value === "SERIES_ALL") {
@@ -975,8 +984,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const public_description = optionalField(formData, "public_description");
   const private_description = optionalField(formData, "private_description");
   const zoom_link = optionalField(formData, "zoom_link");
-  const is_private = checkboxField(formData, "is_private");
-  const allow_online_booking = !is_private && checkboxFieldWithDefault(formData, "allow_online_booking", true);
+  const sessionVisibility = parseSessionVisibility(formData);
+  const is_private = sessionVisibility.isPrivate;
+  const allow_online_booking = sessionVisibility.allowOnlineBooking;
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const recurrence_mode = String(formData.get("recurrence_mode") ?? "NONE").trim().toUpperCase();
@@ -1099,8 +1109,9 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const professor_id = String(formData.get("professor_id") ?? "").trim();
   const zoom_link = optionalField(formData, "zoom_link");
   const status = String(formData.get("status") ?? "").trim();
-  const is_private = checkboxField(formData, "is_private");
-  const allow_online_booking = !is_private && checkboxFieldWithDefault(formData, "allow_online_booking", true);
+  const sessionVisibility = parseSessionVisibility(formData);
+  const is_private = sessionVisibility.isPrivate;
+  const allow_online_booking = sessionVisibility.allowOnlineBooking;
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
@@ -1911,8 +1922,6 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   const isCardOnlinePayment = paymentMethodCode === "CARD_ONLINE";
   const signatureChannel =
     isCardOnlinePayment && (signatureChannelRaw === "EMAIL" || signatureChannelRaw === "SMS") ? signatureChannelRaw : "NONE";
-  const acceptedCgv = checkboxField(formData, "cgv_accepted");
-
   if (!clientId || !planId) {
     redirect("/admin/clients?error=Client%20ou%20plan%20invalide");
   }
@@ -1921,9 +1930,6 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   }
   if (isCardOnlinePayment && signatureChannel === "NONE") {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Choisir%20un%20canal%20email%20ou%20SMS`);
-  }
-  if (!acceptedCgv) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Vous%20devez%20accepter%20les%20CGV`);
   }
   if (discountedTotalRaw && discountedTotal === null) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Prix%20remise%20invalide`);
@@ -1987,7 +1993,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   if (discountedTotal !== null) {
     notes.push(`Prix remise saisi: ${discountedTotal.toFixed(2)} EUR TTC.`);
   }
-  notes.push("CGV acceptees sur la fiche client.");
+  notes.push("Achat valide depuis le back-office.");
   if (!isCardOnlinePayment) {
     notes.push("Lien de paiement: non envoye (reglement hors carte).");
   } else if (signatureChannel === "EMAIL") {
@@ -2609,6 +2615,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
     );
   }
 
+  const isChildClient = client_kind === "CHILD";
   const payload = {
     email: email || null,
     client_kind,
@@ -2628,11 +2635,11 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
     residence_country,
     preferred_currency,
     timezone,
-    portal_contact_visible: checkboxFieldWithDefault(formData, "portal_contact_visible", true),
-    email_opt_in: checkboxFieldWithDefault(formData, "email_opt_in", true),
-    sms_opt_in: checkboxFieldWithDefault(formData, "sms_opt_in", true),
-    lesson_reminder_email_opt_in: checkboxFieldWithDefault(formData, "lesson_reminder_email_opt_in", true),
-    lesson_reminder_sms_opt_in: checkboxFieldWithDefault(formData, "lesson_reminder_sms_opt_in", false),
+    portal_contact_visible: isChildClient ? false : checkboxFieldWithDefault(formData, "portal_contact_visible", true),
+    email_opt_in: isChildClient ? false : checkboxFieldWithDefault(formData, "email_opt_in", true),
+    sms_opt_in: isChildClient ? false : checkboxFieldWithDefault(formData, "sms_opt_in", true),
+    lesson_reminder_email_opt_in: isChildClient ? false : checkboxFieldWithDefault(formData, "lesson_reminder_email_opt_in", true),
+    lesson_reminder_sms_opt_in: isChildClient ? false : checkboxFieldWithDefault(formData, "lesson_reminder_sms_opt_in", false),
     client_status,
     is_active: isActiveFromClientStatus(client_status),
   };
@@ -2664,7 +2671,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
     const newAdultTimezone = String(formData.get("adult_timezone") ?? "Europe/Paris").trim();
     const newAdultAddressCountry = String(formData.get("adult_address_country") ?? "FR").trim().toUpperCase();
     const newAdultStatus = String(formData.get("adult_client_status") ?? "").trim().toUpperCase() || "ACTIVE";
-    const newAdultBillingRecipient = checkboxField(formData, "new_adult_billing_recipient");
+    let createdAdultId: string | null = null;
 
     const adultsToLink: Array<{ adultId: string; isBillingRecipient: boolean }> = [];
 
@@ -2710,11 +2717,22 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
         redirect(`/admin/clients/${createdClientId}?tab=famille&error=${encodeURIComponent(createAdultResult.message)}`);
       }
 
-      adultsToLink.push({ adultId: createAdultResult.data.id, isBillingRecipient: newAdultBillingRecipient });
+      createdAdultId = createAdultResult.data.id;
+      adultsToLink.push({ adultId: createAdultResult.data.id, isBillingRecipient: false });
     }
 
-    for (let index = 0; index < adultsToLink.length; index += 1) {
-      const item = adultsToLink[index];
+    if (adultsToLink.length > 0 && !adultsToLink.some((item) => item.isBillingRecipient)) {
+      if (createdAdultId) {
+        const createdAdultIndex = adultsToLink.findIndex((item) => item.adultId === createdAdultId);
+        if (createdAdultIndex >= 0) {
+          adultsToLink[createdAdultIndex] = { ...adultsToLink[createdAdultIndex], isBillingRecipient: true };
+        }
+      } else {
+        adultsToLink[0] = { ...adultsToLink[0], isBillingRecipient: true };
+      }
+    }
+
+    for (const item of adultsToLink) {
       const linkResult = await backendRequest<{ id: string }>(
         "/api/v1/admin/clients/family/links",
         {
@@ -2723,7 +2741,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
             adult_client_id: item.adultId,
             child_client_id: createdClientId,
             relationship_label: relationshipLabel,
-            is_billing_recipient: item.isBillingRecipient || (index === 0 && !adultsToLink.some((row) => row.isBillingRecipient)),
+            is_billing_recipient: item.isBillingRecipient,
           }),
         },
         token,
@@ -2786,6 +2804,11 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
         phone: optionalField(formData, "child_mobile_phone_1"),
         birth_date: birthDateRaw || null,
         important_info: optionalField(formData, "child_important_info"),
+        portal_contact_visible: false,
+        email_opt_in: false,
+        sms_opt_in: false,
+        lesson_reminder_email_opt_in: false,
+        lesson_reminder_sms_opt_in: false,
         residence_country,
         preferred_currency,
         timezone,

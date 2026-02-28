@@ -72,6 +72,24 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
+function cloneSearchParams(params: SearchParams): URLSearchParams {
+  const search = new URLSearchParams();
+  for (const [key, rawValue] of Object.entries(params)) {
+    if (Array.isArray(rawValue)) {
+      for (const value of rawValue) {
+        if (value !== undefined) {
+          search.append(key, value);
+        }
+      }
+      continue;
+    }
+    if (rawValue !== undefined) {
+      search.set(key, rawValue);
+    }
+  }
+  return search;
+}
+
 function parseTab(value: string): ClientTab {
   if (value === "infos" || value === "famille" || value === "messages" || value === "paiements" || value === "factures" || value === "reservations") {
     return value;
@@ -777,6 +795,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           billing_recipient_adult_id: null,
         } as AdminClientFamilyOut;
       })();
+
+  if (currentTab === "factures" && client.client_kind === "CHILD") {
+    if (family.billing_recipient_adult_id) {
+      const redirectSearch = cloneSearchParams(searchParams);
+      redirectSearch.set("tab", "factures");
+      redirect(`/admin/clients/${family.billing_recipient_adult_id}?${redirectSearch.toString()}`);
+    }
+    redirect(`/admin/clients/${client.id}?tab=famille&error=Definir%20un%20destinataire%20de%20facture%20pour%20cet%20enfant`);
+  }
 
   const allClients = allClientsResult.ok
     ? allClientsResult.data
@@ -1590,20 +1617,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               {hasDiscountedTotalForPurchase ? (
                 <input type="hidden" name="discounted_total_incl_vat" value={discountedTotalForPurchase.toFixed(2)} />
               ) : null}
-
-              <article className="purchase-terms-box">
-                <strong>Conditions Generales de Vente (CGV)</strong>
-                <p className="muted top-gap-sm">
-                  En validant cet achat, l adherent accepte les conditions de vente applicables, les modalites de paiement et les
-                  regles de reconduction de la formule.
-                </p>
-                <p className="muted">Une trace de cette validation est enregistree dans les notes client.</p>
-              </article>
-
-              <label className="checkline">
-                <input type="checkbox" name="cgv_accepted" required />
-                J ai lu et j accepte les CGV.
-              </label>
 
               {isCardOnlinePurchase ? (
                 <label>

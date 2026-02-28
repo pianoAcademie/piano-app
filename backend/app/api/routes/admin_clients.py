@@ -3398,14 +3398,39 @@ def list_admin_client_messages(
     return items
 
 
+def _payment_scope_users(db: Session, *, client: User) -> dict[UUID, User]:
+    users_by_id: dict[UUID, User] = {client.id: client}
+    if client.client_kind != ClientKind.ADULT:
+        return users_by_id
+
+    child_ids = [
+        child_id
+        for child_id in db.scalars(
+            select(ClientFamilyLink.child_user_id).where(
+                ClientFamilyLink.adult_user_id == client.id,
+                ClientFamilyLink.is_billing_recipient.is_(True),
+            )
+        ).all()
+        if child_id is not None
+    ]
+    if not child_ids:
+        return users_by_id
+
+    for row in db.scalars(select(User).where(User.id.in_(child_ids), User.role == UserRole.CLIENT)).all():
+        users_by_id[row.id] = row
+    return users_by_id
+
+
 def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminClientPaymentOut]:
     client = _require_client(db, client_id)
     billing_profile = resolve_billing_profile(db, client)
+    scoped_users_by_id = _payment_scope_users(db, client=client)
+    scoped_user_ids = list(scoped_users_by_id.keys())
 
     rows_subs = db.execute(
         select(ClientPlanSubscription, Plan)
         .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
-        .where(ClientPlanSubscription.user_id == client_id)
+        .where(ClientPlanSubscription.user_id.in_(scoped_user_ids))
     ).all()
 
     rows_bookings = db.execute(
@@ -3415,11 +3440,11 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(ClientPlanSubscription, ClientPlanSubscription.id == Booking.client_plan_subscription_id)
         .outerjoin(Plan, Plan.id == ClientPlanSubscription.plan_id)
-        .where(Booking.user_id == client_id)
+        .where(Booking.user_id.in_(scoped_user_ids))
     ).all()
 
     manual_rows = db.scalars(
-        select(ClientManualTransaction).where(ClientManualTransaction.user_id == client_id)
+        select(ClientManualTransaction).where(ClientManualTransaction.user_id.in_(scoped_user_ids))
     ).all()
     manual_student_ids = {row.student_user_id for row in manual_rows if row.student_user_id is not None}
     manual_students_by_id: dict[UUID, User] = {}
@@ -3429,7 +3454,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         }
 
     refunds = db.scalars(
-        select(ClientPaymentRefund).where(ClientPaymentRefund.user_id == client_id)
+        select(ClientPaymentRefund).where(ClientPaymentRefund.user_id.in_(scoped_user_ids))
     ).all()
     refund_by_key = {(row.source.strip().upper(), row.source_payment_id): row for row in refunds}
 
@@ -3456,12 +3481,17 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             total_incl_vat = Decimal("0.00")
             currency_code = (plan.currency_code or billing_profile.preferred_currency or "EUR").upper()
 
+        owner = scoped_users_by_id.get(sub.user_id)
+        label = plan.name
+        if owner is not None and owner.id != client.id:
+            label = f"{label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+
         items.append(
             AdminClientPaymentOut(
                 id=sub.id,
                 source="PLAN_PURCHASE",
                 occurred_at=sub.started_at,
-                label=plan.name,
+                label=label,
                 status=_subscription_payment_status(sub),
                 amount_excl_vat=price_excl_vat,
                 vat_rate=vat_rate,
@@ -3500,12 +3530,18 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         elif booking.status == BookingStatus.EXCUSED_ABSENCE:
             is_billable = False
             status_value = "NOT_BILLABLE"
+
+        owner = scoped_users_by_id.get(booking.user_id)
+        label = f"{course_type.name} - {location.name}"
+        if owner is not None and owner.id != client.id:
+            label = f"{label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+
         items.append(
             AdminClientPaymentOut(
                 id=booking.id,
                 source="BOOKING",
                 occurred_at=session_obj.start_at_utc,
-                label=f"{course_type.name} - {location.name}",
+                label=label,
                 status=status_value,
                 amount_excl_vat=Decimal("0.00") if not is_billable else _quantize_money(Decimal(amount_excl_vat)),
                 vat_rate=Decimal("0.00") if not is_billable else Decimal(vat_rate).quantize(Decimal("0.01")),
@@ -3518,8 +3554,11 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
 
     for row in manual_rows:
         student = manual_students_by_id.get(row.student_user_id) if row.student_user_id is not None else None
+        owner = scoped_users_by_id.get(row.user_id)
         label = row.label
-        if student is not None and student.id != client_id:
+        if owner is not None and owner.id != client.id:
+            label = f"{label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+        if student is not None and student.id != row.user_id:
             label = f"{label} - {_display_name(student.first_name, student.last_name, student.email)}"
 
         reference_parts: list[str] = []
