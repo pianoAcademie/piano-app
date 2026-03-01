@@ -8,19 +8,15 @@ import {
   createAdminCatalogCategoryAction,
   createAdminCatalogKitAction,
   createAdminCatalogProductAction,
-  createAdminCatalogRequestAction,
   createAdminActivityAction,
   createAdminCreditTypeAction,
   deleteAdminCatalogCategoryAction,
   deleteAdminCatalogKitAction,
   deleteAdminCatalogProductAction,
   deleteAdminCreditTypeAction,
-  deliverAdminCatalogRequestAction,
   disableAdminFormulaAction,
   duplicateAdminFormulaAction,
-  reviewAdminCatalogRequestAction,
   updateAdminCatalogCategoryAction,
-  updateAdminCatalogInventoryAction,
   updateAdminCatalogKitAction,
   updateAdminCatalogProductAction,
   updateAdminActivityAction,
@@ -44,8 +40,6 @@ import type {
   AdminCatalogCategoryOut,
   AdminCatalogKitOut,
   AdminCatalogProductOut,
-  AdminCatalogRequestOut,
-  AdminCatalogStockOut,
   AdminCreditTypeOut,
   AdminConfigAccountOut,
   AdminFormulaOut,
@@ -56,10 +50,8 @@ import type {
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
-  AdminClientOut,
   AdminProfessorDefaultGridOut,
   AdminSubscriptionSettingsOut,
-  LocationOut,
 } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -111,7 +103,6 @@ const MAIN_NAV_ITEMS: MainNavItem[] = [
   { key: "formulas", label: "Les formules", section: "formulas" },
   { key: "activities", label: "Activites", section: "activities" },
   { key: "promo", label: "Code promo", section: "promo" },
-  { key: "products", label: "Les produits", section: "products" },
   { key: "payment-rules", label: "Regles de paiement", section: "payment-rules" },
   { key: "integrations", label: "Integration", section: "integrations" },
   { key: "purchase-link", label: "Creer un lien d'achat", section: "purchase-link" },
@@ -352,10 +343,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     catalogCategoriesResult,
     catalogProductsResult,
     catalogKitsResult,
-    catalogStocksResult,
-    catalogRequestsResult,
-    locationsResult,
-    clientsResult,
   ] =
     await Promise.all([
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
@@ -384,10 +371,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminCatalogCategoryOut[]>("/api/v1/admin/config/catalog/categories?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
     backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
-    backendRequest<AdminCatalogStockOut[]>("/api/v1/admin/config/catalog/stocks", {}, token),
-    backendRequest<AdminCatalogRequestOut[]>("/api/v1/admin/catalog/requests", {}, token),
-    backendRequest<LocationOut[]>("/api/v1/admin/locations", {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
   ]);
 
   const loadErrors: string[] = [];
@@ -505,40 +488,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
         loadErrors.push(`Catalogue kits: ${catalogKitsResult.message}`);
         return [] as AdminCatalogKitOut[];
       })();
-  const catalogStocks = catalogStocksResult.ok
-    ? catalogStocksResult.data
-    : (() => {
-        loadErrors.push(`Catalogue stocks: ${catalogStocksResult.message}`);
-        return [] as AdminCatalogStockOut[];
-      })();
-  const catalogRequests = catalogRequestsResult.ok
-    ? catalogRequestsResult.data
-    : (() => {
-        loadErrors.push(`Catalogue demandes: ${catalogRequestsResult.message}`);
-        return [] as AdminCatalogRequestOut[];
-      })();
-  const locations = locationsResult.ok
-    ? locationsResult.data
-    : (() => {
-        loadErrors.push(`Lieux: ${locationsResult.message}`);
-        return [] as LocationOut[];
-      })();
-  const clients = clientsResult.ok
-    ? clientsResult.data
-    : (() => {
-        loadErrors.push(`Clients: ${clientsResult.message}`);
-        return [] as AdminClientOut[];
-      })();
   const activeCatalogCategories = catalogCategories.filter((row) => row.active);
   const activeCatalogProducts = catalogProducts.filter((row) => row.active);
-  const activeLocations = locations.filter((row) => row.active);
-  const clientOptions = clients
-    .filter((row) => row.role === "client" && row.client_status !== "ARCHIVED")
-    .map((row) => ({
-      id: row.id,
-      label: `${`${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || row.email} (${row.client_kind})`,
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
   const accountAllowedCurrencies = account?.allowed_currencies?.length ? account.allowed_currencies : ["EUR", "USD"];
   const accountDefaultCurrency =
@@ -1584,201 +1535,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               </section>
 
               <section className="card">
-                <h3>Stocks par local</h3>
-                {catalogStocks.length === 0 ? (
-                  <p className="muted">Aucun stock initialise (creez d abord un produit).</p>
-                ) : (
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Produit</th>
-                          <th>Lieu</th>
-                          <th>Inventaire</th>
-                          <th>Date inventaire</th>
-                          <th>Stock reel</th>
-                          <th>Stock estime</th>
-                          <th>Mise a jour inventaire</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {catalogStocks.map((stock) => (
-                          <tr
-                            key={`${stock.product_id}-${stock.location_id}`}
-                            className={stock.real_quantity < 0 || stock.estimated_quantity < 0 ? "catalog-stock-negative" : ""}
-                          >
-                            <td>{stock.product_title}</td>
-                            <td>{stock.location_name}</td>
-                            <td>{stock.inventory_quantity}</td>
-                            <td>{stock.inventory_date || "-"}</td>
-                            <td>{stock.real_quantity}</td>
-                            <td>{stock.estimated_quantity}</td>
-                            <td>
-                              <form action={updateAdminCatalogInventoryAction} className="catalog-stock-form">
-                                <input type="hidden" name="product_id" value={stock.product_id} />
-                                <input type="hidden" name="location_id" value={stock.location_id} />
-                                <input
-                                  type="number"
-                                  name="inventory_quantity"
-                                  min={0}
-                                  step={1}
-                                  defaultValue={stock.inventory_quantity}
-                                  required
-                                />
-                                <input type="date" name="inventory_date" defaultValue={dateInputValue(stock.inventory_date)} />
-                                <button type="submit">Reset inventaire</button>
-                              </form>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-
-              <section className="card">
-                <h3>Demandes produits eleves</h3>
+                <h3>Gestion operationnelle des produits</h3>
                 <p className="muted">
-                  Creation admin: la demande est acceptee immediatement (facturee ou non), puis passe a remettre a l eleve.
+                  Les stocks par local et les demandes produits eleves sont desormais geres dans le menu dedie{" "}
+                  <Link href="/admin/products">Produits</Link>.
                 </p>
-
-                <form action={createAdminCatalogRequestAction} className="grid cols-4 config-form-grid">
-                  <label>
-                    Eleve
-                    <select name="student_user_id" required defaultValue="">
-                      <option value="">Selectionner un eleve</option>
-                      {clientOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Produit
-                    <select name="product_id" required defaultValue="">
-                      <option value="">Selectionner un produit</option>
-                      {activeCatalogProducts.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Lieu
-                    <select name="location_id" required defaultValue="">
-                      <option value="">Selectionner un lieu</option>
-                      {activeLocations.map((location) => (
-                        <option key={location.id} value={location.id}>
-                          {location.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Quantite
-                    <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
-                  </label>
-                  <label className="span-2">
-                    Note
-                    <input type="text" name="note" maxLength={2000} />
-                  </label>
-                  <label className="checkline">
-                    <input type="checkbox" name="should_bill" />
-                    A facturer
-                  </label>
-                  <div className="row span-4">
-                    <button type="submit">Ajouter demande admin</button>
-                  </div>
-                </form>
-
-                {catalogRequests.length === 0 ? (
-                  <p className="muted">Aucune demande produit.</p>
-                ) : (
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Source</th>
-                          <th>Eleve</th>
-                          <th>Produit / Lieu</th>
-                          <th>Qt</th>
-                          <th>Statut</th>
-                          <th>Facturation</th>
-                          <th>Stock</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {catalogRequests.map((request) => (
-                          <tr key={request.id}>
-                            <td>{new Date(request.requested_at).toLocaleString("fr-FR")}</td>
-                            <td>{catalogRequestSourceLabel(request.request_source)}</td>
-                            <td>{request.student_name}</td>
-                            <td>
-                              {request.product_title}
-                              <br />
-                              <small className="muted">{request.location_name}</small>
-                            </td>
-                            <td>{request.quantity}</td>
-                            <td>{catalogRequestStatusLabel(request.status)}</td>
-                            <td>{request.should_bill === null ? "-" : request.should_bill ? "Oui" : "Non"}</td>
-                            <td>
-                              Reel: {request.stock_real_quantity ?? "-"}
-                              <br />
-                              Estime: {request.stock_estimated_quantity ?? "-"}
-                            </td>
-                            <td>
-                              <div className="catalog-request-actions">
-                                {request.status === "PROCESSING" ? (
-                                  <>
-                                    <form action={reviewAdminCatalogRequestAction}>
-                                      <input type="hidden" name="request_id" value={request.id} />
-                                      <input type="hidden" name="decision" value="ACCEPT" />
-                                      <label className="checkline">
-                                        <input type="checkbox" name="should_bill" />
-                                        Facturer
-                                      </label>
-                                      <input type="text" name="note" maxLength={2000} placeholder="Note (optionnel)" />
-                                      <button type="submit">Accepter</button>
-                                    </form>
-                                    <form action={reviewAdminCatalogRequestAction}>
-                                      <input type="hidden" name="request_id" value={request.id} />
-                                      <input type="hidden" name="decision" value="REJECT" />
-                                      <input type="text" name="note" maxLength={2000} placeholder="Motif refus (optionnel)" />
-                                      <button type="submit" className="danger ghost">
-                                        Refuser
-                                      </button>
-                                    </form>
-                                  </>
-                                ) : null}
-                                {(request.status === "TO_DELIVER" || request.status === "INVOICE_TO_SEND") && (
-                                  <form action={deliverAdminCatalogRequestAction}>
-                                    <input type="hidden" name="request_id" value={request.id} />
-                                    <select name="delivered_by_user_id" defaultValue="">
-                                      <option value="">Remis par (utilisateur courant)</option>
-                                      {clients.map((client) => (
-                                        <option key={client.id} value={client.id}>
-                                          {`${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
-                                    <button type="submit">Marquer remis</button>
-                                  </form>
-                                )}
-                                {request.note ? <small className="muted">{request.note}</small> : null}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </section>
             </>
           ) : null}

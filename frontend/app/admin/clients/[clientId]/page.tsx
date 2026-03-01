@@ -3510,7 +3510,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               {!manualIsCashFlow && productCategories.length === 0 ? (
                 <p className="muted">
                   Aucune categorie disponible. Configurez-les dans{" "}
-                  <Link className="mode-link" href="/admin/config?section=products">
+                  <Link className="mode-link" href="/admin/products">
                     Les produits
                   </Link>
                   .
