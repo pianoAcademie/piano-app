@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+from app.models.product_catalog import ProductRequestSource, ProductRequestStatus
+
+
+class AdminCatalogCategoryOut(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminCatalogCategoryCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    active: bool = True
+
+
+class AdminCatalogCategoryUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    active: bool = True
+
+
+class AdminCatalogProductOut(BaseModel):
+    id: UUID
+    category_id: UUID | None
+    category_name: str | None
+    title: str
+    barcode: str | None
+    price_excl_vat: Decimal
+    price_incl_vat: Decimal
+    vat_rate: Decimal
+    stock_global_quantity: int
+    image_url: str | None
+    short_description: str | None
+    long_description: str | None
+    web_link: str | None
+    purchasable_online: bool
+    is_public: bool
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminCatalogProductCreateRequest(BaseModel):
+    category_id: UUID | None = None
+    title: str = Field(min_length=1, max_length=255)
+    barcode: str | None = Field(default=None, max_length=120)
+    price_excl_vat: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
+    price_incl_vat: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
+    vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
+    image_url: str | None = Field(default=None, max_length=4000)
+    short_description: str | None = Field(default=None, max_length=500)
+    long_description: str | None = Field(default=None, max_length=12000)
+    web_link: str | None = Field(default=None, max_length=4000)
+    purchasable_online: bool = False
+    is_public: bool = True
+    active: bool = True
+
+
+class AdminCatalogProductUpdateRequest(AdminCatalogProductCreateRequest):
+    pass
+
+
+class AdminCatalogKitItemIn(BaseModel):
+    product_id: UUID
+    quantity: int = Field(ge=1, le=1000)
+    display_order: int = Field(default=0, ge=0, le=10000)
+
+
+class AdminCatalogKitItemOut(BaseModel):
+    product_id: UUID
+    product_title: str
+    quantity: int
+    display_order: int
+    unit_price_incl_vat: Decimal
+    line_total_incl_vat: Decimal
+
+
+class AdminCatalogKitOut(BaseModel):
+    id: UUID
+    category_id: UUID | None
+    category_name: str | None
+    title: str
+    image_url: str | None
+    short_description: str | None
+    long_description: str | None
+    price_incl_vat: Decimal
+    vat_rate: Decimal
+    computed_price_incl_vat: Decimal
+    purchasable_online: bool
+    is_public: bool
+    active: bool
+    items: list[AdminCatalogKitItemOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminCatalogKitCreateRequest(BaseModel):
+    category_id: UUID | None = None
+    title: str = Field(min_length=1, max_length=255)
+    image_url: str | None = Field(default=None, max_length=4000)
+    short_description: str | None = Field(default=None, max_length=500)
+    long_description: str | None = Field(default=None, max_length=12000)
+    price_incl_vat: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
+    vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
+    purchasable_online: bool = False
+    is_public: bool = True
+    active: bool = True
+    items: list[AdminCatalogKitItemIn] = Field(default_factory=list)
+
+
+class AdminCatalogKitUpdateRequest(AdminCatalogKitCreateRequest):
+    pass
+
+
+class AdminCatalogStockOut(BaseModel):
+    product_id: UUID
+    product_title: str
+    location_id: UUID
+    location_name: str
+    inventory_quantity: int
+    inventory_date: date | None
+    real_quantity: int
+    estimated_quantity: int
+    inventory_updated_at: datetime
+    real_updated_at: datetime
+    estimated_updated_at: datetime
+    updated_at: datetime
+
+
+class AdminCatalogStockInventoryUpdateRequest(BaseModel):
+    inventory_quantity: int = Field(ge=0, le=1000000)
+    inventory_date: date | None = None
+
+
+class AdminCatalogRequestOut(BaseModel):
+    id: UUID
+    student_user_id: UUID
+    student_name: str
+    product_id: UUID
+    product_title: str
+    location_id: UUID
+    location_name: str
+    quantity: int
+    requested_by_user_id: UUID | None
+    requested_by_name: str | None
+    request_source: ProductRequestSource
+    status: ProductRequestStatus
+    requested_at: datetime
+    admin_reviewed_by_user_id: UUID | None
+    admin_reviewed_by_name: str | None
+    admin_reviewed_at: datetime | None
+    accepted: bool | None
+    should_bill: bool | None
+    manual_transaction_id: UUID | None
+    delivered_by_user_id: UUID | None
+    delivered_by_name: str | None
+    delivery_marked_by_user_id: UUID | None
+    delivery_marked_by_name: str | None
+    delivery_marked_at: datetime | None
+    note: str | None
+    stock_real_quantity: int | None
+    stock_estimated_quantity: int | None
+
+
+class AdminCatalogRequestCreateRequest(BaseModel):
+    student_user_id: UUID
+    product_id: UUID
+    location_id: UUID
+    quantity: int = Field(default=1, ge=1, le=1000)
+    should_bill: bool = False
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class AdminCatalogRequestReviewRequest(BaseModel):
+    accept: bool
+    should_bill: bool = False
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class AdminCatalogRequestDeliverRequest(BaseModel):
+    delivered_by_user_id: UUID | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class ProfessorCatalogStudentOut(BaseModel):
+    user_id: UUID
+    display_name: str
+
+
+class ProfessorCatalogRequestCreateRequest(BaseModel):
+    student_user_id: UUID
+    product_id: UUID
+    location_id: UUID
+    quantity: int = Field(default=1, ge=1, le=1000)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class ProfessorCatalogRequestDeliverRequest(BaseModel):
+    delivered_by_user_id: UUID | None = None
+    note: str | None = Field(default=None, max_length=2000)

@@ -938,6 +938,117 @@ export type AdminProductCategoriesOut = {
   updated_at: string | null;
 };
 
+export type AdminCatalogCategoryOut = {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminCatalogProductOut = {
+  id: string;
+  category_id: string | null;
+  category_name: string | null;
+  title: string;
+  barcode: string | null;
+  price_excl_vat: string;
+  price_incl_vat: string;
+  vat_rate: string;
+  stock_global_quantity: number;
+  image_url: string | null;
+  short_description: string | null;
+  long_description: string | null;
+  web_link: string | null;
+  purchasable_online: boolean;
+  is_public: boolean;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminCatalogKitItemOut = {
+  product_id: string;
+  product_title: string;
+  quantity: number;
+  display_order: number;
+  unit_price_incl_vat: string;
+  line_total_incl_vat: string;
+};
+
+export type AdminCatalogKitOut = {
+  id: string;
+  category_id: string | null;
+  category_name: string | null;
+  title: string;
+  image_url: string | null;
+  short_description: string | null;
+  long_description: string | null;
+  price_incl_vat: string;
+  vat_rate: string;
+  computed_price_incl_vat: string;
+  purchasable_online: boolean;
+  is_public: boolean;
+  active: boolean;
+  items: AdminCatalogKitItemOut[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminCatalogStockOut = {
+  product_id: string;
+  product_title: string;
+  location_id: string;
+  location_name: string;
+  inventory_quantity: number;
+  inventory_date: string | null;
+  real_quantity: number;
+  estimated_quantity: number;
+  inventory_updated_at: string;
+  real_updated_at: string;
+  estimated_updated_at: string;
+  updated_at: string;
+};
+
+export type AdminCatalogRequestStatus = "PROCESSING" | "REJECTED" | "INVOICE_TO_SEND" | "TO_DELIVER" | "DELIVERED" | string;
+export type AdminCatalogRequestSource = "ADMIN" | "PROFESSOR" | string;
+
+export type AdminCatalogRequestOut = {
+  id: string;
+  student_user_id: string;
+  student_name: string;
+  product_id: string;
+  product_title: string;
+  location_id: string;
+  location_name: string;
+  quantity: number;
+  requested_by_user_id: string | null;
+  requested_by_name: string | null;
+  request_source: AdminCatalogRequestSource;
+  status: AdminCatalogRequestStatus;
+  requested_at: string;
+  admin_reviewed_by_user_id: string | null;
+  admin_reviewed_by_name: string | null;
+  admin_reviewed_at: string | null;
+  accepted: boolean | null;
+  should_bill: boolean | null;
+  manual_transaction_id: string | null;
+  delivered_by_user_id: string | null;
+  delivered_by_name: string | null;
+  delivery_marked_by_user_id: string | null;
+  delivery_marked_by_name: string | null;
+  delivery_marked_at: string | null;
+  note: string | null;
+  stock_real_quantity: number | null;
+  stock_estimated_quantity: number | null;
+};
+
+export type ProfessorCatalogStudentOut = {
+  user_id: string;
+  display_name: string;
+};
+
 export type AdminPaymentProviderOut = {
   provider: "PAYPLUG" | "MOLLIE" | string;
   mode: "TEST" | "LIVE" | string;

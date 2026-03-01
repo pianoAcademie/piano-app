@@ -33,6 +33,16 @@ from app.models.plan import (
 )
 from app.models.pricing import CourseTypePrice, PlanPrice, VatRule
 from app.models.professor_access import ProfessorPermission
+from app.models.product_catalog import (
+    CatalogKit,
+    CatalogKitItem,
+    CatalogProduct,
+    ProductCategory,
+    ProductLocationStock,
+    ProductRequest,
+    ProductRequestSource,
+    ProductRequestStatus,
+)
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 
 __all__ = [
@@ -75,6 +85,14 @@ __all__ = [
     "ProfessorPermission",
     "ProfessorSessionMessage",
     "ProfessorSessionPayout",
+    "CatalogKit",
+    "CatalogKitItem",
+    "CatalogProduct",
+    "ProductCategory",
+    "ProductLocationStock",
+    "ProductRequest",
+    "ProductRequestSource",
+    "ProductRequestStatus",
     "MessageFormat",
     "ReminderStatus",
     "SessionStatus",

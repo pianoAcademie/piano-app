@@ -3363,3 +3363,51 @@ button.danger {
     overflow-x: auto;
   }
 }
+
+.catalog-kit-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.catalog-kit-grid-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 110px 110px;
+}
+
+.catalog-stock-form {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 100px 160px auto;
+  align-items: center;
+}
+
+.catalog-stock-negative td {
+  background: rgba(178, 53, 47, 0.14);
+}
+
+.catalog-stock-alert {
+  color: #b2352f;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.catalog-request-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.catalog-request-actions form {
+  display: grid;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .catalog-kit-grid-row {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-stock-form {
+    grid-template-columns: 1fr;
+  }
+}

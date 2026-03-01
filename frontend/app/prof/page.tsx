@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 
 import {
   logoutAction,
+  professorCreateCatalogRequestAction,
+  professorDeliverCatalogRequestAction,
   professorMarkSessionAbsentAction,
   professorSendSessionMessageAction,
   professorUpdateAttendanceAction,
@@ -13,7 +15,11 @@ import type {
   ProfessorAttendancePendingOut,
   ProfessorBalanceOut,
   ProfessorContractGridOut,
+  AdminCatalogProductOut,
+  AdminCatalogRequestOut,
+  LocationOut,
   ProfessorMeOut,
+  ProfessorCatalogStudentOut,
   ProfessorPayoutOut,
   ProfessorSessionMessageOut,
   ProfessorSessionOut,
@@ -21,7 +27,7 @@ import type {
 } from "../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type Tab = "overview" | "planning" | "finance" | "messages" | "profile";
+type Tab = "overview" | "planning" | "finance" | "messages" | "catalog" | "profile";
 type AgendaView = "week" | "day" | "agenda";
 
 type AgendaRange = {
@@ -40,7 +46,7 @@ function readParam(params: SearchParams, key: string): string {
 }
 
 function parseTab(value: string): Tab {
-  if (value === "planning" || value === "finance" || value === "messages" || value === "profile") {
+  if (value === "planning" || value === "finance" || value === "messages" || value === "catalog" || value === "profile") {
     return value;
   }
   return "overview";
@@ -281,6 +287,37 @@ function agendaEventStateClass(status: string): string {
   return "";
 }
 
+function productRequestStatusLabel(status: string): string {
+  const normalized = status.toUpperCase();
+  if (normalized === "PROCESSING") {
+    return "En cours de traitement";
+  }
+  if (normalized === "INVOICE_TO_SEND") {
+    return "Facture a envoyer";
+  }
+  if (normalized === "TO_DELIVER") {
+    return "A remettre";
+  }
+  if (normalized === "DELIVERED") {
+    return "Remis";
+  }
+  if (normalized === "REJECTED") {
+    return "Refuse";
+  }
+  return normalized;
+}
+
+function productRequestSourceLabel(source: string): string {
+  const normalized = source.toUpperCase();
+  if (normalized === "PROFESSOR") {
+    return "Professeur";
+  }
+  if (normalized === "ADMIN") {
+    return "Administration";
+  }
+  return normalized;
+}
+
 export default async function ProfessorPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("access_token")?.value;
   if (!token) {
@@ -310,7 +347,19 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   sessionsQuery.set("to", agendaRange.to.toISOString());
   sessionsQuery.set("include_students", "true");
 
-  const [profileResult, pendingResult, sessionsResult, balanceResult, payoutsResult, messagesResult, contractGridsResult] = await Promise.all([
+  const [
+    profileResult,
+    pendingResult,
+    sessionsResult,
+    balanceResult,
+    payoutsResult,
+    messagesResult,
+    contractGridsResult,
+    catalogStudentsResult,
+    catalogProductsResult,
+    catalogLocationsResult,
+    catalogRequestsResult,
+  ] = await Promise.all([
     backendRequest<ProfessorMeOut>("/api/v1/professors/me", {}, token),
     backendRequest<ProfessorAttendancePendingOut[]>("/api/v1/professors/me/attendance/pending?limit=200", {}, token),
     backendRequest<ProfessorSessionOut[]>(`/api/v1/professors/me/sessions?${sessionsQuery.toString()}`, {}, token),
@@ -318,6 +367,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     backendRequest<ProfessorPayoutOut[]>("/api/v1/professors/me/payouts?limit=200", {}, token),
     backendRequest<ProfessorSessionMessageOut[]>("/api/v1/professors/me/messages?limit=100", {}, token),
     backendRequest<ProfessorContractGridOut[]>("/api/v1/professors/me/contract-grids", {}, token),
+    backendRequest<ProfessorCatalogStudentOut[]>("/api/v1/professors/me/catalog/students", {}, token),
+    backendRequest<AdminCatalogProductOut[]>("/api/v1/professors/me/catalog/products", {}, token),
+    backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token),
+    backendRequest<AdminCatalogRequestOut[]>("/api/v1/professors/me/catalog/requests", {}, token),
   ]);
 
   if (!profileResult.ok) {
@@ -351,6 +404,13 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const pendingRows = pendingResult.ok ? pendingResult.data : [];
   const pendingCount = pendingRows.reduce((sum, row) => sum + row.pending_students_count, 0);
+  const catalogStudents = catalogStudentsResult.ok ? catalogStudentsResult.data : [];
+  const catalogProducts = catalogProductsResult.ok ? catalogProductsResult.data.filter((row) => row.active) : [];
+  const catalogLocations = catalogLocationsResult.ok ? catalogLocationsResult.data.filter((row) => row.active) : [];
+  const catalogRequests = catalogRequestsResult.ok ? catalogRequestsResult.data : [];
+  const catalogToDeliver = catalogRequests.filter(
+    (row) => row.status === "TO_DELIVER" || row.status === "INVOICE_TO_SEND",
+  );
 
   const todaySessions = sessionsByDay.get(todayKeyUtc()) ?? [];
   const canEditPlanning = profile.permissions.can_edit_planning;
@@ -360,6 +420,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const navTabs: Array<{ id: Tab; label: string; icon: string }> = [
     { id: "overview", label: "A traiter", icon: "🗂" },
     { id: "planning", label: "Planning", icon: "📅" },
+    { id: "catalog", label: "Produits", icon: "📦" },
     { id: "finance", label: "Solde", icon: "💶" },
     { id: "messages", label: "Messages", icon: "✉️" },
     { id: "profile", label: "Profil", icon: "👤" },
@@ -404,6 +465,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       {!balanceResult.ok ? <section className="flash-err">Erreur solde: {balanceResult.message}</section> : null}
       {!messagesResult.ok ? <section className="flash-err">Erreur messages: {messagesResult.message}</section> : null}
       {!contractGridsResult.ok ? <section className="flash-err">Erreur grille contractuelle: {contractGridsResult.message}</section> : null}
+      {!catalogStudentsResult.ok ? <section className="flash-err">Erreur eleves catalogue: {catalogStudentsResult.message}</section> : null}
+      {!catalogProductsResult.ok ? <section className="flash-err">Erreur produits catalogue: {catalogProductsResult.message}</section> : null}
+      {!catalogRequestsResult.ok ? <section className="flash-err">Erreur demandes produits: {catalogRequestsResult.message}</section> : null}
 
       <section className="grid cols-3 prof-kpi-grid">
         <article className="card">
@@ -594,6 +658,159 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               </article>
             ))}
           </div>
+        </section>
+      ) : null}
+
+      {currentTab === "catalog" ? (
+        <section className="grid cols-2">
+          <article className="card">
+            <h2>Signaler un besoin produit</h2>
+            <p className="muted">
+              Créez une demande pour un eleve. Le statut initial sera “En cours de traitement” puis validé/refusé par l administration.
+            </p>
+            <form action={professorCreateCatalogRequestAction} className="grid">
+              <input type="hidden" name="return_to" value={buildProfHref({ tab: "catalog", agendaView, agendaDate })} />
+              <label>
+                Eleve
+                <select name="student_user_id" required defaultValue="">
+                  <option value="">Selectionner un eleve</option>
+                  {catalogStudents.map((row) => (
+                    <option key={row.user_id} value={row.user_id}>
+                      {row.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Produit
+                <select name="product_id" required defaultValue="">
+                  <option value="">Selectionner un produit</option>
+                  {catalogProducts.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Lieu de remise
+                <select name="location_id" required defaultValue="">
+                  <option value="">Selectionner un lieu</option>
+                  {catalogLocations.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Quantite
+                <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
+              </label>
+              <label>
+                Note (optionnel)
+                <textarea name="note" rows={3} maxLength={2000} />
+              </label>
+              <div className="row">
+                <button type="submit">Envoyer la demande</button>
+              </div>
+            </form>
+          </article>
+
+          <article className="card">
+            <h2>Produits a remettre</h2>
+            {catalogToDeliver.length === 0 ? (
+              <p className="muted">Aucun produit en attente de remise.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Eleve</th>
+                      <th>Produit</th>
+                      <th>Lieu</th>
+                      <th>Qt</th>
+                      <th>Stock lieu</th>
+                      <th>Statut</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catalogToDeliver.map((row) => {
+                      const lowOrNegative = (row.stock_real_quantity ?? 0) < 0;
+                      return (
+                        <tr key={row.id} className={lowOrNegative ? "catalog-stock-negative" : ""}>
+                          <td>{formatDateTime(row.requested_at)}</td>
+                          <td>{row.student_name}</td>
+                          <td>{row.product_title}</td>
+                          <td>{row.location_name}</td>
+                          <td>{row.quantity}</td>
+                          <td>
+                            Reel: {row.stock_real_quantity ?? "-"}
+                            <br />
+                            Estime: {row.stock_estimated_quantity ?? "-"}
+                            {lowOrNegative ? <div className="catalog-stock-alert">⚠ Stock negatif</div> : null}
+                          </td>
+                          <td>{productRequestStatusLabel(row.status)}</td>
+                          <td>
+                            <form action={professorDeliverCatalogRequestAction} className="grid">
+                              <input type="hidden" name="request_id" value={row.id} />
+                              <input
+                                type="hidden"
+                                name="return_to"
+                                value={buildProfHref({ tab: "catalog", agendaView, agendaDate })}
+                              />
+                              <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
+                              <button type="submit">Marquer remis</button>
+                            </form>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+
+          <article className="card span-2">
+            <h2>Historique des demandes produits</h2>
+            {catalogRequests.length === 0 ? (
+              <p className="muted">Aucune demande.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Source</th>
+                      <th>Eleve</th>
+                      <th>Produit</th>
+                      <th>Lieu</th>
+                      <th>Qt</th>
+                      <th>Statut</th>
+                      <th>Facturation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catalogRequests.map((row) => (
+                      <tr key={`${row.id}-history`}>
+                        <td>{formatDateTime(row.requested_at)}</td>
+                        <td>{productRequestSourceLabel(row.request_source)}</td>
+                        <td>{row.student_name}</td>
+                        <td>{row.product_title}</td>
+                        <td>{row.location_name}</td>
+                        <td>{row.quantity}</td>
+                        <td>{productRequestStatusLabel(row.status)}</td>
+                        <td>{row.should_bill === null ? "-" : row.should_bill ? "Oui" : "Non"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
         </section>
       ) : null}
 

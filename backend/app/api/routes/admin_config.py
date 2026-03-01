@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CourseType, CreditType, DeliveryMode
 from app.models.ops import AppSetting
+from app.models.product_catalog import ProductCategory
 from app.models.plan import (
     Plan,
     PlanCreditGrant,
@@ -1332,9 +1333,23 @@ def get_admin_product_categories(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminProductCategoriesOut:
+    categories_rows = db.scalars(
+        select(ProductCategory)
+        .where(ProductCategory.active.is_(True))
+        .order_by(ProductCategory.name.asc())
+    ).all()
+    if categories_rows:
+        return AdminProductCategoriesOut(
+            categories=[row.name for row in categories_rows],
+            updated_at=max((row.updated_at for row in categories_rows), default=None),
+        )
+
     setting = _get_setting(db, PRODUCT_CATEGORIES_SETTING_KEY)
     categories = _parse_product_categories(setting.value) if setting is not None else []
-    return AdminProductCategoriesOut(categories=categories, updated_at=setting.updated_at if setting is not None else None)
+    return AdminProductCategoriesOut(
+        categories=categories,
+        updated_at=setting.updated_at if setting is not None else None,
+    )
 
 
 @router.put("/config/product-categories", response_model=AdminProductCategoriesOut)
@@ -1344,10 +1359,32 @@ def update_admin_product_categories(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminProductCategoriesOut:
     categories = _normalize_product_categories(payload.categories)
+    now = _utcnow()
+    existing_rows = db.scalars(select(ProductCategory).order_by(ProductCategory.created_at.asc())).all()
+    existing_by_key = {row.name.casefold(): row for row in existing_rows}
+    target_keys = {name.casefold() for name in categories}
+
+    for name in categories:
+        key = name.casefold()
+        row = existing_by_key.get(key)
+        if row is None:
+            db.add(ProductCategory(name=name, active=True, updated_at=now))
+            continue
+        row.name = name
+        row.active = True
+        row.updated_at = now
+        db.add(row)
+
+    for row in existing_rows:
+        if row.name.casefold() in target_keys:
+            continue
+        row.active = False
+        row.updated_at = now
+        db.add(row)
+
     _set_setting(db, PRODUCT_CATEGORIES_SETTING_KEY, "\n".join(categories))
     db.commit()
-    setting = _get_setting(db, PRODUCT_CATEGORIES_SETTING_KEY)
-    return AdminProductCategoriesOut(categories=categories, updated_at=setting.updated_at if setting is not None else _utcnow())
+    return AdminProductCategoriesOut(categories=categories, updated_at=now)
 
 
 @router.get("/config/payment-provider", response_model=AdminPaymentProviderOut)

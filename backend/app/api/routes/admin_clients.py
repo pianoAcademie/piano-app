@@ -35,6 +35,7 @@ from app.models.plan import (
     PlanPriceTaxMode,
     SubscriptionStatus,
 )
+from app.models.product_catalog import ProductCategory
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.admin import (
     AdminClientBulkAction,
@@ -1060,6 +1061,14 @@ def _parse_product_categories(raw: str) -> list[str]:
 
 
 def _configured_product_categories(db: Session) -> list[str]:
+    category_rows = db.scalars(
+        select(ProductCategory)
+        .where(ProductCategory.active.is_(True))
+        .order_by(ProductCategory.name.asc())
+    ).all()
+    if category_rows:
+        return [row.name for row in category_rows if row.name]
+
     setting = db.scalar(select(AppSetting).where(AppSetting.key == PRODUCT_CATEGORIES_SETTING_KEY))
     if setting is None:
         return []

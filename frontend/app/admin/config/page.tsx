@@ -5,11 +5,24 @@ import { redirect } from "next/navigation";
 import ColorHexInput from "../../../components/color-hex-input";
 import RichMessageEditor from "../../../components/rich-message-editor";
 import {
+  createAdminCatalogCategoryAction,
+  createAdminCatalogKitAction,
+  createAdminCatalogProductAction,
+  createAdminCatalogRequestAction,
   createAdminActivityAction,
   createAdminCreditTypeAction,
+  deleteAdminCatalogCategoryAction,
+  deleteAdminCatalogKitAction,
+  deleteAdminCatalogProductAction,
   deleteAdminCreditTypeAction,
+  deliverAdminCatalogRequestAction,
   disableAdminFormulaAction,
   duplicateAdminFormulaAction,
+  reviewAdminCatalogRequestAction,
+  updateAdminCatalogCategoryAction,
+  updateAdminCatalogInventoryAction,
+  updateAdminCatalogKitAction,
+  updateAdminCatalogProductAction,
   updateAdminActivityAction,
   updateAdminCreditTypeAction,
   updateAdminConfigAccountAction,
@@ -28,6 +41,11 @@ import {
 import { backendRequest } from "../../../lib/backend";
 import type {
   AdminActivityOut,
+  AdminCatalogCategoryOut,
+  AdminCatalogKitOut,
+  AdminCatalogProductOut,
+  AdminCatalogRequestOut,
+  AdminCatalogStockOut,
   AdminCreditTypeOut,
   AdminConfigAccountOut,
   AdminFormulaOut,
@@ -38,8 +56,10 @@ import type {
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
+  AdminClientOut,
   AdminProfessorDefaultGridOut,
   AdminSubscriptionSettingsOut,
+  LocationOut,
 } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -256,6 +276,48 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
   }
 }
 
+function yesNoLabel(value: boolean): string {
+  return value ? "Oui" : "Non";
+}
+
+function catalogRequestStatusLabel(status: string): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "PROCESSING") {
+    return "En cours";
+  }
+  if (normalized === "REJECTED") {
+    return "Refusee";
+  }
+  if (normalized === "INVOICE_TO_SEND") {
+    return "Facture a envoyer";
+  }
+  if (normalized === "TO_DELIVER") {
+    return "A remettre";
+  }
+  if (normalized === "DELIVERED") {
+    return "Remis";
+  }
+  return normalized || "-";
+}
+
+function catalogRequestSourceLabel(source: string): string {
+  const normalized = source.trim().toUpperCase();
+  if (normalized === "PROFESSOR") {
+    return "Professeur";
+  }
+  if (normalized === "ADMIN") {
+    return "Administration";
+  }
+  return normalized || "-";
+}
+
+function dateInputValue(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+  return value.slice(0, 10);
+}
+
 export default async function AdminConfigPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("access_token")?.value;
   if (!token) {
@@ -287,6 +349,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     formulasResult,
     activitiesResult,
     creditTypesResult,
+    catalogCategoriesResult,
+    catalogProductsResult,
+    catalogKitsResult,
+    catalogStocksResult,
+    catalogRequestsResult,
+    locationsResult,
+    clientsResult,
   ] =
     await Promise.all([
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
@@ -312,6 +381,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminFormulaOut[]>(formulasEndpoint, {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminCreditTypeOut[]>("/api/v1/admin/credit-types?include_inactive=true", {}, token),
+    backendRequest<AdminCatalogCategoryOut[]>("/api/v1/admin/config/catalog/categories?include_inactive=true", {}, token),
+    backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
+    backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
+    backendRequest<AdminCatalogStockOut[]>("/api/v1/admin/config/catalog/stocks", {}, token),
+    backendRequest<AdminCatalogRequestOut[]>("/api/v1/admin/catalog/requests", {}, token),
+    backendRequest<LocationOut[]>("/api/v1/admin/locations", {}, token),
+    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
   ]);
 
   const loadErrors: string[] = [];
@@ -411,6 +487,59 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
         loadErrors.push(`Types de credit: ${creditTypesResult.message}`);
         return [] as AdminCreditTypeOut[];
       })();
+  const catalogCategories = catalogCategoriesResult.ok
+    ? catalogCategoriesResult.data
+    : (() => {
+        loadErrors.push(`Catalogue categories: ${catalogCategoriesResult.message}`);
+        return [] as AdminCatalogCategoryOut[];
+      })();
+  const catalogProducts = catalogProductsResult.ok
+    ? catalogProductsResult.data
+    : (() => {
+        loadErrors.push(`Catalogue produits: ${catalogProductsResult.message}`);
+        return [] as AdminCatalogProductOut[];
+      })();
+  const catalogKits = catalogKitsResult.ok
+    ? catalogKitsResult.data
+    : (() => {
+        loadErrors.push(`Catalogue kits: ${catalogKitsResult.message}`);
+        return [] as AdminCatalogKitOut[];
+      })();
+  const catalogStocks = catalogStocksResult.ok
+    ? catalogStocksResult.data
+    : (() => {
+        loadErrors.push(`Catalogue stocks: ${catalogStocksResult.message}`);
+        return [] as AdminCatalogStockOut[];
+      })();
+  const catalogRequests = catalogRequestsResult.ok
+    ? catalogRequestsResult.data
+    : (() => {
+        loadErrors.push(`Catalogue demandes: ${catalogRequestsResult.message}`);
+        return [] as AdminCatalogRequestOut[];
+      })();
+  const locations = locationsResult.ok
+    ? locationsResult.data
+    : (() => {
+        loadErrors.push(`Lieux: ${locationsResult.message}`);
+        return [] as LocationOut[];
+      })();
+  const clients = clientsResult.ok
+    ? clientsResult.data
+    : (() => {
+        loadErrors.push(`Clients: ${clientsResult.message}`);
+        return [] as AdminClientOut[];
+      })();
+  const activeCatalogCategories = catalogCategories.filter((row) => row.active);
+  const activeCatalogProducts = catalogProducts.filter((row) => row.active);
+  const activeLocations = locations.filter((row) => row.active);
+  const clientOptions = clients
+    .filter((row) => row.role === "client" && row.client_status !== "ARCHIVED")
+    .map((row) => ({
+      id: row.id,
+      label: `${`${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || row.email} (${row.client_kind})`,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, "fr"));
+
   const accountAllowedCurrencies = account?.allowed_currencies?.length ? account.allowed_currencies : ["EUR", "USD"];
   const accountDefaultCurrency =
     account && accountAllowedCurrencies.includes(account.default_currency) ? account.default_currency : accountAllowedCurrencies[0] ?? "EUR";
@@ -961,45 +1090,697 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           ) : null}
 
           {section === "products" ? (
-            <section className="card">
-              <h3>Categories produits et facturation</h3>
-              <p className="muted">
-                Ces categories sont utilisees dans l ajout manuel des montants factures et des rabais.
-              </p>
-              {productCategories.updated_at ? (
-                <p className="muted">Derniere mise a jour: {new Date(productCategories.updated_at).toLocaleString("fr-FR")}</p>
-              ) : null}
+            <>
+              <section className="card">
+                <h3>Categories produits</h3>
+                <p className="muted">Ces categories sont utilisees dans le catalogue, les demandes produits et la facturation manuelle.</p>
+                <form action={createAdminCatalogCategoryAction} className="grid cols-4 config-form-grid">
+                  <label>
+                    Nom
+                    <input type="text" name="name" required maxLength={120} placeholder="Partitions" />
+                  </label>
+                  <label className="span-2">
+                    Description
+                    <input type="text" name="description" maxLength={2000} placeholder="Categorie produits" />
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="active" defaultChecked />
+                    Active
+                  </label>
+                  <div className="row span-4">
+                    <button type="submit">Ajouter categorie</button>
+                  </div>
+                </form>
 
-              <form action={updateAdminConfigProductCategoriesAction} className="grid config-form-grid">
-                <label>
-                  Categories (une par ligne, ou separees par virgules/points-virgules)
-                  <textarea
-                    name="categories"
-                    rows={10}
-                    defaultValue={productCategories.categories.join("\n")}
-                    placeholder={"Lecon\nFrais de dossier\nLocation salle"}
-                  />
-                </label>
-                <div className="row">
-                  <button type="submit">Enregistrer</button>
-                </div>
-              </form>
-
-              <div className="config-products-preview">
-                <strong>Categories actives ({productCategories.categories.length})</strong>
-                {productCategories.categories.length === 0 ? (
+                {catalogCategories.length === 0 ? (
                   <p className="muted">Aucune categorie configuree.</p>
                 ) : (
-                  <div className="config-products-chip-list">
-                    {productCategories.categories.map((category) => (
-                      <span key={category} className="badge">
-                        {category}
-                      </span>
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Nom</th>
+                          <th>Description</th>
+                          <th>Statut</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {catalogCategories.map((category) => (
+                          <tr key={category.id}>
+                            <td>{category.name}</td>
+                            <td>{category.description || "-"}</td>
+                            <td>{category.active ? "Active" : "Inactive"}</td>
+                            <td>
+                              <div className="row">
+                                <details>
+                                  <summary className="mode-link">Modifier</summary>
+                                  <form action={updateAdminCatalogCategoryAction} className="grid top-gap-sm">
+                                    <input type="hidden" name="category_id" value={category.id} />
+                                    <label>
+                                      Nom
+                                      <input type="text" name="name" defaultValue={category.name} required maxLength={120} />
+                                    </label>
+                                    <label>
+                                      Description
+                                      <input type="text" name="description" defaultValue={category.description || ""} maxLength={2000} />
+                                    </label>
+                                    <label className="checkline">
+                                      <input type="checkbox" name="active" defaultChecked={category.active} />
+                                      Active
+                                    </label>
+                                    <div className="row">
+                                      <button type="submit">Sauvegarder</button>
+                                    </div>
+                                  </form>
+                                </details>
+                                <form action={deleteAdminCatalogCategoryAction}>
+                                  <input type="hidden" name="category_id" value={category.id} />
+                                  <button type="submit" className="danger ghost">
+                                    Supprimer
+                                  </button>
+                                </form>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div className="config-products-preview">
+                  <strong>Synchronisation categories legacy ({productCategories.categories.length})</strong>
+                  {productCategories.updated_at ? (
+                    <p className="muted">Derniere mise a jour: {new Date(productCategories.updated_at).toLocaleString("fr-FR")}</p>
+                  ) : null}
+                  <form action={updateAdminConfigProductCategoriesAction} className="grid config-form-grid">
+                    <label>
+                      Categories (une par ligne, ou separees par virgules/points-virgules)
+                      <textarea
+                        name="categories"
+                        rows={6}
+                        defaultValue={productCategories.categories.join("\n")}
+                        placeholder={"Partitions\nSolfege\nConcert"}
+                      />
+                    </label>
+                    <div className="row">
+                      <button type="submit">Synchroniser</button>
+                    </div>
+                  </form>
+                </div>
+              </section>
+
+              <section className="card">
+                <h3>Produits catalogue</h3>
+                <form action={createAdminCatalogProductAction} className="grid cols-4 config-form-grid">
+                  <label className="span-2">
+                    Titre
+                    <input type="text" name="title" required maxLength={255} placeholder="Partition Niveau 1" />
+                  </label>
+                  <label>
+                    Categorie
+                    <select name="category_id" defaultValue="">
+                      <option value="">-</option>
+                      {activeCatalogCategories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Code-barres
+                    <input type="text" name="barcode" maxLength={120} />
+                  </label>
+                  <label>
+                    Tarif HT
+                    <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue="0.00" required />
+                  </label>
+                  <label>
+                    Tarif TTC
+                    <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
+                  </label>
+                  <label>
+                    TVA (%)
+                    <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" required />
+                  </label>
+                  <label>
+                    Lien web
+                    <input type="url" name="web_link" />
+                  </label>
+                  <label className="span-2">
+                    Visuel (URL)
+                    <input type="url" name="image_url" />
+                  </label>
+                  <label className="span-2">
+                    Description courte
+                    <input type="text" name="short_description" maxLength={500} />
+                  </label>
+                  <label className="span-4">
+                    Description longue
+                    <textarea name="long_description" rows={3} maxLength={12000} />
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="purchasable_online" />
+                    Achetable en ligne
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="is_public" defaultChecked />
+                    Public (visible client)
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="active" defaultChecked />
+                    Actif
+                  </label>
+                  <div className="row span-4">
+                    <button type="submit">Ajouter produit</button>
+                  </div>
+                </form>
+
+                {catalogProducts.length === 0 ? (
+                  <p className="muted">Aucun produit catalogue.</p>
+                ) : (
+                  <div className="list">
+                    {catalogProducts.map((product) => (
+                      <article key={product.id} className="item">
+                        <div className="row spread">
+                          <div>
+                            <strong>{product.title}</strong>
+                            <p className="muted">
+                              {product.category_name || "Sans categorie"} | TTC {formatMoney(product.price_incl_vat, "EUR")} | Stock global{" "}
+                              {product.stock_global_quantity}
+                            </p>
+                          </div>
+                          <div className="row">
+                            <span className="badge">Online: {yesNoLabel(product.purchasable_online)}</span>
+                            <span className="badge">Public: {yesNoLabel(product.is_public)}</span>
+                            <span className="badge">Actif: {yesNoLabel(product.active)}</span>
+                          </div>
+                        </div>
+                        <details>
+                          <summary className="mode-link">Modifier le produit</summary>
+                          <form action={updateAdminCatalogProductAction} className="grid cols-4 config-form-grid top-gap-sm">
+                            <input type="hidden" name="product_id" value={product.id} />
+                            <label className="span-2">
+                              Titre
+                              <input type="text" name="title" defaultValue={product.title} required maxLength={255} />
+                            </label>
+                            <label>
+                              Categorie
+                              <select name="category_id" defaultValue={product.category_id ?? ""}>
+                                <option value="">-</option>
+                                {catalogCategories.map((category) => (
+                                  <option key={category.id} value={category.id}>
+                                    {category.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Code-barres
+                              <input type="text" name="barcode" defaultValue={product.barcode || ""} maxLength={120} />
+                            </label>
+                            <label>
+                              Tarif HT
+                              <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue={product.price_excl_vat} required />
+                            </label>
+                            <label>
+                              Tarif TTC
+                              <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue={product.price_incl_vat} required />
+                            </label>
+                            <label>
+                              TVA (%)
+                              <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue={product.vat_rate} required />
+                            </label>
+                            <label>
+                              Lien web
+                              <input type="url" name="web_link" defaultValue={product.web_link || ""} />
+                            </label>
+                            <label className="span-2">
+                              Visuel (URL)
+                              <input type="url" name="image_url" defaultValue={product.image_url || ""} />
+                            </label>
+                            <label className="span-2">
+                              Description courte
+                              <input type="text" name="short_description" defaultValue={product.short_description || ""} maxLength={500} />
+                            </label>
+                            <label className="span-4">
+                              Description longue
+                              <textarea name="long_description" rows={3} maxLength={12000} defaultValue={product.long_description || ""} />
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="purchasable_online" defaultChecked={product.purchasable_online} />
+                              Achetable en ligne
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="is_public" defaultChecked={product.is_public} />
+                              Public
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="active" defaultChecked={product.active} />
+                              Actif
+                            </label>
+                            <div className="row span-4">
+                              <button type="submit">Enregistrer</button>
+                            </div>
+                          </form>
+                          <form action={deleteAdminCatalogProductAction} className="row top-gap-sm">
+                            <input type="hidden" name="product_id" value={product.id} />
+                            <button type="submit" className="danger">
+                              Supprimer
+                            </button>
+                          </form>
+                        </details>
+                      </article>
                     ))}
                   </div>
                 )}
-              </div>
-            </section>
+              </section>
+
+              <section className="card">
+                <h3>Kits</h3>
+                <p className="muted">
+                  Un kit assemble plusieurs produits. Le prix calcule est derive des composants (prix TTC des produits * quantites).
+                </p>
+
+                <form action={createAdminCatalogKitAction} className="grid cols-4 config-form-grid">
+                  <label className="span-2">
+                    Titre
+                    <input type="text" name="title" required maxLength={255} />
+                  </label>
+                  <label>
+                    Categorie
+                    <select name="category_id" defaultValue="">
+                      <option value="">-</option>
+                      {activeCatalogCategories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Tarif TTC
+                    <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
+                  </label>
+                  <label>
+                    TVA (%)
+                    <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" required />
+                  </label>
+                  <label>
+                    Visuel (URL)
+                    <input type="url" name="image_url" />
+                  </label>
+                  <label className="span-2">
+                    Description courte
+                    <input type="text" name="short_description" maxLength={500} />
+                  </label>
+                  <label className="span-4">
+                    Description longue
+                    <textarea name="long_description" rows={3} />
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="purchasable_online" />
+                    Achetable en ligne
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="is_public" defaultChecked />
+                    Public
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="active" defaultChecked />
+                    Actif
+                  </label>
+                  <div className="span-4">
+                    <strong>Composants du kit</strong>
+                    <div className="catalog-kit-grid">
+                      {Array.from({ length: 6 }).map((_, index) => (
+                        <div key={`new-kit-item-${index}`} className="catalog-kit-grid-row">
+                          <select name={`item_product_id_${index}`} defaultValue="">
+                            <option value="">Produit #{index + 1}</option>
+                            {activeCatalogProducts.map((product) => (
+                              <option key={product.id} value={product.id}>
+                                {product.title}
+                              </option>
+                            ))}
+                          </select>
+                          <input type="number" name={`item_quantity_${index}`} min={1} step={1} defaultValue={1} />
+                          <input type="number" name={`item_order_${index}`} min={0} step={1} defaultValue={index} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="row span-4">
+                    <button type="submit">Ajouter kit</button>
+                  </div>
+                </form>
+
+                {catalogKits.length === 0 ? (
+                  <p className="muted">Aucun kit configure.</p>
+                ) : (
+                  <div className="list">
+                    {catalogKits.map((kit) => (
+                      <article key={kit.id} className="item">
+                        <div className="row spread">
+                          <div>
+                            <strong>{kit.title}</strong>
+                            <p className="muted">
+                              Categorie: {kit.category_name || "-"} | Prix saisi {formatMoney(kit.price_incl_vat, "EUR")} | Prix calcule{" "}
+                              {formatMoney(kit.computed_price_incl_vat, "EUR")}
+                            </p>
+                          </div>
+                          <div className="row">
+                            <span className="badge">Items: {kit.items.length}</span>
+                            <span className="badge">Public: {yesNoLabel(kit.is_public)}</span>
+                            <span className="badge">Online: {yesNoLabel(kit.purchasable_online)}</span>
+                          </div>
+                        </div>
+                        {kit.items.length > 0 ? (
+                          <div className="table-wrap">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Produit</th>
+                                  <th>Qt</th>
+                                  <th>PU TTC</th>
+                                  <th>Total TTC</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {kit.items.map((item) => (
+                                  <tr key={`${kit.id}-${item.product_id}`}>
+                                    <td>{item.product_title}</td>
+                                    <td>{item.quantity}</td>
+                                    <td>{formatMoney(item.unit_price_incl_vat, "EUR")}</td>
+                                    <td>{formatMoney(item.line_total_incl_vat, "EUR")}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : null}
+
+                        <details>
+                          <summary className="mode-link">Modifier le kit</summary>
+                          <form action={updateAdminCatalogKitAction} className="grid cols-4 config-form-grid top-gap-sm">
+                            <input type="hidden" name="kit_id" value={kit.id} />
+                            <label className="span-2">
+                              Titre
+                              <input type="text" name="title" defaultValue={kit.title} required maxLength={255} />
+                            </label>
+                            <label>
+                              Categorie
+                              <select name="category_id" defaultValue={kit.category_id ?? ""}>
+                                <option value="">-</option>
+                                {catalogCategories.map((category) => (
+                                  <option key={category.id} value={category.id}>
+                                    {category.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Tarif TTC
+                              <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue={kit.price_incl_vat} required />
+                            </label>
+                            <label>
+                              TVA (%)
+                              <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue={kit.vat_rate} required />
+                            </label>
+                            <label>
+                              Visuel (URL)
+                              <input type="url" name="image_url" defaultValue={kit.image_url || ""} />
+                            </label>
+                            <label className="span-2">
+                              Description courte
+                              <input type="text" name="short_description" maxLength={500} defaultValue={kit.short_description || ""} />
+                            </label>
+                            <label className="span-4">
+                              Description longue
+                              <textarea name="long_description" rows={3} defaultValue={kit.long_description || ""} />
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="purchasable_online" defaultChecked={kit.purchasable_online} />
+                              Achetable en ligne
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="is_public" defaultChecked={kit.is_public} />
+                              Public
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="active" defaultChecked={kit.active} />
+                              Actif
+                            </label>
+                            <div className="span-4">
+                              <strong>Composants du kit</strong>
+                              <div className="catalog-kit-grid">
+                                {Array.from({ length: 6 }).map((_, index) => {
+                                  const item = kit.items[index];
+                                  return (
+                                    <div key={`${kit.id}-item-${index}`} className="catalog-kit-grid-row">
+                                      <select name={`item_product_id_${index}`} defaultValue={item?.product_id ?? ""}>
+                                        <option value="">Produit #{index + 1}</option>
+                                        {catalogProducts.map((product) => (
+                                          <option key={product.id} value={product.id}>
+                                            {product.title}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="number"
+                                        name={`item_quantity_${index}`}
+                                        min={1}
+                                        step={1}
+                                        defaultValue={item?.quantity ?? 1}
+                                      />
+                                      <input
+                                        type="number"
+                                        name={`item_order_${index}`}
+                                        min={0}
+                                        step={1}
+                                        defaultValue={item?.display_order ?? index}
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <div className="row span-4">
+                              <button type="submit">Enregistrer</button>
+                            </div>
+                          </form>
+                          <form action={deleteAdminCatalogKitAction} className="row top-gap-sm">
+                            <input type="hidden" name="kit_id" value={kit.id} />
+                            <button type="submit" className="danger">
+                              Supprimer
+                            </button>
+                          </form>
+                        </details>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="card">
+                <h3>Stocks par local</h3>
+                {catalogStocks.length === 0 ? (
+                  <p className="muted">Aucun stock initialise (creez d abord un produit).</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Produit</th>
+                          <th>Lieu</th>
+                          <th>Inventaire</th>
+                          <th>Date inventaire</th>
+                          <th>Stock reel</th>
+                          <th>Stock estime</th>
+                          <th>Mise a jour inventaire</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {catalogStocks.map((stock) => (
+                          <tr
+                            key={`${stock.product_id}-${stock.location_id}`}
+                            className={stock.real_quantity < 0 || stock.estimated_quantity < 0 ? "catalog-stock-negative" : ""}
+                          >
+                            <td>{stock.product_title}</td>
+                            <td>{stock.location_name}</td>
+                            <td>{stock.inventory_quantity}</td>
+                            <td>{stock.inventory_date || "-"}</td>
+                            <td>{stock.real_quantity}</td>
+                            <td>{stock.estimated_quantity}</td>
+                            <td>
+                              <form action={updateAdminCatalogInventoryAction} className="catalog-stock-form">
+                                <input type="hidden" name="product_id" value={stock.product_id} />
+                                <input type="hidden" name="location_id" value={stock.location_id} />
+                                <input
+                                  type="number"
+                                  name="inventory_quantity"
+                                  min={0}
+                                  step={1}
+                                  defaultValue={stock.inventory_quantity}
+                                  required
+                                />
+                                <input type="date" name="inventory_date" defaultValue={dateInputValue(stock.inventory_date)} />
+                                <button type="submit">Reset inventaire</button>
+                              </form>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="card">
+                <h3>Demandes produits eleves</h3>
+                <p className="muted">
+                  Creation admin: la demande est acceptee immediatement (facturee ou non), puis passe a remettre a l eleve.
+                </p>
+
+                <form action={createAdminCatalogRequestAction} className="grid cols-4 config-form-grid">
+                  <label>
+                    Eleve
+                    <select name="student_user_id" required defaultValue="">
+                      <option value="">Selectionner un eleve</option>
+                      {clientOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Produit
+                    <select name="product_id" required defaultValue="">
+                      <option value="">Selectionner un produit</option>
+                      {activeCatalogProducts.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Lieu
+                    <select name="location_id" required defaultValue="">
+                      <option value="">Selectionner un lieu</option>
+                      {activeLocations.map((location) => (
+                        <option key={location.id} value={location.id}>
+                          {location.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Quantite
+                    <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
+                  </label>
+                  <label className="span-2">
+                    Note
+                    <input type="text" name="note" maxLength={2000} />
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="should_bill" />
+                    A facturer
+                  </label>
+                  <div className="row span-4">
+                    <button type="submit">Ajouter demande admin</button>
+                  </div>
+                </form>
+
+                {catalogRequests.length === 0 ? (
+                  <p className="muted">Aucune demande produit.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Source</th>
+                          <th>Eleve</th>
+                          <th>Produit / Lieu</th>
+                          <th>Qt</th>
+                          <th>Statut</th>
+                          <th>Facturation</th>
+                          <th>Stock</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {catalogRequests.map((request) => (
+                          <tr key={request.id}>
+                            <td>{new Date(request.requested_at).toLocaleString("fr-FR")}</td>
+                            <td>{catalogRequestSourceLabel(request.request_source)}</td>
+                            <td>{request.student_name}</td>
+                            <td>
+                              {request.product_title}
+                              <br />
+                              <small className="muted">{request.location_name}</small>
+                            </td>
+                            <td>{request.quantity}</td>
+                            <td>{catalogRequestStatusLabel(request.status)}</td>
+                            <td>{request.should_bill === null ? "-" : request.should_bill ? "Oui" : "Non"}</td>
+                            <td>
+                              Reel: {request.stock_real_quantity ?? "-"}
+                              <br />
+                              Estime: {request.stock_estimated_quantity ?? "-"}
+                            </td>
+                            <td>
+                              <div className="catalog-request-actions">
+                                {request.status === "PROCESSING" ? (
+                                  <>
+                                    <form action={reviewAdminCatalogRequestAction}>
+                                      <input type="hidden" name="request_id" value={request.id} />
+                                      <input type="hidden" name="decision" value="ACCEPT" />
+                                      <label className="checkline">
+                                        <input type="checkbox" name="should_bill" />
+                                        Facturer
+                                      </label>
+                                      <input type="text" name="note" maxLength={2000} placeholder="Note (optionnel)" />
+                                      <button type="submit">Accepter</button>
+                                    </form>
+                                    <form action={reviewAdminCatalogRequestAction}>
+                                      <input type="hidden" name="request_id" value={request.id} />
+                                      <input type="hidden" name="decision" value="REJECT" />
+                                      <input type="text" name="note" maxLength={2000} placeholder="Motif refus (optionnel)" />
+                                      <button type="submit" className="danger ghost">
+                                        Refuser
+                                      </button>
+                                    </form>
+                                  </>
+                                ) : null}
+                                {(request.status === "TO_DELIVER" || request.status === "INVOICE_TO_SEND") && (
+                                  <form action={deliverAdminCatalogRequestAction}>
+                                    <input type="hidden" name="request_id" value={request.id} />
+                                    <select name="delivered_by_user_id" defaultValue="">
+                                      <option value="">Remis par (utilisateur courant)</option>
+                                      {clients.map((client) => (
+                                        <option key={client.id} value={client.id}>
+                                          {`${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
+                                    <button type="submit">Marquer remis</button>
+                                  </form>
+                                )}
+                                {request.note ? <small className="muted">{request.note}</small> : null}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </>
           ) : null}
 
           {section === "params-messaging" ? (
