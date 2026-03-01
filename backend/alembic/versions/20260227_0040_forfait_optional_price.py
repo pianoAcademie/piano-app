@@ -28,7 +28,7 @@ def upgrade() -> None:
         CHECK (
             (kind = 'PACK' AND credits_count IS NOT NULL AND credits_count > 0 AND pack_validity_months IS NOT NULL AND pack_validity_months BETWEEN 1 AND 12)
             OR (kind = 'SUBSCRIPTION' AND monthly_price_excl_vat IS NOT NULL AND currency_code IS NOT NULL)
-            OR (kind = 'FORFAIT')
+            OR (kind <> 'PACK' AND kind <> 'SUBSCRIPTION')
         )
         """
     )
