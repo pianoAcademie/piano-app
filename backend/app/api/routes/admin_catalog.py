@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -329,12 +329,16 @@ def update_admin_catalog_category(
     )
 
 
-@router.delete("/config/catalog/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/config/catalog/categories/{category_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
 def delete_admin_catalog_category(
     category_id: UUID,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> None:
+) -> Response:
     row = _require_category(db, category_id)
     linked_product = db.scalar(select(CatalogProduct.id).where(CatalogProduct.category_id == row.id).limit(1))
     linked_kit = db.scalar(select(CatalogKit.id).where(CatalogKit.category_id == row.id).limit(1))
@@ -345,6 +349,7 @@ def delete_admin_catalog_category(
         )
     db.delete(row)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/config/catalog/products", response_model=list[AdminCatalogProductOut])
@@ -431,12 +436,16 @@ def update_admin_catalog_product(
     return _product_out(row, category_name_by_id)
 
 
-@router.delete("/config/catalog/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/config/catalog/products/{product_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
 def delete_admin_catalog_product(
     product_id: UUID,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> None:
+) -> Response:
     row = _require_product(db, product_id)
     linked_request = db.scalar(select(ProductRequest.id).where(ProductRequest.product_id == row.id).limit(1))
     linked_kit_item = db.scalar(select(CatalogKitItem.id).where(CatalogKitItem.product_id == row.id).limit(1))
@@ -446,6 +455,7 @@ def delete_admin_catalog_product(
     db.execute(delete(ProductLocationStock).where(ProductLocationStock.product_id == row.id))
     db.delete(row)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/config/catalog/kits", response_model=list[AdminCatalogKitOut])
@@ -579,16 +589,21 @@ def update_admin_catalog_kit(
     )
 
 
-@router.delete("/config/catalog/kits/{kit_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/config/catalog/kits/{kit_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
 def delete_admin_catalog_kit(
     kit_id: UUID,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> None:
+) -> Response:
     row = _require_kit(db, kit_id)
     db.execute(delete(CatalogKitItem).where(CatalogKitItem.kit_id == row.id))
     db.delete(row)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/config/catalog/stocks", response_model=list[AdminCatalogStockOut])
