@@ -19,6 +19,8 @@ import type {
   AdminPlanningActivitiesOut,
   AdminCatalogCategoryOut,
   AdminCatalogProductOut,
+  AdminCatalogReorderProductOut,
+  AdminCatalogStockTransferOut,
   AdminCatalogKitOut,
   AdminCatalogRequestOut,
   AdminCatalogStockOut,
@@ -966,6 +968,9 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+  const recipientTarget = String(formData.get("recipient_target") ?? "GROUP").trim();
+  const targetUserId = recipientTarget.startsWith("STUDENT:") ? parseUuid(recipientTarget.slice("STUDENT:".length)) : null;
+  const recipientScope = targetUserId ? "STUDENT" : "GROUP";
 
   if (!sessionId || !subject || !body) {
     redirect(appendQueryMessage(returnTo, "error", "Sujet et message obligatoires"));
@@ -979,6 +984,8 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
         subject,
         body,
         body_format: bodyFormat,
+        recipient_scope: recipientScope,
+        target_user_id: targetUserId,
       }),
     },
     token,
@@ -4582,20 +4589,26 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
 
   const title = String(formData.get("title") ?? "").trim();
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
+  const primaryLocationId = parseUuid(String(formData.get("primary_location_id") ?? ""));
   const priceExclVat = parseNonNegativeDecimal(String(formData.get("price_excl_vat") ?? ""));
   const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
-  if (!title || priceExclVat === null || priceInclVat === null || vatRate === null) {
+  const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
+  const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
+  if (!title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
     redirect(appendQueryMessage(returnTo, "error", "Produit invalide (champs obligatoires)"));
   }
 
   const payload = {
     category_id: categoryId,
+    primary_location_id: primaryLocationId,
     title,
     barcode: optionalField(formData, "barcode"),
     price_excl_vat: priceExclVat,
     price_incl_vat: priceInclVat,
     vat_rate: vatRate,
+    reserve_stock: reserveStock,
+    reorder_status: reorderStatus,
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
@@ -4632,20 +4645,26 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
   const title = String(formData.get("title") ?? "").trim();
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
+  const primaryLocationId = parseUuid(String(formData.get("primary_location_id") ?? ""));
   const priceExclVat = parseNonNegativeDecimal(String(formData.get("price_excl_vat") ?? ""));
   const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
-  if (!productId || !title || priceExclVat === null || priceInclVat === null || vatRate === null) {
+  const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
+  const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
+  if (!productId || !title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
     redirect(appendQueryMessage(returnTo, "error", "Produit invalide"));
   }
 
   const payload = {
     category_id: categoryId,
+    primary_location_id: primaryLocationId,
     title,
     barcode: optionalField(formData, "barcode"),
     price_excl_vat: priceExclVat,
     price_incl_vat: priceInclVat,
     vat_rate: vatRate,
+    reserve_stock: reserveStock,
+    reorder_status: reorderStatus,
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
@@ -4851,6 +4870,132 @@ export async function updateAdminCatalogInventoryAction(formData: FormData): Pro
   redirect(
     appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Stock inventaire mis a jour"),
   );
+}
+
+export async function updateAdminCatalogReorderStatusAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/products");
+  const productId = parseUuid(String(formData.get("product_id") ?? ""));
+  const reorderStatus = String(formData.get("reorder_status") ?? "").trim().toUpperCase();
+  if (!productId || !reorderStatus) {
+    redirect(appendQueryMessage(returnTo, "error", "Mise a jour statut commande invalide"));
+  }
+
+  const result = await backendRequest<AdminCatalogReorderProductOut>(
+    `/api/v1/admin/config/catalog/reorder-products/${productId}/status`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reorder_status: reorderStatus }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Statut commande mis a jour"));
+}
+
+export async function createAdminCatalogTransferAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/products");
+  const productId = parseUuid(String(formData.get("product_id") ?? ""));
+  const sourceLocationId = parseUuid(String(formData.get("source_location_id") ?? ""));
+  const targetLocationId = parseUuid(String(formData.get("target_location_id") ?? ""));
+  const quantity = parsePositiveInt(String(formData.get("quantity") ?? "1"));
+  const plannedTransferDate = parseDateOnly(String(formData.get("planned_transfer_date") ?? ""));
+  const assignedToUserId = parseUuid(String(formData.get("assigned_to_user_id") ?? ""));
+  const note = optionalField(formData, "note");
+  if (!productId || !sourceLocationId || !targetLocationId || quantity === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Demande de transfert invalide"));
+  }
+  const result = await backendRequest<AdminCatalogStockTransferOut>(
+    "/api/v1/admin/config/catalog/transfers",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        product_id: productId,
+        source_location_id: sourceLocationId,
+        target_location_id: targetLocationId,
+        quantity,
+        planned_transfer_date: plannedTransferDate,
+        assigned_to_user_id: assignedToUserId,
+        note,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Transfert cree"));
+}
+
+export async function completeAdminCatalogTransferAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/products");
+  const transferId = parseUuid(String(formData.get("transfer_id") ?? ""));
+  const completedTransferDate = parseDateOnly(String(formData.get("completed_transfer_date") ?? ""));
+  const note = optionalField(formData, "note");
+  if (!transferId) {
+    redirect(appendQueryMessage(returnTo, "error", "Transfert invalide"));
+  }
+  const result = await backendRequest<AdminCatalogStockTransferOut>(
+    `/api/v1/admin/config/catalog/transfers/${transferId}/complete`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        completed_transfer_date: completedTransferDate,
+        note,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Transfert marque fait"));
+}
+
+export async function cancelAdminCatalogTransferAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/products");
+  const transferId = parseUuid(String(formData.get("transfer_id") ?? ""));
+  const note = optionalField(formData, "note");
+  if (!transferId) {
+    redirect(appendQueryMessage(returnTo, "error", "Transfert invalide"));
+  }
+  const result = await backendRequest<AdminCatalogStockTransferOut>(
+    `/api/v1/admin/config/catalog/transfers/${transferId}/cancel`,
+    {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Transfert annule"));
 }
 
 export async function createAdminCatalogRequestAction(formData: FormData): Promise<void> {

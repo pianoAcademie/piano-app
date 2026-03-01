@@ -574,7 +574,7 @@ def list_my_contract_grids(
 
 
 @router.get("/professors/me/messages", response_model=list[ProfessorSessionMessageOut])
-def list_my_group_messages(
+def list_my_session_messages(
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.PROF)),
@@ -602,7 +602,7 @@ def list_my_group_messages(
 
 
 @router.post("/professors/me/sessions/{session_id}/messages", response_model=ProfessorSessionMessageSendOut)
-def send_session_group_message(
+def send_session_message(
     session_id: UUID,
     payload: ProfessorSessionMessageCreateRequest,
     db: Session = Depends(get_db),
@@ -610,7 +610,7 @@ def send_session_group_message(
 ) -> ProfessorSessionMessageSendOut:
     professor = _resolve_professor_profile(db, current_user=current_user)
     permissions = _resolve_professor_permissions(db, professor_id=professor.id)
-    if not (permissions["can_message_clients"] or permissions["can_edit_planning"]):
+    if not permissions["can_message_clients"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Messaging permission denied")
 
     session_obj = _require_professor_session(db, professor_id=professor.id, session_id=session_id)
@@ -619,24 +619,54 @@ def send_session_group_message(
     if not subject or not body:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Subject and body are required")
 
-    recipient_rows = db.scalars(
-        select(User.email)
-        .join(Booking, Booking.user_id == User.id)
-        .where(
-            Booking.session_id == session_id,
-            Booking.status.in_(
-                (
-                    BookingStatus.BOOKED,
-                    BookingStatus.WAITLISTED,
-                    BookingStatus.ATTENDED,
-                    BookingStatus.NO_SHOW,
-                    BookingStatus.EXCUSED_ABSENCE,
-                )
-            ),
-            User.email_opt_in.is_(True),
-        )
-    ).all()
-    recipients = sorted({email.strip().lower() for email in recipient_rows if email and email.strip()})
+    booking_statuses = (
+        BookingStatus.BOOKED,
+        BookingStatus.WAITLISTED,
+        BookingStatus.ATTENDED,
+        BookingStatus.NO_SHOW,
+        BookingStatus.EXCUSED_ABSENCE,
+    )
+    requested_scope = (payload.recipient_scope or "GROUP").strip().upper()
+    is_individual = requested_scope in {"STUDENT", "INDIVIDUAL", "INDIVIDUAL_STUDENT"} or payload.target_user_id is not None
+
+    recipients: list[str] = []
+    target_display_name: str | None = None
+    if is_individual:
+        if payload.target_user_id is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Target student is required")
+
+        target = db.execute(
+            select(User)
+            .join(Booking, Booking.user_id == User.id)
+            .where(
+                Booking.session_id == session_id,
+                Booking.user_id == payload.target_user_id,
+                Booking.status.in_(booking_statuses),
+                User.email_opt_in.is_(True),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if target is None or not target.email or not target.email.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Target student not found or no email opt-in",
+            )
+        recipients = [target.email.strip().lower()]
+        target_display_name = _display_name(target)
+    else:
+        recipient_rows = db.scalars(
+            select(User.email)
+            .join(Booking, Booking.user_id == User.id)
+            .where(
+                Booking.session_id == session_id,
+                Booking.status.in_(booking_statuses),
+                User.email_opt_in.is_(True),
+            )
+        ).all()
+        recipients = sorted({email.strip().lower() for email in recipient_rows if email and email.strip()})
+
+    if not recipients:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No valid recipient found")
 
     for email in recipients:
         send_session_operation_email(
@@ -649,10 +679,11 @@ def send_session_group_message(
         )
 
     now = _utcnow()
+    logged_subject = subject if target_display_name is None else f"{subject} (eleve: {target_display_name})"
     message_log = ProfessorSessionMessage(
         session_id=session_obj.id,
         professor_id=professor.id,
-        subject=subject,
+        subject=logged_subject,
         body=body,
         body_format=payload.body_format,
         recipient_count=len(recipients),

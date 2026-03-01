@@ -11,6 +11,8 @@ import {
   professorUpdateAttendanceAction,
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
+import AutoSubmitSelect from "../../components/auto-submit-select";
+import RichMessageEditor from "../../components/rich-message-editor";
 import type {
   ProfessorAttendancePendingOut,
   ProfessorBalanceOut,
@@ -53,10 +55,10 @@ function parseTab(value: string): Tab {
 }
 
 function parseAgendaView(value: string): AgendaView {
-  if (value === "day" || value === "agenda") {
+  if (value === "day" || value === "agenda" || value === "week") {
     return value;
   }
-  return "week";
+  return "agenda";
 }
 
 function isDateKey(value: string): boolean {
@@ -244,6 +246,7 @@ function buildProfHref(params: {
   agendaView: AgendaView;
   agendaDate: string;
   sessionId?: string | null;
+  messageId?: string | null;
 }): string {
   const query = new URLSearchParams();
   query.set("tab", params.tab);
@@ -252,11 +255,37 @@ function buildProfHref(params: {
   if (params.sessionId) {
     query.set("session_id", params.sessionId);
   }
+  if (params.messageId) {
+    query.set("message_id", params.messageId);
+  }
   return `/prof?${query.toString()}`;
 }
 
 function stripHtml(raw: string): string {
   return raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function shiftAgendaDate(view: AgendaView, agendaDate: string, direction: -1 | 1): string {
+  const focusDate = keyToUtcDate(agendaDate);
+  if (view === "week") {
+    return utcDateToKey(addUtcDays(focusDate, direction * 7));
+  }
+  if (view === "day") {
+    return utcDateToKey(addUtcDays(focusDate, direction));
+  }
+  return utcDateToKey(addUtcDays(focusDate, direction * 14));
+}
+
+function parseMessageSubject(subject: string): { cleanedSubject: string; targetLabel: string | null } {
+  const match = subject.match(/\s*\(eleve:\s*(.+)\)\s*$/i);
+  if (!match) {
+    return { cleanedSubject: subject, targetLabel: null };
+  }
+  const cleanedSubject = subject.replace(/\s*\(eleve:\s*(.+)\)\s*$/i, "").trim();
+  return {
+    cleanedSubject: cleanedSubject || subject,
+    targetLabel: match[1]?.trim() || null,
+  };
 }
 
 function pendingAttendanceCount(session: ProfessorSessionOut): number {
@@ -401,6 +430,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const selectedSessionId = readParam(searchParams, "session_id");
   const selectedSession = selectedSessionId ? sessions.find((session) => session.id === selectedSessionId) ?? null : null;
+  const selectedMessageId = readParam(searchParams, "message_id");
 
   const pendingRows = pendingResult.ok ? pendingResult.data : [];
   const pendingCount = pendingRows.reduce((sum, row) => sum + row.pending_students_count, 0);
@@ -414,8 +444,15 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const todaySessions = sessionsByDay.get(todayKeyUtc()) ?? [];
   const canEditPlanning = profile.permissions.can_edit_planning;
-  const canMessageGroup = profile.permissions.can_message_clients || canEditPlanning;
+  const canMessageStudents = profile.permissions.can_message_clients;
   const maxVisibleSessionsByDay = 4;
+  const previousAgendaDate = shiftAgendaDate(agendaView, agendaDate, -1);
+  const nextAgendaDate = shiftAgendaDate(agendaView, agendaDate, 1);
+  const previousAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: previousAgendaDate });
+  const nextAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: nextAgendaDate });
+  const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc() });
+  const archivedMessages = messagesResult.ok ? messagesResult.data : [];
+  const selectedMessage = selectedMessageId ? archivedMessages.find((message) => message.id === selectedMessageId) ?? null : null;
 
   const navTabs: Array<{ id: Tab; label: string; icon: string }> = [
     { id: "overview", label: "A traiter", icon: "🗂" },
@@ -483,7 +520,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         <article className="card">
           <h3>Mes droits</h3>
           <p className="prof-kpi-value">{canEditPlanning ? "Edition" : "Lecture"}</p>
-          <small className="muted">{canMessageGroup ? "Message groupe autorise" : "Message groupe non autorise"}</small>
+          <small className="muted">{canMessageStudents ? "Messages eleves autorises" : "Messages eleves non autorises"}</small>
         </article>
       </section>
 
@@ -532,7 +569,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       {currentTab === "planning" ? (
         <section className="card">
           <div className="row spread">
-            <h2>Mon planning</h2>
+            <h2>Mes prochains cours</h2>
             <span className="badge">{agendaRange.title}</span>
           </div>
 
@@ -540,23 +577,36 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             <input type="hidden" name="tab" value="planning" />
             <label>
               Vue
-              <select name="agenda_view" defaultValue={agendaView}>
-                <option value="day">Jour</option>
-                <option value="week">Semaine</option>
-                <option value="agenda">Agenda (14 jours)</option>
-              </select>
+              <AutoSubmitSelect
+                name="agenda_view"
+                defaultValue={agendaView}
+                options={[
+                  { value: "agenda", label: "Prochains cours (14 jours)" },
+                  { value: "week", label: "Semaine" },
+                  { value: "day", label: "Jour" },
+                ]}
+              />
             </label>
             <label>
               Date de reference (UTC)
               <input type="date" name="agenda_date" defaultValue={agendaDate} />
             </label>
             <div className="row">
-              <button type="submit">Appliquer</button>
-              <Link className="reset-link" href={buildProfHref({ tab: "planning", agendaView: "week", agendaDate: todayKeyUtc() })}>
+              <button type="submit" className="ghost">Aller</button>
+              <Link className="reset-link" href={todayAgendaHref}>
                 Aujourd hui
               </Link>
             </div>
+            <div className="row">
+              <Link className="mode-link" href={previousAgendaHref}>
+                ←
+              </Link>
+              <Link className="mode-link" href={nextAgendaHref}>
+                →
+              </Link>
+            </div>
           </form>
+          <p className="muted">La vue change immediatement a la selection. Navigation semaine par semaine disponible via les fleches.</p>
 
           <div className={`agenda-grid coach-agenda-grid agenda-grid-${agendaView === "agenda" ? "month" : agendaView}`}>
             {agendaDays.map((day) => (
@@ -719,6 +769,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
           <article className="card">
             <h2>Produits a remettre</h2>
+            <p className="muted">Quand le produit est donne a l eleve, utilisez le bouton "Marquer remis".</p>
             {catalogToDeliver.length === 0 ? (
               <p className="muted">Aucun produit en attente de remise.</p>
             ) : (
@@ -731,14 +782,14 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                       <th>Produit</th>
                       <th>Lieu</th>
                       <th>Qt</th>
-                      <th>Stock lieu</th>
+                      <th>Stock</th>
                       <th>Statut</th>
                       <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {catalogToDeliver.map((row) => {
-                      const lowOrNegative = (row.stock_real_quantity ?? 0) < 0;
+                      const lowOrNegative = (row.stock_estimated_quantity ?? 0) < 0;
                       return (
                         <tr key={row.id} className={lowOrNegative ? "catalog-stock-negative" : ""}>
                           <td>{formatDateTime(row.requested_at)}</td>
@@ -747,9 +798,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                           <td>{row.location_name}</td>
                           <td>{row.quantity}</td>
                           <td>
-                            Reel: {row.stock_real_quantity ?? "-"}
-                            <br />
-                            Estime: {row.stock_estimated_quantity ?? "-"}
+                            {row.stock_estimated_quantity ?? "-"}
                             {lowOrNegative ? <div className="catalog-stock-alert">⚠ Stock negatif</div> : null}
                           </td>
                           <td>{productRequestStatusLabel(row.status)}</td>
@@ -854,7 +903,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             )}
           </article>
           <article className="card">
-            <h2>Paiements recus</h2>
+            <h2>Suivi des paiements</h2>
             {payoutsResult.ok && payoutsResult.data.length > 0 ? (
               <div className="table-wrap">
                 <table className="data-table">
@@ -870,7 +919,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                     {payoutsResult.data.map((row) => (
                       <tr key={row.payout_id}>
                         <td>
-                          {row.session_title}
+                          {row.course_type_name} - {row.location_name}
                           <br />
                           <small className="muted">{formatDateTime(row.session_start_at_utc)}</small>
                         </td>
@@ -946,21 +995,33 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
       {currentTab === "messages" ? (
         <section className="card">
-          <h2>Messages envoyes aux groupes</h2>
-          {messagesResult.ok && messagesResult.data.length > 0 ? (
+          <h2>Messages envoyes (groupe + eleve)</h2>
+          {messagesResult.ok && archivedMessages.length > 0 ? (
             <div className="list">
-              {messagesResult.data.map((message) => (
-                <article key={message.id} className="item">
-                  <div className="row spread">
-                    <strong>{message.subject}</strong>
-                    <span className="badge">{message.recipient_count} destinataire(s)</span>
-                  </div>
-                  <p className="muted">
-                    Envoye le {formatDateTime(message.sent_at)} | Format: {message.body_format}
-                  </p>
-                  <p>{message.body_format === "HTML" ? stripHtml(message.body) : message.body}</p>
-                </article>
-              ))}
+              {archivedMessages.map((message) => {
+                const parsedSubject = parseMessageSubject(message.subject);
+                return (
+                  <a
+                    key={message.id}
+                    href={buildProfHref({ tab: "messages", agendaView, agendaDate, messageId: message.id })}
+                    className="item mode-link"
+                  >
+                    <div className="row spread">
+                      <strong>{parsedSubject.cleanedSubject}</strong>
+                      <div className="row">
+                        <span className="badge">
+                          {parsedSubject.targetLabel ? `Eleve: ${parsedSubject.targetLabel}` : "Groupe"}
+                        </span>
+                        <span className="badge">{message.recipient_count} destinataire(s)</span>
+                      </div>
+                    </div>
+                    <p className="muted">
+                      Envoye le {formatDateTime(message.sent_at)} | Format: {message.body_format}
+                    </p>
+                    <p>{message.body_format === "HTML" ? stripHtml(message.body) : message.body}</p>
+                  </a>
+                );
+              })}
             </div>
           ) : (
             <p className="muted">Aucun message archive.</p>
@@ -1123,9 +1184,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               )}
             </section>
 
-            {canMessageGroup ? (
+            {canMessageStudents ? (
               <section className="modal-card">
-                <h4>Envoyer un message au groupe</h4>
+                <h4>Envoyer un message (groupe ou eleve)</h4>
                 <form action={professorSendSessionMessageAction} className="grid">
                   <input type="hidden" name="session_id" value={selectedSession.id} />
                   <input
@@ -1138,15 +1199,26 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                     <input type="text" name="subject" required maxLength={255} />
                   </label>
                   <label>
-                    Format
-                    <select name="body_format" defaultValue="TEXT">
-                      <option value="TEXT">Texte</option>
-                      <option value="HTML">HTML</option>
+                    Destinataire
+                    <select name="recipient_target" defaultValue="GROUP">
+                      <option value="GROUP">Tous les eleves du creneau</option>
+                      {selectedSession.students.map((student) => (
+                        <option key={`msg-${student.user_id}`} value={`STUDENT:${student.user_id}`}>
+                          {student.display_name}
+                        </option>
+                      ))}
                     </select>
                   </label>
                   <label>
                     Message
-                    <textarea name="body" rows={4} required />
+                    <RichMessageEditor
+                      name="body"
+                      formatName="body_format"
+                      rows={8}
+                      maxLength={12000}
+                      defaultFormat="HTML"
+                      placeholder="Rédiger votre message..."
+                    />
                   </label>
                   <div className="row">
                     <button type="submit">Envoyer</button>
@@ -1191,6 +1263,39 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 <p className="muted">Le creneau sera annule et les credits restores si applicable.</p>
               </section>
             ) : null}
+          </article>
+        </section>
+      ) : null}
+
+      {currentTab === "messages" && selectedMessage ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact">
+            <Link
+              className="modal-close-x"
+              href={buildProfHref({ tab: "messages", agendaView, agendaDate })}
+              aria-label="Fermer"
+            >
+              ×
+            </Link>
+            {(() => {
+              const parsedSubject = parseMessageSubject(selectedMessage.subject);
+              return (
+                <>
+                  <h3 className="modal-title">{parsedSubject.cleanedSubject}</h3>
+                  <p className="muted">
+                    Envoye le {formatDateTime(selectedMessage.sent_at)} |{" "}
+                    {parsedSubject.targetLabel ? `Eleve: ${parsedSubject.targetLabel}` : "Message groupe"}
+                  </p>
+                </>
+              );
+            })()}
+            {selectedMessage.body_format === "HTML" ? (
+              <article className="item" dangerouslySetInnerHTML={{ __html: selectedMessage.body }} />
+            ) : (
+              <article className="item">
+                <p style={{ whiteSpace: "pre-wrap" }}>{selectedMessage.body}</p>
+              </article>
+            )}
           </article>
         </section>
       ) : null}

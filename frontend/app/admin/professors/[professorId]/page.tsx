@@ -310,6 +310,7 @@ const PERMISSION_SECTIONS: Array<{ title: string; keys: Array<{ key: string; lab
   {
     title: "Gerer les etudiants et les parents",
     keys: [
+      { key: "can_message_clients", label: "Envoyer des messages aux eleves (groupe et individuel)" },
       { key: "can_view_student_parent_addresses_phones", label: "Afficher les adresses et numeros de telephone d'etudiant/parent" },
       { key: "can_view_student_parent_emails", label: "Afficher les courriels d'etudiant/parent" },
       { key: "can_view_student_attachments", label: "Afficher/telecharger les pieces jointes du profil d'etudiant" },

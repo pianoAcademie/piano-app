@@ -134,6 +134,8 @@ class ProfessorSessionMessageCreateRequest(BaseModel):
     subject: str
     body: str
     body_format: MessageFormat = MessageFormat.TEXT
+    recipient_scope: str = "GROUP"
+    target_user_id: UUID | None = None
 
 
 class ProfessorSessionMessageOut(BaseModel):

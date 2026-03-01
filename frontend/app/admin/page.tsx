@@ -585,8 +585,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         return [] as AdminClientOut[];
       })();
 
-  const focusedLocationId = rawLocation || selectedLocationIdsFromQuery[0] || (locations[0]?.id ?? "");
-  const selectedLocationIds = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : focusedLocationId ? [focusedLocationId] : [];
+  const focusedLocationId = rawLocation || selectedLocationIdsFromQuery[0] || "";
+  const selectedLocationIds = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : rawLocation ? [rawLocation] : [];
   const focusedLocation = locations.find((location) => location.id === focusedLocationId) ?? null;
 
   const courseTypesEndpoint = focusedLocationId
@@ -679,7 +679,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       ? `Planning - Multi lieux (${selectedLocationLabels.length})`
       : selectedLocationLabels[0]
         ? `Planning - ${selectedLocationLabels[0]}`
-        : `Planning - ${focusedLocation?.name ?? "Aucun lieu"}`;
+        : focusedLocation?.name
+          ? `Planning - ${focusedLocation.name}`
+          : "Planning - Tous les lieux";
 
   const filteredSessions = sessions
     .filter((session) => {
@@ -860,8 +862,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             <AutoSubmitSelect
               name="location_id"
               defaultValue={focusedLocationId}
-              required
-              options={locations.map((row) => ({ value: row.id, label: row.name }))}
+              options={[{ value: "", label: "-- Tous les lieux --" }, ...locations.map((row) => ({ value: row.id, label: row.name }))]}
             />
           </label>
 
@@ -1050,7 +1051,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                   <label>
                     Lieu
-                    <select name="location_id" defaultValue={focusedLocationId} required>
+                    <select name="location_id" defaultValue={focusedLocationId || (locations[0]?.id ?? "")} required>
                       {locations.map((row) => (
                         <option key={row.id} value={row.id}>
                           {row.name}
