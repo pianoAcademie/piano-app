@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -9,7 +9,16 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Location
 from app.models.client_record import ClientManualTransaction
-from app.models.product_catalog import CatalogProduct, ProductCategory, ProductLocationStock, ProductRequest, ProductRequestStatus
+from app.models.product_catalog import (
+    CatalogProduct,
+    ProductCategory,
+    ProductLocationStock,
+    ProductReorderStatus,
+    ProductRequest,
+    ProductRequestStatus,
+    ProductStockTransfer,
+    ProductTransferStatus,
+)
 from app.models.user import User
 from app.services.family_billing import resolve_billing_profile
 
@@ -114,8 +123,137 @@ def recalculate_product_global_stock(db: Session, *, product_id: UUID) -> None:
         )
     )
     product.stock_global_quantity = int(total or 0)
+    if int(product.stock_global_quantity or 0) < int(product.reserve_stock or 0):
+        if product.reorder_status in {ProductReorderStatus.NORMAL, ProductReorderStatus.RECEIVED}:
+            product.reorder_status = ProductReorderStatus.TO_ORDER
+            product.reorder_status_updated_at = utcnow()
+    elif product.reorder_status == ProductReorderStatus.TO_ORDER:
+        product.reorder_status = ProductReorderStatus.NORMAL
+        product.reorder_status_updated_at = utcnow()
     product.updated_at = utcnow()
     db.add(product)
+
+
+def create_stock_transfer(
+    db: Session,
+    *,
+    product_id: UUID,
+    source_location_id: UUID,
+    target_location_id: UUID,
+    quantity: int,
+    planned_transfer_date: date | None,
+    assigned_to_user_id: UUID | None,
+    requested_by_user_id: UUID | None,
+    note: str | None,
+) -> ProductStockTransfer:
+    if source_location_id == target_location_id:
+        raise ValueError("Source and target locations must be distinct")
+
+    qty = max(int(quantity), 1)
+    now = utcnow()
+    source_stock = get_or_create_stock_row(db, product_id=product_id, location_id=source_location_id, lock=True)
+    target_stock = get_or_create_stock_row(db, product_id=product_id, location_id=target_location_id, lock=True)
+
+    source_stock.estimated_quantity = int(source_stock.estimated_quantity or 0) - qty
+    source_stock.estimated_updated_at = now
+    source_stock.updated_at = now
+    db.add(source_stock)
+
+    target_stock.estimated_quantity = int(target_stock.estimated_quantity or 0) + qty
+    target_stock.estimated_updated_at = now
+    target_stock.updated_at = now
+    db.add(target_stock)
+
+    transfer = ProductStockTransfer(
+        product_id=product_id,
+        source_location_id=source_location_id,
+        target_location_id=target_location_id,
+        quantity=qty,
+        planned_transfer_date=planned_transfer_date,
+        assigned_to_user_id=assigned_to_user_id,
+        requested_by_user_id=requested_by_user_id,
+        status=ProductTransferStatus.PENDING,
+        note=normalize_optional(note),
+        updated_at=now,
+    )
+    db.add(transfer)
+    db.flush()
+
+    recalculate_product_global_stock(db, product_id=product_id)
+    return transfer
+
+
+def mark_stock_transfer_done(
+    db: Session,
+    *,
+    transfer: ProductStockTransfer,
+    completed_by_user_id: UUID | None,
+    completed_transfer_date: date | None,
+    note: str | None,
+) -> ProductStockTransfer:
+    if transfer.status != ProductTransferStatus.PENDING:
+        return transfer
+
+    qty = int(transfer.quantity or 0)
+    now = utcnow()
+    source_stock = get_or_create_stock_row(db, product_id=transfer.product_id, location_id=transfer.source_location_id, lock=True)
+    target_stock = get_or_create_stock_row(db, product_id=transfer.product_id, location_id=transfer.target_location_id, lock=True)
+
+    source_stock.real_quantity = int(source_stock.real_quantity or 0) - qty
+    source_stock.real_updated_at = now
+    source_stock.updated_at = now
+    db.add(source_stock)
+
+    target_stock.real_quantity = int(target_stock.real_quantity or 0) + qty
+    target_stock.real_updated_at = now
+    target_stock.updated_at = now
+    db.add(target_stock)
+
+    transfer.status = ProductTransferStatus.DONE
+    transfer.completed_by_user_id = completed_by_user_id
+    transfer.completed_at = now
+    transfer.completed_transfer_date = completed_transfer_date or now.date()
+    if note is not None:
+        transfer.note = normalize_optional(note)
+    transfer.updated_at = now
+    db.add(transfer)
+
+    recalculate_product_global_stock(db, product_id=transfer.product_id)
+    return transfer
+
+
+def cancel_stock_transfer(
+    db: Session,
+    *,
+    transfer: ProductStockTransfer,
+    note: str | None,
+) -> ProductStockTransfer:
+    if transfer.status != ProductTransferStatus.PENDING:
+        return transfer
+
+    qty = int(transfer.quantity or 0)
+    now = utcnow()
+    source_stock = get_or_create_stock_row(db, product_id=transfer.product_id, location_id=transfer.source_location_id, lock=True)
+    target_stock = get_or_create_stock_row(db, product_id=transfer.product_id, location_id=transfer.target_location_id, lock=True)
+
+    source_stock.estimated_quantity = int(source_stock.estimated_quantity or 0) + qty
+    source_stock.estimated_updated_at = now
+    source_stock.updated_at = now
+    db.add(source_stock)
+
+    target_stock.estimated_quantity = int(target_stock.estimated_quantity or 0) - qty
+    target_stock.estimated_updated_at = now
+    target_stock.updated_at = now
+    db.add(target_stock)
+
+    transfer.status = ProductTransferStatus.CANCELLED
+    if note is not None:
+        transfer.note = normalize_optional(note)
+    transfer.updated_at = now
+    db.add(transfer)
+
+    recalculate_product_global_stock(db, product_id=transfer.product_id)
+    return transfer
 
 
 def create_billable_product_transaction(
@@ -178,13 +316,42 @@ def apply_request_acceptance(
     if product is None or student is None:
         raise ValueError("Product or student not found")
 
+    requested_quantity = max(int(request_row.quantity or 0), 1)
     stock = get_or_create_stock_row(
         db,
         product_id=request_row.product_id,
         location_id=request_row.location_id,
         lock=True,
     )
-    stock.estimated_quantity = int(stock.estimated_quantity or 0) - int(request_row.quantity or 0)
+    available_estimated = int(stock.estimated_quantity or 0)
+    shortage = max(requested_quantity - available_estimated, 0)
+
+    # If destination stock is insufficient, create a pending transfer from the product's
+    # primary location (when configured) so operations can track replenishment by location.
+    if (
+        shortage > 0
+        and product.primary_location_id is not None
+        and product.primary_location_id != request_row.location_id
+    ):
+        create_stock_transfer(
+            db,
+            product_id=request_row.product_id,
+            source_location_id=product.primary_location_id,
+            target_location_id=request_row.location_id,
+            quantity=shortage,
+            planned_transfer_date=now.date(),
+            assigned_to_user_id=actor_user_id,
+            requested_by_user_id=actor_user_id,
+            note=f"Transfert auto pour demande produit {request_row.id}",
+        )
+        stock = get_or_create_stock_row(
+            db,
+            product_id=request_row.product_id,
+            location_id=request_row.location_id,
+            lock=True,
+        )
+
+    stock.estimated_quantity = int(stock.estimated_quantity or 0) - requested_quantity
     stock.estimated_updated_at = now
     stock.updated_at = now
     db.add(stock)
@@ -195,7 +362,7 @@ def apply_request_acceptance(
             db,
             student=student,
             product=product,
-            quantity=int(request_row.quantity or 1),
+            quantity=requested_quantity,
             actor_user_id=actor_user_id,
             occurred_at=now,
         )

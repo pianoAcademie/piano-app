@@ -316,7 +316,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   }
 
   const params = searchParams ?? {};
-  const section = parseSection(readParam(params, "section"));
+  const requestedSection = readParam(params, "section").trim();
+  const section = parseSection(requestedSection);
+  if (section === "products") {
+    redirect("/admin/products");
+  }
   const mainSection = toMainSection(section);
   const showInactiveFormulas = readParam(params, "show_inactive") === "1";
 
@@ -1040,7 +1044,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
             </>
           ) : null}
 
-          {section === "products" ? (
+          {requestedSection === "products" ? (
             <>
               <section className="card">
                 <h3>Categories produits</h3>
@@ -2605,8 +2609,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           section !== "params-messaging" &&
           section !== "formulas" &&
           section !== "activities" &&
-          section !== "credit-types" &&
-          section !== "products" ? (
+          section !== "credit-types" ? (
             <section className="card config-placeholder-card">
               <h3>{placeholderTitleBySection[section]}</h3>
               <p className="muted">Cette section est reservee pour un prochain ticket (V2), avec ecran detaille.</p>

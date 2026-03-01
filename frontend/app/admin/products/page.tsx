@@ -3,25 +3,33 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  cancelAdminCatalogTransferAction,
+  completeAdminCatalogTransferAction,
   createAdminCatalogProductAction,
   createAdminCatalogRequestAction,
+  createAdminCatalogTransferAction,
   deleteAdminCatalogProductAction,
   deliverAdminCatalogRequestAction,
   reviewAdminCatalogRequestAction,
   updateAdminCatalogInventoryAction,
   updateAdminCatalogProductAction,
+  updateAdminCatalogReorderStatusAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import type {
   AdminCatalogCategoryOut,
   AdminCatalogProductOut,
+  AdminCatalogReorderProductOut,
   AdminCatalogRequestOut,
   AdminCatalogStockOut,
+  AdminCatalogStockTransferOut,
   AdminClientOut,
   LocationOut,
 } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+
+type ProductsView = "products" | "reorder" | "transfers" | "requests";
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -29,6 +37,20 @@ function readParam(params: SearchParams, key: string): string {
     return value[0] ?? "";
   }
   return value ?? "";
+}
+
+function parseView(value: string): ProductsView {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "reorder") {
+    return "reorder";
+  }
+  if (normalized === "transfers") {
+    return "transfers";
+  }
+  if (normalized === "requests") {
+    return "requests";
+  }
+  return "products";
 }
 
 function formatMoney(amountRaw: string | null, currency: string | null): string {
@@ -53,6 +75,38 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
 
 function yesNoLabel(value: boolean): string {
   return value ? "Oui" : "Non";
+}
+
+function dateInputValue(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+  return value.slice(0, 10);
+}
+
+function reorderStatusLabel(status: string): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "TO_ORDER") {
+    return "A commander";
+  }
+  if (normalized === "ORDERED") {
+    return "Commande passee";
+  }
+  if (normalized === "RECEIVED") {
+    return "Recu";
+  }
+  return "Normal";
+}
+
+function transferStatusLabel(status: string): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "DONE") {
+    return "Fait";
+  }
+  if (normalized === "CANCELLED") {
+    return "Annule";
+  }
+  return "En attente";
 }
 
 function catalogRequestStatusLabel(status: string): string {
@@ -86,13 +140,6 @@ function catalogRequestSourceLabel(source: string): string {
   return normalized || "-";
 }
 
-function dateInputValue(value: string | null): string {
-  if (!value) {
-    return "";
-  }
-  return value.slice(0, 10);
-}
-
 function buildProductsQuery(params: {
   q: string;
   category: string;
@@ -100,6 +147,11 @@ function buildProductsQuery(params: {
   visibility: string;
   online: string;
   add: string;
+  view: ProductsView;
+  product: string;
+  editProduct: string;
+  reorderStatus: string;
+  transferStatus: string;
 }): string {
   const sp = new URLSearchParams();
   if (params.q) {
@@ -120,8 +172,35 @@ function buildProductsQuery(params: {
   if (params.add === "1") {
     sp.set("add", "1");
   }
+  if (params.product) {
+    sp.set("product", params.product);
+  }
+  if (params.editProduct) {
+    sp.set("edit_product", params.editProduct);
+  }
+  if (params.view !== "products") {
+    sp.set("view", params.view);
+  }
+  if (params.reorderStatus && params.reorderStatus !== "all") {
+    sp.set("reorder_status", params.reorderStatus);
+  }
+  if (params.transferStatus && params.transferStatus !== "all") {
+    sp.set("transfer_status", params.transferStatus);
+  }
   const query = sp.toString();
   return query ? `?${query}` : "";
+}
+
+async function loadLocationsForProducts(token: string): Promise<{ ok: true; data: LocationOut[] } | { ok: false; message: string }> {
+  const directResult = await backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token);
+  if (directResult.ok) {
+    return directResult;
+  }
+  const legacyResult = await backendRequest<LocationOut[]>("/api/v1/catalogue/locations?active=false", {}, token);
+  if (legacyResult.ok) {
+    return legacyResult;
+  }
+  return { ok: false, message: `${directResult.message} | ${legacyResult.message}` };
 }
 
 export default async function AdminProductsPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
@@ -139,32 +218,49 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const visibility = readParam(params, "visibility").trim() || "all";
   const online = readParam(params, "online").trim() || "all";
   const add = readParam(params, "add").trim();
+  const selectedProductId = readParam(params, "product").trim();
+  const editProductId = readParam(params, "edit_product").trim();
+  const currentView = parseView(readParam(params, "view"));
+  const reorderStatus = readParam(params, "reorder_status").trim() || "all";
+  const transferStatus = readParam(params, "transfer_status").trim() || "all";
   const showAddForm = add === "1";
 
-  const returnTo = `/admin/products${buildProductsQuery({
+  const baseQuery = {
     q: query,
     category,
     status,
     visibility,
     online,
-    add: "",
-  })}`;
-  const addLink = `/admin/products${buildProductsQuery({
-    q: query,
-    category,
-    status,
-    visibility,
-    online,
-    add: "1",
-  })}`;
+    view: currentView,
+    product: selectedProductId,
+    reorderStatus,
+    transferStatus,
+  };
 
-  const [categoriesResult, productsResult, stocksResult, requestsResult, locationsResult, clientsResult] = await Promise.all([
+  const returnTo = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "" })}`;
+  const addLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "1", editProduct: "" })}`;
+  const closeModalLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "" })}`;
+  const clearSelectedProductLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", product: "" })}`;
+
+  const stocksPath = selectedProductId
+    ? `/api/v1/admin/config/catalog/stocks?product_id=${encodeURIComponent(selectedProductId)}`
+    : null;
+  const reorderPath = reorderStatus && reorderStatus !== "all"
+    ? `/api/v1/admin/config/catalog/reorder-products?status_filter=${encodeURIComponent(reorderStatus)}`
+    : "/api/v1/admin/config/catalog/reorder-products";
+  const transfersPath = transferStatus && transferStatus !== "all"
+    ? `/api/v1/admin/config/catalog/transfers?status_filter=${encodeURIComponent(transferStatus)}`
+    : "/api/v1/admin/config/catalog/transfers";
+
+  const [categoriesResult, productsResult, stocksResult, requestsResult, locationsResult, clientsResult, reorderResult, transfersResult] = await Promise.all([
     backendRequest<AdminCatalogCategoryOut[]>("/api/v1/admin/config/catalog/categories?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
-    backendRequest<AdminCatalogStockOut[]>("/api/v1/admin/config/catalog/stocks", {}, token),
+    stocksPath ? backendRequest<AdminCatalogStockOut[]>(stocksPath, {}, token) : Promise.resolve({ ok: true as const, data: [] as AdminCatalogStockOut[] }),
     backendRequest<AdminCatalogRequestOut[]>("/api/v1/admin/catalog/requests", {}, token),
-    backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
+    loadLocationsForProducts(token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
+    backendRequest<AdminCatalogReorderProductOut[]>(reorderPath, {}, token),
+    backendRequest<AdminCatalogStockTransferOut[]>(transfersPath, {}, token),
   ]);
 
   const loadErrors: string[] = [];
@@ -203,6 +299,18 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     : (() => {
         loadErrors.push(`Clients: ${clientsResult.message}`);
         return [] as AdminClientOut[];
+      })();
+  const reorderProducts = reorderResult.ok
+    ? reorderResult.data
+    : (() => {
+        loadErrors.push(`Produits a commander: ${reorderResult.message}`);
+        return [] as AdminCatalogReorderProductOut[];
+      })();
+  const transfers = transfersResult.ok
+    ? transfersResult.data
+    : (() => {
+        loadErrors.push(`Transferts: ${transfersResult.message}`);
+        return [] as AdminCatalogStockTransferOut[];
       })();
 
   const activeCategories = categories.filter((row) => row.active);
@@ -245,6 +353,13 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     })
     .sort((a, b) => a.title.localeCompare(b.title, "fr"));
 
+  const selectedProduct = products.find((row) => row.id === selectedProductId) ?? null;
+  const editedProduct = products.find((row) => row.id === editProductId) ?? null;
+
+  const selectedProductStocks = stocks
+    .filter((stock) => !selectedProduct || stock.product_id === selectedProduct.id)
+    .sort((a, b) => a.location_name.localeCompare(b.location_name, "fr"));
+
   const clientOptions = clients
     .filter((row) => row.role === "client" && row.client_status !== "ARCHIVED")
     .map((row) => ({
@@ -253,11 +368,52 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     }))
     .sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
+  const requestsByLocation = requests
+    .filter((row) => row.status === "PROCESSING" || row.status === "INVOICE_TO_SEND" || row.status === "TO_DELIVER")
+    .filter((row) => !selectedProduct || row.product_id === selectedProduct.id)
+    .reduce<
+      Array<{ key: string; locationName: string; productTitle: string; quantity: number; estimatedStock: number | null; status: string }>
+    >((acc, row) => {
+      const key = `${row.location_id}-${row.product_id}-${row.status}`;
+      const found = acc.find((item) => item.key === key);
+      if (found) {
+        found.quantity += row.quantity;
+        return acc;
+      }
+      acc.push({
+        key,
+        locationName: row.location_name,
+        productTitle: row.product_title,
+        quantity: row.quantity,
+        estimatedStock: row.stock_estimated_quantity,
+        status: row.status,
+      });
+      return acc;
+    }, [])
+    .sort((a, b) => a.locationName.localeCompare(b.locationName, "fr") || a.productTitle.localeCompare(b.productTitle, "fr"));
+
   return (
     <section className="admin-page-grid">
       <section className="card">
         <h2>Gestion des produits</h2>
-        <p className="muted">Catalogue, stock par local et demandes produits eleves.</p>
+        <p className="muted">Catalogue, stock par local, transferts et demandes produits eleves.</p>
+      </section>
+
+      <section className="card">
+        <div className="row wrap gap-xs">
+          <Link className={currentView === "products" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "products" })}`}>
+            Produits
+          </Link>
+          <Link className={currentView === "reorder" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "reorder" })}`}>
+            Produits a commander
+          </Link>
+          <Link className={currentView === "transfers" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "transfers" })}`}>
+            Transferts stock
+          </Link>
+          <Link className={currentView === "requests" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "requests" })}`}>
+            Demandes eleves
+          </Link>
+        </div>
       </section>
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
@@ -276,450 +432,812 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      <section className="card">
-        <div className="row spread">
-          <h3>Produits</h3>
-          <div className="row">
-            <Link className="ghost" href={addLink}>
-              Ajouter un produit
-            </Link>
-            <Link className="mode-link" href="/admin/config?section=products">
-              Configurer categories/kits
-            </Link>
-          </div>
-        </div>
+      {currentView === "products" ? (
+        <>
+          <section className="card">
+            <div className="row spread">
+              <h3>Produits</h3>
+              <div className="row">
+                <Link className="ghost" href={addLink}>
+                  Ajouter un produit
+                </Link>
+                <Link className="mode-link" href="/admin/config?section=products">
+                  Configurer categories/kits
+                </Link>
+              </div>
+            </div>
 
-        <form method="get" className="grid cols-5 config-form-grid top-gap-sm">
-          <label className="span-2">
-            Recherche libre
-            <input type="search" name="q" defaultValue={query} placeholder="Titre, code-barres, categorie..." />
-          </label>
-          <label>
-            Categorie
-            <select name="category" defaultValue={category}>
-              <option value="">Toutes</option>
-              {categories.map((categoryRow) => (
-                <option key={categoryRow.id} value={categoryRow.id}>
-                  {categoryRow.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Statut
-            <select name="status" defaultValue={status}>
-              <option value="all">Tous</option>
-              <option value="active">Actifs</option>
-              <option value="inactive">Inactifs</option>
-            </select>
-          </label>
-          <label>
-            Visibilite
-            <select name="visibility" defaultValue={visibility}>
-              <option value="all">Toutes</option>
-              <option value="public">Public</option>
-              <option value="private">Prive</option>
-            </select>
-          </label>
-          <label>
-            Achat en ligne
-            <select name="online" defaultValue={online}>
-              <option value="all">Tous</option>
-              <option value="online">Oui</option>
-              <option value="offline">Non</option>
-            </select>
-          </label>
-          <div className="row span-5">
-            <button type="submit">Filtrer</button>
-            <Link className="ghost" href="/admin/products">
-              Reinitialiser
-            </Link>
-            <span className="badge">{filteredProducts.length} produit(s)</span>
-          </div>
-        </form>
+            <form method="get" className="grid cols-5 config-form-grid top-gap-sm">
+              <input type="hidden" name="view" value="products" />
+              <input type="hidden" name="product" value={selectedProductId} />
+              <label className="span-2">
+                Recherche libre
+                <input type="search" name="q" defaultValue={query} placeholder="Titre, code-barres, categorie..." />
+              </label>
+              <label>
+                Categorie
+                <select name="category" defaultValue={category}>
+                  <option value="">Toutes</option>
+                  {categories.map((categoryRow) => (
+                    <option key={categoryRow.id} value={categoryRow.id}>
+                      {categoryRow.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Statut
+                <select name="status" defaultValue={status}>
+                  <option value="all">Tous</option>
+                  <option value="active">Actifs</option>
+                  <option value="inactive">Inactifs</option>
+                </select>
+              </label>
+              <label>
+                Visibilite
+                <select name="visibility" defaultValue={visibility}>
+                  <option value="all">Toutes</option>
+                  <option value="public">Public</option>
+                  <option value="private">Prive</option>
+                </select>
+              </label>
+              <label>
+                Achat en ligne
+                <select name="online" defaultValue={online}>
+                  <option value="all">Tous</option>
+                  <option value="online">Oui</option>
+                  <option value="offline">Non</option>
+                </select>
+              </label>
+              <div className="row span-5">
+                <button type="submit">Filtrer</button>
+                <Link className="ghost" href={`/admin/products${buildProductsQuery({ ...baseQuery, q: "", category: "", status: "all", visibility: "all", online: "all", add: "", editProduct: "" })}`}>
+                  Reinitialiser
+                </Link>
+                <span className="badge">{filteredProducts.length} produit(s)</span>
+              </div>
+            </form>
 
-        {showAddForm ? (
-          <form action={createAdminCatalogProductAction} className="grid cols-4 config-form-grid top-gap-sm">
+            {showAddForm ? (
+              <form action={createAdminCatalogProductAction} className="grid cols-4 config-form-grid top-gap-sm">
+                <input type="hidden" name="return_to" value={returnTo} />
+                <label className="span-2">
+                  Titre
+                  <input type="text" name="title" required maxLength={255} placeholder="Partition Niveau 1" />
+                </label>
+                <label>
+                  Categorie
+                  <select name="category_id" defaultValue="">
+                    <option value="">-</option>
+                    {activeCategories.map((categoryRow) => (
+                      <option key={categoryRow.id} value={categoryRow.id}>
+                        {categoryRow.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Local principal
+                  <select name="primary_location_id" defaultValue="">
+                    <option value="">-</option>
+                    {activeLocations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Code-barres
+                  <input type="text" name="barcode" maxLength={120} />
+                </label>
+                <label>
+                  Tarif HT
+                  <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue="0.00" required />
+                </label>
+                <label>
+                  Tarif TTC
+                  <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
+                </label>
+                <label>
+                  TVA (%)
+                  <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" required />
+                </label>
+                <label>
+                  Stock de reserve
+                  <input type="number" name="reserve_stock" min="0" step="1" defaultValue="0" required />
+                </label>
+                <label>
+                  Statut commande
+                  <select name="reorder_status" defaultValue="NORMAL">
+                    <option value="NORMAL">Normal</option>
+                    <option value="TO_ORDER">A commander</option>
+                    <option value="ORDERED">Commande passee</option>
+                    <option value="RECEIVED">Recu</option>
+                  </select>
+                </label>
+                <label>
+                  Lien web
+                  <input type="url" name="web_link" />
+                </label>
+                <label className="span-2">
+                  Visuel (URL)
+                  <input type="url" name="image_url" />
+                </label>
+                <label className="span-2">
+                  Description courte
+                  <input type="text" name="short_description" maxLength={500} />
+                </label>
+                <label className="span-4">
+                  Description longue
+                  <textarea name="long_description" rows={3} maxLength={12000} />
+                </label>
+                <label className="checkline">
+                  <input type="checkbox" name="purchasable_online" />
+                  Achetable en ligne
+                </label>
+                <label className="checkline">
+                  <input type="checkbox" name="is_public" defaultChecked />
+                  Public (visible client)
+                </label>
+                <label className="checkline">
+                  <input type="checkbox" name="active" defaultChecked />
+                  Actif
+                </label>
+                <div className="row span-4">
+                  <button type="submit">Ajouter</button>
+                </div>
+              </form>
+            ) : null}
+
+            <div className="table-wrap top-gap-sm">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Produit</th>
+                    <th>Categorie</th>
+                    <th>Local principal</th>
+                    <th>TTC</th>
+                    <th>Stock global</th>
+                    <th>Stock reserve</th>
+                    <th>A commander</th>
+                    <th>Actif</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredProducts.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="muted">
+                        Aucun produit pour ces filtres.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredProducts.map((product) => {
+                      const needsAlert = product.stock_global_quantity < product.reserve_stock;
+                      const selectLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", product: product.id })}`;
+                      const editLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: product.id, product: selectedProductId || product.id })}`;
+                      return (
+                        <tr key={product.id} className={selectedProduct?.id === product.id ? "catalog-selected-row" : ""}>
+                          <td>
+                            <Link href={selectLink} className="mode-link">
+                              {product.title}
+                            </Link>
+                            {product.barcode ? <p className="muted">Code: {product.barcode}</p> : null}
+                          </td>
+                          <td>{product.category_name || "-"}</td>
+                          <td>{product.primary_location_name || "-"}</td>
+                          <td>{formatMoney(product.price_incl_vat, "EUR")}</td>
+                          <td>{product.stock_global_quantity}</td>
+                          <td>{product.reserve_stock}</td>
+                          <td>{needsAlert ? "Oui" : "Non"}</td>
+                          <td>{yesNoLabel(product.active)}</td>
+                          <td>
+                            <div className="row wrap gap-xs">
+                              <Link className="ghost" href={editLink}>
+                                Modifier
+                              </Link>
+                              <form action={deleteAdminCatalogProductAction}>
+                                <input type="hidden" name="product_id" value={product.id} />
+                                <input type="hidden" name="return_to" value={returnTo} />
+                                <button type="submit" className="danger">
+                                  Supprimer
+                                </button>
+                              </form>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="row spread">
+              <h3>Stocks par local</h3>
+              {selectedProduct ? (
+                <Link className="ghost" href={clearSelectedProductLink}>
+                  Retirer la selection produit
+                </Link>
+              ) : null}
+            </div>
+            {!selectedProduct ? (
+              <p className="muted">Choisissez un produit dans la liste pour afficher ses stocks par local.</p>
+            ) : selectedProductStocks.length === 0 ? (
+              <p className="muted">Aucun stock initialise pour ce produit.</p>
+            ) : (
+              <>
+                <p className="muted">
+                  Produit selectionne: <strong>{selectedProduct.title}</strong> ({selectedProduct.stock_global_quantity} en stock reel global)
+                </p>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Lieu</th>
+                        <th>Inventaire</th>
+                        <th>Date inventaire</th>
+                        <th>Stock reel</th>
+                        <th>Stock estime</th>
+                        <th>Mise a jour inventaire</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedProductStocks.map((stock) => (
+                        <tr
+                          key={`${stock.product_id}-${stock.location_id}`}
+                          className={stock.real_quantity < 0 || stock.estimated_quantity < 0 ? "catalog-stock-negative" : ""}
+                        >
+                          <td>{stock.location_name}</td>
+                          <td>{stock.inventory_quantity}</td>
+                          <td>{stock.inventory_date || "-"}</td>
+                          <td>{stock.real_quantity}</td>
+                          <td>{stock.estimated_quantity}</td>
+                          <td>
+                            <form action={updateAdminCatalogInventoryAction} className="catalog-stock-form">
+                              <input type="hidden" name="product_id" value={stock.product_id} />
+                              <input type="hidden" name="location_id" value={stock.location_id} />
+                              <input type="hidden" name="return_to" value={returnTo} />
+                              <input type="number" name="inventory_quantity" min={0} step={1} defaultValue={stock.inventory_quantity} required />
+                              <input type="date" name="inventory_date" defaultValue={dateInputValue(stock.inventory_date)} />
+                              <button type="submit">Reset inventaire</button>
+                            </form>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+
+          <section className="card">
+            <h3>Besoins par local (demandes eleves / achats)</h3>
+            {!selectedProduct ? (
+              <p className="muted">Choisissez un produit pour visualiser les besoins consolides par local.</p>
+            ) : requestsByLocation.length === 0 ? (
+              <p className="muted">Aucun besoin en cours pour ce produit.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Lieu</th>
+                      <th>Produit</th>
+                      <th>Statut</th>
+                      <th>Quantite demandee</th>
+                      <th>Stock estime local</th>
+                      <th>Alerte</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {requestsByLocation.map((row) => {
+                      const shortage = row.estimatedStock !== null ? row.estimatedStock < row.quantity : false;
+                      return (
+                        <tr key={row.key} className={shortage ? "catalog-stock-negative" : ""}>
+                          <td>{row.locationName}</td>
+                          <td>{row.productTitle}</td>
+                          <td>{catalogRequestStatusLabel(row.status)}</td>
+                          <td>{row.quantity}</td>
+                          <td>{row.estimatedStock ?? "-"}</td>
+                          <td>{shortage ? "Stock estime insuffisant" : "-"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+
+      {currentView === "reorder" ? (
+        <section className="card">
+          <div className="row spread">
+            <h3>Produits a commander</h3>
+            <form method="get" className="row">
+              <input type="hidden" name="view" value="reorder" />
+              <label>
+                Statut
+                <select name="reorder_status" defaultValue={reorderStatus}>
+                  <option value="all">Tous</option>
+                  <option value="TO_ORDER">A commander</option>
+                  <option value="ORDERED">Commande passee</option>
+                  <option value="RECEIVED">Recu</option>
+                  <option value="NORMAL">Normal</option>
+                </select>
+              </label>
+              <button type="submit">Filtrer</button>
+            </form>
+          </div>
+          <div className="table-wrap top-gap-sm">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Produit</th>
+                  <th>Categorie</th>
+                  <th>Stock global</th>
+                  <th>Stock reserve</th>
+                  <th>Local principal</th>
+                  <th>Statut commande</th>
+                  <th>Maj statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reorderProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="muted">
+                      Aucun produit a commander pour ce filtre.
+                    </td>
+                  </tr>
+                ) : (
+                  reorderProducts.map((product) => (
+                    <tr key={product.product_id} className={product.stock_global_quantity < product.reserve_stock ? "catalog-stock-negative" : ""}>
+                      <td>{product.title}</td>
+                      <td>{product.category_name || "-"}</td>
+                      <td>{product.stock_global_quantity}</td>
+                      <td>{product.reserve_stock}</td>
+                      <td>{product.primary_location_name || "-"}</td>
+                      <td>{reorderStatusLabel(product.reorder_status)}</td>
+                      <td>
+                        <form action={updateAdminCatalogReorderStatusAction} className="row wrap gap-xs">
+                          <input type="hidden" name="product_id" value={product.product_id} />
+                          <input type="hidden" name="return_to" value={returnTo} />
+                          <select name="reorder_status" defaultValue={product.reorder_status}>
+                            <option value="TO_ORDER">A commander</option>
+                            <option value="ORDERED">Commande passee</option>
+                            <option value="RECEIVED">Recu</option>
+                            <option value="NORMAL">Normal</option>
+                          </select>
+                          <button type="submit">Enregistrer</button>
+                        </form>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {currentView === "transfers" ? (
+        <>
+          <section className="card">
+            <h3>Nouveau transfert de stock</h3>
+            <form action={createAdminCatalogTransferAction} className="grid cols-4 config-form-grid">
+              <input type="hidden" name="return_to" value={returnTo} />
+              <label>
+                Produit
+                <select name="product_id" defaultValue={selectedProduct?.id ?? ""} required>
+                  <option value="">Selectionner un produit</option>
+                  {activeProducts.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Local source
+                <select name="source_location_id" defaultValue={selectedProduct?.primary_location_id ?? ""} required>
+                  <option value="">Selectionner un local source</option>
+                  {activeLocations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Local destination
+                <select name="target_location_id" defaultValue="" required>
+                  <option value="">Selectionner un local destination</option>
+                  {activeLocations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Quantite
+                <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
+              </label>
+              <label>
+                Date previsionnelle
+                <input type="date" name="planned_transfer_date" />
+              </label>
+              <label>
+                Personne designee
+                <select name="assigned_to_user_id" defaultValue="">
+                  <option value="">Aucune</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {`${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="span-2">
+                Note
+                <input type="text" name="note" maxLength={2000} />
+              </label>
+              <div className="row span-4">
+                <button type="submit">Creer transfert</button>
+              </div>
+            </form>
+          </section>
+
+          <section className="card">
+            <div className="row spread">
+              <h3>Suivi des transferts</h3>
+              <form method="get" className="row">
+                <input type="hidden" name="view" value="transfers" />
+                <label>
+                  Statut
+                  <select name="transfer_status" defaultValue={transferStatus}>
+                    <option value="all">Tous</option>
+                    <option value="PENDING">En attente</option>
+                    <option value="DONE">Fait</option>
+                    <option value="CANCELLED">Annule</option>
+                  </select>
+                </label>
+                <button type="submit">Filtrer</button>
+              </form>
+            </div>
+            <div className="table-wrap top-gap-sm">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Date creation</th>
+                    <th>Produit</th>
+                    <th>Source {"->"} Destination</th>
+                    <th>Qt</th>
+                    <th>Date prevue</th>
+                    <th>Personne designee</th>
+                    <th>Statut</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transfers.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="muted">
+                        Aucun transfert.
+                      </td>
+                    </tr>
+                  ) : (
+                    transfers.map((transfer) => (
+                      <tr key={transfer.id}>
+                        <td>{new Date(transfer.created_at).toLocaleString("fr-FR")}</td>
+                        <td>{transfer.product_title}</td>
+                        <td>
+                          {transfer.source_location_name} {"->"} {transfer.target_location_name}
+                        </td>
+                        <td>{transfer.quantity}</td>
+                        <td>{transfer.planned_transfer_date || "-"}</td>
+                        <td>{transfer.assigned_to_name || "-"}</td>
+                        <td>
+                          {transferStatusLabel(transfer.status)}
+                          {transfer.completed_transfer_date ? <div className="muted">Transfert: {transfer.completed_transfer_date}</div> : null}
+                        </td>
+                        <td>
+                          {transfer.status === "PENDING" ? (
+                            <div className="catalog-request-actions">
+                              <form action={completeAdminCatalogTransferAction} className="row wrap gap-xs">
+                                <input type="hidden" name="transfer_id" value={transfer.id} />
+                                <input type="hidden" name="return_to" value={returnTo} />
+                                <input type="date" name="completed_transfer_date" defaultValue={dateInputValue(transfer.planned_transfer_date)} />
+                                <input type="text" name="note" maxLength={2000} placeholder="Note completion" />
+                                <button type="submit">Marquer fait</button>
+                              </form>
+                              <form action={cancelAdminCatalogTransferAction} className="row wrap gap-xs">
+                                <input type="hidden" name="transfer_id" value={transfer.id} />
+                                <input type="hidden" name="return_to" value={returnTo} />
+                                <input type="text" name="note" maxLength={2000} placeholder="Motif annulation" />
+                                <button type="submit" className="danger ghost">
+                                  Annuler
+                                </button>
+                              </form>
+                            </div>
+                          ) : (
+                            <span className="muted">Aucune action</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {currentView === "requests" ? (
+        <section className="card">
+          <h3>Demandes produits eleves</h3>
+          <p className="muted">Creation admin: la demande est acceptee immediatement (facturee ou non), puis passe a remettre a l eleve.</p>
+          <form action={createAdminCatalogRequestAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={returnTo} />
-            <label className="span-2">
-              Titre
-              <input type="text" name="title" required maxLength={255} placeholder="Partition Niveau 1" />
-            </label>
             <label>
-              Categorie
-              <select name="category_id" defaultValue="">
-                <option value="">-</option>
-                {activeCategories.map((categoryRow) => (
-                  <option key={categoryRow.id} value={categoryRow.id}>
-                    {categoryRow.name}
+              Eleve
+              <select name="student_user_id" required defaultValue="">
+                <option value="">Selectionner un eleve</option>
+                {clientOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
                   </option>
                 ))}
               </select>
             </label>
             <label>
-              Code-barres
-              <input type="text" name="barcode" maxLength={120} />
+              Produit
+              <select name="product_id" required defaultValue={selectedProduct?.id ?? ""}>
+                <option value="">Selectionner un produit</option>
+                {activeProducts.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.title}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
-              Tarif HT
-              <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue="0.00" required />
+              Lieu
+              <select name="location_id" required defaultValue={selectedProduct?.primary_location_id ?? ""}>
+                <option value="">Selectionner un lieu</option>
+                {activeLocations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
-              Tarif TTC
-              <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
-            </label>
-            <label>
-              TVA (%)
-              <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" required />
-            </label>
-            <label>
-              Lien web
-              <input type="url" name="web_link" />
+              Quantite
+              <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
             </label>
             <label className="span-2">
-              Visuel (URL)
-              <input type="url" name="image_url" />
-            </label>
-            <label className="span-2">
-              Description courte
-              <input type="text" name="short_description" maxLength={500} />
-            </label>
-            <label className="span-4">
-              Description longue
-              <textarea name="long_description" rows={3} maxLength={12000} />
+              Note
+              <input type="text" name="note" maxLength={2000} />
             </label>
             <label className="checkline">
-              <input type="checkbox" name="purchasable_online" />
-              Achetable en ligne
-            </label>
-            <label className="checkline">
-              <input type="checkbox" name="is_public" defaultChecked />
-              Public (visible client)
-            </label>
-            <label className="checkline">
-              <input type="checkbox" name="active" defaultChecked />
-              Actif
+              <input type="checkbox" name="should_bill" />
+              A facturer
             </label>
             <div className="row span-4">
-              <button type="submit">Ajouter</button>
+              <button type="submit">Ajouter demande admin</button>
             </div>
           </form>
-        ) : null}
 
-        <div className="table-wrap top-gap-sm">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Produit</th>
-                <th>Categorie</th>
-                <th>TTC</th>
-                <th>TVA</th>
-                <th>Stock global</th>
-                <th>Online</th>
-                <th>Public</th>
-                <th>Actif</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredProducts.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="muted">
-                    Aucun produit pour ces filtres.
-                  </td>
-                </tr>
-              ) : (
-                filteredProducts.map((product) => (
-                  <tr key={product.id}>
-                    <td>
-                      <strong>{product.title}</strong>
-                      {product.barcode ? <p className="muted">Code: {product.barcode}</p> : null}
-                    </td>
-                    <td>{product.category_name || "-"}</td>
-                    <td>{formatMoney(product.price_incl_vat, "EUR")}</td>
-                    <td>{Number(product.vat_rate).toFixed(2)}%</td>
-                    <td>{product.stock_global_quantity}</td>
-                    <td>{yesNoLabel(product.purchasable_online)}</td>
-                    <td>{yesNoLabel(product.is_public)}</td>
-                    <td>{yesNoLabel(product.active)}</td>
-                    <td>
-                      <details>
-                        <summary className="mode-link">Modifier</summary>
-                        <form action={updateAdminCatalogProductAction} className="grid cols-2 top-gap-sm">
-                          <input type="hidden" name="product_id" value={product.id} />
-                          <input type="hidden" name="return_to" value={returnTo} />
-                          <label className="span-2">
-                            Titre
-                            <input type="text" name="title" defaultValue={product.title} required maxLength={255} />
-                          </label>
-                          <label>
-                            Categorie
-                            <select name="category_id" defaultValue={product.category_id ?? ""}>
-                              <option value="">-</option>
-                              {categories.map((categoryRow) => (
-                                <option key={categoryRow.id} value={categoryRow.id}>
-                                  {categoryRow.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Code-barres
-                            <input type="text" name="barcode" defaultValue={product.barcode || ""} maxLength={120} />
-                          </label>
-                          <label>
-                            Tarif HT
-                            <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue={product.price_excl_vat} required />
-                          </label>
-                          <label>
-                            Tarif TTC
-                            <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue={product.price_incl_vat} required />
-                          </label>
-                          <label>
-                            TVA (%)
-                            <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue={product.vat_rate} required />
-                          </label>
-                          <label>
-                            Lien web
-                            <input type="url" name="web_link" defaultValue={product.web_link || ""} />
-                          </label>
-                          <label className="span-2">
-                            Description courte
-                            <input type="text" name="short_description" defaultValue={product.short_description || ""} maxLength={500} />
-                          </label>
-                          <label className="span-2">
-                            Description longue
-                            <textarea name="long_description" rows={3} maxLength={12000} defaultValue={product.long_description || ""} />
-                          </label>
-                          <label className="checkline">
-                            <input type="checkbox" name="purchasable_online" defaultChecked={product.purchasable_online} />
-                            Achetable en ligne
-                          </label>
-                          <label className="checkline">
-                            <input type="checkbox" name="is_public" defaultChecked={product.is_public} />
-                            Public
-                          </label>
-                          <label className="checkline">
-                            <input type="checkbox" name="active" defaultChecked={product.active} />
-                            Actif
-                          </label>
-                          <div className="row span-2">
-                            <button type="submit">Enregistrer</button>
-                          </div>
-                        </form>
-                        <form action={deleteAdminCatalogProductAction} className="top-gap-sm">
-                          <input type="hidden" name="product_id" value={product.id} />
-                          <input type="hidden" name="return_to" value={returnTo} />
-                          <button type="submit" className="danger">
-                            Supprimer
-                          </button>
-                        </form>
-                      </details>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="card">
-        <h3>Stocks par local</h3>
-        {stocks.length === 0 ? (
-          <p className="muted">Aucun stock initialise (creez d abord un produit).</p>
-        ) : (
-          <div className="table-wrap">
+          <div className="table-wrap top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Produit</th>
-                  <th>Lieu</th>
-                  <th>Inventaire</th>
-                  <th>Date inventaire</th>
-                  <th>Stock reel</th>
-                  <th>Stock estime</th>
-                  <th>Mise a jour inventaire</th>
+                  <th>Date</th>
+                  <th>Source</th>
+                  <th>Eleve</th>
+                  <th>Produit / Lieu</th>
+                  <th>Qt</th>
+                  <th>Statut</th>
+                  <th>Facturation</th>
+                  <th>Stock</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {stocks.map((stock) => (
-                  <tr
-                    key={`${stock.product_id}-${stock.location_id}`}
-                    className={stock.real_quantity < 0 || stock.estimated_quantity < 0 ? "catalog-stock-negative" : ""}
-                  >
-                    <td>{stock.product_title}</td>
-                    <td>{stock.location_name}</td>
-                    <td>{stock.inventory_quantity}</td>
-                    <td>{stock.inventory_date || "-"}</td>
-                    <td>{stock.real_quantity}</td>
-                    <td>{stock.estimated_quantity}</td>
-                    <td>
-                      <form action={updateAdminCatalogInventoryAction} className="catalog-stock-form">
-                        <input type="hidden" name="product_id" value={stock.product_id} />
-                        <input type="hidden" name="location_id" value={stock.location_id} />
-                        <input type="hidden" name="return_to" value={returnTo} />
-                        <input type="number" name="inventory_quantity" min={0} step={1} defaultValue={stock.inventory_quantity} required />
-                        <input type="date" name="inventory_date" defaultValue={dateInputValue(stock.inventory_date)} />
-                        <button type="submit">Reset inventaire</button>
-                      </form>
+                {requests.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="muted">
+                      Aucune demande produit.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  requests.map((request) => (
+                    <tr key={request.id}>
+                      <td>{new Date(request.requested_at).toLocaleString("fr-FR")}</td>
+                      <td>{catalogRequestSourceLabel(request.request_source)}</td>
+                      <td>{request.student_name}</td>
+                      <td>
+                        {request.product_title}
+                        <br />
+                        <small className="muted">{request.location_name}</small>
+                      </td>
+                      <td>{request.quantity}</td>
+                      <td>{catalogRequestStatusLabel(request.status)}</td>
+                      <td>{request.should_bill === null ? "-" : request.should_bill ? "Oui" : "Non"}</td>
+                      <td>
+                        Reel: {request.stock_real_quantity ?? "-"}
+                        <br />
+                        Estime: {request.stock_estimated_quantity ?? "-"}
+                      </td>
+                      <td>
+                        <div className="catalog-request-actions">
+                          {request.status === "PROCESSING" ? (
+                            <>
+                              <form action={reviewAdminCatalogRequestAction}>
+                                <input type="hidden" name="request_id" value={request.id} />
+                                <input type="hidden" name="decision" value="ACCEPT" />
+                                <input type="hidden" name="return_to" value={returnTo} />
+                                <label className="checkline">
+                                  <input type="checkbox" name="should_bill" />
+                                  Facturer
+                                </label>
+                                <input type="text" name="note" maxLength={2000} placeholder="Note (optionnel)" />
+                                <button type="submit">Accepter</button>
+                              </form>
+                              <form action={reviewAdminCatalogRequestAction}>
+                                <input type="hidden" name="request_id" value={request.id} />
+                                <input type="hidden" name="decision" value="REJECT" />
+                                <input type="hidden" name="return_to" value={returnTo} />
+                                <input type="text" name="note" maxLength={2000} placeholder="Motif refus (optionnel)" />
+                                <button type="submit" className="danger ghost">
+                                  Refuser
+                                </button>
+                              </form>
+                            </>
+                          ) : null}
+                          {(request.status === "TO_DELIVER" || request.status === "INVOICE_TO_SEND") && (
+                            <form action={deliverAdminCatalogRequestAction}>
+                              <input type="hidden" name="request_id" value={request.id} />
+                              <input type="hidden" name="return_to" value={returnTo} />
+                              <select name="delivered_by_user_id" defaultValue="">
+                                <option value="">Remis par (utilisateur courant)</option>
+                                {clients.map((client) => (
+                                  <option key={client.id} value={client.id}>
+                                    {`${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email}
+                                  </option>
+                                ))}
+                              </select>
+                              <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
+                              <button type="submit">Marquer remis</button>
+                            </form>
+                          )}
+                          {request.note ? <small className="muted">{request.note}</small> : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
-        )}
-      </section>
+        </section>
+      ) : null}
 
-      <section className="card">
-        <h3>Demandes produits eleves</h3>
-        <p className="muted">Creation admin: la demande est acceptee immediatement (facturee ou non), puis passe a remettre a l eleve.</p>
-        <form action={createAdminCatalogRequestAction} className="grid cols-4 config-form-grid">
-          <input type="hidden" name="return_to" value={returnTo} />
-          <label>
-            Eleve
-            <select name="student_user_id" required defaultValue="">
-              <option value="">Selectionner un eleve</option>
-              {clientOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Produit
-            <select name="product_id" required defaultValue="">
-              <option value="">Selectionner un produit</option>
-              {activeProducts.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Lieu
-            <select name="location_id" required defaultValue="">
-              <option value="">Selectionner un lieu</option>
-              {activeLocations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Quantite
-            <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
-          </label>
-          <label className="span-2">
-            Note
-            <input type="text" name="note" maxLength={2000} />
-          </label>
-          <label className="checkline">
-            <input type="checkbox" name="should_bill" />
-            A facturer
-          </label>
-          <div className="row span-4">
-            <button type="submit">Ajouter demande admin</button>
-          </div>
-        </form>
-
-        <div className="table-wrap top-gap-sm">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Source</th>
-                <th>Eleve</th>
-                <th>Produit / Lieu</th>
-                <th>Qt</th>
-                <th>Statut</th>
-                <th>Facturation</th>
-                <th>Stock</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {requests.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="muted">
-                    Aucune demande produit.
-                  </td>
-                </tr>
-              ) : (
-                requests.map((request) => (
-                  <tr key={request.id}>
-                    <td>{new Date(request.requested_at).toLocaleString("fr-FR")}</td>
-                    <td>{catalogRequestSourceLabel(request.request_source)}</td>
-                    <td>{request.student_name}</td>
-                    <td>
-                      {request.product_title}
-                      <br />
-                      <small className="muted">{request.location_name}</small>
-                    </td>
-                    <td>{request.quantity}</td>
-                    <td>{catalogRequestStatusLabel(request.status)}</td>
-                    <td>{request.should_bill === null ? "-" : request.should_bill ? "Oui" : "Non"}</td>
-                    <td>
-                      Reel: {request.stock_real_quantity ?? "-"}
-                      <br />
-                      Estime: {request.stock_estimated_quantity ?? "-"}
-                    </td>
-                    <td>
-                      <div className="catalog-request-actions">
-                        {request.status === "PROCESSING" ? (
-                          <>
-                            <form action={reviewAdminCatalogRequestAction}>
-                              <input type="hidden" name="request_id" value={request.id} />
-                              <input type="hidden" name="decision" value="ACCEPT" />
-                              <input type="hidden" name="return_to" value={returnTo} />
-                              <label className="checkline">
-                                <input type="checkbox" name="should_bill" />
-                                Facturer
-                              </label>
-                              <input type="text" name="note" maxLength={2000} placeholder="Note (optionnel)" />
-                              <button type="submit">Accepter</button>
-                            </form>
-                            <form action={reviewAdminCatalogRequestAction}>
-                              <input type="hidden" name="request_id" value={request.id} />
-                              <input type="hidden" name="decision" value="REJECT" />
-                              <input type="hidden" name="return_to" value={returnTo} />
-                              <input type="text" name="note" maxLength={2000} placeholder="Motif refus (optionnel)" />
-                              <button type="submit" className="danger ghost">
-                                Refuser
-                              </button>
-                            </form>
-                          </>
-                        ) : null}
-                        {(request.status === "TO_DELIVER" || request.status === "INVOICE_TO_SEND") && (
-                          <form action={deliverAdminCatalogRequestAction}>
-                            <input type="hidden" name="request_id" value={request.id} />
-                            <input type="hidden" name="return_to" value={returnTo} />
-                            <select name="delivered_by_user_id" defaultValue="">
-                              <option value="">Remis par (utilisateur courant)</option>
-                              {clients.map((client) => (
-                                <option key={client.id} value={client.id}>
-                                  {`${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email}
-                                </option>
-                              ))}
-                            </select>
-                            <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
-                            <button type="submit">Marquer remis</button>
-                          </form>
-                        )}
-                        {request.note ? <small className="muted">{request.note}</small> : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {editedProduct ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Modifier produit">
+          <section className="modal-panel modal-day-details">
+            <div className="row spread">
+              <h3 className="modal-title">Modifier produit</h3>
+              <Link href={closeModalLink} className="ghost" aria-label="Fermer">
+                Fermer
+              </Link>
+            </div>
+            <section className="modal-card">
+              <form action={updateAdminCatalogProductAction} className="grid cols-3 config-form-grid">
+                <input type="hidden" name="product_id" value={editedProduct.id} />
+                <input type="hidden" name="return_to" value={returnTo} />
+                <label className="span-2">
+                  Titre
+                  <input type="text" name="title" defaultValue={editedProduct.title} required maxLength={255} />
+                </label>
+                <label>
+                  Categorie
+                  <select name="category_id" defaultValue={editedProduct.category_id ?? ""}>
+                    <option value="">-</option>
+                    {categories.map((categoryRow) => (
+                      <option key={categoryRow.id} value={categoryRow.id}>
+                        {categoryRow.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Local principal
+                  <select name="primary_location_id" defaultValue={editedProduct.primary_location_id ?? ""}>
+                    <option value="">-</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Code-barres
+                  <input type="text" name="barcode" defaultValue={editedProduct.barcode || ""} maxLength={120} />
+                </label>
+                <label>
+                  Tarif HT
+                  <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue={editedProduct.price_excl_vat} required />
+                </label>
+                <label>
+                  Tarif TTC
+                  <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue={editedProduct.price_incl_vat} required />
+                </label>
+                <label>
+                  TVA (%)
+                  <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue={editedProduct.vat_rate} required />
+                </label>
+                <label>
+                  Stock de reserve
+                  <input type="number" name="reserve_stock" min="0" step="1" defaultValue={editedProduct.reserve_stock} required />
+                </label>
+                <label>
+                  Statut commande
+                  <select name="reorder_status" defaultValue={editedProduct.reorder_status}>
+                    <option value="NORMAL">Normal</option>
+                    <option value="TO_ORDER">A commander</option>
+                    <option value="ORDERED">Commande passee</option>
+                    <option value="RECEIVED">Recu</option>
+                  </select>
+                </label>
+                <label>
+                  Lien web
+                  <input type="url" name="web_link" defaultValue={editedProduct.web_link || ""} />
+                </label>
+                <label className="span-3">
+                  Visuel (URL)
+                  <input type="url" name="image_url" defaultValue={editedProduct.image_url || ""} />
+                </label>
+                <label className="span-3">
+                  Description courte
+                  <input type="text" name="short_description" defaultValue={editedProduct.short_description || ""} maxLength={500} />
+                </label>
+                <label className="span-3">
+                  Description longue
+                  <textarea name="long_description" rows={4} maxLength={12000} defaultValue={editedProduct.long_description || ""} />
+                </label>
+                <label className="checkline">
+                  <input type="checkbox" name="purchasable_online" defaultChecked={editedProduct.purchasable_online} />
+                  Achetable en ligne
+                </label>
+                <label className="checkline">
+                  <input type="checkbox" name="is_public" defaultChecked={editedProduct.is_public} />
+                  Public
+                </label>
+                <label className="checkline">
+                  <input type="checkbox" name="active" defaultChecked={editedProduct.active} />
+                  Actif
+                </label>
+                <div className="row span-3 modal-actions-end">
+                  <Link className="ghost" href={closeModalLink}>
+                    Annuler
+                  </Link>
+                  <button type="submit">Enregistrer</button>
+                </div>
+              </form>
+            </section>
+          </section>
+        </section>
+      ) : null}
     </section>
   );
 }
