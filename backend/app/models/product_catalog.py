@@ -42,6 +42,19 @@ class ProductRequestStatus(str, enum.Enum):
     DELIVERED = "DELIVERED"
 
 
+class ProductReorderStatus(str, enum.Enum):
+    NORMAL = "NORMAL"
+    TO_ORDER = "TO_ORDER"
+    ORDERED = "ORDERED"
+    RECEIVED = "RECEIVED"
+
+
+class ProductTransferStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    DONE = "DONE"
+    CANCELLED = "CANCELLED"
+
+
 class ProductCategory(Base):
     __tablename__ = "product_categories"
 
@@ -73,6 +86,7 @@ class CatalogProduct(Base):
         CheckConstraint("price_incl_vat >= 0", name="ck_catalog_products_price_incl_non_negative"),
         CheckConstraint("vat_rate >= 0 AND vat_rate <= 100", name="ck_catalog_products_vat_rate_range"),
         CheckConstraint("stock_global_quantity >= 0", name="ck_catalog_products_global_stock_non_negative"),
+        CheckConstraint("reserve_stock >= 0", name="ck_catalog_products_reserve_stock_non_negative"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -86,12 +100,35 @@ class CatalogProduct(Base):
         ForeignKey("product_categories.id", ondelete="SET NULL"),
         nullable=True,
     )
+    primary_location_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     barcode: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
     price_excl_vat: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     price_incl_vat: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     vat_rate: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False, server_default=text("20"))
     stock_global_quantity: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    reserve_stock: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    reorder_status: Mapped[ProductReorderStatus] = mapped_column(
+        Enum(
+            ProductReorderStatus,
+            name="product_reorder_status",
+            native_enum=True,
+            values_callable=_enum_values,
+            validate_strings=True,
+            create_type=False,
+        ),
+        nullable=False,
+        server_default=text("'NORMAL'::product_reorder_status"),
+    )
+    reorder_status_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     short_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     long_description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -304,6 +341,78 @@ class ProductRequest(Base):
         nullable=True,
     )
     delivery_marked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
+class ProductStockTransfer(Base):
+    __tablename__ = "product_stock_transfers"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_product_stock_transfers_quantity_positive"),
+        CheckConstraint("source_location_id <> target_location_id", name="ck_product_stock_transfers_distinct_locations"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    product_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("catalog_products.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_location_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    target_location_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    planned_transfer_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    assigned_to_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[ProductTransferStatus] = mapped_column(
+        Enum(
+            ProductTransferStatus,
+            name="product_transfer_status",
+            native_enum=True,
+            values_callable=_enum_values,
+            validate_strings=True,
+            create_type=False,
+        ),
+        nullable=False,
+        server_default=text("'PENDING'::product_transfer_status"),
+    )
+    completed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_transfer_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

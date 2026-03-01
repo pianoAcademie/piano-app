@@ -9,14 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, Location
 from app.models.catalog import Professor as ProfessorModel
-from app.models.product_catalog import (
-    CatalogProduct,
-    ProductCategory,
-    ProductLocationStock,
-    ProductRequest,
-    ProductRequestSource,
-    ProductRequestStatus,
-)
+from app.models.product_catalog import CatalogProduct, ProductCategory, ProductLocationStock, ProductRequest, ProductRequestSource, ProductRequestStatus
 from app.models.user import User, UserRole
 from app.schemas.catalog_admin import (
     AdminCatalogProductOut,
@@ -131,6 +124,7 @@ def list_professor_catalog_products(
 ) -> list[AdminCatalogProductOut]:
     category_rows = db.execute(select(ProductCategory.id, ProductCategory.name)).all()
     category_name_by_id = {category_id: name for category_id, name in category_rows}
+    location_name_by_id = {location_id: name for location_id, name in db.execute(select(Location.id, Location.name)).all()}
 
     stmt = select(CatalogProduct)
     if not include_inactive:
@@ -142,12 +136,17 @@ def list_professor_catalog_products(
             id=row.id,
             category_id=row.category_id,
             category_name=category_name_by_id.get(row.category_id) if row.category_id else None,
+            primary_location_id=row.primary_location_id,
+            primary_location_name=location_name_by_id.get(row.primary_location_id) if row.primary_location_id else None,
             title=row.title,
             barcode=row.barcode,
             price_excl_vat=row.price_excl_vat,
             price_incl_vat=row.price_incl_vat,
             vat_rate=row.vat_rate,
             stock_global_quantity=int(row.stock_global_quantity or 0),
+            reserve_stock=int(row.reserve_stock or 0),
+            reorder_status=row.reorder_status,
+            reorder_status_updated_at=row.reorder_status_updated_at,
             image_url=row.image_url,
             short_description=row.short_description,
             long_description=row.long_description,

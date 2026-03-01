@@ -40,8 +40,11 @@ from app.models.product_catalog import (
     ProductCategory,
     ProductLocationStock,
     ProductRequest,
+    ProductReorderStatus,
     ProductRequestSource,
     ProductRequestStatus,
+    ProductStockTransfer,
+    ProductTransferStatus,
 )
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 
@@ -91,8 +94,11 @@ __all__ = [
     "ProductCategory",
     "ProductLocationStock",
     "ProductRequest",
+    "ProductReorderStatus",
     "ProductRequestSource",
     "ProductRequestStatus",
+    "ProductStockTransfer",
+    "ProductTransferStatus",
     "MessageFormat",
     "ReminderStatus",
     "SessionStatus",

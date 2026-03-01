@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.models.product_catalog import ProductRequestSource, ProductRequestStatus
+from app.models.product_catalog import ProductReorderStatus, ProductTransferStatus
 
 
 class AdminCatalogCategoryOut(BaseModel):
@@ -34,12 +35,17 @@ class AdminCatalogProductOut(BaseModel):
     id: UUID
     category_id: UUID | None
     category_name: str | None
+    primary_location_id: UUID | None
+    primary_location_name: str | None
     title: str
     barcode: str | None
     price_excl_vat: Decimal
     price_incl_vat: Decimal
     vat_rate: Decimal
     stock_global_quantity: int
+    reserve_stock: int
+    reorder_status: ProductReorderStatus
+    reorder_status_updated_at: datetime
     image_url: str | None
     short_description: str | None
     long_description: str | None
@@ -53,11 +59,14 @@ class AdminCatalogProductOut(BaseModel):
 
 class AdminCatalogProductCreateRequest(BaseModel):
     category_id: UUID | None = None
+    primary_location_id: UUID | None = None
     title: str = Field(min_length=1, max_length=255)
     barcode: str | None = Field(default=None, max_length=120)
     price_excl_vat: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
     price_incl_vat: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
     vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
+    reserve_stock: int = Field(default=0, ge=0, le=1000000)
+    reorder_status: ProductReorderStatus = ProductReorderStatus.NORMAL
     image_url: str | None = Field(default=None, max_length=4000)
     short_description: str | None = Field(default=None, max_length=500)
     long_description: str | None = Field(default=None, max_length=12000)
@@ -136,6 +145,65 @@ class AdminCatalogStockOut(BaseModel):
     real_updated_at: datetime
     estimated_updated_at: datetime
     updated_at: datetime
+
+
+class AdminCatalogReorderProductOut(BaseModel):
+    product_id: UUID
+    title: str
+    category_name: str | None
+    stock_global_quantity: int
+    reserve_stock: int
+    reorder_status: ProductReorderStatus
+    reorder_status_updated_at: datetime
+    primary_location_id: UUID | None
+    primary_location_name: str | None
+
+
+class AdminCatalogReorderStatusUpdateRequest(BaseModel):
+    reorder_status: ProductReorderStatus
+
+
+class AdminCatalogStockTransferOut(BaseModel):
+    id: UUID
+    product_id: UUID
+    product_title: str
+    source_location_id: UUID
+    source_location_name: str
+    target_location_id: UUID
+    target_location_name: str
+    quantity: int
+    planned_transfer_date: date | None
+    assigned_to_user_id: UUID | None
+    assigned_to_name: str | None
+    requested_by_user_id: UUID | None
+    requested_by_name: str | None
+    status: ProductTransferStatus
+    completed_by_user_id: UUID | None
+    completed_by_name: str | None
+    completed_at: datetime | None
+    completed_transfer_date: date | None
+    note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminCatalogStockTransferCreateRequest(BaseModel):
+    product_id: UUID
+    source_location_id: UUID
+    target_location_id: UUID
+    quantity: int = Field(default=1, ge=1, le=1000000)
+    planned_transfer_date: date | None = None
+    assigned_to_user_id: UUID | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class AdminCatalogStockTransferCompleteRequest(BaseModel):
+    completed_transfer_date: date | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class AdminCatalogStockTransferCancelRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class AdminCatalogStockInventoryUpdateRequest(BaseModel):

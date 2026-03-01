@@ -16,9 +16,12 @@ from app.models.product_catalog import (
     CatalogProduct,
     ProductCategory,
     ProductLocationStock,
+    ProductReorderStatus,
     ProductRequest,
     ProductRequestSource,
     ProductRequestStatus,
+    ProductStockTransfer,
+    ProductTransferStatus,
 )
 from app.models.user import User, UserRole
 from app.schemas.catalog_admin import (
@@ -32,19 +35,29 @@ from app.schemas.catalog_admin import (
     AdminCatalogProductCreateRequest,
     AdminCatalogProductOut,
     AdminCatalogProductUpdateRequest,
+    AdminCatalogReorderProductOut,
+    AdminCatalogReorderStatusUpdateRequest,
     AdminCatalogRequestCreateRequest,
     AdminCatalogRequestDeliverRequest,
     AdminCatalogRequestOut,
     AdminCatalogRequestReviewRequest,
     AdminCatalogStockInventoryUpdateRequest,
     AdminCatalogStockOut,
+    AdminCatalogStockTransferCancelRequest,
+    AdminCatalogStockTransferCompleteRequest,
+    AdminCatalogStockTransferCreateRequest,
+    AdminCatalogStockTransferOut,
 )
 from app.services.product_catalog import (
     apply_request_acceptance,
+    cancel_stock_transfer,
+    create_stock_transfer,
     ensure_product_stock_rows,
+    mark_stock_transfer_done,
     mark_request_delivered,
     mark_request_rejected,
     normalize_optional,
+    recalculate_product_global_stock,
     reset_inventory_stock,
     utcnow,
 )
@@ -80,6 +93,13 @@ def _require_location(db: Session, location_id: UUID) -> Location:
     return row
 
 
+def _require_transfer(db: Session, transfer_id: UUID) -> ProductStockTransfer:
+    row = db.scalar(select(ProductStockTransfer).where(ProductStockTransfer.id == transfer_id))
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transfer not found")
+    return row
+
+
 def _require_student_client(db: Session, student_user_id: UUID) -> User:
     row = db.scalar(select(User).where(User.id == student_user_id, User.role == UserRole.CLIENT))
     if row is None:
@@ -101,17 +121,39 @@ def _category_name_map(db: Session) -> dict[UUID, str]:
     return {category_id: name for category_id, name in rows}
 
 
-def _product_out(row: CatalogProduct, category_name_by_id: dict[UUID, str]) -> AdminCatalogProductOut:
+def _location_name_map(db: Session) -> dict[UUID, str]:
+    rows = db.execute(select(Location.id, Location.name)).all()
+    return {location_id: name for location_id, name in rows}
+
+
+def _user_name_map(db: Session, user_ids: list[UUID]) -> dict[UUID, str]:
+    unique_ids = list({value for value in user_ids if value is not None})
+    if not unique_ids:
+        return {}
+    users = db.scalars(select(User).where(User.id.in_(unique_ids))).all()
+    return {row.id: (_display_name(row) or row.email) for row in users}
+
+
+def _product_out(
+    row: CatalogProduct,
+    category_name_by_id: dict[UUID, str],
+    location_name_by_id: dict[UUID, str],
+) -> AdminCatalogProductOut:
     return AdminCatalogProductOut(
         id=row.id,
         category_id=row.category_id,
         category_name=category_name_by_id.get(row.category_id) if row.category_id else None,
+        primary_location_id=row.primary_location_id,
+        primary_location_name=location_name_by_id.get(row.primary_location_id) if row.primary_location_id else None,
         title=row.title,
         barcode=row.barcode,
         price_excl_vat=Decimal(row.price_excl_vat),
         price_incl_vat=Decimal(row.price_incl_vat),
         vat_rate=Decimal(row.vat_rate),
         stock_global_quantity=int(row.stock_global_quantity or 0),
+        reserve_stock=int(row.reserve_stock or 0),
+        reorder_status=row.reorder_status,
+        reorder_status_updated_at=row.reorder_status_updated_at,
         image_url=row.image_url,
         short_description=row.short_description,
         long_description=row.long_description,
@@ -119,6 +161,38 @@ def _product_out(row: CatalogProduct, category_name_by_id: dict[UUID, str]) -> A
         purchasable_online=bool(row.purchasable_online),
         is_public=bool(row.is_public),
         active=bool(row.active),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _transfer_out(
+    row: ProductStockTransfer,
+    *,
+    product_title_by_id: dict[UUID, str],
+    location_name_by_id: dict[UUID, str],
+    user_name_by_id: dict[UUID, str],
+) -> AdminCatalogStockTransferOut:
+    return AdminCatalogStockTransferOut(
+        id=row.id,
+        product_id=row.product_id,
+        product_title=product_title_by_id.get(row.product_id, "Produit"),
+        source_location_id=row.source_location_id,
+        source_location_name=location_name_by_id.get(row.source_location_id, "Lieu"),
+        target_location_id=row.target_location_id,
+        target_location_name=location_name_by_id.get(row.target_location_id, "Lieu"),
+        quantity=int(row.quantity or 0),
+        planned_transfer_date=row.planned_transfer_date,
+        assigned_to_user_id=row.assigned_to_user_id,
+        assigned_to_name=user_name_by_id.get(row.assigned_to_user_id) if row.assigned_to_user_id else None,
+        requested_by_user_id=row.requested_by_user_id,
+        requested_by_name=user_name_by_id.get(row.requested_by_user_id) if row.requested_by_user_id else None,
+        status=row.status,
+        completed_by_user_id=row.completed_by_user_id,
+        completed_by_name=user_name_by_id.get(row.completed_by_user_id) if row.completed_by_user_id else None,
+        completed_at=row.completed_at,
+        completed_transfer_date=row.completed_transfer_date,
+        note=row.note,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -362,8 +436,14 @@ def list_admin_catalog_products(
     if not include_inactive:
         stmt = stmt.where(CatalogProduct.active.is_(True))
     rows = db.scalars(stmt.order_by(CatalogProduct.title.asc())).all()
+    for row in rows:
+        ensure_product_stock_rows(db, product_id=row.id)
+        recalculate_product_global_stock(db, product_id=row.id)
+    if rows:
+        db.flush()
     category_name_by_id = _category_name_map(db)
-    return [_product_out(row, category_name_by_id) for row in rows]
+    location_name_by_id = _location_name_map(db)
+    return [_product_out(row, category_name_by_id, location_name_by_id) for row in rows]
 
 
 @router.post("/config/catalog/products", response_model=AdminCatalogProductOut, status_code=status.HTTP_201_CREATED)
@@ -374,15 +454,21 @@ def create_admin_catalog_product(
 ) -> AdminCatalogProductOut:
     if payload.category_id is not None:
         _require_category(db, payload.category_id)
+    if payload.primary_location_id is not None:
+        _require_location(db, payload.primary_location_id)
 
     now = utcnow()
     row = CatalogProduct(
         category_id=payload.category_id,
+        primary_location_id=payload.primary_location_id,
         title=payload.title.strip(),
         barcode=normalize_optional(payload.barcode),
         price_excl_vat=Decimal(payload.price_excl_vat).quantize(Decimal("0.01")),
         price_incl_vat=Decimal(payload.price_incl_vat).quantize(Decimal("0.01")),
         vat_rate=Decimal(payload.vat_rate).quantize(Decimal("0.001")),
+        reserve_stock=max(int(payload.reserve_stock or 0), 0),
+        reorder_status=payload.reorder_status,
+        reorder_status_updated_at=now,
         image_url=normalize_optional(payload.image_url),
         short_description=normalize_optional(payload.short_description),
         long_description=normalize_optional(payload.long_description),
@@ -396,11 +482,13 @@ def create_admin_catalog_product(
     db.flush()
 
     ensure_product_stock_rows(db, product_id=row.id)
+    recalculate_product_global_stock(db, product_id=row.id)
     db.commit()
     db.refresh(row)
 
     category_name_by_id = _category_name_map(db)
-    return _product_out(row, category_name_by_id)
+    location_name_by_id = _location_name_map(db)
+    return _product_out(row, category_name_by_id, location_name_by_id)
 
 
 @router.put("/config/catalog/products/{product_id}", response_model=AdminCatalogProductOut)
@@ -413,13 +501,20 @@ def update_admin_catalog_product(
     row = _require_product(db, product_id)
     if payload.category_id is not None:
         _require_category(db, payload.category_id)
+    if payload.primary_location_id is not None:
+        _require_location(db, payload.primary_location_id)
 
     row.category_id = payload.category_id
+    row.primary_location_id = payload.primary_location_id
     row.title = payload.title.strip()
     row.barcode = normalize_optional(payload.barcode)
     row.price_excl_vat = Decimal(payload.price_excl_vat).quantize(Decimal("0.01"))
     row.price_incl_vat = Decimal(payload.price_incl_vat).quantize(Decimal("0.01"))
     row.vat_rate = Decimal(payload.vat_rate).quantize(Decimal("0.001"))
+    row.reserve_stock = max(int(payload.reserve_stock or 0), 0)
+    if row.reorder_status != payload.reorder_status:
+        row.reorder_status = payload.reorder_status
+        row.reorder_status_updated_at = utcnow()
     row.image_url = normalize_optional(payload.image_url)
     row.short_description = normalize_optional(payload.short_description)
     row.long_description = normalize_optional(payload.long_description)
@@ -429,11 +524,14 @@ def update_admin_catalog_product(
     row.active = payload.active
     row.updated_at = utcnow()
 
+    ensure_product_stock_rows(db, product_id=row.id)
+    recalculate_product_global_stock(db, product_id=row.id)
     db.add(row)
     db.commit()
     db.refresh(row)
     category_name_by_id = _category_name_map(db)
-    return _product_out(row, category_name_by_id)
+    location_name_by_id = _location_name_map(db)
+    return _product_out(row, category_name_by_id, location_name_by_id)
 
 
 @router.delete(
@@ -617,6 +715,7 @@ def list_admin_catalog_stocks(
         products = [row for row in products if row.id == product_id]
     for product in products:
         ensure_product_stock_rows(db, product_id=product.id)
+        recalculate_product_global_stock(db, product_id=product.id)
     if products:
         db.flush()
 
@@ -680,6 +779,218 @@ def update_admin_catalog_stock_inventory(
         real_updated_at=row.real_updated_at,
         estimated_updated_at=row.estimated_updated_at,
         updated_at=row.updated_at,
+    )
+
+
+@router.get("/config/catalog/reorder-products", response_model=list[AdminCatalogReorderProductOut])
+def list_admin_catalog_reorder_products(
+    status_filter: ProductReorderStatus | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminCatalogReorderProductOut]:
+    rows = db.scalars(select(CatalogProduct).order_by(CatalogProduct.title.asc())).all()
+    for row in rows:
+        ensure_product_stock_rows(db, product_id=row.id)
+        recalculate_product_global_stock(db, product_id=row.id)
+    if rows:
+        db.flush()
+
+    category_name_by_id = _category_name_map(db)
+    location_name_by_id = _location_name_map(db)
+    filtered = rows if status_filter is None else [row for row in rows if row.reorder_status == status_filter]
+    return [
+        AdminCatalogReorderProductOut(
+            product_id=row.id,
+            title=row.title,
+            category_name=category_name_by_id.get(row.category_id) if row.category_id else None,
+            stock_global_quantity=int(row.stock_global_quantity or 0),
+            reserve_stock=int(row.reserve_stock or 0),
+            reorder_status=row.reorder_status,
+            reorder_status_updated_at=row.reorder_status_updated_at,
+            primary_location_id=row.primary_location_id,
+            primary_location_name=location_name_by_id.get(row.primary_location_id) if row.primary_location_id else None,
+        )
+        for row in filtered
+        if int(row.stock_global_quantity or 0) < int(row.reserve_stock or 0) or status_filter is not None
+    ]
+
+
+@router.post("/config/catalog/reorder-products/{product_id}/status", response_model=AdminCatalogReorderProductOut)
+def update_admin_catalog_reorder_status(
+    product_id: UUID,
+    payload: AdminCatalogReorderStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCatalogReorderProductOut:
+    row = _require_product(db, product_id)
+    row.reorder_status = payload.reorder_status
+    row.reorder_status_updated_at = utcnow()
+    row.updated_at = utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    category_name = None
+    if row.category_id is not None:
+        category_name = db.scalar(select(ProductCategory.name).where(ProductCategory.id == row.category_id))
+    location_name = None
+    if row.primary_location_id is not None:
+        location_name = db.scalar(select(Location.name).where(Location.id == row.primary_location_id))
+    return AdminCatalogReorderProductOut(
+        product_id=row.id,
+        title=row.title,
+        category_name=category_name,
+        stock_global_quantity=int(row.stock_global_quantity or 0),
+        reserve_stock=int(row.reserve_stock or 0),
+        reorder_status=row.reorder_status,
+        reorder_status_updated_at=row.reorder_status_updated_at,
+        primary_location_id=row.primary_location_id,
+        primary_location_name=location_name,
+    )
+
+
+@router.get("/config/catalog/transfers", response_model=list[AdminCatalogStockTransferOut])
+def list_admin_catalog_stock_transfers(
+    status_filter: ProductTransferStatus | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminCatalogStockTransferOut]:
+    stmt = select(ProductStockTransfer)
+    if status_filter is not None:
+        stmt = stmt.where(ProductStockTransfer.status == status_filter)
+    rows = db.scalars(stmt.order_by(ProductStockTransfer.created_at.desc())).all()
+
+    product_title_by_id = {product_id: title for product_id, title in db.execute(select(CatalogProduct.id, CatalogProduct.title)).all()}
+    location_name_by_id = _location_name_map(db)
+    user_name_by_id = _user_name_map(
+        db,
+        [
+            value
+            for row in rows
+            for value in [row.assigned_to_user_id, row.requested_by_user_id, row.completed_by_user_id]
+            if value is not None
+        ],
+    )
+    return [
+        _transfer_out(
+            row,
+            product_title_by_id=product_title_by_id,
+            location_name_by_id=location_name_by_id,
+            user_name_by_id=user_name_by_id,
+        )
+        for row in rows
+    ]
+
+
+@router.post("/config/catalog/transfers", response_model=AdminCatalogStockTransferOut, status_code=status.HTTP_201_CREATED)
+def create_admin_catalog_stock_transfer(
+    payload: AdminCatalogStockTransferCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCatalogStockTransferOut:
+    _require_product(db, payload.product_id)
+    _require_location(db, payload.source_location_id)
+    _require_location(db, payload.target_location_id)
+    if payload.assigned_to_user_id is not None:
+        assigned = db.scalar(select(User.id).where(User.id == payload.assigned_to_user_id))
+        if assigned is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assigned user not found")
+    try:
+        transfer = create_stock_transfer(
+            db,
+            product_id=payload.product_id,
+            source_location_id=payload.source_location_id,
+            target_location_id=payload.target_location_id,
+            quantity=payload.quantity,
+            planned_transfer_date=payload.planned_transfer_date,
+            assigned_to_user_id=payload.assigned_to_user_id,
+            requested_by_user_id=actor.id,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(transfer)
+    product_title = db.scalar(select(CatalogProduct.title).where(CatalogProduct.id == transfer.product_id)) or "Produit"
+    location_name_by_id = _location_name_map(db)
+    user_name_by_id = _user_name_map(
+        db,
+        [value for value in [transfer.assigned_to_user_id, transfer.requested_by_user_id, transfer.completed_by_user_id] if value is not None],
+    )
+    return _transfer_out(
+        transfer,
+        product_title_by_id={transfer.product_id: product_title},
+        location_name_by_id=location_name_by_id,
+        user_name_by_id=user_name_by_id,
+    )
+
+
+@router.post("/config/catalog/transfers/{transfer_id}/complete", response_model=AdminCatalogStockTransferOut)
+def complete_admin_catalog_stock_transfer(
+    transfer_id: UUID,
+    payload: AdminCatalogStockTransferCompleteRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCatalogStockTransferOut:
+    transfer = db.scalar(select(ProductStockTransfer).where(ProductStockTransfer.id == transfer_id).with_for_update())
+    if transfer is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transfer not found")
+    if transfer.status != ProductTransferStatus.PENDING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Transfer is not pending")
+
+    mark_stock_transfer_done(
+        db,
+        transfer=transfer,
+        completed_by_user_id=actor.id,
+        completed_transfer_date=payload.completed_transfer_date,
+        note=payload.note,
+    )
+    db.commit()
+    db.refresh(transfer)
+
+    product_title = db.scalar(select(CatalogProduct.title).where(CatalogProduct.id == transfer.product_id)) or "Produit"
+    location_name_by_id = _location_name_map(db)
+    user_name_by_id = _user_name_map(
+        db,
+        [value for value in [transfer.assigned_to_user_id, transfer.requested_by_user_id, transfer.completed_by_user_id] if value is not None],
+    )
+    return _transfer_out(
+        transfer,
+        product_title_by_id={transfer.product_id: product_title},
+        location_name_by_id=location_name_by_id,
+        user_name_by_id=user_name_by_id,
+    )
+
+
+@router.post("/config/catalog/transfers/{transfer_id}/cancel", response_model=AdminCatalogStockTransferOut)
+def cancel_admin_catalog_stock_transfer(
+    transfer_id: UUID,
+    payload: AdminCatalogStockTransferCancelRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCatalogStockTransferOut:
+    transfer = db.scalar(select(ProductStockTransfer).where(ProductStockTransfer.id == transfer_id).with_for_update())
+    if transfer is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transfer not found")
+    if transfer.status != ProductTransferStatus.PENDING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Transfer is not pending")
+
+    cancel_stock_transfer(db, transfer=transfer, note=payload.note)
+    db.commit()
+    db.refresh(transfer)
+
+    product_title = db.scalar(select(CatalogProduct.title).where(CatalogProduct.id == transfer.product_id)) or "Produit"
+    location_name_by_id = _location_name_map(db)
+    user_name_by_id = _user_name_map(
+        db,
+        [value for value in [transfer.assigned_to_user_id, transfer.requested_by_user_id, transfer.completed_by_user_id] if value is not None],
+    )
+    return _transfer_out(
+        transfer,
+        product_title_by_id={transfer.product_id: product_title},
+        location_name_by_id=location_name_by_id,
+        user_name_by_id=user_name_by_id,
     )
 
 
