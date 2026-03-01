@@ -1213,6 +1213,19 @@ button.danger {
   width: min(520px, 94vw);
 }
 
+.message-body-preview {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .planning-filters-modal {
   width: min(720px, 96vw);
 }

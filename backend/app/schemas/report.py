@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
@@ -58,3 +59,38 @@ class ProfessorStatementRow(BaseModel):
     amount_snapshot: Decimal | None
     currency_snapshot: str | None
     payout_status: Literal['PENDING', 'APPROVED', 'PAID'] | None
+
+
+class CommunicationChannel(str, enum.Enum):
+    EMAIL = "EMAIL"
+    SMS = "SMS"
+
+
+class CommunicationSenderCategory(str, enum.Enum):
+    PROFESSOR = "PROFESSOR"
+    SYSTEM = "SYSTEM"
+    OTHER_USER = "OTHER_USER"
+
+
+class CommunicationDeliveryStatus(str, enum.Enum):
+    DELIVERED = "DELIVERED"
+    SENT = "SENT"
+    FAILED = "FAILED"
+    PENDING = "PENDING"
+    SKIPPED = "SKIPPED"
+    UNKNOWN = "UNKNOWN"
+
+
+class CommunicationReportRow(BaseModel):
+    id: str
+    channel: CommunicationChannel
+    source: str
+    sender_category: CommunicationSenderCategory
+    sender_label: str
+    occurred_at: datetime
+    subject: str
+    recipient: str
+    delivery_status: CommunicationDeliveryStatus
+    provider_message_id: str | None
+    content: str
+    content_format: Literal["TEXT", "HTML"]

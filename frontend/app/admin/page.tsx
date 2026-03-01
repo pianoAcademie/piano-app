@@ -277,8 +277,18 @@ function shiftAgendaDate(view: AgendaView, agendaDate: string, direction: -1 | 1
     return utcDateToKey(new Date(Date.UTC(focusDate.getUTCFullYear(), focusDate.getUTCMonth() + direction, 1)));
   }
 
-  const dayStep = view === "week" ? 14 : 2;
+  const dayStep = view === "week" ? 7 : 1;
   return utcDateToKey(addUtcDays(focusDate, direction * dayStep));
+}
+
+function agendaNavigationHint(view: AgendaView): string {
+  if (view === "month") {
+    return "Navigation: mois par mois.";
+  }
+  if (view === "week") {
+    return "Navigation: semaine par semaine.";
+  }
+  return "Navigation: jour par jour.";
 }
 
 function toDateTimeLocalUtcValue(value: string): string {
@@ -1188,7 +1198,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </a>
           </div>
         </div>
-        <p className="muted">Navigation: mois par mois, 2 semaines en vue semaine, 2 jours en vue jour.</p>
+        <p className="muted">{agendaNavigationHint(agendaView)}</p>
 
         <div className={`agenda-grid agenda-grid-${agendaView}`}>
           {agendaDays.map((day) => (

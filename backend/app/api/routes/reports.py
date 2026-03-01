@@ -1,17 +1,28 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Numeric, case, cast, extract, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
+from app.models.client_record import ClientNoteEntry
+from app.models.ops import EmailReminder, MessageFormat, ProfessorSessionMessage, ReminderStatus
 from app.models.payout import ProfessorSessionPayout
 from app.models.user import User, UserRole
-from app.schemas.report import AttendanceReportRow, ProfessorStatementRow, ReservationReportRow
+from app.schemas.report import (
+    AttendanceReportRow,
+    CommunicationChannel,
+    CommunicationDeliveryStatus,
+    CommunicationReportRow,
+    CommunicationSenderCategory,
+    ProfessorStatementRow,
+    ReservationReportRow,
+)
 
 router = APIRouter(prefix="/admin/reports")
 
@@ -26,6 +37,43 @@ def _ensure_date_range(from_: datetime | None, to: datetime | None) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="'from' must be before 'to'",
         )
+
+
+def _display_name(user: User | None) -> str:
+    if user is None:
+        return "Systeme"
+    label = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+    return label or user.email
+
+
+def _sender_category(user: User | None) -> CommunicationSenderCategory:
+    if user is None:
+        return CommunicationSenderCategory.SYSTEM
+    if user.role == UserRole.PROF:
+        return CommunicationSenderCategory.PROFESSOR
+    return CommunicationSenderCategory.OTHER_USER
+
+
+def _extract_contact(text: str) -> str:
+    email_match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text or "")
+    if email_match:
+        return email_match.group(0).lower()
+    phone_match = re.search(r"\+?[0-9][0-9 .()-]{6,}[0-9]", text or "")
+    if phone_match:
+        return phone_match.group(0).strip()
+    return "-"
+
+
+def _reminder_status_to_delivery(status_value: ReminderStatus) -> CommunicationDeliveryStatus:
+    if status_value == ReminderStatus.SENT:
+        return CommunicationDeliveryStatus.DELIVERED
+    if status_value == ReminderStatus.FAILED:
+        return CommunicationDeliveryStatus.FAILED
+    if status_value == ReminderStatus.SKIPPED:
+        return CommunicationDeliveryStatus.SKIPPED
+    if status_value == ReminderStatus.PENDING:
+        return CommunicationDeliveryStatus.PENDING
+    return CommunicationDeliveryStatus.UNKNOWN
 
 
 @router.get("/reservations", response_model=list[ReservationReportRow])
@@ -251,3 +299,127 @@ def report_professor_statements(
         )
 
     return result
+
+
+@router.get("/communications", response_model=list[CommunicationReportRow])
+def report_communications(
+    channel: CommunicationChannel = Query(default=CommunicationChannel.EMAIL),
+    limit: int = Query(default=300, ge=1, le=2000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[CommunicationReportRow]:
+    rows: list[CommunicationReportRow] = []
+
+    if channel == CommunicationChannel.EMAIL:
+        prof_rows = db.execute(
+            select(ProfessorSessionMessage, Professor, CourseSession.title)
+            .join(Professor, Professor.id == ProfessorSessionMessage.professor_id)
+            .join(CourseSession, CourseSession.id == ProfessorSessionMessage.session_id)
+            .order_by(ProfessorSessionMessage.sent_at.desc())
+            .limit(limit)
+        ).all()
+        for message_row, professor, session_title in prof_rows:
+            sender_name = f"{(professor.first_name or '').strip()} {(professor.last_name or '').strip()}".strip() or professor.email
+            rows.append(
+                CommunicationReportRow(
+                    id=f"prof-message-{message_row.id}",
+                    channel=CommunicationChannel.EMAIL,
+                    source="PROFESSOR_SESSION_MESSAGE",
+                    sender_category=CommunicationSenderCategory.PROFESSOR,
+                    sender_label=sender_name,
+                    occurred_at=message_row.sent_at,
+                    subject=message_row.subject,
+                    recipient=f"{message_row.recipient_count} destinataire(s) - {session_title}",
+                    delivery_status=CommunicationDeliveryStatus.SENT,
+                    provider_message_id=None,
+                    content=message_row.body,
+                    content_format="HTML" if message_row.body_format == MessageFormat.HTML else "TEXT",
+                )
+            )
+
+        reminder_rows = db.execute(
+            select(EmailReminder, User.email, CourseSession.title)
+            .join(Booking, Booking.id == EmailReminder.booking_id)
+            .join(User, User.id == Booking.user_id)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .order_by(func.coalesce(EmailReminder.sent_at, EmailReminder.created_at).desc())
+            .limit(limit)
+        ).all()
+        for reminder, recipient_email, session_title in reminder_rows:
+            occurred_at = reminder.sent_at or reminder.created_at
+            rows.append(
+                CommunicationReportRow(
+                    id=f"email-reminder-{reminder.id}",
+                    channel=CommunicationChannel.EMAIL,
+                    source="SYSTEM_EMAIL_REMINDER",
+                    sender_category=CommunicationSenderCategory.SYSTEM,
+                    sender_label="Systeme",
+                    occurred_at=occurred_at,
+                    subject=f"Rappel de cours - {session_title}",
+                    recipient=(recipient_email or "-").strip().lower() or "-",
+                    delivery_status=_reminder_status_to_delivery(reminder.status),
+                    provider_message_id=reminder.provider_message_id,
+                    content=(
+                        reminder.error_message.strip()
+                        if reminder.error_message and reminder.error_message.strip()
+                        else "Rappel de cours genere automatiquement par le systeme."
+                    ),
+                    content_format="TEXT",
+                )
+            )
+
+        author_user = aliased(User)
+        note_rows = db.execute(
+            select(ClientNoteEntry, author_user)
+            .outerjoin(author_user, author_user.id == ClientNoteEntry.author_user_id)
+            .where(ClientNoteEntry.entry_type == "EMAIL")
+            .order_by(ClientNoteEntry.created_at.desc())
+            .limit(limit)
+        ).all()
+        for note, author in note_rows:
+            rows.append(
+                CommunicationReportRow(
+                    id=f"client-note-email-{note.id}",
+                    channel=CommunicationChannel.EMAIL,
+                    source="CLIENT_NOTE_EMAIL",
+                    sender_category=_sender_category(author),
+                    sender_label=_display_name(author),
+                    occurred_at=note.created_at,
+                    subject="Operation email",
+                    recipient=_extract_contact(note.message),
+                    delivery_status=CommunicationDeliveryStatus.SENT,
+                    provider_message_id=None,
+                    content=note.message,
+                    content_format="TEXT",
+                )
+            )
+
+    if channel == CommunicationChannel.SMS:
+        author_user = aliased(User)
+        note_rows = db.execute(
+            select(ClientNoteEntry, author_user)
+            .outerjoin(author_user, author_user.id == ClientNoteEntry.author_user_id)
+            .where(ClientNoteEntry.entry_type == "SMS")
+            .order_by(ClientNoteEntry.created_at.desc())
+            .limit(limit)
+        ).all()
+        for note, author in note_rows:
+            rows.append(
+                CommunicationReportRow(
+                    id=f"client-note-sms-{note.id}",
+                    channel=CommunicationChannel.SMS,
+                    source="CLIENT_NOTE_SMS",
+                    sender_category=_sender_category(author),
+                    sender_label=_display_name(author),
+                    occurred_at=note.created_at,
+                    subject="Operation SMS",
+                    recipient=_extract_contact(note.message),
+                    delivery_status=CommunicationDeliveryStatus.UNKNOWN,
+                    provider_message_id=None,
+                    content=note.message,
+                    content_format="TEXT",
+                )
+            )
+
+    rows.sort(key=lambda row: row.occurred_at, reverse=True)
+    return rows[:limit]

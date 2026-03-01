@@ -951,12 +951,17 @@ export type AdminCatalogProductOut = {
   id: string;
   category_id: string | null;
   category_name: string | null;
+  primary_location_id: string | null;
+  primary_location_name: string | null;
   title: string;
   barcode: string | null;
   price_excl_vat: string;
   price_incl_vat: string;
   vat_rate: string;
   stock_global_quantity: number;
+  reserve_stock: number;
+  reorder_status: "NORMAL" | "TO_ORDER" | "ORDERED" | "RECEIVED" | string;
+  reorder_status_updated_at: string;
   image_url: string | null;
   short_description: string | null;
   long_description: string | null;
@@ -964,6 +969,44 @@ export type AdminCatalogProductOut = {
   purchasable_online: boolean;
   is_public: boolean;
   active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminCatalogReorderProductOut = {
+  product_id: string;
+  title: string;
+  category_name: string | null;
+  stock_global_quantity: number;
+  reserve_stock: number;
+  reorder_status: "NORMAL" | "TO_ORDER" | "ORDERED" | "RECEIVED" | string;
+  reorder_status_updated_at: string;
+  primary_location_id: string | null;
+  primary_location_name: string | null;
+};
+
+export type AdminCatalogTransferStatus = "PENDING" | "DONE" | "CANCELLED" | string;
+
+export type AdminCatalogStockTransferOut = {
+  id: string;
+  product_id: string;
+  product_title: string;
+  source_location_id: string;
+  source_location_name: string;
+  target_location_id: string;
+  target_location_name: string;
+  quantity: number;
+  planned_transfer_date: string | null;
+  assigned_to_user_id: string | null;
+  assigned_to_name: string | null;
+  requested_by_user_id: string | null;
+  requested_by_name: string | null;
+  status: AdminCatalogTransferStatus;
+  completed_by_user_id: string | null;
+  completed_by_name: string | null;
+  completed_at: string | null;
+  completed_transfer_date: string | null;
+  note: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1301,4 +1344,19 @@ export type ProfessorStatementRow = {
   amount_snapshot: string | null;
   currency_snapshot: string | null;
   payout_status: "PENDING" | "APPROVED" | "PAID" | null;
+};
+
+export type CommunicationReportRow = {
+  id: string;
+  channel: "EMAIL" | "SMS";
+  source: string;
+  sender_category: "PROFESSOR" | "SYSTEM" | "OTHER_USER";
+  sender_label: string;
+  occurred_at: string;
+  subject: string;
+  recipient: string;
+  delivery_status: "DELIVERED" | "SENT" | "FAILED" | "PENDING" | "SKIPPED" | "UNKNOWN";
+  provider_message_id: string | null;
+  content: string;
+  content_format: "TEXT" | "HTML";
 };

@@ -37,7 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <header className="admin-topbar">
           <div className="admin-topbar-left">
             <strong>Portail admin</strong>
-            <small className="muted">Planning, clients, collaborateurs, produits, configuration, reporting</small>
+            <small className="muted">Planning, clients, collaborateurs, communications, produits, configuration, reporting</small>
           </div>
           <div className="row">
             <Link className="reset-link" href="/dashboard">

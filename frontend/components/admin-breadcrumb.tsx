@@ -36,6 +36,9 @@ function labelForSegment(segment: string, previous: string): string | null {
   if (segment === "reporting") {
     return "Reporting";
   }
+  if (segment === "communications") {
+    return "Communications";
+  }
   if (segment === "products") {
     return "Produits";
   }
