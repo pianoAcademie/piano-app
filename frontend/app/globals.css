@@ -1476,6 +1476,10 @@ button.danger {
   display: none;
 }
 
+.session-edit-form:has(input[name="is_all_day"]:checked) .session-time-field {
+  display: none;
+}
+
 .create-session-toggle {
   width: 100%;
   min-height: 46px;

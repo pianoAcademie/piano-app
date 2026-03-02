@@ -1073,12 +1073,21 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
   const end_time = String(formData.get("end_time") ?? "");
+  const duration_minutes_raw = String(formData.get("duration_minutes") ?? "").trim();
+  const duration_minutes = duration_minutes_raw ? parsePositiveInt(duration_minutes_raw) : null;
   const start_at_utc = parseUtcFromDateAndTimeInTimezone(start_date, is_all_day ? "00:00" : start_time, session_timezone);
-  const end_at_utc = is_all_day
+  const parsed_end_at_utc = is_all_day
     ? null
     : end_time.trim()
       ? parseUtcFromDateAndTimeInTimezone(start_date, end_time, session_timezone)
       : null;
+  let end_at_utc = parsed_end_at_utc;
+  if (!is_all_day && !end_at_utc && start_at_utc && duration_minutes !== null) {
+    const startMs = Date.parse(start_at_utc);
+    if (Number.isFinite(startMs)) {
+      end_at_utc = new Date(startMs + duration_minutes * 60000).toISOString();
+    }
+  }
 
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const parsed_capacity_max = parseNonNegativeInt(capacity_raw);
@@ -1092,8 +1101,24 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     redirect(appendQueryMessage(returnTo, "error", "Heure de debut obligatoire"));
   }
 
-  if (!is_all_day && end_time.trim() && !end_at_utc) {
+  if (!is_all_day && end_time.trim() && !parsed_end_at_utc) {
     redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+  }
+
+  if (!is_all_day && duration_minutes_raw && duration_minutes === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Duree invalide"));
+  }
+
+  if (!is_all_day && !parsed_end_at_utc && duration_minutes === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Heure de fin ou duree obligatoire"));
+  }
+
+  if (!is_all_day && start_at_utc && end_at_utc) {
+    const startMs = Date.parse(start_at_utc);
+    const endMs = Date.parse(end_at_utc);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+    }
   }
 
   if (!capacity_raw.trim() || parsed_capacity_max === null || capacity_max < 0) {
@@ -1198,16 +1223,45 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
   const end_time = String(formData.get("end_time") ?? "");
+  const duration_minutes_raw = String(formData.get("duration_minutes") ?? "").trim();
+  const duration_minutes = duration_minutes_raw ? parsePositiveInt(duration_minutes_raw) : null;
   const start_at_utc = parseUtcFromDateAndTimeInTimezone(start_date, is_all_day ? "00:00" : start_time, session_timezone);
-  const end_at_utc = is_all_day ? null : parseUtcFromDateAndTimeInTimezone(start_date, end_time, session_timezone);
+  const parsed_end_at_utc = is_all_day ? null : parseUtcFromDateAndTimeInTimezone(start_date, end_time, session_timezone);
+  let end_at_utc = parsed_end_at_utc;
+  if (!is_all_day && !end_at_utc && start_at_utc && duration_minutes !== null) {
+    const startMs = Date.parse(start_at_utc);
+    if (Number.isFinite(startMs)) {
+      end_at_utc = new Date(startMs + duration_minutes * 60000).toISOString();
+    }
+  }
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const capacity_max = parseNonNegativeInt(capacity_raw);
 
   if (!session_id || !title || !start_at_utc || !course_type_id || !location_id || !professor_id) {
     redirect(appendQueryMessage(returnTo, "error", "Champs de modification invalides"));
   }
-  if (!is_all_day && !end_at_utc) {
+  if (!is_all_day && !start_time.trim()) {
+    redirect(appendQueryMessage(returnTo, "error", "Heure de debut obligatoire"));
+  }
+
+  if (!is_all_day && end_time.trim() && !parsed_end_at_utc) {
     redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+  }
+
+  if (!is_all_day && duration_minutes_raw && duration_minutes === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Duree invalide"));
+  }
+
+  if (!is_all_day && !parsed_end_at_utc && duration_minutes === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Heure de fin ou duree obligatoire"));
+  }
+
+  if (!is_all_day && start_at_utc && end_at_utc) {
+    const startMs = Date.parse(start_at_utc);
+    const endMs = Date.parse(end_at_utc);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+    }
   }
 
   if (capacity_raw.trim() && capacity_max === null) {

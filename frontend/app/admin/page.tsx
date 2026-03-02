@@ -19,6 +19,7 @@ import { backendRequest } from "../../lib/backend";
 import AutoSubmitSelect from "../../components/auto-submit-select";
 import RichMessageEditor from "../../components/rich-message-editor";
 import SearchMultiSelect from "../../components/search-multi-select";
+import SessionTimeFields from "../../components/session-time-fields";
 import SessionVisibilityFields from "../../components/session-visibility-fields";
 import type {
   AdminClientOut,
@@ -349,11 +350,34 @@ function formatTime(value: string): string {
   });
 }
 
+function stripHtml(raw: string): string {
+  return raw
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*\/\s*p\s*>/gi, "\n")
+    .replace(/<\s*\/\s*div\s*>/gi, "\n")
+    .replace(/<\s*li\b[^>]*>/gi, "- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function sessionTimeRangeLabel(session: AdminSessionOut): string {
   if (session.is_all_day) {
     return "Toute la journee";
   }
   return `${formatTime(session.start_at_utc)} - ${formatTime(session.end_at_utc)}`;
+}
+
+function sessionDurationMinutes(session: AdminSessionOut): number | null {
+  if (session.is_all_day) {
+    return null;
+  }
+  const startMs = Date.parse(session.start_at_utc);
+  const endMs = Date.parse(session.end_at_utc);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return null;
+  }
+  return Math.floor((endMs - startMs) / 60000);
 }
 
 function occupancyClass(bookedCount: number, capacityMax: number): string {
@@ -789,6 +813,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const deleteConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "delete") : baseHref;
   const focusedAttendanceBooking =
     selectedSessionBookings.find((booking) => booking.id === bookingFocusId) ?? selectedSessionBookings[0] ?? null;
+  const selectedSessionHasBookings = selectedSessionBookings.length > 0;
   const focusedAttendanceIndex = focusedAttendanceBooking
     ? selectedSessionBookings.findIndex((booking) => booking.id === focusedAttendanceBooking.id)
     : -1;
@@ -1096,15 +1121,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     Creneau sur toute la journee
                   </label>
 
-                  <label className="create-time-field">
-                    Heure debut
-                    <input type="time" name="start_time" defaultValue="12:00" />
-                  </label>
-
-                  <label className="create-time-field">
-                    Heure fin
-                    <input type="time" name="end_time" defaultValue="13:00" />
-                  </label>
+                  <SessionTimeFields
+                    labelClassName="create-time-field session-time-field"
+                    defaultStartTime="12:00"
+                    defaultEndTime="13:00"
+                    defaultDurationMinutes={60}
+                    requiredStart
+                  />
 
                   <label>
                     Capacite max
@@ -1227,6 +1250,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     const duplicateSessionHref = withQueryParam(openSessionHref, "duplicate", "1");
                     const editSessionCardHref = withQueryParam(openSessionHref, "edit", "1");
                     const deleteSessionHref = withQueryParam(openSessionHref, "confirm_action", "delete");
+                    const hasBookedStudents = session.booked_count > 0;
                     const activityColor = courseType?.color_hex ?? "#d8ccb9";
                     const eventStateClass =
                       session.status === "COMPLETED"
@@ -1267,12 +1291,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         </a>
 
                         <div className="agenda-event-hover-actions" aria-label="Actions creneau">
-                          <a className="agenda-event-action" href={attendanceSessionHref}>
-                            Presences
-                          </a>
-                          <a className="agenda-event-action" href={groupNotesSessionHref}>
-                            Note groupe
-                          </a>
+                          {hasBookedStudents ? (
+                            <a className="agenda-event-action" href={attendanceSessionHref}>
+                              Presences
+                            </a>
+                          ) : null}
+                          {hasBookedStudents ? (
+                            <a className="agenda-event-action" href={groupNotesSessionHref}>
+                              Note groupe
+                            </a>
+                          ) : null}
                           <a className="agenda-event-action" href={duplicateSessionHref}>
                             Dupliquer
                           </a>
@@ -1402,12 +1430,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </p>
 
             <div className="row quick-actions-row">
-              <a className="mode-link" href={attendanceModalHref}>
-                Prendre les presences
-              </a>
-              <a className="mode-link" href={groupNotesModalHref}>
-                Note de groupe
-              </a>
+              {selectedSessionHasBookings ? (
+                <a className="mode-link" href={attendanceModalHref}>
+                  Prendre les presences
+                </a>
+              ) : null}
+              {selectedSessionHasBookings ? (
+                <a className="mode-link" href={groupNotesModalHref}>
+                  Note de groupe
+                </a>
+              ) : null}
               <a className="mode-link" href={duplicateModalHref}>
                 Dupliquer
               </a>
@@ -1497,17 +1529,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   ))}
                 </div>
               )}
-              <div className="row session-primary-actions">
-                <a className="mode-link" href={attendanceModalHref}>
-                  Prendre les presences
-                </a>
-                <a className="mode-link" href={groupNotesModalHref}>
-                  Ajouter des notes de groupe
-                </a>
-              </div>
+              {selectedSessionHasBookings ? (
+                <div className="row session-primary-actions">
+                  <a className="mode-link" href={attendanceModalHref}>
+                    Prendre les presences
+                  </a>
+                  <a className="mode-link" href={groupNotesModalHref}>
+                    Ajouter des notes de groupe
+                  </a>
+                </div>
+              ) : null}
               {selectedSession.group_note ? (
                 <p className="muted top-gap-sm">
-                  <strong>Note de groupe:</strong> {selectedSession.group_note}
+                  <strong>Note de groupe:</strong> {stripHtml(selectedSession.group_note)}
                 </p>
               ) : null}
             </section>
@@ -1617,15 +1651,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         Creneau sur toute la journee
                       </label>
 
-                      <label>
-                        Heure debut
-                        <input type="time" name="start_time" defaultValue={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)} />
-                      </label>
-
-                      <label>
-                        Heure fin
-                        <input type="time" name="end_time" defaultValue={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)} />
-                      </label>
+                      <SessionTimeFields
+                        labelClassName="session-time-field"
+                        defaultStartTime={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                        defaultEndTime={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                        defaultDurationMinutes={sessionDurationMinutes(selectedSession)}
+                        requiredStart
+                      />
 
                       <label>
                         Capacite max
@@ -1755,7 +1787,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      {selectedSession && attendanceModalOpen ? (
+      {selectedSession && attendanceModalOpen && selectedSessionHasBookings ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel session-attendance-modal">
             <a className="modal-close-x" href={modalHref} aria-label="Fermer">
@@ -1819,11 +1851,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <input type="hidden" name="session_id" value={selectedSession.id} />
                     <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
                     <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
-                    <label>
+                    <label className="session-edit-span">
                       Note eleve
-                      <textarea
+                      <RichMessageEditor
                         name="student_note"
-                        rows={6}
+                        formatName="student_note_format"
+                        rows={8}
+                        maxLength={12000}
                         placeholder="Saisir une note pour cet eleve..."
                         defaultValue={focusedAttendanceBooking.student_note ?? ""}
                       />
@@ -1856,7 +1890,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      {selectedSession && groupNotesModalOpen ? (
+      {selectedSession && groupNotesModalOpen && selectedSessionHasBookings ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel modal-compact session-group-notes-modal">
             <a className="modal-close-x" href={modalHref} aria-label="Fermer">
@@ -1867,9 +1901,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             <form action={adminUpdateSessionGroupNoteAction} className="grid top-gap-sm">
               <input type="hidden" name="session_id" value={selectedSession.id} />
               <input type="hidden" name="return_to" value={groupNotesModalHref} />
-              <label>
+              <label className="session-edit-span">
                 Note du creneau (groupe)
-                <textarea name="group_note" rows={10} placeholder="Saisir une note de groupe..." defaultValue={selectedSession.group_note ?? ""} />
+                <RichMessageEditor
+                  name="group_note"
+                  formatName="group_note_format"
+                  rows={10}
+                  maxLength={12000}
+                  placeholder="Saisir une note de groupe..."
+                  defaultValue={selectedSession.group_note ?? ""}
+                />
               </label>
               <div className="row spread">
                 <a className="reset-link" href={modalHref}>
