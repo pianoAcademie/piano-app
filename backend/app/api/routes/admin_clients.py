@@ -5,7 +5,7 @@ import io
 import json
 import re
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -1056,6 +1056,25 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
     if reminded_at is not None:
         normalized["reminded_at"] = reminded_at.isoformat()
 
+    reconciled_payment_ids_raw = payload.get("reconciled_manual_payment_ids")
+    if isinstance(reconciled_payment_ids_raw, list):
+        reconciled_payment_ids: list[str] = []
+        seen_reconciled_payment_ids: set[str] = set()
+        for raw_value in reconciled_payment_ids_raw:
+            candidate = _normalize_optional(str(raw_value))
+            if not candidate:
+                continue
+            try:
+                normalized_candidate = str(UUID(candidate))
+            except ValueError:
+                continue
+            if normalized_candidate in seen_reconciled_payment_ids:
+                continue
+            seen_reconciled_payment_ids.add(normalized_candidate)
+            reconciled_payment_ids.append(normalized_candidate)
+        if reconciled_payment_ids:
+            normalized["reconciled_manual_payment_ids"] = reconciled_payment_ids
+
     return normalized
 
 
@@ -1170,6 +1189,43 @@ def _load_range_invoice_note(
     if metadata is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture de plage introuvable")
     return note, metadata
+
+
+def _invoice_range_total_in_currency(metadata: dict[str, object], *, currency: str) -> Decimal:
+    totals_raw = metadata.get("totals_by_currency")
+    if not isinstance(totals_raw, dict) or not totals_raw:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Montant facture indisponible")
+
+    normalized_currency = _normalize_currency(currency, fallback="EUR")
+    amount_raw = None
+    for raw_currency, raw_amount in totals_raw.items():
+        candidate_currency = str(raw_currency or "").strip().upper()
+        if candidate_currency == normalized_currency:
+            amount_raw = raw_amount
+            break
+
+    if amount_raw is None:
+        available = sorted({str(raw_currency or "").strip().upper() for raw_currency in totals_raw.keys() if str(raw_currency or "").strip()})
+        detail = f"Devise facture incompatible ({', '.join(available)})" if available else "Devise facture incompatible"
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+
+    try:
+        amount = _quantize_money(Decimal(str(amount_raw)))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Montant facture invalide") from exc
+    if amount < Decimal("0.00"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Montant facture invalide")
+    return amount
+
+
+def _manual_payment_method_code(reference: str | None) -> str | None:
+    normalized_reference = (reference or "").strip()
+    if not normalized_reference:
+        return None
+    if not normalized_reference.upper().startswith("MODE:"):
+        return None
+    code = normalized_reference[5:].strip().upper()
+    return code or None
 
 
 def _manual_transaction_allowed_student_ids(db: Session, *, client: User) -> set[UUID]:
@@ -1429,7 +1485,7 @@ def _payment_method_label(method_code: str | None) -> str:
         "CHECK": "Cheque",
         "CASH": "Especes",
         "PAYPAL": "PayPal",
-        "FACTURATION_AUTO": "Facturation automatique",
+        "FACTURATION_AUTO": "Paiement sur facture",
     }
     return labels.get(normalized, normalized or "Non defini")
 
@@ -1443,7 +1499,7 @@ def _payment_method_label_client(method_code: str | None) -> str:
         "CHECK": "Cheque",
         "CASH": "Especes",
         "PAYPAL": "PayPal",
-        "FACTURATION_AUTO": "Facturation automatique",
+        "FACTURATION_AUTO": "Paiement sur facture",
     }
     return labels.get(normalized, normalized or "Non defini")
 
@@ -4135,6 +4191,22 @@ def create_admin_client_manual_transaction(
     sign = MANUAL_TRANSACTION_SIGN_BY_TYPE.get(transaction_type)
     if sign is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported transaction type")
+    if transaction_type != "PAYMENT":
+        if payload.reconciled_invoice_note_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invoice reconciliation is available only for payment transactions",
+            )
+        if payload.mark_reconciled_invoices_paid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invoice status update is available only for payment transactions",
+            )
+        if payload.send_receipt_email:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Receipt email is available only for payment transactions",
+            )
 
     student_id = payload.student_id
     if student_id is not None:
@@ -4172,6 +4244,29 @@ def create_admin_client_manual_transaction(
     occurred_at = payload.occurred_at or _utcnow()
     status_value = MANUAL_TRANSACTION_STATUS_BY_TYPE.get(transaction_type, "COMPLETED")
 
+    reconciled_note_ids: list[UUID] = []
+    seen_reconciled_note_ids: set[UUID] = set()
+    for note_id in payload.reconciled_invoice_note_ids:
+        if note_id in seen_reconciled_note_ids:
+            continue
+        seen_reconciled_note_ids.add(note_id)
+        reconciled_note_ids.append(note_id)
+
+    reconciled_invoices: list[tuple[ClientNoteEntry, dict[str, object], Decimal, str]] = []
+    reconciled_total = Decimal("0.00")
+    for note_id in reconciled_note_ids:
+        note, metadata = _load_range_invoice_note(db, client_id=client.id, note_id=note_id, for_update=True)
+        invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+        if invoice_status != "ISSUED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Only issued invoices can be reconciled",
+            )
+        invoice_total = _invoice_range_total_in_currency(metadata, currency=currency)
+        invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note.id)
+        reconciled_total = _quantize_money(reconciled_total + invoice_total)
+        reconciled_invoices.append((note, metadata, invoice_total, invoice_number))
+
     row = ClientManualTransaction(
         user_id=client.id,
         student_user_id=student_id,
@@ -4190,18 +4285,103 @@ def create_admin_client_manual_transaction(
         reference=reference,
     )
     db.add(row)
+    db.flush()
+
+    can_mark_reconciled_invoices_paid = bool(reconciled_invoices) and total_abs >= reconciled_total
+    marked_reconciled_invoices_paid = bool(payload.mark_reconciled_invoices_paid and can_mark_reconciled_invoices_paid)
+    if reconciled_invoices:
+        payment_id = str(row.id)
+        for note, metadata, _, _ in reconciled_invoices:
+            existing_ids_raw = metadata.get("reconciled_manual_payment_ids")
+            existing_ids = [str(value) for value in existing_ids_raw] if isinstance(existing_ids_raw, list) else []
+            if payment_id not in existing_ids:
+                existing_ids.append(payment_id)
+            metadata["reconciled_manual_payment_ids"] = existing_ids
+            if marked_reconciled_invoices_paid:
+                metadata["invoice_status"] = "PAID"
+            note.message = _build_invoice_range_note_message(metadata)
+            db.add(note)
+
+    receipt_recipients: list[str] = []
+    receipt_message_id: str | None = None
+    receipt_send_error: str | None = None
+    if payload.send_receipt_email:
+        billing_profile = resolve_billing_profile(db, client)
+        receipt_recipients = _normalize_email_recipients([billing_profile.email, client.email])
+        if not receipt_recipients:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
+        payment_method_code = _manual_payment_method_code(reference)
+        payment_method_label = _payment_method_label_client(payment_method_code) if payment_method_code else "Paiement manuel"
+        client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
+        invoice_numbers = [invoice_number for _, _, _, invoice_number in reconciled_invoices]
+        receipt_lines = [
+            f"Bonjour {client_name},",
+            "",
+            f"Nous confirmons la reception de votre paiement de {total_abs:.2f} {currency}.",
+            f"Date du paiement: {occurred_at.strftime('%d/%m/%Y')}.",
+            f"Mode de paiement: {payment_method_label}.",
+        ]
+        if invoice_numbers:
+            receipt_lines.append(f"Facture(s) rapprochee(s): {', '.join(invoice_numbers)}.")
+        receipt_lines.extend(
+            [
+                "",
+                "Ce message tient lieu de recu.",
+            ]
+        )
+        sender = resolve_sender_profile(db, sender_kind="STUDIO")
+        subject = f"Recu de paiement - {client_name}"
+        body = "\n".join(receipt_lines).strip()
+        try:
+            message_ids = [
+                send_email(
+                    to_email=recipient,
+                    subject=subject,
+                    body=body,
+                    body_format="TEXT",
+                    context="MANUAL_PAYMENT_RECEIPT",
+                    from_email=sender.from_email,
+                    from_name=sender.from_name,
+                    reply_to=sender.reply_to,
+                    subject_prefix=sender.subject_prefix,
+                )
+                for recipient in receipt_recipients
+            ]
+            receipt_message_id = message_ids[0] if message_ids else None
+        except Exception as exc:  # pragma: no cover - defensive safety for SMTP providers
+            receipt_send_error = str(exc).strip() or "Erreur technique d'envoi"
 
     direction_label = "debiteur" if sign > 0 else "crediteur"
+    note_message = (
+        f"Transaction manuelle ajoutee ({label}) : {row.total_incl_vat:.2f} {currency} "
+        f"[{direction_label}]"
+        + (f". Categorie: {category}." if category else ".")
+    )
+    if reconciled_invoices:
+        invoice_numbers = [invoice_number for _, _, _, invoice_number in reconciled_invoices]
+        note_message += (
+            f" Rapprochement facture(s): {', '.join(invoice_numbers)} "
+            f"(total facture(s): {reconciled_total:.2f} {currency})."
+        )
+        if payload.mark_reconciled_invoices_paid:
+            if marked_reconciled_invoices_paid:
+                note_message += " Facture(s) marquee(s) comme payee(s)."
+            else:
+                note_message += " Montant paiement inferieur au total facture(s): facture(s) laissee(s) en statut emise."
+    if payload.send_receipt_email:
+        if receipt_send_error:
+            note_message += f" Echec envoi recu par courriel: {receipt_send_error}."
+        else:
+            recipients_label = ", ".join(receipt_recipients)
+            note_message += f" Recu envoye par courriel a: {recipients_label}."
+            if receipt_message_id:
+                note_message += f" Message id: {receipt_message_id}."
     _create_client_note(
         db,
         client_id=client.id,
         author_user_id=actor.id,
         entry_type="AUTO",
-        message=(
-            f"Transaction manuelle ajoutee ({label}) : {row.total_incl_vat:.2f} {currency} "
-            f"[{direction_label}]"
-            + (f". Categorie: {category}." if category else ".")
-        ),
+        message=note_message,
     )
 
     db.commit()

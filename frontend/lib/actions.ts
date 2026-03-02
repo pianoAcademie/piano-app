@@ -2952,10 +2952,28 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
   const customReference = optionalField(formData, "reference");
   const resolvedReference = customReference ?? (paymentMethodCode ? `MODE:${paymentMethodCode}` : null);
-
   if (!clientId) {
     redirect("/admin/clients?error=Client%20invalide");
   }
+  const reconciledInvoiceNoteIdsRaw = formData
+    .getAll("reconciled_invoice_note_ids")
+    .map((entry) => String(entry ?? "").trim())
+    .filter((entry) => entry.length > 0);
+  const reconciledInvoiceNoteIds: string[] = [];
+  const seenReconciledInvoiceNoteIds = new Set<string>();
+  for (const rawId of reconciledInvoiceNoteIdsRaw) {
+    const parsedId = parseUuid(rawId);
+    if (!parsedId) {
+      redirect(`/admin/clients/${clientId}?tab=paiements&error=Facture%20a%20rapprocher%20invalide`);
+    }
+    if (seenReconciledInvoiceNoteIds.has(parsedId)) {
+      continue;
+    }
+    seenReconciledInvoiceNoteIds.add(parsedId);
+    reconciledInvoiceNoteIds.push(parsedId);
+  }
+  const markReconciledInvoicesPaid = parseCheckboxFlag(formData, "mark_reconciled_invoices_paid", false);
+  const sendReceiptEmail = parseCheckboxFlag(formData, "send_receipt_email", false);
   if (!["PAYMENT", "REFUND", "CHARGE", "DISCOUNT"].includes(transactionType)) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Type%20de%20transaction%20invalide`);
   }
@@ -2984,6 +3002,9 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         amount_incl_vat: amountInclVat,
         vat_rate: vatRate,
         currency: optionalField(formData, "currency"),
+        reconciled_invoice_note_ids: reconciledInvoiceNoteIds,
+        mark_reconciled_invoices_paid: markReconciledInvoicesPaid,
+        send_receipt_email: sendReceiptEmail,
       }),
     },
     token,

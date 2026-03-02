@@ -219,6 +219,9 @@ function billingMethodLabel(code: string | null): string {
   if (normalized === "PAYPAL") {
     return "PayPal";
   }
+  if (normalized === "FACTURATION_AUTO") {
+    return "Paiement sur facture";
+  }
   return code || "Non defini";
 }
 
@@ -640,6 +643,7 @@ const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{ code: string; label: string }> = [
   { code: "PAYPAL", label: "PayPal" },
   { code: "SEPA_DEBIT", label: "Prelevement SEPA" },
   { code: "BANK_TRANSFER", label: "Virement bancaire" },
+  { code: "FACTURATION_AUTO", label: "Paiement sur facture" },
 ];
 
 function statusClass(status: string): string {
@@ -1132,6 +1136,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoices = [...generatedRangeInvoices, ...paymentInvoices].sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
   );
+  const reconcilableRangeInvoices = generatedRangeInvoices.filter((row) => (row.status || "").trim().toUpperCase() === "ISSUED");
   const selectedRangeInvoiceForModal =
     paymentModalAction === "invoice_email" && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
@@ -1238,6 +1243,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const manualTransactionDefaultLabel =
     manualTransactionModalType === null ? "" : manualTransactionDefaultLabelByModal[manualTransactionModalType];
   const manualIsCashFlow = manualTransactionModalType === "payment" || manualTransactionModalType === "refund";
+  const manualIsPayment = manualTransactionModalType === "payment";
   const manualVatDefault = manualIsCashFlow ? "0" : "20";
 
   return (
@@ -1667,6 +1673,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <option value="CARD_ONLINE">CB en ligne (Mollie / Payplug)</option>
                       <option value="PAYPAL">PayPal</option>
                       <option value="CARD_TERMINAL">CB sur place (TPE)</option>
+                      <option value="FACTURATION_AUTO">Paiement sur facture</option>
                     </>
                   )}
                 </select>
@@ -3516,6 +3523,63 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 Description (optionnel)
                 <textarea name="description" rows={3} maxLength={2000} placeholder="Ce texte apparaitra dans la facture." />
               </label>
+              {manualIsPayment ? (
+                <fieldset className="config-payment-fieldset span-2">
+                  <legend>Rapprochement facture (optionnel)</legend>
+                  {reconcilableRangeInvoices.length > 0 ? (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th aria-label="Selection">Sel.</th>
+                            <th>Date facture</th>
+                            <th>Numero facture</th>
+                            <th>Montant</th>
+                            <th>Statut</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reconcilableRangeInvoices.map((row) => (
+                            <tr key={`manual-reconcile-${row.noteId}`}>
+                              <td>
+                                <input type="checkbox" name="reconciled_invoice_note_ids" value={row.noteId} />
+                              </td>
+                              <td>{formatDate(row.occurredAt)}</td>
+                              <td>{row.invoiceNumber}</td>
+                              <td>{row.totalLabel}</td>
+                              <td>
+                                <span className={`status-pill ${rangeInvoiceStatusClass(row.status)}`}>
+                                  {rangeInvoiceStatusLabel(row.status)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="muted">Aucune facture emise en attente de paiement a rapprocher.</p>
+                  )}
+                  <input type="hidden" name="mark_reconciled_invoices_paid" value="off" />
+                  <label className="checkline">
+                    <input type="checkbox" name="mark_reconciled_invoices_paid" value="on" />
+                    Marquer manuellement les factures selectionnees comme payees (si montant regle suffisant)
+                  </label>
+                  <p className="muted">
+                    Si montant paiement &lt; total facture(s), elles restent a payer. Si montant paiement &gt;= total facture(s), vous pouvez les
+                    valider comme payees.
+                  </p>
+                </fieldset>
+              ) : null}
+              {manualIsPayment ? (
+                <>
+                  <input type="hidden" name="send_receipt_email" value="off" />
+                  <label className="checkline span-2">
+                    <input type="checkbox" name="send_receipt_email" value="on" />
+                    Envoyer un recu par courriel (validation manuelle)
+                  </label>
+                </>
+              ) : null}
               {!manualIsCashFlow && productCategories.length === 0 ? (
                 <p className="muted">
                   Aucune categorie disponible. Configurez-les dans{" "}

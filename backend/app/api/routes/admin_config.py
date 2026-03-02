@@ -121,6 +121,7 @@ PAYMENT_METHOD_CATALOG: list[tuple[str, str]] = [
     ("PAYPAL", "PayPal"),
     ("SEPA_DEBIT", "Prelevement SEPA"),
     ("BANK_TRANSFER", "Virement bancaire"),
+    ("FACTURATION_AUTO", "Paiement sur facture"),
 ]
 PAYMENT_METHOD_CODES = {code for code, _ in PAYMENT_METHOD_CATALOG}
 SUPPORTED_CURRENCIES = {"EUR", "USD"}
@@ -1309,6 +1310,9 @@ def get_admin_payment_methods(
     raw = _get_setting_value(db, PAYMENT_METHODS_SETTING_KEY, "")
     if raw:
         enabled_codes = _normalize_methods(raw.split(","))
+        legacy_default_codes = [code for code, _ in PAYMENT_METHOD_CATALOG if code != "FACTURATION_AUTO"]
+        if set(enabled_codes) == set(legacy_default_codes):
+            enabled_codes.append("FACTURATION_AUTO")
     else:
         enabled_codes = [code for code, _ in PAYMENT_METHOD_CATALOG]
 

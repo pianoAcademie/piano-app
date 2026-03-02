@@ -954,6 +954,9 @@ class AdminClientManualTransactionCreateRequest(BaseModel):
     amount_incl_vat: Decimal = Field(gt=Decimal("0"))
     vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    reconciled_invoice_note_ids: list[UUID] = Field(default_factory=list)
+    mark_reconciled_invoices_paid: bool = False
+    send_receipt_email: bool = False
 
 
 class AdminClientPaymentRefundRequest(BaseModel):
