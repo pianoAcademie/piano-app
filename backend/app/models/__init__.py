@@ -14,7 +14,18 @@ from app.models.catalog import (
     Professor,
     SessionStatus,
 )
-from app.models.ops import AppSetting, EmailReminder, MessageFormat, PasswordResetToken, ProfessorSessionMessage, ReminderStatus
+from app.models.ops import (
+    AppSetting,
+    CommunicationChannel,
+    CommunicationDeliveryStatus,
+    CommunicationLog,
+    CommunicationSenderCategory,
+    EmailReminder,
+    MessageFormat,
+    PasswordResetToken,
+    ProfessorSessionMessage,
+    ReminderStatus,
+)
 from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
 from app.models.professor_contract import (
     ProfessorContractGrid,
@@ -52,6 +63,10 @@ __all__ = [
     "AppSetting",
     "Booking",
     "BookingStatus",
+    "CommunicationChannel",
+    "CommunicationDeliveryStatus",
+    "CommunicationLog",
+    "CommunicationSenderCategory",
     "CreditType",
     "ClientFamilyLink",
     "ClientGroup",

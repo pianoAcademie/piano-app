@@ -7,8 +7,11 @@ from email.message import EmailMessage
 from email.utils import formataddr
 from typing import Iterable
 from uuid import uuid4
+from uuid import UUID
 
 from app.core.config import settings
+from app.models.ops import CommunicationChannel, CommunicationDeliveryStatus, CommunicationSenderCategory, MessageFormat
+from app.services.communication_journal import infer_communication_type, log_communication
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +99,31 @@ def send_email(
     reply_to: str | None = None,
     subject_prefix: str | None = None,
     attachments: Iterable[EmailAttachment] | None = None,
+    sender_user_id: UUID | None = None,
+    sender_label: str | None = None,
+    sender_category: CommunicationSenderCategory | str | None = None,
+    professor_id: UUID | None = None,
+    recipient_user_id: UUID | None = None,
+    communication_type: str | None = None,
 ) -> str:
     message_id = f"mail-{uuid4()}"
     provider = _normalized_provider()
+    normalized_format = "HTML" if (body_format or "").strip().lower() == "html" else "TEXT"
+    raw_sender_category = (
+        sender_category.value
+        if isinstance(sender_category, CommunicationSenderCategory)
+        else str(sender_category or CommunicationSenderCategory.SYSTEM.value)
+    )
+    resolved_sender_category = CommunicationSenderCategory(raw_sender_category.strip().upper())
+    resolved_sender_label = (sender_label or "").strip() or (
+        "Systeme" if resolved_sender_category == CommunicationSenderCategory.SYSTEM else "Autre utilisateur"
+    )
+    resolved_type = communication_type or infer_communication_type(
+        source=context,
+        context=context,
+        sender_category=resolved_sender_category,
+        channel=CommunicationChannel.EMAIL,
+    )
 
     if provider == "LOG":
         logger.info(
@@ -107,6 +132,23 @@ def send_email(
             to_email,
             context,
             subject,
+        )
+        log_communication(
+            channel=CommunicationChannel.EMAIL,
+            source=context,
+            communication_type=resolved_type,
+            sender_category=resolved_sender_category,
+            sender_user_id=sender_user_id,
+            sender_label=resolved_sender_label,
+            professor_id=professor_id,
+            recipient_user_id=recipient_user_id,
+            recipient=to_email,
+            subject=subject,
+            content=body,
+            content_format=MessageFormat.HTML if normalized_format == "HTML" else MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.SKIPPED,
+            provider=provider,
+            provider_message_id=message_id,
         )
         return message_id
 
@@ -122,6 +164,24 @@ def send_email(
             to_email,
             context,
         )
+        log_communication(
+            channel=CommunicationChannel.EMAIL,
+            source=context,
+            communication_type=resolved_type,
+            sender_category=resolved_sender_category,
+            sender_user_id=sender_user_id,
+            sender_label=resolved_sender_label,
+            professor_id=professor_id,
+            recipient_user_id=recipient_user_id,
+            recipient=to_email,
+            subject=subject,
+            content=body,
+            content_format=MessageFormat.HTML if normalized_format == "HTML" else MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.FAILED,
+            provider=provider,
+            provider_message_id=message_id,
+            error_message="Missing SMTP host",
+        )
         return message_id
 
     if not username or not password:
@@ -131,6 +191,24 @@ def send_email(
             provider,
             to_email,
             context,
+        )
+        log_communication(
+            channel=CommunicationChannel.EMAIL,
+            source=context,
+            communication_type=resolved_type,
+            sender_category=resolved_sender_category,
+            sender_user_id=sender_user_id,
+            sender_label=resolved_sender_label,
+            professor_id=professor_id,
+            recipient_user_id=recipient_user_id,
+            recipient=to_email,
+            subject=subject,
+            content=body,
+            content_format=MessageFormat.HTML if normalized_format == "HTML" else MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.FAILED,
+            provider=provider,
+            provider_message_id=message_id,
+            error_message="Missing SMTP credentials",
         )
         return message_id
 
@@ -172,6 +250,24 @@ def send_email(
             to_email,
             context,
         )
+        log_communication(
+            channel=CommunicationChannel.EMAIL,
+            source=context,
+            communication_type=resolved_type,
+            sender_category=resolved_sender_category,
+            sender_user_id=sender_user_id,
+            sender_label=resolved_sender_label,
+            professor_id=professor_id,
+            recipient_user_id=recipient_user_id,
+            recipient=to_email,
+            subject=subject,
+            content=body,
+            content_format=MessageFormat.HTML if normalized_format == "HTML" else MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.FAILED,
+            provider=provider,
+            provider_message_id=message_id,
+            error_message="SMTP send exception",
+        )
         return message_id
 
     logger.info(
@@ -181,5 +277,22 @@ def send_email(
         to_email,
         context,
         subject,
+    )
+    log_communication(
+        channel=CommunicationChannel.EMAIL,
+        source=context,
+        communication_type=resolved_type,
+        sender_category=resolved_sender_category,
+        sender_user_id=sender_user_id,
+        sender_label=resolved_sender_label,
+        professor_id=professor_id,
+        recipient_user_id=recipient_user_id,
+        recipient=to_email,
+        subject=subject,
+        content=body,
+        content_format=MessageFormat.HTML if normalized_format == "HTML" else MessageFormat.TEXT,
+        delivery_status=CommunicationDeliveryStatus.SENT,
+        provider=provider,
+        provider_message_id=message_id,
     )
     return message_id

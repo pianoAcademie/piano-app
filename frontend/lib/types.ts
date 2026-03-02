@@ -1350,13 +1350,35 @@ export type CommunicationReportRow = {
   id: string;
   channel: "EMAIL" | "SMS";
   source: string;
+  communication_type: string;
+  communication_type_label: string;
   sender_category: "PROFESSOR" | "SYSTEM" | "OTHER_USER";
   sender_label: string;
+  sender_user_id: string | null;
+  professor_id: string | null;
   occurred_at: string;
   subject: string;
   recipient: string;
+  recipient_user_id: string | null;
   delivery_status: "DELIVERED" | "SENT" | "FAILED" | "PENDING" | "SKIPPED" | "UNKNOWN";
   provider_message_id: string | null;
+  provider: string | null;
   content: string;
   content_format: "TEXT" | "HTML";
+  error_message: string | null;
+};
+
+export type CommunicationTypeFilterOut = {
+  code: string;
+  label: string;
+};
+
+export type CommunicationProfessorFilterOut = {
+  id: string;
+  label: string;
+};
+
+export type CommunicationFiltersOut = {
+  communication_types: CommunicationTypeFilterOut[];
+  professors: CommunicationProfessorFilterOut[];
 };

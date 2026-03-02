@@ -85,12 +85,34 @@ class CommunicationReportRow(BaseModel):
     id: str
     channel: CommunicationChannel
     source: str
+    communication_type: str
+    communication_type_label: str
     sender_category: CommunicationSenderCategory
     sender_label: str
+    sender_user_id: UUID | None
+    professor_id: UUID | None
     occurred_at: datetime
     subject: str
     recipient: str
+    recipient_user_id: UUID | None
     delivery_status: CommunicationDeliveryStatus
     provider_message_id: str | None
+    provider: str | None
     content: str
     content_format: Literal["TEXT", "HTML"]
+    error_message: str | None
+
+
+class CommunicationTypeFilterOut(BaseModel):
+    code: str
+    label: str
+
+
+class CommunicationProfessorFilterOut(BaseModel):
+    id: UUID
+    label: str
+
+
+class CommunicationFiltersOut(BaseModel):
+    communication_types: list[CommunicationTypeFilterOut]
+    professors: list[CommunicationProfessorFilterOut]

@@ -23,7 +23,14 @@ from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry, ClientPaymentRefund
 from app.models.family import ClientFamilyLink
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, Location, SessionStatus
-from app.models.ops import AppSetting, EmailReminder
+from app.models.ops import (
+    AppSetting,
+    CommunicationChannel,
+    CommunicationDeliveryStatus,
+    CommunicationSenderCategory,
+    EmailReminder,
+    MessageFormat,
+)
 from app.models.plan import (
     ClientForfaitActivityPricing,
     ClientPlanSubscription,
@@ -95,6 +102,7 @@ from app.services.client_payment_email import (
     render_client_payment_email,
     send_client_payment_email,
 )
+from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
 from app.services.invoice_documents import InvoicePeriodLine, render_invoice_period_pdf, reserve_next_invoice_number
@@ -518,6 +526,27 @@ def _create_client_note(
         message=normalized,
     )
     db.add(note)
+    if note.entry_type == "SMS":
+        author = db.scalar(select(User).where(User.id == author_user_id)) if author_user_id is not None else None
+        sender_category = CommunicationSenderCategory.SYSTEM if author is None else (
+            CommunicationSenderCategory.PROFESSOR if author.role == UserRole.PROF else CommunicationSenderCategory.OTHER_USER
+        )
+        sender_label = "Systeme" if author is None else (_display_name(author.first_name, author.last_name, author.email))
+        log_communication(
+            db=db,
+            channel=CommunicationChannel.SMS,
+            source="CLIENT_NOTE_SMS",
+            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            sender_category=sender_category,
+            sender_user_id=author_user_id,
+            sender_label=sender_label,
+            recipient_user_id=client_id,
+            recipient=f"client:{client_id}",
+            subject="Operation SMS",
+            content=normalized,
+            content_format=MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.UNKNOWN,
+        )
     return note
 
 

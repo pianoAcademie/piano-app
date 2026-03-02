@@ -12,7 +12,7 @@ from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location
 from app.models.catalog import Professor as ProfessorModel
 from app.models.catalog import SessionStatus
-from app.models.ops import MessageFormat, ProfessorSessionMessage
+from app.models.ops import CommunicationSenderCategory, MessageFormat, ProfessorSessionMessage
 from app.models.payout import PayoutStatus, ProfessorSessionPayout
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.professor_contract import ProfessorContractGrid, ProfessorContractGridLine, ProfessorContractGridLineRule
@@ -668,15 +668,19 @@ def send_session_message(
     if not recipients:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No valid recipient found")
 
-    for email in recipients:
-        send_session_operation_email(
-            to_email=email,
-            subject=subject,
-            body=body,
-            body_format=payload.body_format.value,
-            operation="PROF_GROUP_MESSAGE",
-            session_title=session_obj.title,
-        )
+        for email in recipients:
+            send_session_operation_email(
+                to_email=email,
+                subject=subject,
+                body=body,
+                body_format=payload.body_format.value,
+                operation="PROF_GROUP_MESSAGE",
+                session_title=session_obj.title,
+                sender_user_id=current_user.id,
+                sender_label=_display_name(current_user),
+                sender_category=CommunicationSenderCategory.PROFESSOR,
+                professor_id=professor.id,
+            )
 
     now = _utcnow()
     logged_subject = subject if target_display_name is None else f"{subject} (eleve: {target_display_name})"
@@ -774,6 +778,10 @@ def report_professor_absence(
                 body_format=payload.students_format.value,
                 operation="PROF_ABSENCE_CANCEL",
                 session_title=session_obj.title,
+                sender_user_id=current_user.id,
+                sender_label=_display_name(current_user),
+                sender_category=CommunicationSenderCategory.PROFESSOR,
+                professor_id=professor.id,
             )
         notified_students = len(recipients)
         db.add(

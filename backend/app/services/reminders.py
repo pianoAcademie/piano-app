@@ -10,8 +10,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, SessionStatus
-from app.models.ops import AppSetting, EmailReminder, ReminderStatus
+from app.models.ops import (
+    AppSetting,
+    CommunicationChannel,
+    CommunicationDeliveryStatus,
+    CommunicationSenderCategory,
+    EmailReminder,
+    MessageFormat,
+    ReminderStatus,
+)
 from app.models.user import User
+from app.services.communication_journal import COMMUNICATION_TYPE_COURSE_REMINDER, log_communication
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +209,11 @@ def run_send_reminders_job(db: Session, *, now: datetime, limit: int = 200) -> R
     failed = 0
 
     for reminder, booking, user, session_obj, course_type, location in rows:
+        subject = ""
+        body = ""
+        delivery_status = CommunicationDeliveryStatus.UNKNOWN
+        error_message: str | None = None
+
         if (
             booking.status != BookingStatus.BOOKED
             or session_obj.status != SessionStatus.SCHEDULED
@@ -208,30 +222,60 @@ def run_send_reminders_job(db: Session, *, now: datetime, limit: int = 200) -> R
             reminder.status = ReminderStatus.SKIPPED
             reminder.sent_at = now
             reminder.error_message = "Booking/session not active"
+            error_message = reminder.error_message
+            delivery_status = CommunicationDeliveryStatus.SKIPPED
             skipped += 1
-            continue
-
-        if not user.email_opt_in or not user.lesson_reminder_email_opt_in:
+        elif not user.email_opt_in or not user.lesson_reminder_email_opt_in:
             reminder.status = ReminderStatus.SKIPPED
             reminder.sent_at = now
             reminder.error_message = "Client opt-out email reminders"
+            error_message = reminder.error_message
+            delivery_status = CommunicationDeliveryStatus.SKIPPED
             skipped += 1
-            continue
+        else:
+            try:
+                subject, body = _build_email_payload(db, user, session_obj, course_type, location)
+                message_id = f"dev-{uuid4()}"
+                logger.info("Reminder sent | id=%s | to=%s | subject=%s | body=%s", message_id, user.email, subject, body)
 
-        try:
-            subject, body = _build_email_payload(db, user, session_obj, course_type, location)
-            message_id = f"dev-{uuid4()}"
-            logger.info("Reminder sent | id=%s | to=%s | subject=%s | body=%s", message_id, user.email, subject, body)
+                reminder.status = ReminderStatus.SENT
+                reminder.sent_at = now
+                reminder.provider_message_id = message_id
+                reminder.error_message = None
+                delivery_status = CommunicationDeliveryStatus.DELIVERED
+                sent += 1
+            except Exception as exc:  # pragma: no cover - defensive runtime guard
+                reminder.status = ReminderStatus.FAILED
+                reminder.sent_at = now
+                reminder.error_message = str(exc)
+                error_message = reminder.error_message
+                delivery_status = CommunicationDeliveryStatus.FAILED
+                failed += 1
 
-            reminder.status = ReminderStatus.SENT
-            reminder.sent_at = now
-            reminder.provider_message_id = message_id
-            reminder.error_message = None
-            sent += 1
-        except Exception as exc:  # pragma: no cover - defensive runtime guard
-            reminder.status = ReminderStatus.FAILED
-            reminder.sent_at = now
-            reminder.error_message = str(exc)
-            failed += 1
+        if not subject:
+            subject = f"Rappel cours: {course_type.name}"
+        if not body:
+            body = reminder.error_message or "Rappel de cours genere automatiquement par le systeme."
+
+        log_communication(
+            db=db,
+            channel=CommunicationChannel.EMAIL,
+            source="SYSTEM_EMAIL_REMINDER",
+            communication_type=COMMUNICATION_TYPE_COURSE_REMINDER,
+            sender_category=CommunicationSenderCategory.SYSTEM,
+            sender_label="Systeme",
+            recipient=(user.email or "").strip().lower() or "-",
+            recipient_user_id=user.id,
+            subject=subject,
+            content=body,
+            content_format=MessageFormat.TEXT,
+            delivery_status=delivery_status,
+            provider_message_id=reminder.provider_message_id,
+            provider="LOG",
+            error_message=error_message,
+            occurred_at=reminder.sent_at or reminder.created_at or now,
+            delivered_at=(reminder.sent_at if delivery_status == CommunicationDeliveryStatus.DELIVERED else None),
+            failed_at=(reminder.sent_at if delivery_status == CommunicationDeliveryStatus.FAILED else None),
+        )
 
     return ReminderJobResult(created=created, sent=sent, skipped=skipped, failed=failed)
