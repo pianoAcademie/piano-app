@@ -1649,6 +1649,18 @@ def update_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     updates = payload.model_dump(exclude_unset=True)
+    recurrence_payload = updates.pop("recurrence", None)
+    if recurrence_payload is not None:
+        if apply_scope != "ONE":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Recurrence conversion is only supported with apply_scope=ONE",
+            )
+        if session_obj.recurrence_group_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Session is already recurring",
+            )
     if "public_description" not in updates and "description" in updates:
         updates["public_description"] = updates["description"]
 
@@ -1717,6 +1729,24 @@ def update_session(
         is_all_day=anchor_is_all_day,
         session_timezone=anchor_timezone,
     )
+
+    recurrence_rule: str | None = None
+    recurrence_group_id: UUID | None = None
+    recurrence_occurrences = 1
+    if recurrence_payload is not None:
+        recurrence_rule = str(recurrence_payload.get("frequency") or "").strip().upper()
+        recurrence_until_date = recurrence_payload.get("until_date")
+        recurrence_occurrences = _resolve_recurrence_occurrences(
+            recurrence_frequency=recurrence_rule,
+            recurrence_until_date=recurrence_until_date,
+            anchor_start_at_utc=anchor_start,
+        )
+        if recurrence_occurrences <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Recurrence end date must generate at least one future occurrence",
+            )
+        recurrence_group_id = uuid4()
 
     has_start_update = "start_at_utc" in updates
     has_end_update = "end_at_utc" in updates
@@ -1833,7 +1863,76 @@ def update_session(
         target.auto_cancel_deadline_utc = resolved_deadline
         target.is_all_day = resolved_is_all_day
         target.timezone = resolved_timezone
+        if recurrence_group_id is not None and recurrence_rule is not None:
+            target.recurrence_group_id = recurrence_group_id
+            target.recurrence_rule = recurrence_rule
         target.updated_at = now
+
+    if recurrence_group_id is not None and recurrence_rule is not None:
+        anchor_duration = session_obj.end_at_utc - session_obj.start_at_utc
+        anchor_deadline_delta = session_obj.start_at_utc - session_obj.auto_cancel_deadline_utc
+        created_future_count = 0
+
+        for index in range(1, recurrence_occurrences):
+            starts_at = _advance_recurrence_datetime(session_obj.start_at_utc, frequency=recurrence_rule, offset=index)
+            if session_obj.is_all_day:
+                starts_at = _start_of_utc_day(starts_at)
+                ends_at = starts_at + timedelta(days=1)
+            else:
+                ends_at = starts_at + anchor_duration
+            deadline_at = starts_at - anchor_deadline_delta
+
+            _validate_session_times(
+                start_at_utc=starts_at,
+                end_at_utc=ends_at,
+                auto_cancel_deadline_utc=deadline_at,
+            )
+            _validate_same_day_slot(
+                start_at_utc=starts_at,
+                end_at_utc=ends_at,
+                is_all_day=session_obj.is_all_day,
+                session_timezone=session_obj.timezone,
+            )
+
+            if not is_vacation and _has_vacation_on_day(
+                db,
+                location_id=session_obj.location_id,
+                day_start_utc=_start_of_utc_day(starts_at),
+            ):
+                continue
+
+            db.add(
+                CourseSession(
+                    course_type_id=session_obj.course_type_id,
+                    location_id=session_obj.location_id,
+                    professor_id=session_obj.professor_id,
+                    title=session_obj.title,
+                    description=session_obj.description,
+                    private_description=session_obj.private_description,
+                    group_note=session_obj.group_note,
+                    start_at_utc=starts_at,
+                    end_at_utc=ends_at,
+                    is_all_day=session_obj.is_all_day,
+                    capacity_max=session_obj.capacity_max,
+                    status=session_obj.status,
+                    auto_cancel_deadline_utc=deadline_at,
+                    cancel_reason=session_obj.cancel_reason,
+                    zoom_link=session_obj.zoom_link,
+                    is_private=session_obj.is_private,
+                    allow_online_booking=session_obj.allow_online_booking,
+                    timezone=session_obj.timezone,
+                    recurrence_group_id=recurrence_group_id,
+                    recurrence_rule=recurrence_rule,
+                    updated_at=now,
+                )
+            )
+            created_future_count += 1
+
+        if created_future_count <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="All recurring future occurrences were blocked by vacation day sessions",
+            )
 
     db.commit()
     db.refresh(session_obj)

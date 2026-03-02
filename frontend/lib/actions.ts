@@ -1189,6 +1189,11 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
+  const recurrence_mode = String(formData.get("recurrence_mode") ?? "NONE").trim().toUpperCase();
+  const recurrence_frequency = String(formData.get("recurrence_frequency") ?? "WEEKLY").trim().toUpperCase();
+  const recurrence_interval_raw = String(formData.get("recurrence_interval") ?? "1").trim();
+  const recurrence_interval = parsePositiveInt(recurrence_interval_raw);
+  const recurrence_until_date = String(formData.get("recurrence_until_date") ?? "").trim();
 
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
@@ -1207,6 +1212,25 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
 
   if (capacity_raw.trim() && capacity_max === null) {
     redirect(appendQueryMessage(returnTo, "error", "Capacite max invalide"));
+  }
+
+  const recurrenceEnabled = recurrence_mode === "RECURRING";
+  if (recurrenceEnabled) {
+    if (apply_scope !== "ONE") {
+      redirect(appendQueryMessage(returnTo, "error", "Conversion en recurrence: portee 'Ce creneau' requise"));
+    }
+    if (!(recurrence_frequency === "DAILY" || recurrence_frequency === "WEEKLY" || recurrence_frequency === "MONTHLY")) {
+      redirect(appendQueryMessage(returnTo, "error", "Frequence de recurrence invalide"));
+    }
+    if (recurrence_interval === null || recurrence_interval < 1) {
+      redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence invalide"));
+    }
+    if (recurrence_interval !== 1) {
+      redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence > 1 pas encore supporte"));
+    }
+    if (!recurrence_until_date) {
+      redirect(appendQueryMessage(returnTo, "error", "Choisir une date de fin de recurrence"));
+    }
   }
 
   const payload: Record<string, unknown> = {
@@ -1239,6 +1263,12 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     if (status === "CANCELLED") {
       payload.cancel_reason = "ADMIN_CANCELLED";
     }
+  }
+  if (recurrenceEnabled) {
+    payload.recurrence = {
+      frequency: recurrence_frequency,
+      until_date: recurrence_until_date,
+    };
   }
 
   const result = await backendRequest<{ id: string }>(

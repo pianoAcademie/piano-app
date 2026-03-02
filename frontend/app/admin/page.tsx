@@ -1613,6 +1613,52 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         </select>
                       </label>
 
+                      {!selectedSession.recurrence_group_id ? (
+                        <fieldset className="session-edit-span recurrence-panel">
+                          <legend>Recurrence</legend>
+                          <div className="recurrence-mode-row">
+                            <label className="checkline">
+                              <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
+                              Garder ponctuel
+                            </label>
+                            <label className="checkline">
+                              <input type="radio" name="recurrence_mode" value="RECURRING" />
+                              Transformer en recurrent
+                            </label>
+                          </div>
+
+                          <div className="recurrence-settings">
+                            <div className="grid cols-3 recurrence-grid">
+                              <label>
+                                Frequence
+                                <select name="recurrence_frequency" defaultValue="WEEKLY">
+                                  <option value="DAILY">Journaliere</option>
+                                  <option value="WEEKLY">Hebdomadaire</option>
+                                  <option value="MONTHLY">Mensuelle</option>
+                                </select>
+                              </label>
+
+                              <label>
+                                Se repete chaque
+                                <input type="number" name="recurrence_interval" min={1} defaultValue={1} />
+                              </label>
+
+                              <label>
+                                Repeter jusqu au
+                                <input type="date" name="recurrence_until_date" />
+                              </label>
+                            </div>
+                            <p className="muted">
+                              Le creneau actuel devient l ancre de la serie, puis les occurrences futures sont creees.
+                            </p>
+                          </div>
+                        </fieldset>
+                      ) : (
+                        <p className="session-edit-span muted">
+                          Ce creneau appartient deja a une serie recurrente. Utilisez la portee de modification pour ajuster la serie.
+                        </p>
+                      )}
+
                       <SessionVisibilityFields
                         initialIsPrivate={selectedSession.is_private}
                         initialAllowOnlineBooking={selectedSession.allow_online_booking}

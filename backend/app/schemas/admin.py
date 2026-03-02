@@ -1316,6 +1316,7 @@ class AdminSessionUpdateRequest(BaseModel):
     is_private: bool | None = None
     allow_online_booking: bool | None = None
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
+    recurrence: AdminSessionRecurrenceRequest | None = None
 
 
 class AdminSessionOut(BaseModel):
