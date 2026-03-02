@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
+from app.models.ops import AppSetting
 from app.models.pricing import CourseTypePrice, PlanPrice, VatRule
 
 Money = Decimal
+ACCOUNT_DEFAULT_VAT_RATE_KEY = "config_account_vat_default_rate"
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,19 @@ class ResolvedPrice:
 
 def quantize_money(value: Decimal) -> Money:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def resolve_account_default_vat_rate(db: Session) -> Decimal:
+    raw_value = db.scalar(select(AppSetting.value).where(AppSetting.key == ACCOUNT_DEFAULT_VAT_RATE_KEY))
+    if raw_value is None:
+        return Decimal("20.00")
+    try:
+        parsed = Decimal(str(raw_value).strip().replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return Decimal("20.00")
+    if parsed < Decimal("0.00") or parsed > Decimal("100.00"):
+        return Decimal("20.00")
+    return parsed.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _resolve_price(
@@ -156,6 +171,8 @@ def resolve_vat_rate(
     ).first()
 
     if fallback is None:
+        if (country or "").strip().upper() == "FR":
+            return resolve_account_default_vat_rate(db)
         return quantize_money(Decimal("0"))
 
     return quantize_money(Decimal(fallback.vat_rate))

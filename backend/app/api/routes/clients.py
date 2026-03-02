@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionStatus
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
 from app.models.ops import EmailReminder
@@ -454,11 +454,33 @@ def _resolve_activity_base_hourly_ttc(course_type: CourseType) -> Decimal | None
     return None
 
 
+def _booking_vat_country(
+    *,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    location: Location | None,
+    billing_profile: User,
+) -> str:
+    if course_type.mode == DeliveryMode.ONLINE:
+        is_online = True
+    elif course_type.mode == DeliveryMode.ONSITE:
+        is_online = False
+    else:
+        is_online = bool(location.is_online) if location is not None else False
+
+    if is_online:
+        return (billing_profile.residence_country or "FR").upper()
+    if location is not None:
+        return (location.country_code or "FR").upper()
+    return "FR"
+
+
 def _booking_amounts_from_activity(
     *,
     booking: Booking,
     session_obj: CourseSession,
     course_type: CourseType,
+    location: Location | None,
     billing_profile: User,
     forfait_subscription: ClientPlanSubscription | None,
     db: Session,
@@ -484,7 +506,12 @@ def _booking_amounts_from_activity(
     )
     total_incl_vat = (hourly_ttc * duration_hours).quantize(Decimal("0.01"))
 
-    country_code = (billing_profile.residence_country or "FR").upper()
+    country_code = _booking_vat_country(
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        billing_profile=billing_profile,
+    )
     vat_rate = resolve_vat_rate(
         db,
         country=country_code,
@@ -1137,6 +1164,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                     booking=booking,
                     session_obj=session_obj,
                     course_type=course_type,
+                    location=location,
                     billing_profile=billing_profile,
                     forfait_subscription=forfait_subscription,
                     db=db,

@@ -10,7 +10,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
 from app.models.family import ClientFamilyLink
 from app.models.plan import (
     ClientForfaitActivityPricing,
@@ -328,6 +328,29 @@ def _resolve_activity_base_hourly_ttc(course_type: CourseType) -> Decimal:
     )
 
 
+def _booking_vat_country(
+    *,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    billing_profile: User,
+    db: Session,
+) -> str:
+    location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
+
+    if course_type.mode == DeliveryMode.ONLINE:
+        is_online = True
+    elif course_type.mode == DeliveryMode.ONSITE:
+        is_online = False
+    else:
+        is_online = bool(location.is_online) if location is not None else False
+
+    if is_online:
+        return (billing_profile.residence_country or "FR").upper()
+    if location is not None:
+        return (location.country_code or "FR").upper()
+    return "FR"
+
+
 def _restriction_window_start(reference: datetime, period: PlanRestrictionPeriod) -> datetime:
     if period == PlanRestrictionPeriod.DAY:
         return reference.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -561,7 +584,6 @@ def _resolve_booking_snapshot(
     plan: Plan | None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str]:
     billing_profile = resolve_billing_profile(db, user)
-    country = (billing_profile.residence_country or "FR").upper()
     currency = (billing_profile.preferred_currency or "EUR").upper()
 
     # For SUBSCRIPTION/PACK plan-backed bookings, there is no per-session pricing.
@@ -573,9 +595,15 @@ def _resolve_booking_snapshot(
     if course_type is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
 
+    vat_country = _booking_vat_country(
+        session_obj=session_obj,
+        course_type=course_type,
+        billing_profile=billing_profile,
+        db=db,
+    )
     vat_rate = resolve_vat_rate(
         db,
-        country=country,
+        country=vat_country,
         service_code=course_type.service_code,
         on_date=now.date(),
     )
