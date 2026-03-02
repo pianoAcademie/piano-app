@@ -223,7 +223,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const currentView = parseView(readParam(params, "view"));
   const reorderStatus = readParam(params, "reorder_status").trim() || "all";
   const transferStatus = readParam(params, "transfer_status").trim() || "all";
-  const showAddForm = add === "1";
+  const showAddForm = add === "1" && currentView === "products";
 
   const baseQuery = {
     q: query,
@@ -238,6 +238,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   };
 
   const returnTo = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "" })}`;
+  const addFormReturnTo = `/admin/products${buildProductsQuery({ ...baseQuery, add: "1", editProduct: "" })}`;
   const addLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "1", editProduct: "" })}`;
   const closeModalLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "" })}`;
   const clearSelectedProductLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", product: "" })}`;
@@ -497,109 +498,6 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 <span className="badge">{filteredProducts.length} produit(s)</span>
               </div>
             </form>
-
-            {showAddForm ? (
-              <form action={createAdminCatalogProductAction} className="grid cols-4 config-form-grid top-gap-sm">
-                <input type="hidden" name="return_to" value={returnTo} />
-                <label className="span-2">
-                  Titre
-                  <input type="text" name="title" required maxLength={255} placeholder="Partition Niveau 1" />
-                </label>
-                <label>
-                  Categorie
-                  <select name="category_id" defaultValue="">
-                    <option value="">-</option>
-                    {activeCategories.map((categoryRow) => (
-                      <option key={categoryRow.id} value={categoryRow.id}>
-                        {categoryRow.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Local principal
-                  <select name="primary_location_id" defaultValue="">
-                    <option value="">-</option>
-                    {activeLocations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Code-barres
-                  <input type="text" name="barcode" maxLength={120} />
-                </label>
-                <label>
-                  Tarif HT
-                  <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue="0.00" required />
-                </label>
-                <label>
-                  Tarif TTC
-                  <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
-                </label>
-                <label>
-                  TVA (%)
-                  <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" required />
-                </label>
-                <label>
-                  Stock de reserve
-                  <input type="number" name="reserve_stock" min="0" step="1" defaultValue="0" required />
-                </label>
-                <label>
-                  Statut commande
-                  <select name="reorder_status" defaultValue="NORMAL">
-                    <option value="NORMAL">Normal</option>
-                    <option value="TO_ORDER">A commander</option>
-                    <option value="ORDERED">Commande passee</option>
-                    <option value="RECEIVED">Recu</option>
-                  </select>
-                </label>
-                <fieldset className="span-2">
-                  <legend>Type de produit</legend>
-                  <label className="checkline">
-                    <input type="radio" name="is_virtual" value="false" defaultChecked />
-                    Physique (stock gere)
-                  </label>
-                  <label className="checkline">
-                    <input type="radio" name="is_virtual" value="true" />
-                    Virtuel (pas de stock)
-                  </label>
-                </fieldset>
-                <label>
-                  Lien web
-                  <input type="url" name="web_link" />
-                </label>
-                <label className="span-2">
-                  Visuel (URL)
-                  <input type="url" name="image_url" />
-                </label>
-                <label className="span-2">
-                  Description courte
-                  <input type="text" name="short_description" maxLength={500} />
-                </label>
-                <label className="span-4">
-                  Description longue
-                  <textarea name="long_description" rows={3} maxLength={12000} />
-                </label>
-                <label className="checkline">
-                  <input type="checkbox" name="purchasable_online" />
-                  Achetable en ligne
-                </label>
-                <label className="checkline">
-                  <input type="checkbox" name="is_public" defaultChecked />
-                  Public (visible client)
-                </label>
-                <label className="checkline">
-                  <input type="checkbox" name="active" defaultChecked />
-                  Actif
-                </label>
-                <div className="row span-4">
-                  <button type="submit">Ajouter</button>
-                </div>
-              </form>
-            ) : null}
 
             <div className="table-wrap top-gap-sm">
               <table className="data-table">
@@ -1142,6 +1040,79 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </tbody>
             </table>
           </div>
+        </section>
+      ) : null}
+
+      {showAddForm ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Ajouter produit">
+          <section className="modal-panel modal-day-details">
+            <div className="row spread">
+              <h3 className="modal-title">Ajouter un produit</h3>
+              <Link href={closeModalLink} className="ghost" aria-label="Fermer">
+                Fermer
+              </Link>
+            </div>
+            <section className="modal-card">
+              <form action={createAdminCatalogProductAction} className="grid cols-3 config-form-grid">
+                <input type="hidden" name="return_to" value={addFormReturnTo} />
+
+                <label className="span-2">
+                  Titre *
+                  <input type="text" name="title" required maxLength={255} placeholder="Partition Niveau 1" />
+                </label>
+
+                <label>
+                  Categorie *
+                  <select name="category_id" defaultValue="" required>
+                    <option value="">Selectionner...</option>
+                    {activeCategories.map((categoryRow) => (
+                      <option key={categoryRow.id} value={categoryRow.id}>
+                        {categoryRow.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Tarif TTC *
+                  <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
+                </label>
+
+                <label>
+                  TVA (%) (optionnel)
+                  <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" />
+                </label>
+
+                <label>
+                  Local principal (optionnel)
+                  <select name="primary_location_id" defaultValue="">
+                    <option value="">-</option>
+                    {activeLocations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="checkline">
+                  <input type="radio" name="is_virtual" value="false" defaultChecked />
+                  Produit physique
+                </label>
+                <label className="checkline">
+                  <input type="radio" name="is_virtual" value="true" />
+                  Produit virtuel
+                </label>
+
+                <div className="row span-3 modal-actions-end">
+                  <Link className="ghost" href={closeModalLink}>
+                    Annuler
+                  </Link>
+                  <button type="submit">Ajouter</button>
+                </div>
+              </form>
+            </section>
+          </section>
         </section>
       ) : null}
 
