@@ -909,12 +909,12 @@ class AdminClientBookingOut(BaseModel):
 
 class AdminClientMessageOut(BaseModel):
     id: UUID
-    booking_id: UUID
-    session_id: UUID
-    session_title: str
+    booking_id: UUID | None = None
+    session_id: UUID | None = None
+    session_title: str | None = None
     scheduled_for_utc: datetime
     sent_at: datetime | None
-    status: ReminderStatus
+    status: str
     provider_message_id: str | None
     error_message: str | None
     subject_preview: str

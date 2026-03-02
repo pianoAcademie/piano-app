@@ -26,6 +26,7 @@ from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
+    CommunicationLog,
     CommunicationDeliveryStatus,
     CommunicationSenderCategory,
     EmailReminder,
@@ -4067,6 +4068,33 @@ def list_admin_client_messages(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminClientMessageOut]:
     client = _require_client(db, client_id)
+    scoped_users_by_id = _payment_scope_users(db, client=client)
+    scoped_user_ids = list(scoped_users_by_id.keys())
+    recipient_emails = {
+        (user.email or "").strip().lower()
+        for user in scoped_users_by_id.values()
+        if (user.email or "").strip()
+    }
+    billing_profile = resolve_billing_profile(db, client)
+    billing_email = (billing_profile.email or "").strip().lower()
+    if billing_email:
+        recipient_emails.add(billing_email)
+
+    communication_filters = [CommunicationLog.recipient_user_id.in_(scoped_user_ids)]
+    if recipient_emails:
+        communication_filters.append(func.lower(CommunicationLog.recipient).in_(list(recipient_emails)))
+
+    communication_rows = db.scalars(
+        select(CommunicationLog)
+        .where(or_(*communication_filters))
+        .order_by(CommunicationLog.occurred_at.desc())
+        .limit(max(limit * 2, limit))
+    ).all()
+    communication_provider_ids = {
+        (row.provider_message_id or "").strip()
+        for row in communication_rows
+        if (row.provider_message_id or "").strip()
+    }
 
     rows = db.execute(
         select(EmailReminder, Booking, CourseSession, CourseType, Location)
@@ -4074,13 +4102,38 @@ def list_admin_client_messages(
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
-        .where(Booking.user_id == client_id)
+        .where(Booking.user_id.in_(scoped_user_ids))
         .order_by(EmailReminder.created_at.desc())
-        .limit(limit)
+        .limit(max(limit * 2, limit))
     ).all()
 
     items: list[AdminClientMessageOut] = []
+    for row in communication_rows:
+        sent_at = row.delivered_at or row.failed_at or row.occurred_at
+        status_value = (
+            row.delivery_status.value
+            if isinstance(row.delivery_status, CommunicationDeliveryStatus)
+            else str(row.delivery_status or "UNKNOWN").strip().upper()
+        )
+        items.append(
+            AdminClientMessageOut(
+                id=row.id,
+                booking_id=None,
+                session_id=None,
+                session_title=None,
+                scheduled_for_utc=row.occurred_at,
+                sent_at=sent_at,
+                status=status_value or "UNKNOWN",
+                provider_message_id=row.provider_message_id,
+                error_message=row.error_message,
+                subject_preview=_normalize_optional(row.subject) or _normalize_optional(row.source) or "Message",
+            )
+        )
+
     for reminder, booking, session_obj, course_type, location in rows:
+        provider_message_id = (reminder.provider_message_id or "").strip()
+        if provider_message_id and provider_message_id in communication_provider_ids:
+            continue
         start_human = _format_session_datetime(session_obj, client.timezone, location)
         subject_preview = f"Rappel cours: {course_type.name} - {start_human}"
 
@@ -4092,14 +4145,21 @@ def list_admin_client_messages(
                 session_title=session_obj.title,
                 scheduled_for_utc=reminder.scheduled_for_utc,
                 sent_at=reminder.sent_at,
-                status=reminder.status,
+                status=reminder.status.value if hasattr(reminder.status, "value") else str(reminder.status),
                 provider_message_id=reminder.provider_message_id,
                 error_message=reminder.error_message,
                 subject_preview=subject_preview,
             )
         )
 
-    return items
+    items.sort(
+        key=lambda item: (
+            item.sent_at or item.scheduled_for_utc,
+            item.scheduled_for_utc,
+        ),
+        reverse=True,
+    )
+    return items[:limit]
 
 
 def _payment_scope_users(db: Session, *, client: User) -> dict[UUID, User]:
@@ -4525,6 +4585,7 @@ def create_admin_client_manual_transaction(
                     body=body,
                     body_format="TEXT",
                     context="MANUAL_PAYMENT_RECEIPT",
+                    recipient_user_id=client.id,
                     from_email=sender.from_email,
                     from_name=sender.from_name,
                     reply_to=sender.reply_to,

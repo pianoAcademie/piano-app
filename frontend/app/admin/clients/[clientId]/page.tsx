@@ -180,6 +180,14 @@ function formatDateInputLabel(value: string): string {
   });
 }
 
+function truncatePreview(value: string, maxLength = 100): string {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
+}
+
 function formatMoney(value: string | null | undefined, currency: string): string {
   const amount = Number(value ?? "0");
   return new Intl.NumberFormat("fr-FR", {
@@ -633,7 +641,14 @@ const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{ code: string; label: string }> = [
 
 function statusClass(status: string): string {
   const normalized = status.toUpperCase();
-  if (normalized === "ACTIVE" || normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "SENT" || normalized === "PAID") {
+  if (
+    normalized === "ACTIVE" ||
+    normalized === "BOOKED" ||
+    normalized === "ATTENDED" ||
+    normalized === "SENT" ||
+    normalized === "DELIVERED" ||
+    normalized === "PAID"
+  ) {
     return "status-ok";
   }
   if (normalized === "WAITLISTED" || normalized === "PENDING" || normalized === "TRIAL" || normalized === "FAILED") {
@@ -739,6 +754,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const purchasePaymentMethod = readParam(searchParams, "purchase_payment_method").toUpperCase();
   const purchaseDiscountedTotalRaw = readParam(searchParams, "purchase_discounted_total").replace(",", ".");
   const purchaseStartDateRaw = readParam(searchParams, "purchase_start_date").trim();
+  const noteModalAction = readParam(searchParams, "note_modal").toLowerCase();
+  const noteModalId = readParam(searchParams, "note_id");
   const purchaseReturnTab = parseTab(readParam(searchParams, "purchase_return_tab") || currentTab);
   const paymentReturnTab = parseTab(paymentReturnTabRaw || currentTab);
   const balanceDateParam = readParam(searchParams, "balance_date");
@@ -918,24 +935,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         return [] as AdminClientNoteOut[];
       })();
 
-  const messageRows = [
-    ...messages.map((msg) => ({
-      id: `reminder:${msg.id}`,
+  const messageRows = messages
+    .map((msg) => ({
+      id: `msg:${msg.id}`,
       occurredAt: msg.sent_at ?? msg.scheduled_for_utc,
       subject: msg.subject_preview,
       status: msg.status,
-      session: msg.session_title,
-    })),
-    ...notes
-      .filter((note) => (note.entry_type || "").toUpperCase() === "EMAIL")
-      .map((note) => ({
-        id: `email-note:${note.id}`,
-        occurredAt: note.created_at,
-        subject: note.message,
-        status: "SENT",
-        session: "-",
-      })),
-  ].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+      session: msg.session_title ?? "-",
+    }))
+    .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+
+  const openNoteViewModal = currentTab === "fiche" && noteModalAction === "view" && noteModalId.length > 0;
+  const selectedNoteForView = openNoteViewModal ? notes.find((row) => row.id === noteModalId) ?? null : null;
 
   const selectedPlanForPurchase = purchasePlanId ? plans.find((plan) => plan.id === purchasePlanId) ?? null : null;
   const discountedTotalForPurchase = purchaseDiscountedTotalRaw ? Number(purchaseDiscountedTotalRaw) : Number.NaN;
@@ -1620,6 +1631,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <th>Type</th>
                       <th>Auteur</th>
                       <th>Message</th>
+                      <th>Voir</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1628,7 +1640,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <td>{formatDate(row.created_at)}</td>
                         <td>{row.entry_type}</td>
                         <td>{row.author_display_name}</td>
-                        <td>{row.message}</td>
+                        <td title={row.message}>{truncatePreview(row.message, 100)}</td>
+                        <td>
+                          <Link
+                            className="client-action-icon"
+                            href={ficheHref(client.id, { note_modal: "view", note_id: row.id })}
+                            title="Voir le message complet"
+                          >
+                            V
+                          </Link>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1646,6 +1667,26 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <button type="submit">Enregistrer</button>
               </div>
             </form>
+          </article>
+        </section>
+      ) : null}
+
+      {openNoteViewModal && selectedNoteForView ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Detail de la note</h3>
+            <p className="muted">
+              {formatDate(selectedNoteForView.created_at)} | {selectedNoteForView.entry_type} | {selectedNoteForView.author_display_name}
+            </p>
+            <textarea readOnly rows={12} value={selectedNoteForView.message} />
+            <div className="row modal-actions-end top-gap-sm">
+              <Link className="reset-link" href={tabHref(client.id, "fiche")}>
+                Fermer
+              </Link>
+            </div>
           </article>
         </section>
       ) : null}

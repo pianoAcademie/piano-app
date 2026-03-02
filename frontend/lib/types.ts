@@ -273,12 +273,12 @@ export type AdminClientBookingOut = {
 
 export type AdminClientMessageOut = {
   id: string;
-  booking_id: string;
-  session_id: string;
-  session_title: string;
+  booking_id: string | null;
+  session_id: string | null;
+  session_title: string | null;
   scheduled_for_utc: string;
   sent_at: string | null;
-  status: "PENDING" | "SENT" | "FAILED" | "SKIPPED" | string;
+  status: string;
   provider_message_id: string | null;
   error_message: string | null;
   subject_preview: string;
