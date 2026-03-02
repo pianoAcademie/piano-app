@@ -4638,11 +4638,13 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   const primaryLocationId = parseUuid(String(formData.get("primary_location_id") ?? ""));
   const priceExclVatInput = parseNonNegativeDecimal(String(formData.get("price_excl_vat") ?? ""));
   const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
-  const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
-  const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
+  const vatRateInput = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? ""));
+  const reserveStockInput = parseNonNegativeInt(String(formData.get("reserve_stock") ?? ""));
+  const vatRate = vatRateInput ?? 20;
+  const reserveStock = reserveStockInput ?? 0;
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
   const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
-  if (!title || !categoryId || priceInclVat === null || vatRate === null || reserveStock === null) {
+  if (!title || !categoryId || priceInclVat === null) {
     redirect(appendQueryMessage(returnTo, "error", "Titre, categorie et prix TTC obligatoires"));
   }
   const divisor = 1 + vatRate / 100;

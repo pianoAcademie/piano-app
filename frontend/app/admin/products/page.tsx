@@ -1079,7 +1079,12 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </label>
 
                 <label>
-                  TVA (%) (optionnel)
+                  Tarif HT (optionnel)
+                  <input type="number" name="price_excl_vat" min="0" step="0.01" placeholder="Calcule automatiquement si vide" />
+                </label>
+
+                <label>
+                  TVA (%) (optionnel, defaut 20)
                   <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" />
                 </label>
 
@@ -1095,13 +1100,73 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   </select>
                 </label>
 
-                <label className="checkline">
-                  <input type="radio" name="is_virtual" value="false" defaultChecked />
-                  Produit physique
+                <label>
+                  Code-barres (optionnel)
+                  <input type="text" name="barcode" maxLength={120} />
                 </label>
+
+                <label>
+                  Stock de reserve (optionnel)
+                  <input type="number" name="reserve_stock" min="0" step="1" defaultValue="0" />
+                </label>
+
+                <label>
+                  Statut commande (optionnel)
+                  <select name="reorder_status" defaultValue="NORMAL">
+                    <option value="NORMAL">Normal</option>
+                    <option value="TO_ORDER">A commander</option>
+                    <option value="ORDERED">Commande passee</option>
+                    <option value="RECEIVED">Recu</option>
+                  </select>
+                </label>
+
+                <fieldset className="span-3">
+                  <legend>Type de produit</legend>
+                  <div className="row">
+                    <label className="checkline">
+                      <input type="radio" name="is_virtual" value="false" defaultChecked />
+                      Produit physique (stock gere)
+                    </label>
+                    <label className="checkline">
+                      <input type="radio" name="is_virtual" value="true" />
+                      Produit virtuel (pas de stock)
+                    </label>
+                  </div>
+                </fieldset>
+
+                <label>
+                  Lien web (optionnel)
+                  <input type="url" name="web_link" />
+                </label>
+
+                <label className="span-2">
+                  Visuel URL (optionnel)
+                  <input type="url" name="image_url" />
+                </label>
+
+                <label className="span-2">
+                  Description courte (optionnel)
+                  <input type="text" name="short_description" maxLength={500} />
+                </label>
+
+                <label className="span-3">
+                  Description longue (optionnel)
+                  <textarea name="long_description" rows={3} maxLength={12000} />
+                </label>
+
                 <label className="checkline">
-                  <input type="radio" name="is_virtual" value="true" />
-                  Produit virtuel
+                  <input type="checkbox" name="purchasable_online" />
+                  Achetable en ligne
+                </label>
+
+                <label className="checkline">
+                  <input type="checkbox" name="is_public" defaultChecked />
+                  Public (visible client)
+                </label>
+
+                <label className="checkline">
+                  <input type="checkbox" name="active" defaultChecked />
+                  Actif
                 </label>
 
                 <div className="row span-3 modal-actions-end">
