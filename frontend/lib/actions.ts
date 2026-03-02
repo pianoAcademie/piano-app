@@ -1796,10 +1796,11 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
   const subject = optionalField(formData, "subject");
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+  const includedStudentIds = parseStringList(formData.getAll("included_student_ids"));
   const ccEmails = emailListField(formData, "cc_emails") ?? [];
   const ccPhoneNumbers = emailListField(formData, "cc_phone_numbers") ?? [];
 
-  if (!sessionId || !body) {
+  if (!sessionId || !body || includedStudentIds.length === 0) {
     redirect(appendQueryMessage(returnTo, "error", "Session, sujet/message invalides"));
   }
   if (channel === "EMAIL" && !subject) {
@@ -1819,6 +1820,7 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
       body: JSON.stringify({
         channel,
         audience,
+        included_student_ids: includedStudentIds,
         subject,
         body,
         body_format: bodyFormat,

@@ -1502,7 +1502,11 @@ def broadcast_admin_session_message(
     if channel == CommunicationChannel.EMAIL and subject is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Sujet obligatoire pour un email")
 
-    student_ids = _session_active_student_ids(db, session_id=session_obj.id)
+    available_student_ids = _session_active_student_ids(db, session_id=session_obj.id)
+    selected_student_ids = set(payload.included_student_ids) if payload.included_student_ids else available_student_ids
+    student_ids = available_student_ids.intersection(selected_student_ids)
+    if not student_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun eleve selectionne")
     recipients: dict[str, UUID] = {}
 
     include_students = payload.audience.value in {"STUDENTS", "STUDENTS_AND_PARENTS"}

@@ -1418,6 +1418,7 @@ class AdminSessionMessageFormat(str, enum.Enum):
 class AdminSessionBroadcastRequest(BaseModel):
     channel: AdminSessionBroadcastChannel
     audience: AdminSessionBroadcastAudience = AdminSessionBroadcastAudience.STUDENTS
+    included_student_ids: list[UUID] = Field(default_factory=list)
     subject: str | None = Field(default=None, max_length=255)
     body: str = Field(min_length=1, max_length=12000)
     body_format: AdminSessionMessageFormat = AdminSessionMessageFormat.TEXT

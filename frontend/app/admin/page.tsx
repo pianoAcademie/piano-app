@@ -802,6 +802,20 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     id: client.id,
     label: clientDisplayName(client),
   }));
+  const sessionRecipientStudents = Array.from(
+    new Map(
+      selectedSessionBookings
+        .filter((booking) => Boolean(booking.client_id))
+        .map((booking) => [
+          booking.client_id,
+          {
+            id: booking.client_id,
+            label: `${booking.client_display_name || booking.client_email} <${booking.client_email}>`,
+          },
+        ]),
+    ).values(),
+  );
+  const sessionRecipientStudentIds = sessionRecipientStudents.map((item) => item.id);
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
@@ -1993,6 +2007,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </select>
               </label>
 
+              <SearchMultiSelect
+                className="session-edit-span"
+                label="Eleves inclus (vous pouvez en retirer)"
+                name="included_student_ids"
+                options={sessionRecipientStudents}
+                selectedIds={sessionRecipientStudentIds}
+                placeholder="Rechercher un eleve..."
+                emptySelectionLabel="Aucun eleve selectionne."
+              />
+
               <label>
                 Sujet
                 <input type="text" name="subject" defaultValue={`Message creneau: ${selectedSession.title}`} maxLength={255} required />
@@ -2047,6 +2071,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
                 </select>
               </label>
+
+              <SearchMultiSelect
+                className="session-edit-span"
+                label="Eleves inclus (vous pouvez en retirer)"
+                name="included_student_ids"
+                options={sessionRecipientStudents}
+                selectedIds={sessionRecipientStudentIds}
+                placeholder="Rechercher un eleve..."
+                emptySelectionLabel="Aucun eleve selectionne."
+              />
 
               <label>
                 Sujet (optionnel)
