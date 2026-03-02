@@ -237,7 +237,7 @@ def upgrade() -> None:
             'OPERATIONAL',
             CASE
                 WHEN a.id IS NULL THEN 'SYSTEM'::communication_sender_category
-                WHEN a.role = 'PROF' THEN 'PROFESSOR'::communication_sender_category
+                WHEN upper(a.role::text) = 'PROF' THEN 'PROFESSOR'::communication_sender_category
                 ELSE 'OTHER_USER'::communication_sender_category
             END,
             cne.author_user_id,
