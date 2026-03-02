@@ -1,5 +1,6 @@
 "use server";
 
+import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -4517,6 +4518,23 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
 
   await ensureAdmin(token);
 
+  let logoDataUrl = String(formData.get("logo_data_url") ?? "").trim();
+  const clearLogo = checkboxField(formData, "clear_logo");
+  const rawLogoFile = formData.get("logo_file");
+  if (clearLogo) {
+    logoDataUrl = "";
+  } else if (rawLogoFile instanceof File && rawLogoFile.size > 0) {
+    const contentType = String(rawLogoFile.type || "").trim().toLowerCase();
+    if (contentType !== "image/jpeg" && contentType !== "image/jpg") {
+      redirect("/admin/config?section=params-account&error=Le%20logo%20doit%20etre%20au%20format%20JPEG");
+    }
+    if (rawLogoFile.size > 1024 * 1024) {
+      redirect("/admin/config?section=params-account&error=Le%20logo%20depasse%201%20Mo");
+    }
+    const buffer = Buffer.from(await rawLogoFile.arrayBuffer());
+    logoDataUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+  }
+
   const payload = {
     contact_first_name: String(formData.get("contact_first_name") ?? "").trim(),
     contact_last_name: String(formData.get("contact_last_name") ?? "").trim(),
@@ -4535,6 +4553,7 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
     allowed_currencies: parseStringList(formData.getAll("allowed_currencies")).map((code) => code.toUpperCase()),
     default_currency: String(formData.get("default_currency") ?? "EUR").trim().toUpperCase(),
     legal_terms: String(formData.get("legal_terms") ?? "").trim(),
+    logo_data_url: logoDataUrl,
   };
 
   const result = await backendRequest<AdminConfigAccountOut>(

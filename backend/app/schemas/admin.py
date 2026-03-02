@@ -44,6 +44,7 @@ class AdminConfigAccountOut(BaseModel):
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str
     legal_terms: str
+    logo_data_url: str = ""
 
 
 class AdminConfigAccountUpdateRequest(BaseModel):
@@ -64,6 +65,7 @@ class AdminConfigAccountUpdateRequest(BaseModel):
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str = Field(default="EUR", min_length=3, max_length=3)
     legal_terms: str = Field(default="")
+    logo_data_url: str = Field(default="", max_length=2000000)
 
 
 class AdminSubscriptionSettingsOut(BaseModel):

@@ -912,6 +912,7 @@ export type AdminConfigAccountOut = {
   allowed_currencies: string[];
   default_currency: string;
   legal_terms: string;
+  logo_data_url: string;
 };
 
 export type AdminSubscriptionSettingsOut = {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -265,6 +267,7 @@ class _SimplePdfDocument:
 
     def __init__(self) -> None:
         self._pages: list[list[str]] = []
+        self._images: dict[str, tuple[bytes, int, int]] = {}
         self.new_page()
 
     def new_page(self) -> None:
@@ -348,6 +351,25 @@ class _SimplePdfDocument:
         fr, fg, fb = fill_color
         self._push(f"{prefix}{fr:.3f} {fg:.3f} {fb:.3f} rg {x:.2f} {y:.2f} {width:.2f} {height:.2f} re B")
 
+    def register_jpeg_image(self, *, image_bytes: bytes, width_px: int, height_px: int) -> str:
+        image_name = f"Im{len(self._images) + 1}"
+        self._images[image_name] = (image_bytes, max(1, width_px), max(1, height_px))
+        return image_name
+
+    def draw_image(
+        self,
+        *,
+        image_name: str,
+        x: float,
+        top_y: float,
+        width: float,
+        height: float,
+    ) -> None:
+        if image_name not in self._images:
+            return
+        y = self._to_y(top_y + height)
+        self._push(f"q {width:.2f} 0 0 {height:.2f} {x:.2f} {y:.2f} cm /{image_name} Do Q")
+
     def add_page_numbers(self) -> None:
         total_pages = len(self._pages)
         if total_pages <= 1:
@@ -366,8 +388,24 @@ class _SimplePdfDocument:
         object_map[3] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
         object_map[4] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"
 
-        page_ids: list[int] = []
         next_id = 5
+        image_object_ids: dict[str, int] = {}
+        for image_name, (image_bytes, width_px, height_px) in self._images.items():
+            image_object_id = next_id
+            next_id += 1
+            object_map[image_object_id] = (
+                b"<< /Type /XObject /Subtype /Image "
+                + f"/Width {width_px} /Height {height_px} ".encode("ascii")
+                + b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode "
+                + b"/Length "
+                + str(len(image_bytes)).encode("ascii")
+                + b" >>\nstream\n"
+                + image_bytes
+                + b"\nendstream"
+            )
+            image_object_ids[image_name] = image_object_id
+
+        page_ids: list[int] = []
         for page_ops in self._pages:
             content_id = next_id
             page_id = next_id + 1
@@ -376,9 +414,15 @@ class _SimplePdfDocument:
             object_map[content_id] = (
                 b"<< /Length " + str(len(stream_data)).encode("ascii") + b" >>\nstream\n" + stream_data + b"endstream"
             )
+            xobject_resources = b""
+            if image_object_ids:
+                refs = " ".join(f"/{name} {obj_id} 0 R" for name, obj_id in image_object_ids.items())
+                xobject_resources = f" /XObject << {refs} >>".encode("ascii")
             object_map[page_id] = (
                 b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-                + b"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> "
+                + b"/Resources << /Font << /F1 3 0 R /F2 4 0 R >>"
+                + xobject_resources
+                + b" >> "
                 + f"/Contents {content_id} 0 R >>".encode("ascii")
             )
             page_ids.append(page_id)
@@ -487,7 +531,75 @@ class CompanyIdentity:
     company_email: str
     company_phone: str
     company_siret: str
+    company_vat_number: str
     company_address: str
+    company_logo_jpeg: bytes | None
+    company_logo_width_px: int | None
+    company_logo_height_px: int | None
+
+
+def _decode_jpeg_data_url(value: str | None) -> bytes | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    match = re.match(r"^data:image/(?:jpeg|jpg);base64,(?P<data>[A-Za-z0-9+/=\s]+)$", raw, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    base64_payload = re.sub(r"\s+", "", match.group("data"))
+    try:
+        decoded = base64.b64decode(base64_payload, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(decoded) < 4 or decoded[0:2] != b"\xff\xd8":
+        return None
+    return decoded
+
+
+def _jpeg_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
+    if len(image_bytes) < 4 or image_bytes[0:2] != b"\xff\xd8":
+        return None
+    index = 2
+    marker_with_size_exceptions = {0x01, *range(0xD0, 0xD8), 0xD8, 0xD9}
+    sof_markers = {
+        0xC0,
+        0xC1,
+        0xC2,
+        0xC3,
+        0xC5,
+        0xC6,
+        0xC7,
+        0xC9,
+        0xCA,
+        0xCB,
+        0xCD,
+        0xCE,
+        0xCF,
+    }
+    while index + 1 < len(image_bytes):
+        if image_bytes[index] != 0xFF:
+            index += 1
+            continue
+        while index < len(image_bytes) and image_bytes[index] == 0xFF:
+            index += 1
+        if index >= len(image_bytes):
+            break
+        marker = image_bytes[index]
+        index += 1
+        if marker in marker_with_size_exceptions:
+            continue
+        if index + 2 > len(image_bytes):
+            break
+        segment_length = int.from_bytes(image_bytes[index : index + 2], "big")
+        if segment_length < 2 or index + segment_length > len(image_bytes):
+            break
+        if marker in sof_markers and segment_length >= 7:
+            height = int.from_bytes(image_bytes[index + 3 : index + 5], "big")
+            width = int.from_bytes(image_bytes[index + 5 : index + 7], "big")
+            if width > 0 and height > 0:
+                return width, height
+            return None
+        index += segment_length
+    return None
 
 
 def _company_identity(db: Session) -> CompanyIdentity:
@@ -497,6 +609,7 @@ def _company_identity(db: Session) -> CompanyIdentity:
     company_email = _setting_value(db, "config_account_contact_email", "") or "-"
     company_phone = _setting_value(db, "config_account_contact_phone", "") or "-"
     company_siret = _setting_value(db, "config_account_siret", "") or "-"
+    company_vat_number = _setting_value(db, "config_account_vat_number", "") or "-"
     address_parts = [
         _setting_value(db, "config_account_address_line", ""),
         _setting_value(db, "config_account_postal_code", ""),
@@ -504,12 +617,19 @@ def _company_identity(db: Session) -> CompanyIdentity:
         _country_display_name(_setting_value(db, "config_account_country", "")),
     ]
     company_address = " ".join(part for part in address_parts if part).strip() or "-"
+    logo_raw = _setting_value(db, "config_account_logo_data_url", "")
+    logo_jpeg = _decode_jpeg_data_url(logo_raw)
+    logo_dimensions = _jpeg_dimensions(logo_jpeg) if logo_jpeg is not None else None
     return CompanyIdentity(
         company_name=company_name,
         company_email=company_email,
         company_phone=company_phone,
         company_siret=company_siret,
+        company_vat_number=company_vat_number,
         company_address=company_address,
+        company_logo_jpeg=logo_jpeg,
+        company_logo_width_px=logo_dimensions[0] if logo_dimensions else None,
+        company_logo_height_px=logo_dimensions[1] if logo_dimensions else None,
     )
 
 
@@ -534,6 +654,24 @@ def render_invoice_period_pdf(
 ) -> bytes:
     identity = _company_identity(db)
     pdf = _SimplePdfDocument()
+    logo_resource_name: str | None = None
+    logo_width = 0.0
+    logo_height = 0.0
+    if (
+        identity.company_logo_jpeg is not None
+        and identity.company_logo_width_px is not None
+        and identity.company_logo_height_px is not None
+    ):
+        logo_resource_name = pdf.register_jpeg_image(
+            image_bytes=identity.company_logo_jpeg,
+            width_px=identity.company_logo_width_px,
+            height_px=identity.company_logo_height_px,
+        )
+        logo_height = 44.0
+        logo_width = min(
+            150.0,
+            logo_height * (identity.company_logo_width_px / max(1, identity.company_logo_height_px)),
+        )
 
     left = 34.0
     right = pdf.width - 34.0
@@ -561,7 +699,18 @@ def render_invoice_period_pdf(
             fill_color=(0.11, 0.15, 0.24),
             stroke_width=0.0,
         )
-        pdf.text(x=left, top_y=34.0, value=identity.company_name, size=20, bold=True, color=(1, 1, 1))
+        title_x = left
+        if logo_resource_name is not None:
+            logo_top_y = 22.0
+            pdf.draw_image(
+                image_name=logo_resource_name,
+                x=left,
+                top_y=logo_top_y,
+                width=logo_width,
+                height=logo_height,
+            )
+            title_x = left + logo_width + 12.0
+        pdf.text(x=title_x, top_y=34.0, value=identity.company_name, size=20, bold=True, color=(1, 1, 1))
         pdf.text(x=left, top_y=54.0, value="FACTURE", size=12, bold=True, color=(0.95, 0.78, 0.48))
         pdf.text_right(
             right_x=right - 2.0,
@@ -597,10 +746,11 @@ def render_invoice_period_pdf(
         pdf.text(x=left, top_y=116.0, value="Societe emettrice", size=11, bold=True)
         pdf.text(x=left, top_y=134.0, value=identity.company_name, size=10, bold=True)
         pdf.text(x=left, top_y=150.0, value=f"SIRET: {identity.company_siret}", size=10)
-        pdf.text(x=left, top_y=166.0, value=f"Telephone: {identity.company_phone}", size=10)
-        pdf.text(x=left, top_y=182.0, value=f"Email: {identity.company_email}", size=10)
+        pdf.text(x=left, top_y=166.0, value=f"TVA intracom: {identity.company_vat_number}", size=10)
+        pdf.text(x=left, top_y=182.0, value=f"Telephone: {identity.company_phone}", size=10)
+        pdf.text(x=left, top_y=198.0, value=f"Email: {identity.company_email}", size=10)
         for index, chunk in enumerate(_wrap_text(identity.company_address, 48)):
-            pdf.text(x=left, top_y=198.0 + (index * 14.0), value=chunk, size=10)
+            pdf.text(x=left, top_y=214.0 + (index * 14.0), value=chunk, size=10)
 
         # Bloc client facture
         billing_address = _ascii_safe((client_billing_address or "").strip()) or "-"

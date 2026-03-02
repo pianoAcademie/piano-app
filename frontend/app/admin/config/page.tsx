@@ -615,7 +615,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {!account ? (
                 <p className="muted">Impossible de charger les informations du compte.</p>
               ) : (
-                <form action={updateAdminConfigAccountAction} className="grid cols-2 config-form-grid">
+                <form action={updateAdminConfigAccountAction} className="grid cols-2 config-form-grid" encType="multipart/form-data">
                   <label>
                     Prenom
                     <input type="text" name="contact_first_name" defaultValue={account.contact_first_name} maxLength={100} />
@@ -659,6 +659,26 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   <label>
                     Site web
                     <input type="text" name="website" defaultValue={account.website} maxLength={255} />
+                  </label>
+
+                  <input type="hidden" name="logo_data_url" value={account.logo_data_url || ""} />
+                  <label className="span-2">
+                    Logo societe (JPEG, max 1 Mo)
+                    <input type="file" name="logo_file" accept="image/jpeg,image/jpg" />
+                    {account.logo_data_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={account.logo_data_url}
+                        alt="Logo societe"
+                        style={{ marginTop: 10, maxHeight: 64, width: "auto", border: "1px solid #d8c8ab", borderRadius: 8, padding: 6, background: "#fff" }}
+                      />
+                    ) : (
+                      <small className="muted">Aucun logo configure.</small>
+                    )}
+                  </label>
+                  <label className="checkline span-2">
+                    <input type="checkbox" name="clear_logo" value="on" />
+                    Supprimer le logo actuel
                   </label>
 
                   <label className="span-2">

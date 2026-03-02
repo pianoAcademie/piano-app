@@ -144,6 +144,7 @@ ACCOUNT_SETTING_MAP = {
     "city": "config_account_city",
     "country": "config_account_country",
     "legal_terms": "config_account_legal_terms",
+    "logo_data_url": "config_account_logo_data_url",
 }
 
 SUBSCRIPTION_SETTING_DEFAULTS = {
@@ -1236,6 +1237,7 @@ def get_admin_config_account(
         allowed_currencies=allowed_currencies,
         default_currency=default_currency,
         legal_terms=_get_setting_value(db, ACCOUNT_SETTING_MAP["legal_terms"], ""),
+        logo_data_url=_get_setting_value(db, ACCOUNT_SETTING_MAP["logo_data_url"], ""),
     )
 
 
