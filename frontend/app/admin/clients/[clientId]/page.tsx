@@ -3330,17 +3330,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <td>{formatMoney(row.total_incl_vat, row.currency)}</td>
                         <td>
                           <div className="row payment-row-actions">
-                            <a
-                              className="client-action-icon"
-                              href={
-                                row.invoice_note_id
-                                  ? rangeInvoicePdfHref(client.id, row.invoice_note_id, false)
-                                  : `/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.id}/invoice`
-                              }
-                              title="Telecharger la facture"
-                            >
-                              ↓
-                            </a>
                             {row.source.toUpperCase() === "MANUAL" ? (
                               <>
                                 {row.can_edit ? (
