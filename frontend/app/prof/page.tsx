@@ -1245,16 +1245,16 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                     Sujet (optionnel)
                     <input type="text" name="students_subject" maxLength={255} />
                   </label>
-                  <label>
-                    Format message
-                    <select name="students_format" defaultValue="TEXT">
-                      <option value="TEXT">Texte</option>
-                      <option value="HTML">HTML</option>
-                    </select>
-                  </label>
-                  <label>
+                  <label className="span-2">
                     Message (optionnel)
-                    <textarea name="students_message" rows={3} />
+                    <RichMessageEditor
+                      name="students_message"
+                      formatName="students_format"
+                      rows={6}
+                      maxLength={12000}
+                      defaultFormat="HTML"
+                      placeholder="Message aux eleves"
+                    />
                   </label>
                   <div className="row">
                     <button type="submit" className="danger">Declarer absence professeur</button>

@@ -2069,6 +2069,41 @@ button.danger {
   cursor: pointer;
 }
 
+.rich-message-toolbar select {
+  border: 1px solid #d6c3a8;
+  border-radius: 8px;
+  background: #fff;
+  color: #3b2e1d;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-weight: 600;
+}
+
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.toolbar-color-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #5a4325;
+}
+
+.toolbar-color-field input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #d6c3a8;
+  border-radius: 6px;
+  background: #fff;
+}
+
 .rich-message-surface {
   min-height: 260px;
   padding: 10px;
@@ -2079,6 +2114,10 @@ button.danger {
 
 .rich-message-surface:focus {
   box-shadow: inset 0 0 0 1px #d9b98a;
+}
+
+.hidden-file-input {
+  display: none;
 }
 
 .client-create-modal {
