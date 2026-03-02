@@ -1390,6 +1390,15 @@ class AdminSessionBookingOperationOut(BaseModel):
     details: list[str] = Field(default_factory=list)
 
 
+class AdminSessionDuplicateRequest(BaseModel):
+    target_start_at_utc: datetime
+
+
+class AdminSessionDuplicateOperationOut(BaseModel):
+    processed_sessions: int
+    duplicated_bookings: int
+
+
 class AdminSessionMessageFormat(str, enum.Enum):
     TEXT = "TEXT"
     HTML = "HTML"

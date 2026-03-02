@@ -41,6 +41,8 @@ from app.services.session_notifications import send_session_operation_email
 from app.schemas.admin import (
     AdminSessionCancelOperationRequest,
     AdminSessionDeleteOperationRequest,
+    AdminSessionDuplicateOperationOut,
+    AdminSessionDuplicateRequest,
     AdminSessionMessageFormat,
     AdminSessionOperationNotificationRequest,
     AdminSessionOperationOut,
@@ -1939,6 +1941,165 @@ def update_session(
 
     booked_count = _booked_count_by_session(db, session_id)
     return _to_admin_session_out(session_obj, booked_count=booked_count)
+
+
+@router.post("/sessions/{session_id}/duplicate", response_model=AdminSessionDuplicateOperationOut)
+def duplicate_session_operation(
+    session_id: UUID,
+    payload: AdminSessionDuplicateRequest,
+    apply_scope: ApplyScope = Query(default="ONE"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSessionDuplicateOperationOut:
+    if apply_scope == "SERIES_ALL":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Duplication supports ONE or SERIES_FUTURE scope only",
+        )
+
+    try:
+        session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
+        if session_obj is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+        targets = _target_sessions_for_scope(db, session_obj=session_obj, apply_scope=apply_scope)
+        targets.sort(key=lambda row: row.start_at_utc)
+        if not targets:
+            targets = [session_obj]
+
+        now = _utcnow()
+        target_anchor_start = payload.target_start_at_utc
+        if target_anchor_start.tzinfo is None:
+            target_anchor_start = target_anchor_start.replace(tzinfo=timezone.utc)
+        else:
+            target_anchor_start = target_anchor_start.astimezone(timezone.utc)
+        anchor_shift = target_anchor_start - session_obj.start_at_utc
+        duplicate_recurrence_group_id: UUID | None = None
+        if apply_scope == "SERIES_FUTURE" and session_obj.recurrence_group_id is not None:
+            duplicate_recurrence_group_id = uuid4()
+
+        duplicated_bookings = 0
+
+        for target in targets:
+            target_timezone = _normalize_session_timezone(target.timezone or "UTC")
+            target_duration = target.end_at_utc - target.start_at_utc
+            target_deadline_delta = target.start_at_utc - target.auto_cancel_deadline_utc
+
+            duplicate_start = target.start_at_utc + anchor_shift
+            if target.is_all_day:
+                duplicate_start = _start_of_utc_day(duplicate_start)
+                duplicate_end = duplicate_start + timedelta(days=1)
+            else:
+                duplicate_end = duplicate_start + target_duration
+            duplicate_deadline = duplicate_start - target_deadline_delta
+
+            _validate_session_times(
+                start_at_utc=duplicate_start,
+                end_at_utc=duplicate_end,
+                auto_cancel_deadline_utc=duplicate_deadline,
+            )
+            _validate_same_day_slot(
+                start_at_utc=duplicate_start,
+                end_at_utc=duplicate_end,
+                is_all_day=target.is_all_day,
+                session_timezone=target_timezone,
+            )
+
+            recurrence_group_id = (
+                duplicate_recurrence_group_id
+                if duplicate_recurrence_group_id is not None and target.recurrence_group_id is not None
+                else None
+            )
+            recurrence_rule = target.recurrence_rule if recurrence_group_id is not None else None
+
+            duplicate_session = CourseSession(
+                course_type_id=target.course_type_id,
+                location_id=target.location_id,
+                professor_id=target.professor_id,
+                title=target.title,
+                description=target.description,
+                private_description=target.private_description,
+                group_note=target.group_note,
+                start_at_utc=duplicate_start,
+                end_at_utc=duplicate_end,
+                is_all_day=target.is_all_day,
+                capacity_max=target.capacity_max,
+                status=SessionStatus.SCHEDULED,
+                auto_cancel_deadline_utc=duplicate_deadline,
+                cancel_reason=None,
+                zoom_link=target.zoom_link,
+                is_private=target.is_private,
+                allow_online_booking=target.allow_online_booking,
+                timezone=target_timezone,
+                recurrence_group_id=recurrence_group_id,
+                recurrence_rule=recurrence_rule,
+                updated_at=now,
+            )
+            db.add(duplicate_session)
+            db.flush()
+
+            source_bookings = db.scalars(
+                select(Booking)
+                .where(
+                    Booking.session_id == target.id,
+                    Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                )
+                .with_for_update()
+            ).all()
+
+            for source_booking in source_bookings:
+                duplicate_status = source_booking.status
+                if duplicate_status in (BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE):
+                    duplicate_status = BookingStatus.BOOKED
+
+                duplicate_booking = Booking(
+                    session_id=duplicate_session.id,
+                    user_id=source_booking.user_id,
+                    client_plan_subscription_id=source_booking.client_plan_subscription_id,
+                    status=duplicate_status,
+                    booked_at=now,
+                    cancelled_at=None,
+                    cancellation_reason=None,
+                    price_excl_vat_snapshot=source_booking.price_excl_vat_snapshot,
+                    vat_rate_snapshot=source_booking.vat_rate_snapshot,
+                    vat_amount_snapshot=source_booking.vat_amount_snapshot,
+                    total_incl_vat_snapshot=source_booking.total_incl_vat_snapshot,
+                    currency_snapshot=source_booking.currency_snapshot,
+                    student_note=source_booking.student_note,
+                )
+                db.add(duplicate_booking)
+                db.flush()
+
+                if duplicate_status == BookingStatus.BOOKED:
+                    ensure_booking_reminder(
+                        db,
+                        booking=duplicate_booking,
+                        session_obj=duplicate_session,
+                        now=now,
+                    )
+                else:
+                    skip_pending_reminders_for_booking(
+                        db,
+                        booking_id=duplicate_booking.id,
+                        reason="Booking duplicated as waitlist",
+                        now=now,
+                    )
+                duplicated_bookings += 1
+
+        db.commit()
+    except OperationalError as exc:
+        db.rollback()
+        if _is_retryable_lock_error(exc):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Planning en cours de modification. Reessayez dans quelques secondes.",
+            ) from exc
+        raise
+
+    return AdminSessionDuplicateOperationOut(
+        processed_sessions=len(targets),
+        duplicated_bookings=duplicated_bookings,
+    )
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=AdminSessionOperationOut)

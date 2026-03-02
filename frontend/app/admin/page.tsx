@@ -11,6 +11,7 @@ import {
   cancelAdminSessionAction,
   createAdminSessionAction,
   deleteAdminSessionAction,
+  duplicateAdminSessionAction,
   shiftAdminSessionAction,
   updateAdminSessionAction,
 } from "../../lib/actions";
@@ -532,7 +533,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const attendanceModalOpen = readParam(searchParams, "attendance") === "1";
   const notesModal = readParam(searchParams, "notes").toLowerCase();
   const groupNotesModalOpen = notesModal === "group";
+  const duplicateModalOpen = readParam(searchParams, "duplicate") === "1";
   const bookingFocusId = readParam(searchParams, "booking_focus");
+  const editSessionOpen = readParam(searchParams, "edit") === "1";
   const confirmActionRaw = readParam(searchParams, "confirm_action").toLowerCase();
   const confirmAction: "" | "cancel" | "delete" = confirmActionRaw === "cancel" || confirmActionRaw === "delete" ? confirmActionRaw : "";
 
@@ -778,6 +781,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const modalHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const attendanceModalHref = selectedSession ? withQueryParam(modalHref, "attendance", "1") : modalHref;
   const groupNotesModalHref = selectedSession ? withQueryParam(modalHref, "notes", "group") : modalHref;
+  const duplicateModalHref = selectedSession ? withQueryParam(modalHref, "duplicate", "1") : modalHref;
+  const editSessionHref = selectedSession ? withQueryParam(modalHref, "edit", "1") : modalHref;
   const attendanceBookingHref = (bookingId: string): string => withQueryParam(attendanceModalHref, "booking_focus", bookingId);
   const confirmCloseHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const cancelConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "cancel") : baseHref;
@@ -1217,6 +1222,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     const location = locationById.get(session.location_id);
                     const occupancyText = `${session.booked_count}/${session.capacity_max}`;
                     const openSessionHref = withSessionInHref(sessionModalBaseHref, session.id);
+                    const attendanceSessionHref = withQueryParam(openSessionHref, "attendance", "1");
+                    const groupNotesSessionHref = withQueryParam(openSessionHref, "notes", "group");
+                    const duplicateSessionHref = withQueryParam(openSessionHref, "duplicate", "1");
+                    const editSessionCardHref = withQueryParam(openSessionHref, "edit", "1");
+                    const deleteSessionHref = withQueryParam(openSessionHref, "confirm_action", "delete");
                     const activityColor = courseType?.color_hex ?? "#d8ccb9";
                     const eventStateClass =
                       session.status === "COMPLETED"
@@ -1226,34 +1236,54 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           : "";
 
                     return (
-                      <a key={session.id} className="agenda-event-link" href={openSessionHref}>
-                        <article className={`agenda-event ${eventStateClass}`} style={{ borderLeft: `4px solid ${activityColor}` }}>
-                          <div className="row spread">
-                            <p className="muted">
-                              {sessionTimeRangeLabel(session)}
-                            </p>
-                            <div className="row">
-                              <span className={`occ-badge ${occupancyClass(session.booked_count, session.capacity_max)}`}>{occupancyText}</span>
-                              <span className={`status-badge ${statusClass(session.status)}`}>{session.status}</span>
-                              {session.is_private ? <span className="status-badge status-private">PRIVE</span> : null}
+                      <article key={session.id} className="agenda-event-shell">
+                        <a className="agenda-event-link" href={openSessionHref}>
+                          <section className={`agenda-event ${eventStateClass}`} style={{ borderLeft: `4px solid ${activityColor}` }}>
+                            <div className="row spread">
+                              <p className="muted">
+                                {sessionTimeRangeLabel(session)}
+                              </p>
+                              <div className="row">
+                                <span className={`occ-badge ${occupancyClass(session.booked_count, session.capacity_max)}`}>{occupancyText}</span>
+                                <span className={`status-badge ${statusClass(session.status)}`}>{session.status}</span>
+                                {session.is_private ? <span className="status-badge status-private">PRIVE</span> : null}
+                              </div>
                             </div>
-                          </div>
 
-                          <h3 className="event-title">{session.title}</h3>
-                          <small className="muted event-meta">
-                            <span className="meta-icon" aria-hidden="true">
-                              🎵
-                            </span>
-                            {courseType?.name ?? "Type non defini"}
-                          </small>
-                          <small className="muted event-meta">
-                            <span className="meta-icon" aria-hidden="true">
-                              📍
-                            </span>
-                            {location?.name ?? "Lieu non defini"}
-                          </small>
-                        </article>
-                      </a>
+                            <h3 className="event-title">{session.title}</h3>
+                            <small className="muted event-meta">
+                              <span className="meta-icon" aria-hidden="true">
+                                🎵
+                              </span>
+                              {courseType?.name ?? "Type non defini"}
+                            </small>
+                            <small className="muted event-meta">
+                              <span className="meta-icon" aria-hidden="true">
+                                📍
+                              </span>
+                              {location?.name ?? "Lieu non defini"}
+                            </small>
+                          </section>
+                        </a>
+
+                        <div className="agenda-event-hover-actions" aria-label="Actions creneau">
+                          <a className="agenda-event-action" href={attendanceSessionHref}>
+                            Presences
+                          </a>
+                          <a className="agenda-event-action" href={groupNotesSessionHref}>
+                            Note groupe
+                          </a>
+                          <a className="agenda-event-action" href={duplicateSessionHref}>
+                            Dupliquer
+                          </a>
+                          <a className="agenda-event-action" href={editSessionCardHref}>
+                            Modifier
+                          </a>
+                          <a className="agenda-event-action danger" href={deleteSessionHref}>
+                            Supprimer
+                          </a>
+                        </div>
+                      </article>
                     );
                   })}
                   {day.sessions.length > maxVisibleSessionsByDay ? (
@@ -1372,6 +1402,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </p>
 
             <div className="row quick-actions-row">
+              <a className="mode-link" href={attendanceModalHref}>
+                Prendre les presences
+              </a>
+              <a className="mode-link" href={groupNotesModalHref}>
+                Note de groupe
+              </a>
+              <a className="mode-link" href={duplicateModalHref}>
+                Dupliquer
+              </a>
+              <a className="mode-link" href={editSessionHref}>
+                Modifier
+              </a>
               {selectedSession.status !== "CANCELLED" ? (
                 <a className="danger-link" href={cancelConfirmHref}>
                   Annuler le creneau...
@@ -1504,7 +1546,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </section>
 
             <section className="card modal-card">
-                  <details className="modal-details">
+                  <details className="modal-details" open={editSessionOpen}>
                     <summary>Modifier ce creneau</summary>
 
                     <form action={updateAdminSessionAction} className="grid session-edit-form" noValidate>
@@ -1834,6 +1876,73 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   Fermer
                 </a>
                 <button type="submit">Sauvegarder note de groupe</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && duplicateModalOpen ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Dupliquer le creneau</h2>
+            <p className="muted">
+              Definir la date cible et l heure de debut. Les eleves rattaches au creneau seront dupliques automatiquement.
+            </p>
+
+            <form action={duplicateAdminSessionAction} className="grid top-gap-sm">
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="return_to" value={duplicateModalHref} />
+              <input type="hidden" name="session_timezone" value={selectedSession.timezone} />
+
+              <div className="grid cols-2">
+                <label>
+                  Date cible
+                  <input
+                    type="date"
+                    name="target_date"
+                    defaultValue={toDateInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                    required
+                  />
+                </label>
+                <label>
+                  Heure de debut
+                  <input
+                    type="time"
+                    name="target_time"
+                    defaultValue={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                    required
+                  />
+                </label>
+              </div>
+
+              {selectedSession.recurrence_group_id ? (
+                <fieldset className="grid">
+                  <legend>Portee de duplication</legend>
+                  <label className="checkline">
+                    <input type="radio" name="apply_scope" value="ONE" defaultChecked />
+                    Dupliquer ce creneau uniquement
+                  </label>
+                  <label className="checkline">
+                    <input type="radio" name="apply_scope" value="SERIES_FUTURE" />
+                    Dupliquer ce creneau et les occurrences recurrentes suivantes
+                  </label>
+                </fieldset>
+              ) : (
+                <>
+                  <input type="hidden" name="apply_scope" value="ONE" />
+                  <p className="muted">Creneau ponctuel: duplication d un seul creneau.</p>
+                </>
+              )}
+
+              <div className="row spread">
+                <a className="reset-link" href={modalHref}>
+                  Annuler
+                </a>
+                <button type="submit">Dupliquer le creneau</button>
               </div>
             </form>
           </article>

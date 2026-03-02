@@ -255,6 +255,11 @@ button.danger {
   gap: 4px;
 }
 
+.agenda-event-shell {
+  display: grid;
+  gap: 4px;
+}
+
 .agenda-more-link {
   display: inline-flex;
   align-items: center;
@@ -323,6 +328,52 @@ button.danger {
   line-height: 1.05;
 }
 
+.agenda-event-hover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-height 0.15s ease, opacity 0.15s ease;
+}
+
+.agenda-event-shell:hover .agenda-event-hover-actions,
+.agenda-event-shell:focus-within .agenda-event-hover-actions {
+  max-height: 120px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agenda-event-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #d2b184;
+  background: #fff2dd;
+  color: #5a3b16;
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agenda-event-action:hover {
+  background: #f2d6ab;
+}
+
+.agenda-event-action.danger {
+  border-color: #ce8b8b;
+  background: #fbe5e5;
+  color: #7c1914;
+}
+
+.agenda-event-action.danger:hover {
+  background: #f2c9c9;
+}
+
 .agenda-event-completed {
   background: #eceff3;
   border-color: #c9d1da;
@@ -377,6 +428,12 @@ button.danger {
   .agenda-grid-month,
   .agenda-grid-week {
     grid-template-columns: 1fr;
+  }
+
+  .agenda-event-hover-actions {
+    max-height: 120px;
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
@@ -498,6 +555,7 @@ button.danger {
 }
 
 .agenda-event-link {
+  display: block;
   text-decoration: none;
   color: inherit;
 }

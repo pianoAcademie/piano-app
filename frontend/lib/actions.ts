@@ -1344,6 +1344,56 @@ export async function shiftAdminSessionAction(formData: FormData): Promise<void>
   redirect(appendQueryMessage(returnTo, "ok", "Creneau decale"));
 }
 
+export async function duplicateAdminSessionAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin");
+
+  const session_id = String(formData.get("session_id") ?? "").trim();
+  const target_date = String(formData.get("target_date") ?? "").trim();
+  const target_time = String(formData.get("target_time") ?? "").trim();
+  const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
+  const parsedScope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
+  const apply_scope: "ONE" | "SERIES_FUTURE" = parsedScope === "SERIES_FUTURE" ? "SERIES_FUTURE" : "ONE";
+  const target_start_at_utc = parseUtcFromDateAndTimeInTimezone(target_date, target_time, session_timezone);
+
+  if (!session_id || !target_start_at_utc) {
+    redirect(appendQueryMessage(returnTo, "error", "Duplication invalide (date/heure cible)"));
+  }
+
+  const result = await backendRequest<{
+    processed_sessions: number;
+    duplicated_bookings: number;
+  }>(
+    `/api/v1/admin/sessions/${session_id}/duplicate?apply_scope=${apply_scope}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        target_start_at_utc,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  const successPath = removeQueryParam(returnTo, "duplicate");
+  redirect(
+    appendQueryMessage(
+      successPath,
+      "ok",
+      `Creneau duplique (${result.data.processed_sessions} creneau(x), ${result.data.duplicated_bookings} eleve(s))`,
+    ),
+  );
+}
+
 export async function cancelAdminSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
