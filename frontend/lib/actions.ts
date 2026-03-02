@@ -13,6 +13,7 @@ import type {
   AdminClientPasswordEmailTemplateOut,
   AdminRangeInvoiceEmailOut,
   AdminRangeInvoiceOut,
+  AdminClientPaymentOut,
   AdminCreditTypeOut,
   AdminFormulaOut,
   AdminMessagingSettingsOut,
@@ -2952,7 +2953,6 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   const vatRate = parseNonNegativeDecimal(vatRateRaw);
   const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
   const customReference = optionalField(formData, "reference");
-  const resolvedReference = customReference ?? (paymentMethodCode ? `MODE:${paymentMethodCode}` : null);
   if (!clientId) {
     redirect("/admin/clients?error=Client%20invalide");
   }
@@ -2998,7 +2998,8 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         label: optionalField(formData, "label"),
         description: optionalField(formData, "description"),
         category: optionalField(formData, "category"),
-        reference: resolvedReference,
+        reference: customReference,
+        payment_method_code: paymentMethodCode,
         student_id: optionalField(formData, "student_id"),
         amount_incl_vat: amountInclVat,
         vat_rate: vatRate,
@@ -3017,6 +3018,93 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
 
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20ajoutee`);
+}
+
+export async function updateAdminClientManualTransactionAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const transactionId = String(formData.get("transaction_id") ?? "").trim();
+  const amountRaw = String(formData.get("amount_incl_vat") ?? "").trim().replace(",", ".");
+  const vatRateRaw = String(formData.get("vat_rate") ?? "").trim().replace(",", ".");
+  const occurredAtRaw = String(formData.get("occurred_at") ?? "").trim();
+  const occurredAt = occurredAtRaw ? parseUtcStartOfDate(occurredAtRaw) : null;
+  const amountInclVat = parseNonNegativeDecimal(amountRaw);
+  const vatRate = vatRateRaw ? parseNonNegativeDecimal(vatRateRaw) : null;
+  const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
+
+  if (!clientId || !transactionId) {
+    redirect("/admin/clients?error=Transaction%20invalide");
+  }
+  if (amountInclVat === null || amountInclVat <= 0) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Montant%20invalide`);
+  }
+  if (vatRateRaw && (vatRate === null || vatRate < 0 || vatRate > 100)) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
+  }
+  if (occurredAtRaw && !occurredAt) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Date%20invalide`);
+  }
+
+  const result = await backendRequest<AdminClientPaymentOut>(
+    `/api/v1/admin/clients/${clientId}/manual-transactions/${transactionId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        occurred_at: occurredAt,
+        label: optionalField(formData, "label"),
+        description: optionalField(formData, "description"),
+        category: optionalField(formData, "category"),
+        reference: optionalField(formData, "reference"),
+        student_id: optionalField(formData, "student_id"),
+        amount_incl_vat: amountInclVat,
+        vat_rate: vatRate ?? undefined,
+        currency: optionalField(formData, "currency"),
+        payment_method_code: paymentMethodCode,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20mise%20a%20jour`);
+}
+
+export async function deleteAdminClientManualTransactionAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const transactionId = String(formData.get("transaction_id") ?? "").trim();
+  if (!clientId || !transactionId) {
+    redirect("/admin/clients?error=Transaction%20invalide");
+  }
+
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/clients/${clientId}/manual-transactions/${transactionId}`,
+    {
+      method: "DELETE",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20supprimee`);
 }
 
 export async function createAdminClientAction(formData: FormData): Promise<void> {
