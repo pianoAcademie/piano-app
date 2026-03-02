@@ -298,8 +298,18 @@ export type AdminClientPaymentOut = {
   reference: string | null;
   invoice_number: string | null;
   invoice_status: string | null;
+  invoice_note_id: string | null;
   refunded_at: string | null;
   refund_reason: string | null;
+  payment_method_code: string | null;
+  payment_method_label: string | null;
+  manual_transaction_type: string | null;
+  student_user_id: string | null;
+  description: string | null;
+  category: string | null;
+  can_edit: boolean;
+  can_cancel: boolean;
+  locked_by_invoice_number: string | null;
 };
 
 export type AdminClientManualCreditOut = {

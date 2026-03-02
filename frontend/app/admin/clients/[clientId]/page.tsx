@@ -15,6 +15,8 @@ import {
   adminPurchasePlanForClientAction,
   createAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
+  updateAdminClientManualTransactionAction,
+  deleteAdminClientManualTransactionAction,
   refundAdminClientPaymentAction,
   sendAdminClientRangeInvoiceEmailAction,
   sendAdminClientPasswordAction,
@@ -263,6 +265,9 @@ function paymentStatusLabel(status: string): string {
   if (normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "NO_SHOW") {
     return "A facturer";
   }
+  if (normalized === "INVOICED") {
+    return "Facturee";
+  }
   if (normalized === "FAILED") {
     return "Echec";
   }
@@ -329,6 +334,7 @@ const PENDING_PAYMENT_STATUSES = new Set([
   "BOOKED",
   "ATTENDED",
   "NO_SHOW",
+  "INVOICED",
 ]);
 const CANCELLED_PAYMENT_STATUSES = new Set(["CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"]);
 const ACTIVE_SUBSCRIPTION_BOOKING_STATUSES = new Set(["BOOKED", "WAITLISTED"]);
@@ -547,43 +553,12 @@ function rangeInvoiceTotalLabel(totalsByCurrency: Record<string, string>): strin
     .join(" | ");
 }
 
-function rangeInvoicePdfHref(clientId: string, payload: RangeInvoiceNotePayload, inline = false): string {
+function rangeInvoicePdfHref(clientId: string, noteId: string, inline = false): string {
   const params = new URLSearchParams({
-    payment_return_tab: "factures",
-    start_date: payload.start_date,
-    end_date: payload.end_date,
-    issued_date: payload.issued_date,
-    due_date: payload.due_date,
-    no_due_date: payload.no_due_date ? "true" : "false",
-    include_pending: payload.include_pending ? "true" : "false",
-    include_cancelled: payload.include_cancelled ? "true" : "false",
-    layout: payload.layout,
-    generation_mode: payload.generation_mode,
-    group_adjustments_by_type: payload.group_adjustments_by_type ? "true" : "false",
-    include_discount_adjustments: payload.include_discount_adjustments ? "true" : "false",
-    include_supplement_adjustments: payload.include_supplement_adjustments ? "true" : "false",
-    auto_period_scope: payload.auto_period_scope,
-    auto_frequency: payload.auto_frequency,
-    auto_repeat_every: String(payload.auto_repeat_every),
-    auto_layout_style: payload.auto_layout_style,
-    auto_include_previous_balance: payload.auto_include_previous_balance ? "true" : "false",
-    auto_send_email: payload.auto_send_email ? "true" : "false",
-    auto_exclude_pack_subscription_lines: payload.auto_exclude_pack_subscription_lines ? "true" : "false",
-    invoice_number: payload.invoice_number,
-    persist_note: "false",
-    invoice_status: payload.invoice_status,
     inline: inline ? "true" : "false",
+    payment_return_tab: "factures",
   });
-  if (payload.auto_cycle_start_date) {
-    params.set("auto_cycle_start_date", payload.auto_cycle_start_date);
-  }
-  if (payload.auto_footer_note) {
-    params.set("auto_footer_note", payload.auto_footer_note);
-  }
-  if (payload.public_note) {
-    params.set("public_note", payload.public_note);
-  }
-  return `/admin/clients/${clientId}/payments/invoice-range?${params.toString()}`;
+  return `/admin/clients/${clientId}/invoices/range/${noteId}/pdf?${params.toString()}`;
 }
 
 function rangeInvoiceStatusLabel(status: string): string {
@@ -1005,6 +980,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     paymentModalAction === "refund"
       ? payments.find((row) => row.id === paymentModalId && row.source.toUpperCase() === paymentModalSource) ?? null
       : null;
+  const selectedManualTransactionForEdit =
+    paymentModalAction === "edit_manual"
+      ? payments.find((row) => row.id === paymentModalId && row.source.toUpperCase() === "MANUAL") ?? null
+      : null;
   const cancellationEffectiveAtMs = (() => {
     if (!selectedSubscriptionForModal) {
       return Number.NaN;
@@ -1058,6 +1037,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .join(", ");
   const openManualTransactionSelector = paymentModalAction === "manual" && manualTransactionModalType === null;
   const openManualTransactionForm = paymentModalAction === "manual" && manualTransactionModalType !== null;
+  const openManualTransactionEditModal = paymentModalAction === "edit_manual" && selectedManualTransactionForEdit !== null;
   const openPaymentFiltersModal = paymentModalAction === "filters";
 
   const totalRemainingCredits = activeSubscriptions.reduce((acc, sub) => {
@@ -1096,6 +1076,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     if (paymentFilterQuery.length > 0) {
       const searchable = [
         paymentSourceLabel(row.source),
+        row.payment_method_label ?? "",
         row.label,
         row.reference ?? "",
         paymentStatusDisplayLabel(row),
@@ -1160,8 +1141,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       emailedAt: payload.emailed_at ?? null,
       remindedAt: payload.reminded_at ?? null,
       totalLabel: rangeInvoiceTotalLabel(payload.totals_by_currency),
-      downloadHref: rangeInvoicePdfHref(client.id, payload, false),
-      viewHref: rangeInvoicePdfHref(client.id, payload, true),
+      downloadHref: rangeInvoicePdfHref(client.id, note.id, false),
+      viewHref: rangeInvoicePdfHref(client.id, note.id, true),
     });
     return acc;
   }, []);
@@ -1279,6 +1260,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const manualIsPayment = manualTransactionModalType === "payment";
   const manualVatDefault = manualIsCashFlow ? "0" : "20";
   const manualNonCashFlowType = manualTransactionTypeCode === "CHARGE" || manualTransactionTypeCode === "DISCOUNT" ? manualTransactionTypeCode : null;
+  const editManualTransactionTypeCode = (selectedManualTransactionForEdit?.manual_transaction_type || "").trim().toUpperCase();
+  const editManualIsPayment = editManualTransactionTypeCode === "PAYMENT";
+  const editManualVatDefault = selectedManualTransactionForEdit?.vat_rate
+    ? String(selectedManualTransactionForEdit.vat_rate)
+    : editManualIsPayment
+      ? "0"
+      : "20";
+  const editManualAmountAbs = selectedManualTransactionForEdit
+    ? Math.abs(Number(selectedManualTransactionForEdit.total_incl_vat || "0")).toFixed(2)
+    : "0.00";
+  const editManualOccurredAt = selectedManualTransactionForEdit
+    ? formatDateForInput(selectedManualTransactionForEdit.occurred_at, todayInputValue)
+    : todayInputValue;
 
   return (
     <section className="admin-page-grid client-detail-page">
@@ -3295,6 +3289,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <tr>
                       <th>Date</th>
                       <th>Type</th>
+                      <th>Mode paiement</th>
                       <th>Libelle</th>
                       <th>Formule liee</th>
                       <th>Tarif prestation</th>
@@ -3308,6 +3303,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <tr key={`${row.source}-${row.id}`}>
                         <td>{formatDate(row.occurred_at)}</td>
                         <td>{paymentSourceLabel(row.source)}</td>
+                        <td>{row.payment_method_label ?? "-"}</td>
                         <td>
                           <div className="stack-xs">
                             <span>{row.label}</span>
@@ -3336,11 +3332,49 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           <div className="row payment-row-actions">
                             <a
                               className="client-action-icon"
-                              href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.id}/invoice`}
+                              href={
+                                row.invoice_note_id
+                                  ? rangeInvoicePdfHref(client.id, row.invoice_note_id, false)
+                                  : `/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.id}/invoice`
+                              }
                               title="Telecharger la facture"
                             >
                               ↓
                             </a>
+                            {row.source.toUpperCase() === "MANUAL" ? (
+                              <>
+                                {row.can_edit ? (
+                                  <Link
+                                    className="client-action-icon"
+                                    href={paymentsHref(client.id, {
+                                      payment_modal: "edit_manual",
+                                      payment_id: row.id,
+                                      payment_source: "MANUAL",
+                                      payment_return_tab: "paiements",
+                                    })}
+                                    title="Modifier la transaction"
+                                  >
+                                    ✎
+                                  </Link>
+                                ) : row.locked_by_invoice_number ? (
+                                  <span
+                                    className="client-action-icon"
+                                    title={`Transaction verrouillee par la facture ${row.locked_by_invoice_number}`}
+                                  >
+                                    🔒
+                                  </span>
+                                ) : null}
+                                {row.can_cancel ? (
+                                  <form action={deleteAdminClientManualTransactionAction}>
+                                    <input type="hidden" name="client_id" value={client.id} />
+                                    <input type="hidden" name="transaction_id" value={row.id} />
+                                    <button type="submit" className="client-action-icon danger" title="Supprimer la transaction">
+                                      ×
+                                    </button>
+                                  </form>
+                                ) : null}
+                              </>
+                            ) : null}
                             {row.status !== "REFUNDED" && row.source.toUpperCase() === "PLAN_PURCHASE" ? (
                               <Link
                                 className="client-action-icon danger"
@@ -3647,6 +3681,99 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <button type="submit">Ajouter la transaction</button>
               </div>
             </form>
+          </article>
+        </section>
+      ) : null}
+
+      {currentTab === "paiements" && openManualTransactionEditModal && selectedManualTransactionForEdit ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Modifier la transaction</h3>
+            {selectedManualTransactionForEdit.can_edit ? (
+              <form action={updateAdminClientManualTransactionAction} className="grid top-gap-sm">
+                <input type="hidden" name="client_id" value={client.id} />
+                <input type="hidden" name="transaction_id" value={selectedManualTransactionForEdit.id} />
+                <input type="hidden" name="currency" value={selectedManualTransactionForEdit.currency || client.preferred_currency || "EUR"} />
+
+                <label>
+                  Etudiant (optionnel)
+                  <select name="student_id" defaultValue={selectedManualTransactionForEdit.student_user_id ?? ""}>
+                    <option value="">(Non precise)</option>
+                    <option value={client.id}>{fullName || client.email}</option>
+                    {family.links_as_adult.map((link) => (
+                      <option key={link.child.id} value={link.child.id}>
+                        {[link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Date
+                  <input type="date" name="occurred_at" defaultValue={editManualOccurredAt} required />
+                </label>
+                <label>
+                  Montant TTC
+                  <input type="number" name="amount_incl_vat" step="0.01" min="0.01" defaultValue={editManualAmountAbs} required />
+                </label>
+                <label>
+                  TVA (%)
+                  <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={editManualVatDefault} required />
+                </label>
+                {editManualIsPayment ? (
+                  <label>
+                    Mode de paiement
+                    <select name="payment_method_code" defaultValue={selectedManualTransactionForEdit.payment_method_code ?? ""}>
+                      <option value="">(Non precise)</option>
+                      {enabledPaymentMethods.map((method) => (
+                        <option key={method.code} value={method.code}>
+                          {method.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <label>
+                  Libelle (optionnel)
+                  <input type="text" name="label" maxLength={255} defaultValue={selectedManualTransactionForEdit.label} />
+                </label>
+                <label>
+                  Categorie (optionnelle)
+                  <input type="text" name="category" maxLength={120} defaultValue={selectedManualTransactionForEdit.category ?? ""} />
+                </label>
+                <label>
+                  Reference (optionnelle)
+                  <input type="text" name="reference" maxLength={120} defaultValue={selectedManualTransactionForEdit.reference ?? ""} />
+                </label>
+                <label>
+                  Description (optionnel)
+                  <textarea name="description" rows={3} maxLength={2000} defaultValue={selectedManualTransactionForEdit.description ?? ""} />
+                </label>
+
+                <div className="row modal-actions-end">
+                  <Link className="reset-link" href={tabHref(client.id, "paiements")}>
+                    Annuler
+                  </Link>
+                  <button type="submit">Enregistrer</button>
+                </div>
+              </form>
+            ) : (
+              <div className="stack-sm top-gap-sm">
+                <p className="muted">
+                  Cette transaction ne peut plus etre modifiee car elle est liee a une facture non annulee.
+                </p>
+                {selectedManualTransactionForEdit.locked_by_invoice_number ? (
+                  <p className="muted">Facture: {selectedManualTransactionForEdit.locked_by_invoice_number}</p>
+                ) : null}
+                <div className="row modal-actions-end">
+                  <Link className="reset-link" href={tabHref(client.id, "paiements")}>
+                    Fermer
+                  </Link>
+                </div>
+              </div>
+            )}
           </article>
         </section>
       ) : null}

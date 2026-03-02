@@ -64,6 +64,7 @@ from app.schemas.admin import (
     AdminClientPasswordResetOut,
     AdminClientPaymentOut,
     AdminClientManualTransactionCreateRequest,
+    AdminClientManualTransactionUpdateRequest,
     AdminClientPaymentRefundOut,
     AdminClientPaymentRefundRequest,
     AdminClientSubscriptionMiniOut,
@@ -137,6 +138,7 @@ PENDING_PAYMENT_STATUSES = {
     "BOOKED",
     "ATTENDED",
     "NO_SHOW",
+    "INVOICED",
 }
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
@@ -969,6 +971,34 @@ def _parse_invoice_range_metadata_int(
     return max(minimum, min(value, maximum))
 
 
+def _normalize_invoice_range_payment_keys(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        candidate = _normalize_optional(str(item))
+        if candidate is None:
+            continue
+        parts = candidate.split(":", 1)
+        if len(parts) != 2:
+            continue
+        source = parts[0].strip().upper()
+        payment_id_raw = parts[1].strip()
+        if not source or not payment_id_raw:
+            continue
+        try:
+            payment_id = UUID(payment_id_raw)
+        except ValueError:
+            continue
+        key = f"{source}:{payment_id}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
 def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, object] | None:
     kind = str(payload.get("kind") or "").strip().upper()
     if kind != "INVOICE_RANGE":
@@ -1049,6 +1079,10 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
 
     status_value = str(payload.get("invoice_status") or "ISSUED").strip().upper()
     normalized["invoice_status"] = status_value if status_value in INVOICE_RANGE_STATUSES else "ISSUED"
+
+    included_payment_keys = _normalize_invoice_range_payment_keys(payload.get("included_payment_keys"))
+    if included_payment_keys:
+        normalized["included_payment_keys"] = included_payment_keys
 
     emailed_at = _parse_iso_datetime(payload.get("emailed_at"))
     reminded_at = _parse_iso_datetime(payload.get("reminded_at"))
@@ -1192,6 +1226,57 @@ def _load_range_invoice_note(
     return note, metadata
 
 
+def _range_invoice_metadatas_for_client(db: Session, *, client_id: UUID) -> list[dict[str, object]]:
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.user_id == client_id)
+        .order_by(ClientNoteEntry.created_at.desc())
+    ).all()
+    out: list[dict[str, object]] = []
+    for note in notes:
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            continue
+        metadata["note_id"] = str(note.id)
+        out.append(metadata)
+    return out
+
+
+def _active_invoice_lock_by_payment_key(db: Session, *, client_id: UUID) -> dict[str, tuple[str, str, UUID | None]]:
+    locks: dict[str, tuple[str, str, UUID | None]] = {}
+    for metadata in _range_invoice_metadatas_for_client(db, client_id=client_id):
+        invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+        if invoice_status == "CANCELLED":
+            continue
+        invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or "-"
+        note_id: UUID | None = None
+        raw_note_id = _normalize_optional(str(metadata.get("note_id") or ""))
+        if raw_note_id:
+            try:
+                note_id = UUID(raw_note_id)
+            except ValueError:
+                note_id = None
+        for key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")):
+            if key in locks:
+                continue
+            locks[key] = (invoice_status, invoice_number, note_id)
+    return locks
+
+
+def _manual_transaction_lock_info(
+    db: Session,
+    *,
+    client_id: UUID,
+    transaction_id: UUID,
+) -> tuple[bool, str | None]:
+    key = _payment_key(source="MANUAL", payment_id=transaction_id)
+    lock = _active_invoice_lock_by_payment_key(db, client_id=client_id).get(key)
+    if lock is None:
+        return False, None
+    _, invoice_number, _ = lock
+    return True, invoice_number
+
+
 def _invoice_range_total_in_currency(metadata: dict[str, object], *, currency: str) -> Decimal:
     totals_raw = metadata.get("totals_by_currency")
     if not isinstance(totals_raw, dict) or not totals_raw:
@@ -1219,14 +1304,52 @@ def _invoice_range_total_in_currency(metadata: dict[str, object], *, currency: s
     return amount
 
 
-def _manual_payment_method_code(reference: str | None) -> str | None:
+def _payment_key(*, source: str, payment_id: UUID) -> str:
+    return f"{(source or '').strip().upper()}:{payment_id}"
+
+
+def _parse_manual_reference(reference: str | None) -> tuple[str | None, str | None]:
     normalized_reference = (reference or "").strip()
     if not normalized_reference:
-        return None
+        return None, None
+
     if not normalized_reference.upper().startswith("MODE:"):
-        return None
-    code = normalized_reference[5:].strip().upper()
-    return code or None
+        return None, normalized_reference
+
+    suffix = normalized_reference[5:].strip()
+    if not suffix:
+        return None, None
+
+    separator_index = suffix.upper().find("|REF:")
+    if separator_index < 0:
+        code = suffix.strip().upper()
+        return (code or None), None
+
+    code = suffix[:separator_index].strip().upper()
+    custom_reference = suffix[separator_index + 5 :].strip()
+    return (code or None), (custom_reference or None)
+
+
+def _manual_payment_method_code(reference: str | None) -> str | None:
+    code, _ = _parse_manual_reference(reference)
+    return code
+
+
+def _manual_custom_reference(reference: str | None) -> str | None:
+    _, custom_reference = _parse_manual_reference(reference)
+    return custom_reference
+
+
+def _build_manual_reference(*, payment_method_code: str | None, custom_reference: str | None) -> str | None:
+    normalized_method = _normalize_optional(payment_method_code)
+    normalized_reference = _normalize_optional(custom_reference)
+    if normalized_method is not None:
+        normalized_method = normalized_method.upper()
+    if normalized_method and normalized_reference:
+        return f"MODE:{normalized_method}|REF:{normalized_reference}"
+    if normalized_method:
+        return f"MODE:{normalized_method}"
+    return normalized_reference
 
 
 def _manual_transaction_allowed_student_ids(db: Session, *, client: User) -> set[UUID]:
@@ -1320,6 +1443,8 @@ def _invoice_number_for_payment(payment_id: UUID, occurred_at: datetime) -> str:
 
 def _invoice_status_from_payment_status(status_value: str) -> str:
     normalized = (status_value or "").strip().upper()
+    if normalized == "INVOICED":
+        return "ISSUED"
     if normalized == "REFUNDED":
         return "CANCELLED"
     if normalized == "NOT_BILLABLE":
@@ -4086,6 +4211,8 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 total_incl_vat=total_incl_vat,
                 currency=currency_code,
                 reference=plan.code,
+                payment_method_code=_normalize_optional(sub.billing_method_code.upper() if sub.billing_method_code else None),
+                payment_method_label=(_payment_method_label_client(sub.billing_method_code) if sub.billing_method_code else None),
             )
         )
 
@@ -4151,12 +4278,9 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         if student is not None and student.id != row.user_id:
             label = f"{label} - {_display_name(student.first_name, student.last_name, student.email)}"
 
-        reference_parts: list[str] = []
-        if row.category:
-            reference_parts.append(row.category)
-        if row.reference:
-            reference_parts.append(row.reference)
-        reference = " | ".join(reference_parts) or None
+        manual_reference = _manual_custom_reference(row.reference) or (row.reference if _manual_payment_method_code(row.reference) is None else None)
+        reference = manual_reference or None
+        payment_method_code = _manual_payment_method_code(row.reference)
 
         items.append(
             AdminClientPaymentOut(
@@ -4171,15 +4295,41 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 total_incl_vat=_quantize_money(Decimal(row.total_incl_vat)),
                 currency=_normalize_currency(row.currency, fallback=billing_profile.preferred_currency or "EUR"),
                 reference=reference,
+                payment_method_code=payment_method_code,
+                payment_method_label=_payment_method_label_client(payment_method_code) if payment_method_code else None,
+                manual_transaction_type=(row.transaction_type or "").strip().upper() or None,
+                student_user_id=row.student_user_id,
+                description=_normalize_optional(row.description),
+                category=_normalize_optional(row.category),
+                can_edit=(row.status or "").strip().upper() != "REFUNDED",
+                can_cancel=(row.status or "").strip().upper() != "REFUNDED",
             )
         )
 
+    invoice_locks_by_payment_key = _active_invoice_lock_by_payment_key(db, client_id=client.id)
     for item in items:
         refund = refund_by_key.get((item.source.strip().upper(), item.id))
         if refund is not None:
             item.status = "REFUNDED"
             item.refunded_at = refund.refunded_at
             item.refund_reason = refund.reason
+            if item.source.strip().upper() == "MANUAL":
+                item.can_edit = False
+                item.can_cancel = False
+
+        lock = invoice_locks_by_payment_key.get(_payment_key(source=item.source, payment_id=item.id))
+        if lock is not None:
+            locked_status, locked_invoice_number, locked_note_id = lock
+            item.invoice_number = locked_invoice_number
+            item.invoice_status = "PAID" if locked_status == "PAID" else "ISSUED"
+            item.invoice_note_id = locked_note_id
+            item.status = "PAID" if locked_status == "PAID" else "INVOICED"
+            if item.source.strip().upper() == "MANUAL":
+                item.can_edit = False
+                item.can_cancel = False
+                item.locked_by_invoice_number = locked_invoice_number
+            continue
+
         invoice_status = _invoice_status_from_payment_status(item.status)
         item.invoice_status = invoice_status
         item.invoice_number = _invoice_number_for_payment(item.id, item.occurred_at) if invoice_status != "PENDING" else None
@@ -4257,8 +4407,17 @@ def create_admin_client_manual_transaction(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Unknown category. Update products categories in admin config first.",
             )
-    reference = _normalize_optional(payload.reference)
-    payment_method_code = _manual_payment_method_code(reference)
+    custom_reference = _normalize_optional(payload.reference)
+    if custom_reference and custom_reference.upper().startswith("MODE:"):
+        custom_reference = _manual_custom_reference(custom_reference)
+    payment_method_code = _normalize_optional(payload.payment_method_code)
+    if payment_method_code is None:
+        payment_method_code = _manual_payment_method_code(payload.reference)
+    if payment_method_code is not None:
+        payment_method_code = payment_method_code.upper()
+    if transaction_type != "PAYMENT":
+        payment_method_code = None
+    reference = _build_manual_reference(payment_method_code=payment_method_code, custom_reference=custom_reference)
     currency = _normalize_currency(payload.currency, fallback=client.preferred_currency or "EUR")
     occurred_at = payload.occurred_at or _utcnow()
     status_value = MANUAL_TRANSACTION_STATUS_BY_TYPE.get(transaction_type, "COMPLETED")
@@ -4425,6 +4584,184 @@ def create_admin_client_manual_transaction(
     return created
 
 
+def _load_manual_transaction_for_client(
+    db: Session,
+    *,
+    client: User,
+    transaction_id: UUID,
+    for_update: bool = False,
+) -> ClientManualTransaction:
+    scoped_users = _payment_scope_users(db, client=client)
+    stmt = select(ClientManualTransaction).where(
+        ClientManualTransaction.id == transaction_id,
+        ClientManualTransaction.user_id.in_(list(scoped_users.keys())),
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    row = db.scalar(stmt)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction manuelle introuvable")
+    return row
+
+
+@router.patch("/{client_id}/manual-transactions/{transaction_id}", response_model=AdminClientPaymentOut)
+def update_admin_client_manual_transaction(
+    client_id: UUID,
+    transaction_id: UUID,
+    payload: AdminClientManualTransactionUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientPaymentOut:
+    client = _require_client(db, client_id)
+    row = _load_manual_transaction_for_client(db, client=client, transaction_id=transaction_id, for_update=True)
+    is_locked, locked_invoice_number = _manual_transaction_lock_info(
+        db,
+        client_id=client.id,
+        transaction_id=row.id,
+    )
+    if is_locked:
+        invoice_label = locked_invoice_number or "inconnue"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Transaction verrouillee par la facture {invoice_label}",
+        )
+
+    update_values = payload.model_dump(exclude_unset=True)
+    if not update_values:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune modification fournie")
+
+    transaction_type = (row.transaction_type or "").strip().upper()
+    sign = MANUAL_TRANSACTION_SIGN_BY_TYPE.get(transaction_type, Decimal("1"))
+
+    if "student_id" in update_values:
+        student_id = update_values.get("student_id")
+        if student_id is not None:
+            allowed_student_ids = _manual_transaction_allowed_student_ids(db, client=client)
+            if student_id not in allowed_student_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Selected student is not linked to this account",
+                )
+        row.student_user_id = student_id
+
+    if "label" in update_values:
+        row.label = _manual_transaction_label(transaction_type, _normalize_optional(update_values.get("label")))
+    if "description" in update_values:
+        row.description = _normalize_optional(update_values.get("description"))
+    if "category" in update_values:
+        category = _normalize_optional(update_values.get("category"))
+        if category:
+            allowed_categories = _configured_product_categories(db)
+            if allowed_categories and category.casefold() not in {item.casefold() for item in allowed_categories}:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Unknown category. Update products categories in admin config first.",
+                )
+        row.category = category
+    if "occurred_at" in update_values and update_values.get("occurred_at") is not None:
+        row.occurred_at = update_values["occurred_at"]
+    if "currency" in update_values:
+        row.currency = _normalize_currency(update_values.get("currency"), fallback=row.currency or client.preferred_currency or "EUR")
+
+    current_total_abs = _quantize_money(abs(Decimal(row.total_incl_vat)))
+    total_abs = _quantize_money(Decimal(update_values.get("amount_incl_vat", current_total_abs)))
+    if total_abs <= Decimal("0.00"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Amount must be greater than zero")
+    vat_rate_value = Decimal(update_values.get("vat_rate", row.vat_rate)).quantize(Decimal("0.001"))
+    ratio = Decimal("1.000") + (vat_rate_value / Decimal("100"))
+    if ratio <= Decimal("0.000"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid VAT rate")
+
+    amount_excl_abs = _quantize_money(total_abs / ratio)
+    vat_amount_abs = _quantize_money(total_abs - amount_excl_abs)
+    row.amount_excl_vat = _quantize_money(amount_excl_abs * sign)
+    row.vat_rate = vat_rate_value
+    row.vat_amount = _quantize_money(vat_amount_abs * sign)
+    row.total_incl_vat = _quantize_money(total_abs * sign)
+
+    current_payment_method_code = _manual_payment_method_code(row.reference)
+    current_custom_reference = _manual_custom_reference(row.reference) or (
+        row.reference if current_payment_method_code is None else None
+    )
+    reference_input = (
+        _manual_custom_reference(update_values.get("reference"))
+        if (isinstance(update_values.get("reference"), str) and str(update_values.get("reference")).upper().startswith("MODE:"))
+        else _normalize_optional(update_values.get("reference"))
+    )
+    payment_method_code = _normalize_optional(update_values.get("payment_method_code"))
+    if payment_method_code is None:
+        payment_method_code = current_payment_method_code
+    if payment_method_code is not None:
+        payment_method_code = payment_method_code.upper()
+    if transaction_type != "PAYMENT":
+        payment_method_code = None
+    custom_reference = reference_input if "reference" in update_values else current_custom_reference
+    row.reference = _build_manual_reference(payment_method_code=payment_method_code, custom_reference=custom_reference)
+    row.actor_user_id = actor.id
+
+    note_message = (
+        f"Transaction manuelle modifiee ({row.label}) : {Decimal(row.total_incl_vat):.2f} {row.currency}."
+    )
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=note_message,
+    )
+
+    db.add(row)
+    db.commit()
+
+    updated = next(
+        (
+            item
+            for item in _build_admin_client_payments(db, client_id=client.id)
+            if item.id == row.id and item.source.strip().upper() == "MANUAL"
+        ),
+        None,
+    )
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load updated transaction")
+    return updated
+
+
+@router.delete("/{client_id}/manual-transactions/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_admin_client_manual_transaction(
+    client_id: UUID,
+    transaction_id: UUID,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    client = _require_client(db, client_id)
+    row = _load_manual_transaction_for_client(db, client=client, transaction_id=transaction_id, for_update=True)
+    is_locked, locked_invoice_number = _manual_transaction_lock_info(
+        db,
+        client_id=client.id,
+        transaction_id=row.id,
+    )
+    if is_locked:
+        invoice_label = locked_invoice_number or "inconnue"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Transaction verrouillee par la facture {invoice_label}",
+        )
+
+    label = row.label
+    amount = Decimal(row.total_incl_vat)
+    currency = row.currency
+    db.delete(row)
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=f"Transaction manuelle supprimee ({label}) : {amount:.2f} {currency}.",
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/{client_id}/payments/invoice-range", response_model=AdminRangeInvoiceOut, status_code=status.HTTP_201_CREATED)
 def create_admin_client_range_invoice(
     client_id: UUID,
@@ -4464,6 +4801,11 @@ def create_admin_client_range_invoice(
             for row in payments
             if row.source.strip().upper() == "BOOKING" and not _is_pack_or_subscription_booking_reference(row.reference)
         ]
+    payments = [
+        row
+        for row in payments
+        if ((row.invoice_status or "").strip().upper() not in {"ISSUED", "PAID"})
+    ]
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
 
@@ -4502,6 +4844,7 @@ def create_admin_client_range_invoice(
         "auto_exclude_pack_subscription_lines": bool(payload.auto_exclude_pack_subscription_lines),
         "include_pending": bool(payload.include_pending),
         "include_cancelled": bool(payload.include_cancelled),
+        "included_payment_keys": [_payment_key(source=row.source, payment_id=row.id) for row in payments],
         "totals_by_currency": totals_by_currency,
         "invoice_status": "ISSUED",
     }
@@ -4617,6 +4960,7 @@ def send_admin_client_range_invoice_email(
         auto_exclude_pack_subscription_lines=_parse_invoice_range_metadata_bool(
             metadata, "auto_exclude_pack_subscription_lines", default=True
         ),
+        frozen_payment_keys=_normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")),
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
@@ -4723,6 +5067,7 @@ def download_admin_client_range_invoice(
     auto_exclude_pack_subscription_lines: bool = Query(default=True),
     invoice_number: str | None = Query(default=None, max_length=120),
     persist_note: bool = Query(default=True),
+    frozen_payment_keys: list[str] = Query(default=[]),
     public_note: str | None = Query(default=None, max_length=2000),
     private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
@@ -4750,17 +5095,31 @@ def download_admin_client_range_invoice(
     start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
     end_at_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
     all_payments = _build_admin_client_payments(db, client_id=client_id)
-    payments = [row for row in all_payments if start_at <= row.occurred_at < end_at_exclusive]
+    normalized_frozen_keys = _normalize_invoice_range_payment_keys(frozen_payment_keys)
+    if normalized_frozen_keys:
+        frozen_key_set = set(normalized_frozen_keys)
+        payments = [
+            row
+            for row in all_payments
+            if _payment_key(source=row.source, payment_id=row.id) in frozen_key_set
+        ]
+    else:
+        payments = [row for row in all_payments if start_at <= row.occurred_at < end_at_exclusive]
 
-    if not include_pending:
-        payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "PENDING"]
-    if not include_cancelled:
-        payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "CANCELLED"]
-    if normalized_generation_mode == "AUTO" and auto_exclude_pack_subscription_lines:
+        if not include_pending:
+            payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "PENDING"]
+        if not include_cancelled:
+            payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "CANCELLED"]
+        if normalized_generation_mode == "AUTO" and auto_exclude_pack_subscription_lines:
+            payments = [
+                row
+                for row in payments
+                if row.source.strip().upper() == "BOOKING" and not _is_pack_or_subscription_booking_reference(row.reference)
+            ]
         payments = [
             row
             for row in payments
-            if row.source.strip().upper() == "BOOKING" and not _is_pack_or_subscription_booking_reference(row.reference)
+            if ((row.invoice_status or "").strip().upper() not in {"ISSUED", "PAID"})
         ]
 
     if not payments:
@@ -5047,6 +5406,7 @@ def download_admin_client_range_invoice(
             "auto_exclude_pack_subscription_lines": bool(auto_exclude_pack_subscription_lines),
             "include_pending": bool(include_pending),
             "include_cancelled": bool(include_cancelled),
+            "included_payment_keys": [_payment_key(source=row.source, payment_id=row.id) for row in payments],
             "totals_by_currency": totals_payload,
             "opening_balance_by_currency": opening_balance_payload,
             "total_to_pay_by_currency": total_to_pay_payload,
@@ -5109,6 +5469,76 @@ def download_admin_client_range_invoice(
             "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{file_name}"',
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.get("/{client_id}/invoices/range/{note_id}/pdf")
+def download_admin_client_range_invoice_from_note(
+    client_id: UUID,
+    note_id: UUID,
+    inline: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    _require_client(db, client_id)
+    _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    return download_admin_client_range_invoice(
+        client_id=client_id,
+        start_date=_parse_invoice_range_metadata_date(metadata, "start_date"),
+        end_date=_parse_invoice_range_metadata_date(metadata, "end_date"),
+        issued_date=_parse_invoice_range_metadata_date(metadata, "issued_date"),
+        due_date=_parse_invoice_range_metadata_date(metadata, "due_date"),
+        no_due_date=_parse_invoice_range_metadata_bool(metadata, "no_due_date", default=False),
+        include_pending=_parse_invoice_range_metadata_bool(metadata, "include_pending", default=True),
+        include_cancelled=_parse_invoice_range_metadata_bool(metadata, "include_cancelled", default=False),
+        layout=str(metadata.get("layout") or "DETAILED"),
+        generation_mode=str(metadata.get("generation_mode") or "MANUAL"),
+        group_adjustments_by_type=_parse_invoice_range_metadata_bool(metadata, "group_adjustments_by_type", default=False),
+        include_discount_adjustments=_parse_invoice_range_metadata_bool(
+            metadata, "include_discount_adjustments", default=True
+        ),
+        include_supplement_adjustments=_parse_invoice_range_metadata_bool(
+            metadata, "include_supplement_adjustments", default=True
+        ),
+        auto_cycle_start_date=(
+            date.fromisoformat(str(metadata.get("auto_cycle_start_date")))
+            if _normalize_optional(str(metadata.get("auto_cycle_start_date") or ""))
+            else None
+        ),
+        auto_period_scope=(
+            "FUTURE" if str(metadata.get("auto_period_scope") or "").strip().upper() == "FUTURE" else "PAST"
+        ),
+        auto_frequency=(
+            "WEEKLY" if str(metadata.get("auto_frequency") or "").strip().upper() == "WEEKLY" else "MONTHLY"
+        ),
+        auto_repeat_every=_parse_invoice_range_metadata_int(
+            metadata,
+            "auto_repeat_every",
+            default=1,
+            minimum=1,
+            maximum=6,
+        ),
+        auto_layout_style=(
+            "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
+        ),
+        auto_include_previous_balance=_parse_invoice_range_metadata_bool(
+            metadata, "auto_include_previous_balance", default=True
+        ),
+        auto_send_email=_parse_invoice_range_metadata_bool(metadata, "auto_send_email", default=False),
+        auto_footer_note=_normalize_optional(str(metadata.get("auto_footer_note") or "")),
+        auto_exclude_pack_subscription_lines=_parse_invoice_range_metadata_bool(
+            metadata, "auto_exclude_pack_subscription_lines", default=True
+        ),
+        frozen_payment_keys=_normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")),
+        invoice_number=str(metadata.get("invoice_number") or ""),
+        persist_note=False,
+        public_note=_normalize_optional(str(metadata.get("public_note") or "")),
+        private_note=_normalize_optional(str(metadata.get("private_note") or "")),
+        note=None,
+        invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        inline=inline,
+        db=db,
+        actor=actor,
     )
 
 
@@ -5175,6 +5605,7 @@ def download_admin_client_range_invoice_public(
         auto_exclude_pack_subscription_lines=_parse_invoice_range_metadata_bool(
             metadata, "auto_exclude_pack_subscription_lines", default=True
         ),
+        frozen_payment_keys=_normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")),
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
@@ -5272,7 +5703,7 @@ def download_admin_client_payment_invoice(
     payment_id: UUID,
     inline: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
     payment_user = _require_client(db, client_id)
     source_code = source.strip().upper()
@@ -5289,6 +5720,15 @@ def download_admin_client_payment_invoice(
     )
     if payment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+
+    if payment.invoice_note_id is not None:
+        return download_admin_client_range_invoice_from_note(
+            client_id=client_id,
+            note_id=payment.invoice_note_id,
+            inline=inline,
+            db=db,
+            actor=actor,
+        )
 
     invoice_number = payment.invoice_number or _invoice_number_for_payment(payment.id, payment.occurred_at)
     billing_profile = resolve_billing_profile(db, payment_user)

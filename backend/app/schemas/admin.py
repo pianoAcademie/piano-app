@@ -934,8 +934,18 @@ class AdminClientPaymentOut(BaseModel):
     reference: str | None
     invoice_number: str | None = None
     invoice_status: str | None = None
+    invoice_note_id: UUID | None = None
     refunded_at: datetime | None = None
     refund_reason: str | None = None
+    payment_method_code: str | None = None
+    payment_method_label: str | None = None
+    manual_transaction_type: str | None = None
+    student_user_id: UUID | None = None
+    description: str | None = None
+    category: str | None = None
+    can_edit: bool = False
+    can_cancel: bool = False
+    locked_by_invoice_number: str | None = None
 
 
 class AdminClientManualTransactionType(str, enum.Enum):
@@ -956,9 +966,23 @@ class AdminClientManualTransactionCreateRequest(BaseModel):
     amount_incl_vat: Decimal = Field(gt=Decimal("0"))
     vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    payment_method_code: str | None = Field(default=None, max_length=40)
     reconciled_invoice_note_ids: list[UUID] = Field(default_factory=list)
     mark_reconciled_invoices_paid: bool = False
     send_receipt_email: bool = False
+
+
+class AdminClientManualTransactionUpdateRequest(BaseModel):
+    occurred_at: datetime | None = None
+    label: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=120)
+    reference: str | None = Field(default=None, max_length=120)
+    student_id: UUID | None = None
+    amount_incl_vat: Decimal | None = Field(default=None, gt=Decimal("0"))
+    vat_rate: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    payment_method_code: str | None = Field(default=None, max_length=40)
 
 
 class AdminClientPaymentRefundRequest(BaseModel):
