@@ -4161,6 +4161,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         select(ClientPaymentRefund).where(ClientPaymentRefund.user_id.in_(scoped_user_ids))
     ).all()
     refund_by_key = {(row.source.strip().upper(), row.source_payment_id): row for row in refunds}
+    invoice_locks_by_payment_key = _active_invoice_lock_by_payment_key(db, client_id=client.id)
 
     items: list[AdminClientPaymentOut] = []
     forfait_pricing_map = _forfait_activity_pricing_map(
@@ -4217,6 +4218,8 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         )
 
     for booking, session_obj, course_type, location, forfait_subscription, plan in rows_bookings:
+        booking_key = _payment_key(source="BOOKING", payment_id=booking.id)
+        is_locked_booking = booking_key in invoice_locks_by_payment_key
         is_billable = True
         status_value = booking.status.value
         amount_excl_vat = booking.price_excl_vat_snapshot
@@ -4224,29 +4227,30 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         vat_amount = booking.vat_amount_snapshot
         total_incl_vat = booking.total_incl_vat_snapshot
         currency = booking.currency_snapshot
-        if plan is None or (plan is not None and plan.kind == PlanKind.FORFAIT):
-            is_billable = (
-                session_obj.status != SessionStatus.CANCELLED
-                and booking.status not in {BookingStatus.WAITLISTED, BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
-            )
-            if not is_billable:
-                status_value = "NOT_BILLABLE"
-            else:
-                computed = _forfait_booking_amounts_from_activity(
-                    booking=booking,
-                    session_obj=session_obj,
-                    course_type=course_type,
-                    location=location,
-                    billing_profile=billing_profile,
-                    forfait_subscription=forfait_subscription,
-                    db=db,
-                    pricing_map=forfait_pricing_map,
+        if not is_locked_booking:
+            if plan is None or (plan is not None and plan.kind == PlanKind.FORFAIT):
+                is_billable = (
+                    session_obj.status != SessionStatus.CANCELLED
+                    and booking.status not in {BookingStatus.WAITLISTED, BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
                 )
-                if computed is not None:
-                    amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = computed
-        elif booking.status == BookingStatus.EXCUSED_ABSENCE:
-            is_billable = False
-            status_value = "NOT_BILLABLE"
+                if not is_billable:
+                    status_value = "NOT_BILLABLE"
+                else:
+                    computed = _forfait_booking_amounts_from_activity(
+                        booking=booking,
+                        session_obj=session_obj,
+                        course_type=course_type,
+                        location=location,
+                        billing_profile=billing_profile,
+                        forfait_subscription=forfait_subscription,
+                        db=db,
+                        pricing_map=forfait_pricing_map,
+                    )
+                    if computed is not None:
+                        amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = computed
+            elif booking.status == BookingStatus.EXCUSED_ABSENCE:
+                is_billable = False
+                status_value = "NOT_BILLABLE"
 
         owner = scoped_users_by_id.get(booking.user_id)
         label = f"{course_type.name} - {location.name}"
@@ -4306,7 +4310,6 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             )
         )
 
-    invoice_locks_by_payment_key = _active_invoice_lock_by_payment_key(db, client_id=client.id)
     for item in items:
         refund = refund_by_key.get((item.source.strip().upper(), item.id))
         if refund is not None:
