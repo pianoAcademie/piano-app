@@ -85,6 +85,7 @@ def _request_out(db: Session, row: ProductRequest) -> AdminCatalogRequestOut:
         )
     )
 
+    is_virtual = bool(product.is_virtual) if product is not None else False
     return AdminCatalogRequestOut(
         id=row.id,
         student_user_id=row.student_user_id,
@@ -111,8 +112,8 @@ def _request_out(db: Session, row: ProductRequest) -> AdminCatalogRequestOut:
         delivery_marked_by_name=_display_name(users.get(row.delivery_marked_by_user_id)) if row.delivery_marked_by_user_id else None,
         delivery_marked_at=row.delivery_marked_at,
         note=row.note,
-        stock_real_quantity=(int(stock.real_quantity) if stock is not None else None),
-        stock_estimated_quantity=(int(stock.estimated_quantity) if stock is not None else None),
+        stock_real_quantity=(None if is_virtual else (int(stock.real_quantity) if stock is not None else None)),
+        stock_estimated_quantity=(None if is_virtual else (int(stock.estimated_quantity) if stock is not None else None)),
     )
 
 
@@ -151,6 +152,7 @@ def list_professor_catalog_products(
             short_description=row.short_description,
             long_description=row.long_description,
             web_link=row.web_link,
+            is_virtual=bool(row.is_virtual),
             purchasable_online=bool(row.purchasable_online),
             is_public=bool(row.is_public),
             active=bool(row.active),

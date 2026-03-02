@@ -1443,7 +1443,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   (row) =>
                                     Number.parseFloat(row.loyalty_discount_per_hour_ttc || "0") > 0 ||
                                     Number.parseFloat(row.family_discount_per_hour_ttc || "0") > 0 ||
-                                    Number.parseFloat(row.short_commitment_supplement_per_hour_ttc || "0") > 0,
+                                    Number.parseFloat(row.short_commitment_supplement_per_hour_ttc || "0") > 0 ||
+                                    Number.parseFloat(row.second_course_weekly_discount_per_hour_ttc || "0") > 0,
                                 ).length
                               }/${sub.forfait_activity_pricing.length}`
                             : ""}
@@ -1886,7 +1887,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         ? `${formatMoney(row.base_hourly_rate_ttc, selectedSubscriptionForModal.estimated_currency || client.preferred_currency)}/h`
                         : "n/a"}{" "}
                       |
-                      Apres surcouche:{" "}
+                      Apres surcouche max:{" "}
                       {row.effective_hourly_rate_ttc
                         ? `${formatMoney(
                             row.effective_hourly_rate_ttc,
@@ -1894,7 +1895,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           )}/h`
                         : "n/a"}
                     </p>
-                    <div className="grid cols-3 config-form-grid">
+                    <div className="grid cols-4 config-form-grid">
                       <label>
                         Remise fidelite / h TTC
                         <input
@@ -1917,6 +1918,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           type="text"
                           name={`forfait_short_commitment_supplement_per_hour_ttc_${row.course_type_id}`}
                           defaultValue={row.short_commitment_supplement_per_hour_ttc ?? "0"}
+                        />
+                      </label>
+                      <label>
+                        Remise 2e cours semaine / h TTC
+                        <input
+                          type="text"
+                          name={`forfait_second_course_weekly_discount_per_hour_ttc_${row.course_type_id}`}
+                          defaultValue={row.second_course_weekly_discount_per_hour_ttc ?? "0"}
                         />
                       </label>
                     </div>

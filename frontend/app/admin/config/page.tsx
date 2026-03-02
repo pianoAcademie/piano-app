@@ -1184,6 +1184,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     Lien web
                     <input type="url" name="web_link" />
                   </label>
+                  <fieldset className="span-2">
+                    <legend>Type de produit</legend>
+                    <label className="checkline">
+                      <input type="radio" name="is_virtual" value="false" defaultChecked />
+                      Physique (stock gere)
+                    </label>
+                    <label className="checkline">
+                      <input type="radio" name="is_virtual" value="true" />
+                      Virtuel (pas de stock)
+                    </label>
+                  </fieldset>
                   <label className="span-2">
                     Visuel (URL)
                     <input type="url" name="image_url" />
@@ -1224,10 +1235,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <strong>{product.title}</strong>
                             <p className="muted">
                               {product.category_name || "Sans categorie"} | TTC {formatMoney(product.price_incl_vat, "EUR")} | Stock global{" "}
-                              {product.stock_global_quantity}
+                              {product.is_virtual ? "n/a (virtuel)" : product.stock_global_quantity}
                             </p>
                           </div>
                           <div className="row">
+                            <span className="badge">Virtuel: {yesNoLabel(product.is_virtual)}</span>
                             <span className="badge">Online: {yesNoLabel(product.purchasable_online)}</span>
                             <span className="badge">Public: {yesNoLabel(product.is_public)}</span>
                             <span className="badge">Actif: {yesNoLabel(product.active)}</span>
@@ -1272,6 +1284,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               Lien web
                               <input type="url" name="web_link" defaultValue={product.web_link || ""} />
                             </label>
+                            <fieldset className="span-2">
+                              <legend>Type de produit</legend>
+                              <label className="checkline">
+                                <input type="radio" name="is_virtual" value="false" defaultChecked={!product.is_virtual} />
+                                Physique (stock gere)
+                              </label>
+                              <label className="checkline">
+                                <input type="radio" name="is_virtual" value="true" defaultChecked={product.is_virtual} />
+                                Virtuel (pas de stock)
+                              </label>
+                            </fieldset>
                             <label className="span-2">
                               Visuel (URL)
                               <input type="url" name="image_url" defaultValue={product.image_url || ""} />
@@ -2147,7 +2170,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </Link>
                 </div>
                 <p className="muted">
-                  Une activite definit le titre, la description, la duree, la couleur, la capacite maximum et le tarif horaire TTC.
+                  Une activite definit le titre, la description, la duree, la couleur, la capacite maximum et le tarif
+                  (horaire TTC ou par cours TTC).
                 </p>
                 {activeCreditTypes.length === 0 ? (
                   <p className="flash-err">Aucun type de credit actif: ajoutez/activez d abord un type de credit.</p>
@@ -2181,7 +2205,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <span className="status-pill status-warn">{activityModeLabel(activity.mode)}</span>
                           <span className="status-pill status-ok">{activity.duration_minutes} min</span>
                           <span className="status-pill status-warn">
-                            {activity.default_hourly_rate ? `${activity.default_hourly_rate} ${accountDefaultCurrency}/h TTC` : "Tarif TTC non defini"}
+                            {activity.default_course_rate_ttc
+                              ? `${activity.default_course_rate_ttc} ${accountDefaultCurrency}/cours TTC`
+                              : activity.default_hourly_rate
+                                ? `${activity.default_hourly_rate} ${accountDefaultCurrency}/h TTC`
+                                : "Tarif TTC non defini"}
                           </span>
                           <span className="status-pill status-off">Cap. max {activity.default_capacity}</span>
                           <span className={`status-pill ${activity.active ? "status-ok" : "status-warn"}`}>
@@ -2263,6 +2291,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             min={0}
                             step="0.01"
                             placeholder="ex: 35.00"
+                          />
+                        </label>
+                        <label>
+                          Tarif par cours TTC
+                          <input
+                            type="number"
+                            name="default_course_rate_ttc"
+                            min={0}
+                            step="0.01"
+                            placeholder="ex: 200.00"
                           />
                         </label>
                         <label>
@@ -2373,6 +2411,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             step="0.01"
                             defaultValue={selectedActivity.default_hourly_rate ?? ""}
                             placeholder="ex: 35.00"
+                          />
+                        </label>
+                        <label>
+                          Tarif par cours TTC
+                          <input
+                            type="number"
+                            name="default_course_rate_ttc"
+                            min={0}
+                            step="0.01"
+                            defaultValue={selectedActivity.default_course_rate_ttc ?? ""}
+                            placeholder="ex: 200.00"
                           />
                         </label>
                         <label>

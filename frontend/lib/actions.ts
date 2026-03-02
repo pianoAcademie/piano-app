@@ -2205,16 +2205,19 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
     loyalty_discount_per_hour_ttc: string;
     family_discount_per_hour_ttc: string;
     short_commitment_supplement_per_hour_ttc: string;
+    second_course_weekly_discount_per_hour_ttc: string;
   }> = [];
   for (const rowKey of rowKeys) {
     const courseTypeId = String(formData.get(`forfait_course_type_id_${rowKey}`) ?? "").trim();
     const loyaltyRaw = String(formData.get(`forfait_loyalty_discount_per_hour_ttc_${rowKey}`) ?? "").trim();
     const familyRaw = String(formData.get(`forfait_family_discount_per_hour_ttc_${rowKey}`) ?? "").trim();
     const shortCommitmentRaw = String(formData.get(`forfait_short_commitment_supplement_per_hour_ttc_${rowKey}`) ?? "").trim();
+    const secondCourseWeeklyRaw = String(formData.get(`forfait_second_course_weekly_discount_per_hour_ttc_${rowKey}`) ?? "").trim();
     const loyalty = loyaltyRaw ? parseNonNegativeDecimal(loyaltyRaw.replace(",", ".")) : 0;
     const family = familyRaw ? parseNonNegativeDecimal(familyRaw.replace(",", ".")) : 0;
     const shortCommitment = shortCommitmentRaw ? parseNonNegativeDecimal(shortCommitmentRaw.replace(",", ".")) : 0;
-    if (!courseTypeId || loyalty === null || family === null || shortCommitment === null) {
+    const secondCourseWeekly = secondCourseWeeklyRaw ? parseNonNegativeDecimal(secondCourseWeeklyRaw.replace(",", ".")) : 0;
+    if (!courseTypeId || loyalty === null || family === null || shortCommitment === null || secondCourseWeekly === null) {
       redirect(
         `/admin/clients/${clientId}?tab=fiche&subscription_modal=forfait_pricing&subscription_id=${subscriptionId}&error=Valeurs%20tarifaires%20invalides`,
       );
@@ -2224,6 +2227,7 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
       loyalty_discount_per_hour_ttc: loyalty.toFixed(2),
       family_discount_per_hour_ttc: family.toFixed(2),
       short_commitment_supplement_per_hour_ttc: shortCommitment.toFixed(2),
+      second_course_weekly_discount_per_hour_ttc: secondCourseWeekly.toFixed(2),
     });
   }
 
@@ -4014,6 +4018,8 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
   const defaultHourlyRateRaw = String(formData.get("default_hourly_rate") ?? "").trim();
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
+  const defaultCourseRateRaw = String(formData.get("default_course_rate_ttc") ?? "").trim();
+  const defaultCourseRate = parseNonNegativeDecimal(defaultCourseRateRaw);
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
@@ -4033,6 +4039,9 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
     redirect("/admin/config?section=activities&error=Taux%20horaire%20par%20defaut%20invalide");
   }
+  if (defaultCourseRateRaw && defaultCourseRate === null) {
+    redirect("/admin/config?section=activities&error=Tarif%20par%20cours%20invalide");
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -4044,6 +4053,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     mode,
     default_capacity: defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
+    default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     active: checkboxField(formData, "active"),
   };
   if (code) {
@@ -4090,6 +4100,8 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
   const defaultHourlyRateRaw = String(formData.get("default_hourly_rate") ?? "").trim();
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
+  const defaultCourseRateRaw = String(formData.get("default_course_rate_ttc") ?? "").trim();
+  const defaultCourseRate = parseNonNegativeDecimal(defaultCourseRateRaw);
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
@@ -4109,6 +4121,9 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
     redirect("/admin/config?section=activities&error=Taux%20horaire%20par%20defaut%20invalide");
   }
+  if (defaultCourseRateRaw && defaultCourseRate === null) {
+    redirect("/admin/config?section=activities&error=Tarif%20par%20cours%20invalide");
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -4121,6 +4136,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     mode,
     default_capacity: defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
+    default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     active: checkboxField(formData, "active"),
   };
 
@@ -4595,6 +4611,7 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
+  const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
   if (!title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
     redirect(appendQueryMessage(returnTo, "error", "Produit invalide (champs obligatoires)"));
   }
@@ -4607,12 +4624,13 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
     price_excl_vat: priceExclVat,
     price_incl_vat: priceInclVat,
     vat_rate: vatRate,
-    reserve_stock: reserveStock,
-    reorder_status: reorderStatus,
+    reserve_stock: isVirtual ? 0 : reserveStock,
+    reorder_status: isVirtual ? "NORMAL" : reorderStatus,
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
     web_link: optionalField(formData, "web_link"),
+    is_virtual: isVirtual,
     purchasable_online: checkboxField(formData, "purchasable_online"),
     is_public: checkboxFieldWithDefault(formData, "is_public", true),
     active: checkboxFieldWithDefault(formData, "active", true),
@@ -4651,6 +4669,7 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
+  const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
   if (!productId || !title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
     redirect(appendQueryMessage(returnTo, "error", "Produit invalide"));
   }
@@ -4663,12 +4682,13 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
     price_excl_vat: priceExclVat,
     price_incl_vat: priceInclVat,
     vat_rate: vatRate,
-    reserve_stock: reserveStock,
-    reorder_status: reorderStatus,
+    reserve_stock: isVirtual ? 0 : reserveStock,
+    reorder_status: isVirtual ? "NORMAL" : reorderStatus,
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
     web_link: optionalField(formData, "web_link"),
+    is_virtual: isVirtual,
     purchasable_online: checkboxField(formData, "purchasable_online"),
     is_public: checkboxFieldWithDefault(formData, "is_public", true),
     active: checkboxFieldWithDefault(formData, "active", true),

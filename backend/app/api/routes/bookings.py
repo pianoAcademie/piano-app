@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import case, func, or_, select
@@ -190,6 +191,8 @@ def _forfait_hourly_ttc_with_overrides(
     subscription: ClientPlanSubscription | None,
     session_start_at: datetime,
     course_type_id: UUID,
+    session_timezone: str,
+    booking_id: UUID | None,
     db: Session,
 ) -> Decimal:
     if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
@@ -198,12 +201,14 @@ def _forfait_hourly_ttc_with_overrides(
     loyalty_discount = Decimal("0.00")
     family_discount = Decimal("0.00")
     short_commitment_supplement = Decimal("0.00")
+    second_course_weekly_discount = Decimal("0.00")
     if subscription is not None:
         row = db.execute(
             select(
                 ClientForfaitActivityPricing.loyalty_discount_per_hour_ttc,
                 ClientForfaitActivityPricing.family_discount_per_hour_ttc,
                 ClientForfaitActivityPricing.short_commitment_supplement_per_hour_ttc,
+                ClientForfaitActivityPricing.second_course_weekly_discount_per_hour_ttc,
             ).where(
                 ClientForfaitActivityPricing.subscription_id == subscription.id,
                 ClientForfaitActivityPricing.course_type_id == course_type_id,
@@ -213,10 +218,108 @@ def _forfait_hourly_ttc_with_overrides(
             loyalty_discount = _non_negative_money(row[0])
             family_discount = _non_negative_money(row[1])
             short_commitment_supplement = _non_negative_money(row[2])
+            second_course_weekly_discount = _non_negative_money(row[3])
+    if (
+        second_course_weekly_discount > Decimal("0.00")
+        and subscription is not None
+        and _forfait_second_course_weekly_applies(
+            db,
+            subscription=subscription,
+            course_type_id=course_type_id,
+            session_start_at=session_start_at,
+            session_timezone=session_timezone,
+            booking_id=booking_id,
+        )
+    ):
+        loyalty_discount += second_course_weekly_discount
     adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
     if adjusted < Decimal("0.00"):
         return Decimal("0.00")
     return adjusted
+
+
+def _forfait_week_utc_bounds(*, session_start_at: datetime, session_timezone: str) -> tuple[datetime, datetime]:
+    tz_name = (session_timezone or "UTC").strip() or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = timezone.utc
+    local_start = session_start_at.astimezone(tz)
+    week_start_local = (local_start - timedelta(days=local_start.weekday())).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    week_end_local = week_start_local + timedelta(days=7)
+    return week_start_local.astimezone(timezone.utc), week_end_local.astimezone(timezone.utc)
+
+
+def _forfait_second_course_weekly_applies(
+    db: Session,
+    *,
+    subscription: ClientPlanSubscription,
+    course_type_id: UUID,
+    session_start_at: datetime,
+    session_timezone: str,
+    booking_id: UUID | None,
+) -> bool:
+    week_start_utc, week_end_utc = _forfait_week_utc_bounds(
+        session_start_at=session_start_at,
+        session_timezone=session_timezone,
+    )
+    counted_statuses = (
+        BookingStatus.BOOKED,
+        BookingStatus.ATTENDED,
+        BookingStatus.NO_SHOW,
+        BookingStatus.EXCUSED_ABSENCE,
+    )
+    earlier_filters = [CourseSession.start_at_utc < session_start_at]
+    if booking_id is not None:
+        earlier_filters.append((CourseSession.start_at_utc == session_start_at) & (Booking.id < booking_id))
+    earlier_count = int(
+        db.scalar(
+            select(func.count(Booking.id))
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .where(
+                Booking.user_id == subscription.user_id,
+                Booking.client_plan_subscription_id == subscription.id,
+                Booking.status.in_(counted_statuses),
+                CourseSession.status != SessionStatus.CANCELLED,
+                CourseSession.course_type_id == course_type_id,
+                CourseSession.start_at_utc >= week_start_utc,
+                CourseSession.start_at_utc < week_end_utc,
+                or_(*earlier_filters),
+            )
+        )
+        or 0
+    )
+    return earlier_count >= 1
+
+
+def _resolve_activity_base_hourly_ttc(course_type: CourseType) -> Decimal:
+    if course_type.default_course_rate_ttc is not None:
+        reference_minutes = int(course_type.duration_minutes or 0)
+        if reference_minutes <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Duree de reference invalide pour le tarif par cours",
+            )
+        reference_hours = Decimal(reference_minutes) / Decimal("60")
+        if reference_hours <= Decimal("0.00"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Duree de reference invalide pour le tarif par cours",
+            )
+        return (Decimal(course_type.default_course_rate_ttc) / reference_hours).quantize(Decimal("0.01"))
+
+    if course_type.default_hourly_rate is not None:
+        return Decimal(course_type.default_hourly_rate).quantize(Decimal("0.01"))
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Tarif TTC non defini sur cette activite",
+    )
 
 
 def _restriction_window_start(reference: datetime, period: PlanRestrictionPeriod) -> datetime:
@@ -470,24 +573,19 @@ def _resolve_booking_snapshot(
         service_code=course_type.service_code,
         on_date=now.date(),
     )
-    hourly_ttc = course_type.default_hourly_rate
-    if hourly_ttc is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tarif horaire TTC non defini sur cette activite",
-        )
-
     duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
     if duration_seconds <= 0:
         duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
     duration_hours = Decimal(duration_seconds) / Decimal("3600")
-    hourly_ttc_decimal = Decimal(hourly_ttc).quantize(Decimal("0.01"))
+    hourly_ttc_decimal = _resolve_activity_base_hourly_ttc(course_type)
     if plan is not None and plan.kind == PlanKind.FORFAIT:
         hourly_ttc_decimal = _forfait_hourly_ttc_with_overrides(
             base_hourly_ttc=hourly_ttc_decimal,
             subscription=subscription,
             session_start_at=session_obj.start_at_utc,
             course_type_id=course_type.id,
+            session_timezone=session_obj.timezone,
+            booking_id=None,
             db=db,
         )
     total_incl_vat = (hourly_ttc_decimal * duration_hours).quantize(Decimal("0.01"))

@@ -23,6 +23,7 @@ class CourseTypeOut(BaseModel):
     mode: DeliveryMode
     default_capacity: int
     default_hourly_rate: Decimal | None
+    default_course_rate_ttc: Decimal | None
     active: bool
 
 

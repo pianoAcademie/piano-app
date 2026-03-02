@@ -250,6 +250,7 @@ def _serialize_activity(activity: CourseType, *, credit_type_by_id: dict[UUID, C
         mode=activity.mode,
         default_capacity=activity.default_capacity,
         default_hourly_rate=activity.default_hourly_rate,
+        default_course_rate_ttc=activity.default_course_rate_ttc,
         active=activity.active,
     )
 
@@ -1126,6 +1127,7 @@ def create_admin_activity(
         mode=DeliveryMode(payload.mode),
         default_capacity=int(payload.default_capacity),
         default_hourly_rate=payload.default_hourly_rate,
+        default_course_rate_ttc=payload.default_course_rate_ttc,
         active=bool(payload.active),
     )
     db.add(activity)
@@ -1191,6 +1193,9 @@ def update_admin_activity(
 
     if "default_hourly_rate" in changes:
         activity.default_hourly_rate = changes["default_hourly_rate"]
+
+    if "default_course_rate_ttc" in changes:
+        activity.default_course_rate_ttc = changes["default_course_rate_ttc"]
 
     if "active" in changes:
         activity.active = bool(changes["active"])

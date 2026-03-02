@@ -49,6 +49,7 @@ export type CourseTypeOut = {
   mode: string;
   default_capacity: number;
   default_hourly_rate: string | null;
+  default_course_rate_ttc: string | null;
   active: boolean;
 };
 
@@ -224,6 +225,7 @@ export type AdminClientSubscriptionOut = {
     loyalty_discount_per_hour_ttc: string;
     family_discount_per_hour_ttc: string;
     short_commitment_supplement_per_hour_ttc: string;
+    second_course_weekly_discount_per_hour_ttc: string;
     effective_hourly_rate_ttc: string | null;
   }>;
   last_payment_at: string | null;
@@ -966,6 +968,7 @@ export type AdminCatalogProductOut = {
   short_description: string | null;
   long_description: string | null;
   web_link: string | null;
+  is_virtual: boolean;
   purchasable_online: boolean;
   is_public: boolean;
   active: boolean;
@@ -1238,6 +1241,7 @@ export type AdminActivityOut = {
   mode: "ONLINE" | "ONSITE" | "ANY" | string;
   default_capacity: number;
   default_hourly_rate: string | null;
+  default_course_rate_ttc: string | null;
   active: boolean;
 };
 

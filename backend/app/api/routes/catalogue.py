@@ -81,6 +81,7 @@ def list_course_types(
             mode=row.mode,
             default_capacity=row.default_capacity,
             default_hourly_rate=row.default_hourly_rate,
+            default_course_rate_ttc=row.default_course_rate_ttc,
             active=row.active,
         )
         for row in rows

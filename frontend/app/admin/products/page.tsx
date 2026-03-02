@@ -556,6 +556,17 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                     <option value="RECEIVED">Recu</option>
                   </select>
                 </label>
+                <fieldset className="span-2">
+                  <legend>Type de produit</legend>
+                  <label className="checkline">
+                    <input type="radio" name="is_virtual" value="false" defaultChecked />
+                    Physique (stock gere)
+                  </label>
+                  <label className="checkline">
+                    <input type="radio" name="is_virtual" value="true" />
+                    Virtuel (pas de stock)
+                  </label>
+                </fieldset>
                 <label>
                   Lien web
                   <input type="url" name="web_link" />
@@ -614,7 +625,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                     </tr>
                   ) : (
                     filteredProducts.map((product) => {
-                      const needsAlert = product.stock_global_quantity < product.reserve_stock;
+                      const needsAlert = !product.is_virtual && product.stock_global_quantity < product.reserve_stock;
                       const selectLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", product: product.id })}`;
                       const editLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: product.id, product: selectedProductId || product.id })}`;
                       return (
@@ -623,14 +634,15 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                             <Link href={selectLink} className="mode-link">
                               {product.title}
                             </Link>
+                            {product.is_virtual ? <p className="muted">Produit virtuel</p> : null}
                             {product.barcode ? <p className="muted">Code: {product.barcode}</p> : null}
                           </td>
                           <td>{product.category_name || "-"}</td>
                           <td>{product.primary_location_name || "-"}</td>
                           <td>{formatMoney(product.price_incl_vat, "EUR")}</td>
-                          <td>{product.stock_global_quantity}</td>
-                          <td>{product.reserve_stock}</td>
-                          <td>{needsAlert ? "Oui" : "Non"}</td>
+                          <td>{product.is_virtual ? "-" : product.stock_global_quantity}</td>
+                          <td>{product.is_virtual ? "-" : product.reserve_stock}</td>
+                          <td>{product.is_virtual ? "n/a" : needsAlert ? "Oui" : "Non"}</td>
                           <td>{yesNoLabel(product.active)}</td>
                           <td>
                             <div className="row wrap gap-xs">
@@ -666,6 +678,8 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
             </div>
             {!selectedProduct ? (
               <p className="muted">Choisissez un produit dans la liste pour afficher ses stocks par local.</p>
+            ) : selectedProduct.is_virtual ? (
+              <p className="muted">Produit virtuel: aucune gestion de stock par local.</p>
             ) : selectedProductStocks.length === 0 ? (
               <p className="muted">Aucun stock initialise pour ce produit.</p>
             ) : (
@@ -1199,6 +1213,17 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                     <option value="RECEIVED">Recu</option>
                   </select>
                 </label>
+                <fieldset className="span-2">
+                  <legend>Type de produit</legend>
+                  <label className="checkline">
+                    <input type="radio" name="is_virtual" value="false" defaultChecked={!editedProduct.is_virtual} />
+                    Physique (stock gere)
+                  </label>
+                  <label className="checkline">
+                    <input type="radio" name="is_virtual" value="true" defaultChecked={editedProduct.is_virtual} />
+                    Virtuel (pas de stock)
+                  </label>
+                </fieldset>
                 <label>
                   Lien web
                   <input type="url" name="web_link" defaultValue={editedProduct.web_link || ""} />

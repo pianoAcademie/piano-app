@@ -50,6 +50,9 @@ def normalize_optional(value: str | None) -> str | None:
 
 
 def ensure_product_stock_rows(db: Session, *, product_id: UUID) -> None:
+    product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == product_id))
+    if product is None or bool(product.is_virtual):
+        return
     location_ids = db.scalars(select(Location.id)).all()
     if not location_ids:
         return
@@ -117,6 +120,15 @@ def recalculate_product_global_stock(db: Session, *, product_id: UUID) -> None:
     product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == product_id).with_for_update())
     if product is None:
         return
+    if product.is_virtual:
+        product.stock_global_quantity = 0
+        product.reserve_stock = 0
+        if product.reorder_status != ProductReorderStatus.NORMAL:
+            product.reorder_status = ProductReorderStatus.NORMAL
+            product.reorder_status_updated_at = utcnow()
+        product.updated_at = utcnow()
+        db.add(product)
+        return
     total = db.scalar(
         select(func.coalesce(func.sum(ProductLocationStock.real_quantity), 0)).where(
             ProductLocationStock.product_id == product_id
@@ -148,6 +160,11 @@ def create_stock_transfer(
 ) -> ProductStockTransfer:
     if source_location_id == target_location_id:
         raise ValueError("Source and target locations must be distinct")
+    product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == product_id))
+    if product is None:
+        raise ValueError("Product not found")
+    if product.is_virtual:
+        raise ValueError("Virtual products do not support stock transfers")
 
     qty = max(int(quantity), 1)
     now = utcnow()
@@ -317,44 +334,45 @@ def apply_request_acceptance(
         raise ValueError("Product or student not found")
 
     requested_quantity = max(int(request_row.quantity or 0), 1)
-    stock = get_or_create_stock_row(
-        db,
-        product_id=request_row.product_id,
-        location_id=request_row.location_id,
-        lock=True,
-    )
-    available_estimated = int(stock.estimated_quantity or 0)
-    shortage = max(requested_quantity - available_estimated, 0)
-
-    # If destination stock is insufficient, create a pending transfer from the product's
-    # primary location (when configured) so operations can track replenishment by location.
-    if (
-        shortage > 0
-        and product.primary_location_id is not None
-        and product.primary_location_id != request_row.location_id
-    ):
-        create_stock_transfer(
-            db,
-            product_id=request_row.product_id,
-            source_location_id=product.primary_location_id,
-            target_location_id=request_row.location_id,
-            quantity=shortage,
-            planned_transfer_date=now.date(),
-            assigned_to_user_id=actor_user_id,
-            requested_by_user_id=actor_user_id,
-            note=f"Transfert auto pour demande produit {request_row.id}",
-        )
+    if not product.is_virtual:
         stock = get_or_create_stock_row(
             db,
             product_id=request_row.product_id,
             location_id=request_row.location_id,
             lock=True,
         )
+        available_estimated = int(stock.estimated_quantity or 0)
+        shortage = max(requested_quantity - available_estimated, 0)
 
-    stock.estimated_quantity = int(stock.estimated_quantity or 0) - requested_quantity
-    stock.estimated_updated_at = now
-    stock.updated_at = now
-    db.add(stock)
+        # If destination stock is insufficient, create a pending transfer from the product's
+        # primary location (when configured) so operations can track replenishment by location.
+        if (
+            shortage > 0
+            and product.primary_location_id is not None
+            and product.primary_location_id != request_row.location_id
+        ):
+            create_stock_transfer(
+                db,
+                product_id=request_row.product_id,
+                source_location_id=product.primary_location_id,
+                target_location_id=request_row.location_id,
+                quantity=shortage,
+                planned_transfer_date=now.date(),
+                assigned_to_user_id=actor_user_id,
+                requested_by_user_id=actor_user_id,
+                note=f"Transfert auto pour demande produit {request_row.id}",
+            )
+            stock = get_or_create_stock_row(
+                db,
+                product_id=request_row.product_id,
+                location_id=request_row.location_id,
+                lock=True,
+            )
+
+        stock.estimated_quantity = int(stock.estimated_quantity or 0) - requested_quantity
+        stock.estimated_updated_at = now
+        stock.updated_at = now
+        db.add(stock)
 
     transaction = None
     if should_bill:
@@ -415,16 +433,18 @@ def mark_request_delivered(
         return request_row
 
     now = utcnow()
-    stock = get_or_create_stock_row(
-        db,
-        product_id=request_row.product_id,
-        location_id=request_row.location_id,
-        lock=True,
-    )
-    stock.real_quantity = int(stock.real_quantity or 0) - int(request_row.quantity or 0)
-    stock.real_updated_at = now
-    stock.updated_at = now
-    db.add(stock)
+    product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == request_row.product_id))
+    if product is not None and not product.is_virtual:
+        stock = get_or_create_stock_row(
+            db,
+            product_id=request_row.product_id,
+            location_id=request_row.location_id,
+            lock=True,
+        )
+        stock.real_quantity = int(stock.real_quantity or 0) - int(request_row.quantity or 0)
+        stock.real_updated_at = now
+        stock.updated_at = now
+        db.add(stock)
 
     request_row.status = ProductRequestStatus.DELIVERED
     request_row.delivered_by_user_id = delivered_by_user_id or marker_user_id
@@ -447,6 +467,11 @@ def reset_inventory_stock(
     inventory_quantity: int,
     inventory_date,
 ) -> ProductLocationStock:
+    product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == product_id))
+    if product is None:
+        raise ValueError("Product not found")
+    if product.is_virtual:
+        raise ValueError("Virtual products do not support stock inventory")
     row = get_or_create_stock_row(db, product_id=product_id, location_id=location_id, lock=True)
     now = utcnow()
     quantity = max(int(inventory_quantity), 0)

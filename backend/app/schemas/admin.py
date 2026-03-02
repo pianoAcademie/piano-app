@@ -415,6 +415,7 @@ class AdminActivityOut(BaseModel):
     mode: DeliveryMode
     default_capacity: int
     default_hourly_rate: Decimal | None
+    default_course_rate_ttc: Decimal | None
     active: bool
 
 
@@ -429,6 +430,7 @@ class AdminActivityUpsertRequest(BaseModel):
     mode: DeliveryMode = DeliveryMode.ANY
     default_capacity: int = Field(default=8, ge=1, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
+    default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
     active: bool = True
 
 
@@ -443,6 +445,7 @@ class AdminActivityUpdateRequest(BaseModel):
     mode: DeliveryMode | None = None
     default_capacity: int | None = Field(default=None, ge=1, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
+    default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
     active: bool | None = None
 
 
@@ -747,6 +750,7 @@ class AdminClientForfaitActivityPricingIn(BaseModel):
     loyalty_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     family_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     short_commitment_supplement_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    second_course_weekly_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
 
 
 class AdminClientForfaitActivityPricingOut(BaseModel):
@@ -756,6 +760,7 @@ class AdminClientForfaitActivityPricingOut(BaseModel):
     loyalty_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     family_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     short_commitment_supplement_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    second_course_weekly_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     effective_hourly_rate_ttc: Decimal | None = None
 
 
