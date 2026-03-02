@@ -328,7 +328,7 @@ def _forfait_hourly_ttc_with_overrides(
                 )
         if values is not None:
             loyalty_discount, family_discount, short_commitment_supplement, second_course_weekly_discount = values
-    if (
+    second_course_weekly_applies = (
         second_course_weekly_discount > Decimal("0.00")
         and subscription is not None
         and _forfait_second_course_weekly_applies(
@@ -339,8 +339,10 @@ def _forfait_hourly_ttc_with_overrides(
             session_timezone=session_timezone,
             booking_id=booking_id,
         )
-    ):
-        loyalty_discount += second_course_weekly_discount
+    )
+    if second_course_weekly_applies and second_course_weekly_discount > loyalty_discount:
+        # "2e cours semaine" replaces fidelity discount when it is more favorable.
+        loyalty_discount = second_course_weekly_discount
     if (
         loyalty_discount <= Decimal("0.00")
         and family_discount <= Decimal("0.00")

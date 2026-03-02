@@ -398,7 +398,7 @@ def _forfait_hourly_ttc_with_overrides(
                 )
         if values is not None:
             loyalty_discount, family_discount, short_commitment_supplement, second_course_weekly_discount = values
-    if (
+    second_course_weekly_applies = (
         second_course_weekly_discount > Decimal("0.00")
         and subscription is not None
         and _forfait_second_course_weekly_applies(
@@ -409,8 +409,10 @@ def _forfait_hourly_ttc_with_overrides(
             session_timezone=session_timezone,
             booking_id=booking_id,
         )
-    ):
-        loyalty_discount += second_course_weekly_discount
+    )
+    if second_course_weekly_applies and second_course_weekly_discount > loyalty_discount:
+        # "2e cours semaine" replaces fidelity discount when it is more favorable.
+        loyalty_discount = second_course_weekly_discount
 
     if (
         loyalty_discount <= Decimal("0.00")
@@ -1381,16 +1383,8 @@ def _forfait_adjustments_grouped_by_type(
             continue
         duration_hours = Decimal(duration_seconds) / Decimal("3600")
         currency = _normalize_currency(booking.currency_snapshot, fallback=fallback_currency)
-
-        if include_discounts and loyalty_discount > Decimal("0.00"):
-            key = ("Remise fidelite", currency)
-            totals[key] = _quantize_money(totals.get(key, Decimal("0.00")) - _quantize_money(loyalty_discount * duration_hours))
-        if include_discounts and family_discount > Decimal("0.00"):
-            key = ("Remise famille", currency)
-            totals[key] = _quantize_money(totals.get(key, Decimal("0.00")) - _quantize_money(family_discount * duration_hours))
-        if (
-            include_discounts
-            and second_course_weekly_discount > Decimal("0.00")
+        second_course_weekly_applies = (
+            second_course_weekly_discount > Decimal("0.00")
             and _forfait_second_course_weekly_applies(
                 db,
                 subscription=subscription,
@@ -1399,11 +1393,18 @@ def _forfait_adjustments_grouped_by_type(
                 session_timezone=session_obj.timezone,
                 booking_id=booking.id,
             )
-        ):
-            key = ("Remise 2e cours semaine", currency)
+        )
+        effective_loyalty_discount = loyalty_discount
+        if second_course_weekly_applies and second_course_weekly_discount > effective_loyalty_discount:
+            effective_loyalty_discount = second_course_weekly_discount
+        if include_discounts and effective_loyalty_discount > Decimal("0.00"):
+            key = ("Remise 2e cours semaine", currency) if second_course_weekly_applies else ("Remise fidelite", currency)
             totals[key] = _quantize_money(
-                totals.get(key, Decimal("0.00")) - _quantize_money(second_course_weekly_discount * duration_hours)
+                totals.get(key, Decimal("0.00")) - _quantize_money(effective_loyalty_discount * duration_hours)
             )
+        if include_discounts and family_discount > Decimal("0.00"):
+            key = ("Remise famille", currency)
+            totals[key] = _quantize_money(totals.get(key, Decimal("0.00")) - _quantize_money(family_discount * duration_hours))
         if include_supplements and short_commitment_supplement > Decimal("0.00"):
             key = ("Supplement sans engagement", currency)
             totals[key] = _quantize_money(
@@ -3048,13 +3049,13 @@ def _admin_subscription_out(
                 base_hourly_rate_ttc = _non_negative_money(default_hourly_rate)
             effective_hourly_rate_ttc: Decimal | None = None
             if base_hourly_rate_ttc is not None:
+                effective_primary_discount = max(loyalty_discount, second_course_weekly_discount)
                 effective_hourly_rate_ttc = _quantize_money(
                     max(
                         Decimal("0.00"),
                         base_hourly_rate_ttc
-                        - loyalty_discount
+                        - effective_primary_discount
                         - family_discount
-                        - second_course_weekly_discount
                         + short_commitment_supplement,
                     )
                 )
