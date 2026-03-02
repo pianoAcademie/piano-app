@@ -1642,6 +1642,14 @@ button.danger {
   display: grid;
 }
 
+.invoice-range-form .invoice-auto-options {
+  display: none;
+}
+
+.invoice-range-form:has(select[name="generation_mode"] option[value="AUTO"]:checked) .invoice-auto-options {
+  display: contents;
+}
+
 .session-bookings-summary-list {
   max-height: 240px;
   overflow: auto;

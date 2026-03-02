@@ -3816,7 +3816,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </Link>
             <h3 className="modal-title">Generer une facture</h3>
             <p className="muted">Genere un document pour une plage de dates.</p>
-            <form action={createAdminClientRangeInvoiceAction} className="grid top-gap-sm">
+            <form action={createAdminClientRangeInvoiceAction} className="grid top-gap-sm invoice-range-form">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value="factures" />
               <p className="badge span-2">Etape 1: Details de la facture</p>
@@ -3869,7 +3869,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </select>
               </label>
               {hasForfaitPlan ? (
-                <>
+                <div className="invoice-auto-options">
                   <p className="badge span-2">Etape 2: Options de facturation automatique</p>
                   <label>
                     Date de debut du cycle (auto)
@@ -3937,7 +3937,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <input type="checkbox" name="include_supplement_adjustments" value="on" defaultChecked />
                     Inclure les supplements
                   </label>
-                </>
+                </div>
               ) : (
                 <>
                   <input type="hidden" name="group_adjustments_by_type" value="off" />
