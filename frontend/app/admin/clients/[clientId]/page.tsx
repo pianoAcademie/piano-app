@@ -253,6 +253,9 @@ function paymentSourceLabel(source: string): string {
   if (normalized === "BOOKING") {
     return "Reservation";
   }
+  if (normalized === "BOOKING_CREDIT") {
+    return "Avoir";
+  }
   if (normalized === "MANUAL") {
     return "Manuel";
   }

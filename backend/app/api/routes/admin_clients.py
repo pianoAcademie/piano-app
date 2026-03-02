@@ -4282,17 +4282,25 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         booking_key = _payment_key(source="BOOKING", payment_id=booking.id)
         is_locked_booking = booking_key in invoice_locks_by_payment_key
         is_billable = True
+        should_add_credit_note = False
         status_value = booking.status.value
         amount_excl_vat = booking.price_excl_vat_snapshot
         vat_rate = booking.vat_rate_snapshot
         vat_amount = booking.vat_amount_snapshot
         total_incl_vat = booking.total_incl_vat_snapshot
         currency = booking.currency_snapshot
+        cancelled_statuses = {BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
+        if booking.status in cancelled_statuses:
+            if is_locked_booking:
+                should_add_credit_note = True
+            else:
+                # Reservation annulee non facturee: ne pas afficher de ligne de transaction.
+                continue
         if not is_locked_booking:
             if plan is None or (plan is not None and plan.kind == PlanKind.FORFAIT):
                 is_billable = (
                     session_obj.status != SessionStatus.CANCELLED
-                    and booking.status not in {BookingStatus.WAITLISTED, BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
+                    and booking.status not in {BookingStatus.WAITLISTED, *cancelled_statuses}
                 )
                 if not is_billable:
                     status_value = "NOT_BILLABLE"
@@ -4333,6 +4341,31 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 reference=_linked_plan_label(plan),
             )
         )
+
+        # Reservation deja facturee puis annulee: creer un avoir "a facturer" pour la prochaine facture.
+        if should_add_credit_note:
+            credit_source = "BOOKING_CREDIT"
+            credit_amount_excl_vat = _quantize_money(-abs(Decimal(amount_excl_vat)))
+            credit_vat_amount = _quantize_money(-abs(Decimal(vat_amount)))
+            credit_total = _quantize_money(-abs(Decimal(total_incl_vat)))
+            credit_label = f"Avoir annulation - {course_type.name} - {location.name}"
+            if owner is not None and owner.id != client.id:
+                credit_label = f"{credit_label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+            items.append(
+                AdminClientPaymentOut(
+                    id=booking.id,
+                    source=credit_source,
+                    occurred_at=booking.cancelled_at or session_obj.start_at_utc,
+                    label=credit_label,
+                    status="PENDING",
+                    amount_excl_vat=credit_amount_excl_vat,
+                    vat_rate=Decimal(vat_rate).quantize(Decimal("0.01")),
+                    vat_amount=credit_vat_amount,
+                    total_incl_vat=credit_total,
+                    currency=_normalize_currency(currency, fallback=(billing_profile.preferred_currency or "EUR").upper()),
+                    reference=f"AVOIR:{booking.id}",
+                )
+            )
 
     for row in manual_rows:
         student = manual_students_by_id.get(row.student_user_id) if row.student_user_id is not None else None
