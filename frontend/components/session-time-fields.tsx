@@ -136,7 +136,7 @@ export default function SessionTimeFields({
         <input
           type="number"
           min={1}
-          step={5}
+          step={1}
           name={durationName}
           value={durationValue}
           placeholder="60"
