@@ -523,6 +523,9 @@ def render_invoice_period_pdf(
     period_label: str,
     lines: list[InvoicePeriodLine],
     totals_by_currency: dict[str, dict[str, Decimal]],
+    opening_balance_by_currency: dict[str, Decimal] | None = None,
+    total_to_pay_by_currency: dict[str, Decimal] | None = None,
+    payment_link_url: str | None = None,
     adjustment_summary: list[tuple[str, str, Decimal]] | None = None,
     note: str | None,
     client_billing_address: str | None = None,
@@ -544,6 +547,9 @@ def render_invoice_period_pdf(
     col_vat_rate_right = left + 446
     col_vat_right = left + 486
     col_ttc_right = right - 6
+    totals_col_ht_right = right - 166
+    totals_col_vat_right = right - 86
+    totals_col_ttc_right = right - 6
 
     def draw_header() -> None:
         pdf.rect(
@@ -690,9 +696,27 @@ def render_invoice_period_pdf(
         )
 
     normalized_note = _ascii_safe((note or "").strip())
+    normalized_opening_balance_by_currency: dict[str, Decimal] = {}
+    for currency_code, amount in (opening_balance_by_currency or {}).items():
+        currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
+        normalized_opening_balance_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
+    normalized_total_to_pay_by_currency: dict[str, Decimal] = {}
+    for currency_code, amount in (total_to_pay_by_currency or {}).items():
+        currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
+        normalized_total_to_pay_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
+    summary_currencies = sorted(
+        set(totals_by_currency.keys()) | set(normalized_opening_balance_by_currency.keys()) | set(normalized_total_to_pay_by_currency.keys())
+    )
+    payment_link_text = _ascii_safe((payment_link_url or "").strip())
+    payment_link_lines = _wrap_text(payment_link_text, 88) if payment_link_text else []
     reserved_adjustment_space = (len(normalized_adjustments) * 18.0) + 34.0 if normalized_adjustments else 0.0
+    reserved_balance_space = 0.0
+    if summary_currencies:
+        reserved_balance_space = 24.0 + (len(summary_currencies) * 54.0)
+    if payment_link_lines:
+        reserved_balance_space += 16.0 + (len(payment_link_lines) * 12.0)
     reserved_note_space = 80.0 if normalized_note else 0.0
-    if current_row_top + 140 + reserved_adjustment_space + reserved_note_space > 780:
+    if current_row_top + 140 + reserved_adjustment_space + reserved_balance_space + reserved_note_space > 780:
         pdf.new_page()
         draw_header()
         current_row_top = 140.0
@@ -702,9 +726,9 @@ def render_invoice_period_pdf(
     current_row_top += 16
     pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.82, 0.86, 0.91), fill_color=(0.95, 0.96, 0.98))
     pdf.text(x=col_label_x, top_y=current_row_top + 14, value="Devise", size=9, bold=True)
-    pdf.text_right(right_x=col_ht_right, top_y=current_row_top + 14, value="HT", size=9, bold=True)
-    pdf.text_right(right_x=col_vat_right, top_y=current_row_top + 14, value="TVA", size=9, bold=True)
-    pdf.text_right(right_x=col_ttc_right, top_y=current_row_top + 14, value="TTC", size=9, bold=True)
+    pdf.text_right(right_x=totals_col_ht_right, top_y=current_row_top + 14, value="HT", size=9, bold=True)
+    pdf.text_right(right_x=totals_col_vat_right, top_y=current_row_top + 14, value="TVA", size=9, bold=True)
+    pdf.text_right(right_x=totals_col_ttc_right, top_y=current_row_top + 14, value="TTC", size=9, bold=True)
     current_row_top += 22
 
     for currency_code in sorted(totals_by_currency.keys()):
@@ -712,27 +736,77 @@ def render_invoice_period_pdf(
         pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.90, 0.92, 0.95))
         pdf.text(x=col_label_x, top_y=current_row_top + 14, value=currency_code.upper(), size=10, bold=True)
         pdf.text_right(
-            right_x=col_ht_right,
+            right_x=totals_col_ht_right,
             top_y=current_row_top + 14,
             value=_format_amount(Decimal(totals["amount_excl_vat"])),
             size=10,
             bold=True,
         )
         pdf.text_right(
-            right_x=col_vat_right,
+            right_x=totals_col_vat_right,
             top_y=current_row_top + 14,
             value=_format_amount(Decimal(totals["vat_amount"])),
             size=10,
             bold=True,
         )
         pdf.text_right(
-            right_x=col_ttc_right,
+            right_x=totals_col_ttc_right,
             top_y=current_row_top + 14,
             value=_format_amount(Decimal(totals["total_incl_vat"])),
             size=10,
             bold=True,
         )
         current_row_top += 22
+
+    if summary_currencies:
+        current_row_top += 14.0
+        pdf.text(x=left, top_y=current_row_top, value="Solde", size=10, bold=True)
+        current_row_top += 14.0
+        for currency_code in summary_currencies:
+            opening_amount = Decimal(normalized_opening_balance_by_currency.get(currency_code, Decimal("0.00"))).quantize(Decimal("0.01"))
+            period_totals = totals_by_currency.get(currency_code)
+            period_amount = (
+                Decimal(period_totals["total_incl_vat"]).quantize(Decimal("0.01"))
+                if period_totals is not None
+                else Decimal("0.00")
+            )
+            total_to_pay_amount = Decimal(
+                normalized_total_to_pay_by_currency.get(currency_code, period_amount)
+            ).quantize(Decimal("0.01"))
+            pdf.text(x=col_label_x, top_y=current_row_top, value=f"Ancien solde debut periode ({currency_code})", size=9)
+            pdf.text_right(
+                right_x=totals_col_ttc_right,
+                top_y=current_row_top,
+                value=f"{_format_amount(opening_amount)} {currency_code}",
+                size=9,
+            )
+            current_row_top += 14.0
+            pdf.text(x=col_label_x, top_y=current_row_top, value=f"Montant periode facturee ({currency_code})", size=9)
+            pdf.text_right(
+                right_x=totals_col_ttc_right,
+                top_y=current_row_top,
+                value=f"{_format_amount(period_amount)} {currency_code}",
+                size=9,
+            )
+            current_row_top += 14.0
+            pdf.text(x=col_label_x, top_y=current_row_top, value=f"Montant total a payer ({currency_code})", size=10, bold=True)
+            pdf.text_right(
+                right_x=totals_col_ttc_right,
+                top_y=current_row_top,
+                value=f"{_format_amount(total_to_pay_amount)} {currency_code}",
+                size=10,
+                bold=True,
+                color=(0.18, 0.59, 0.82),
+            )
+            current_row_top += 26.0
+
+    if payment_link_lines:
+        pdf.text(x=col_label_x, top_y=current_row_top, value="Payer en ligne", size=9, bold=True)
+        current_row_top += 12.0
+        for chunk in payment_link_lines:
+            pdf.text(x=col_label_x, top_y=current_row_top, value=chunk, size=9, color=(0.18, 0.59, 0.82))
+            current_row_top += 12.0
+        current_row_top += 6.0
 
     if normalized_adjustments:
         if current_row_top + 34.0 + (len(normalized_adjustments) * 18.0) + reserved_note_space > 780:

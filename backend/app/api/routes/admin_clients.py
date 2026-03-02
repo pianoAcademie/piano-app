@@ -1333,6 +1333,17 @@ def _invoice_status_from_payment_status(status_value: str) -> str:
     return "PENDING"
 
 
+def _should_count_in_client_balance(row: AdminClientPaymentOut) -> bool:
+    status_value = (row.status or "").strip().upper()
+    if status_value in {"NOT_BILLABLE", "INCLUDED_PLAN", "REFUNDED"}:
+        return False
+    if status_value in CANCELLED_PAYMENT_STATUSES:
+        return False
+    if (row.source or "").strip().upper() == "MANUAL":
+        return True
+    return status_value in PENDING_PAYMENT_STATUSES
+
+
 def _forfait_booking_amounts_from_activity(
     *,
     booking: Booking,
@@ -4247,6 +4258,7 @@ def create_admin_client_manual_transaction(
                 detail="Unknown category. Update products categories in admin config first.",
             )
     reference = _normalize_optional(payload.reference)
+    payment_method_code = _manual_payment_method_code(reference)
     currency = _normalize_currency(payload.currency, fallback=client.preferred_currency or "EUR")
     occurred_at = payload.occurred_at or _utcnow()
     status_value = MANUAL_TRANSACTION_STATUS_BY_TYPE.get(transaction_type, "COMPLETED")
@@ -4295,7 +4307,12 @@ def create_admin_client_manual_transaction(
     db.flush()
 
     can_mark_reconciled_invoices_paid = bool(reconciled_invoices) and total_abs >= reconciled_total
-    marked_reconciled_invoices_paid = bool(payload.mark_reconciled_invoices_paid and can_mark_reconciled_invoices_paid)
+    auto_mark_reconciled_invoices_paid = bool(
+        transaction_type == "PAYMENT" and payment_method_code == "CARD_ONLINE" and can_mark_reconciled_invoices_paid
+    )
+    marked_reconciled_invoices_paid = bool(
+        can_mark_reconciled_invoices_paid and (payload.mark_reconciled_invoices_paid or auto_mark_reconciled_invoices_paid)
+    )
     if reconciled_invoices:
         payment_id = str(row.id)
         for note, metadata, _, _ in reconciled_invoices:
@@ -4317,7 +4334,6 @@ def create_admin_client_manual_transaction(
         receipt_recipients = _normalize_email_recipients([billing_profile.email, client.email])
         if not receipt_recipients:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
-        payment_method_code = _manual_payment_method_code(reference)
         payment_method_label = _payment_method_label_client(payment_method_code) if payment_method_code else "Paiement manuel"
         client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
         invoice_numbers = [invoice_number for _, _, _, invoice_number in reconciled_invoices]
@@ -4370,9 +4386,12 @@ def create_admin_client_manual_transaction(
             f" Rapprochement facture(s): {', '.join(invoice_numbers)} "
             f"(total facture(s): {reconciled_total:.2f} {currency})."
         )
-        if payload.mark_reconciled_invoices_paid:
+        if payload.mark_reconciled_invoices_paid or auto_mark_reconciled_invoices_paid:
             if marked_reconciled_invoices_paid:
-                note_message += " Facture(s) marquee(s) comme payee(s)."
+                if auto_mark_reconciled_invoices_paid and not payload.mark_reconciled_invoices_paid:
+                    note_message += " Facture(s) marquee(s) comme payee(s) automatiquement (paiement CB en ligne)."
+                else:
+                    note_message += " Facture(s) marquee(s) comme payee(s)."
             else:
                 note_message += " Montant paiement inferieur au total facture(s): facture(s) laissee(s) en statut emise."
     if payload.send_receipt_email:
@@ -4759,6 +4778,24 @@ def download_admin_client_range_invoice(
         current["vat_amount"] = _quantize_money(current["vat_amount"] + Decimal(row.vat_amount))
         current["total_incl_vat"] = _quantize_money(current["total_incl_vat"] + Decimal(row.total_incl_vat))
 
+    opening_balance_by_currency: dict[str, Decimal] = {}
+    for row in all_payments:
+        if row.occurred_at >= start_at:
+            continue
+        if not _should_count_in_client_balance(row):
+            continue
+        currency = _normalize_currency(row.currency, fallback="EUR")
+        opening_balance_by_currency[currency] = _quantize_money(
+            opening_balance_by_currency.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
+        )
+
+    total_to_pay_by_currency: dict[str, Decimal] = {}
+    for currency in sorted(set(totals_by_currency.keys()) | set(opening_balance_by_currency.keys())):
+        period_total = _quantize_money(Decimal(totals_by_currency.get(currency, {}).get("total_incl_vat", Decimal("0.00"))))
+        opening_balance = _quantize_money(Decimal(opening_balance_by_currency.get(currency, Decimal("0.00"))))
+        carry_balance = opening_balance if auto_include_previous_balance else Decimal("0.00")
+        total_to_pay_by_currency[currency] = _quantize_money(period_total + carry_balance)
+
     invoice_lines: list[InvoicePeriodLine] = []
     if normalized_layout == "DETAILED":
         for row in payments:
@@ -4820,12 +4857,13 @@ def download_admin_client_range_invoice(
                     "timezone": str(session_timezone or "UTC"),
                 }
 
-        grouped_bookings: dict[str, dict[tuple[int, str, str, int, str, str, str, str], dict[str, Decimal | int]]] = {}
-        grouped_others: dict[tuple[str, str, str], dict[str, Decimal | int]] = {}
+        grouped_bookings: dict[str, dict[tuple[int, str, str, int, str, str, str, str, Decimal], dict[str, Decimal | int]]] = {}
+        grouped_others: dict[tuple[str, str, str, Decimal], dict[str, Decimal | int]] = {}
         for row in payments:
             currency = _normalize_currency(row.currency, fallback="EUR")
             type_label = _payment_source_label(row.source)
             base_label = row.label
+            vat_rate_key = Decimal(row.vat_rate).quantize(Decimal("0.001"))
             if row.source.strip().upper() == "BOOKING" and " - " in base_label:
                 base_label = base_label.split(" - ", maxsplit=1)[0]
             source_key = row.source.strip().upper()
@@ -4854,7 +4892,7 @@ def download_admin_client_range_invoice(
                 )
                 student_group = grouped_bookings.setdefault(student_name, {})
                 bucket = student_group.setdefault(
-                    slot_key + (currency, type_label),
+                    slot_key + (currency, type_label, vat_rate_key),
                     {
                         "quantity": 0,
                         "duration_minutes": duration_minutes,
@@ -4864,7 +4902,7 @@ def download_admin_client_range_invoice(
                     },
                 )
             else:
-                key = (base_label, type_label, currency)
+                key = (base_label, type_label, currency, vat_rate_key)
                 bucket = grouped_others.setdefault(
                     key,
                     {
@@ -4899,7 +4937,7 @@ def download_admin_client_range_invoice(
                 )
             )
             student_groups = grouped_bookings[student_name]
-            for key in sorted(student_groups.keys(), key=lambda item: (item[0], item[2], item[4], item[5], item[6], item[7])):
+            for key in sorted(student_groups.keys(), key=lambda item: (item[0], item[2], item[4], item[5], item[6], item[7], item[8])):
                 (
                     _weekday_index,
                     weekday_label,
@@ -4909,15 +4947,14 @@ def download_admin_client_range_invoice(
                     location_name,
                     currency,
                     type_label,
+                    vat_rate_raw,
                 ) = key
                 values = student_groups[key]
                 if duration_minutes <= 0:
                     duration_minutes = int(values.get("duration_minutes") or 0)
                 amount_excl_vat = _quantize_money(Decimal(values["amount_excl_vat"]))
                 vat_amount = _quantize_money(Decimal(values["vat_amount"]))
-                vat_rate = Decimal("0.00")
-                if amount_excl_vat > Decimal("0.00"):
-                    vat_rate = ((vat_amount / amount_excl_vat) * Decimal("100")).quantize(Decimal("0.01"))
+                vat_rate = Decimal(vat_rate_raw).quantize(Decimal("0.01"))
                 duration_suffix = f" ({duration_minutes} min)" if duration_minutes > 0 else ""
                 location_suffix = f" - {location_name}" if location_name else ""
                 invoice_lines.append(
@@ -4934,13 +4971,11 @@ def download_admin_client_range_invoice(
                     )
                 )
 
-        for (base_label, type_label, currency) in sorted(grouped_others.keys(), key=lambda item: (item[1], item[0], item[2])):
-            values = grouped_others[(base_label, type_label, currency)]
+        for (base_label, type_label, currency, vat_rate_raw) in sorted(grouped_others.keys(), key=lambda item: (item[1], item[0], item[2], item[3])):
+            values = grouped_others[(base_label, type_label, currency, vat_rate_raw)]
             amount_excl_vat = _quantize_money(Decimal(values["amount_excl_vat"]))
             vat_amount = _quantize_money(Decimal(values["vat_amount"]))
-            vat_rate = Decimal("0.00")
-            if amount_excl_vat > Decimal("0.00"):
-                vat_rate = ((vat_amount / amount_excl_vat) * Decimal("100")).quantize(Decimal("0.01"))
+            vat_rate = Decimal(vat_rate_raw).quantize(Decimal("0.01"))
             invoice_lines.append(
                 InvoicePeriodLine(
                     date_label=period_label,
@@ -4981,6 +5016,14 @@ def download_admin_client_range_invoice(
             currency: f"{_quantize_money(Decimal(values['total_incl_vat'])):.2f}"
             for currency, values in sorted(totals_by_currency.items())
         }
+        opening_balance_payload = {
+            currency: f"{_quantize_money(amount):.2f}"
+            for currency, amount in sorted(opening_balance_by_currency.items())
+        }
+        total_to_pay_payload = {
+            currency: f"{_quantize_money(amount):.2f}"
+            for currency, amount in sorted(total_to_pay_by_currency.items())
+        }
         metadata: dict[str, object] = {
             "kind": "INVOICE_RANGE",
             "invoice_number": resolved_invoice_number,
@@ -5005,6 +5048,8 @@ def download_admin_client_range_invoice(
             "include_pending": bool(include_pending),
             "include_cancelled": bool(include_cancelled),
             "totals_by_currency": totals_payload,
+            "opening_balance_by_currency": opening_balance_payload,
+            "total_to_pay_by_currency": total_to_pay_payload,
             "invoice_status": "ISSUED",
         }
         if normalized_auto_footer_note:
@@ -5025,6 +5070,15 @@ def download_admin_client_range_invoice(
     elif requested_invoice_number is None:
         db.commit()
 
+    payment_link_url = _invoice_range_payment_url(
+        metadata={
+            "invoice_number": resolved_invoice_number,
+            "totals_by_currency": {
+                currency: f"{_quantize_money(amount):.2f}"
+                for currency, amount in sorted(total_to_pay_by_currency.items())
+            },
+        }
+    )
     content = render_invoice_period_pdf(
         db,
         invoice_number=resolved_invoice_number,
@@ -5038,6 +5092,9 @@ def download_admin_client_range_invoice(
         note=normalized_public_note,
         client_billing_address=client_billing_address,
         due_date=(None if no_due_date else due_date_value),
+        opening_balance_by_currency=opening_balance_by_currency,
+        total_to_pay_by_currency=total_to_pay_by_currency,
+        payment_link_url=payment_link_url,
         watermark=(
             "PAYE"
             if ((invoice_status or "").strip().upper() in {"PAID", "PAYE"})

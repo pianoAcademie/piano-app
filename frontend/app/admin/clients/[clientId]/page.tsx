@@ -39,6 +39,7 @@ import {
   TIMEZONE_OPTIONS,
   labelFromOptions,
 } from "../../../../lib/reference-data";
+import ManualTransactionNonCashFlowFields from "../../../../components/manual-transaction-noncashflow-fields";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import type {
   AdminClientBookingOut,
@@ -52,6 +53,7 @@ import type {
   AdminRangeInvoiceEmailPreviewOut,
   AdminClientSubscriptionOut,
   AdminPaymentMethodsOut,
+  AdminCatalogProductOut,
   AdminProductCategoriesOut,
   PlanOut,
 } from "../../../../lib/types";
@@ -770,6 +772,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     messagesResult,
     paymentsResult,
     productCategoriesResult,
+    catalogProductsResult,
     paymentMethodsResult,
     familyResult,
     allClientsResult,
@@ -784,6 +787,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminClientMessageOut[]>(`/api/v1/admin/clients/${params.clientId}/messages`, {}, token),
     backendRequest<AdminClientPaymentOut[]>(`/api/v1/admin/clients/${params.clientId}/payments`, {}, token),
     backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
+    backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
     backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${params.clientId}/family`, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
@@ -852,6 +856,27 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         errors.push(`product_categories: ${productCategoriesResult.message}`);
         return [] as string[];
       })();
+  const catalogProducts = catalogProductsResult.ok
+    ? catalogProductsResult.data
+    : (() => {
+        errors.push(`catalog_products: ${catalogProductsResult.message}`);
+        return [] as AdminCatalogProductOut[];
+      })();
+  const manualChargeProductOptions = catalogProducts
+    .filter((product) => product.active && product.category_name)
+    .map((product) => ({
+      id: product.id,
+      title: product.title,
+      categoryName: product.category_name,
+      priceInclVat: product.price_incl_vat,
+      vatRate: product.vat_rate,
+    }));
+  const manualChargeCategories = Array.from(
+    new Set([
+      ...productCategories,
+      ...manualChargeProductOptions.map((product) => String(product.categoryName ?? "").trim()).filter((value) => value.length > 0),
+    ]),
+  ).sort((a, b) => a.localeCompare(b, "fr-FR"));
 
   const enabledPaymentMethods = paymentMethodsResult.ok
     ? paymentMethodsResult.data.methods.filter((method) => method.enabled)
@@ -1245,6 +1270,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const manualIsCashFlow = manualTransactionModalType === "payment" || manualTransactionModalType === "refund";
   const manualIsPayment = manualTransactionModalType === "payment";
   const manualVatDefault = manualIsCashFlow ? "0" : "20";
+  const manualNonCashFlowType = manualTransactionTypeCode === "CHARGE" || manualTransactionTypeCode === "DISCOUNT" ? manualTransactionTypeCode : null;
 
   return (
     <section className="admin-page-grid client-detail-page">
@@ -3520,28 +3546,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
               ) : null}
-              <label>
-                {manualTransactionModalType === "discount" ? "Le montant" : "Montant TTC"}
-                <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
-              </label>
-              {!manualIsCashFlow ? (
-                <>
-                  <label>
-                    TVA (%)
-                    <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={manualVatDefault} required />
-                  </label>
-                  <label>
-                    Categorie (optionnel)
-                    <select name="category" defaultValue="">
-                      <option value="">Selectionner...</option>
-                      {productCategories.map((category) => (
-                        <option key={category} value={category}>
-                          {category}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </>
+              {manualIsCashFlow ? (
+                <label>
+                  Montant TTC
+                  <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
+                </label>
+              ) : manualNonCashFlowType ? (
+                <ManualTransactionNonCashFlowFields
+                  transactionType={manualNonCashFlowType}
+                  amountLabel={manualTransactionModalType === "discount" ? "Le montant" : "Montant TTC"}
+                  defaultVatRate={manualVatDefault}
+                  categories={manualChargeCategories}
+                  products={manualChargeProductOptions}
+                />
               ) : null}
               <label>
                 Libelle (optionnel)
@@ -3567,7 +3584,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             <th>Date facture</th>
                             <th>Numero facture</th>
                             <th>Montant</th>
-                            <th>Statut</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -3579,11 +3595,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               <td>{formatDate(row.occurredAt)}</td>
                               <td>{row.invoiceNumber}</td>
                               <td>{row.totalLabel}</td>
-                              <td>
-                                <span className={`status-pill ${rangeInvoiceStatusClass(row.status)}`}>
-                                  {rangeInvoiceStatusLabel(row.status)}
-                                </span>
-                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -3612,7 +3623,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </label>
                 </>
               ) : null}
-              {!manualIsCashFlow && productCategories.length === 0 ? (
+              {!manualIsCashFlow && manualChargeCategories.length === 0 ? (
                 <p className="muted">
                   Aucune categorie disponible. Configurez-les dans{" "}
                   <Link className="mode-link" href="/admin/products">

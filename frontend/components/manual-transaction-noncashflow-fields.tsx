@@ -1,0 +1,146 @@
+"use client";
+
+import { useMemo, useState } from "react";
+
+type ManualNonCashFlowProductOption = {
+  id: string;
+  title: string;
+  categoryName: string | null;
+  priceInclVat: string;
+  vatRate: string;
+};
+
+type ManualTransactionNonCashFlowFieldsProps = {
+  transactionType: "CHARGE" | "DISCOUNT";
+  amountLabel: string;
+  defaultVatRate: string;
+  categories: string[];
+  products: ManualNonCashFlowProductOption[];
+};
+
+function normalizeCategory(value: string): string {
+  return value.trim().toLocaleLowerCase("fr-FR");
+}
+
+function formatAmountLabel(value: string): string {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return value;
+  }
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+export default function ManualTransactionNonCashFlowFields({
+  transactionType,
+  amountLabel,
+  defaultVatRate,
+  categories,
+  products,
+}: ManualTransactionNonCashFlowFieldsProps): JSX.Element {
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [selectedProductId, setSelectedProductId] = useState<string>("");
+  const [amountInclVat, setAmountInclVat] = useState<string>("");
+  const [vatRate, setVatRate] = useState<string>(defaultVatRate);
+
+  const availableProducts = useMemo(() => {
+    if (transactionType !== "CHARGE" || !selectedCategory) {
+      return [] as ManualNonCashFlowProductOption[];
+    }
+    const selectedCategoryKey = normalizeCategory(selectedCategory);
+    return products
+      .filter((product) => normalizeCategory(product.categoryName || "") === selectedCategoryKey)
+      .sort((a, b) => a.title.localeCompare(b.title, "fr-FR"));
+  }, [products, selectedCategory, transactionType]);
+
+  return (
+    <>
+      <label>
+        {amountLabel}
+        <input
+          type="number"
+          name="amount_incl_vat"
+          step="0.01"
+          min="0.01"
+          placeholder="0.00"
+          value={amountInclVat}
+          onChange={(event) => setAmountInclVat(event.currentTarget.value)}
+          required
+        />
+      </label>
+      <label>
+        TVA (%)
+        <input
+          type="number"
+          name="vat_rate"
+          step="0.001"
+          min="0"
+          max="100"
+          value={vatRate}
+          onChange={(event) => setVatRate(event.currentTarget.value)}
+          readOnly={transactionType === "CHARGE" && selectedProductId.length > 0}
+          required
+        />
+      </label>
+      <label>
+        Categorie (optionnel)
+        <select
+          name="category"
+          value={selectedCategory}
+          onChange={(event) => {
+            const nextCategory = event.currentTarget.value;
+            setSelectedCategory(nextCategory);
+            if (transactionType === "CHARGE") {
+              setSelectedProductId("");
+              setAmountInclVat("");
+              setVatRate(defaultVatRate);
+            }
+          }}
+        >
+          <option value="">Selectionner...</option>
+          {categories.map((category) => (
+            <option key={category} value={category}>
+              {category}
+            </option>
+          ))}
+        </select>
+      </label>
+      {transactionType === "CHARGE" ? (
+        <>
+          <label>
+            Produit de la categorie (optionnel)
+            <select
+              name="catalog_product_id"
+              value={selectedProductId}
+              onChange={(event) => {
+                const nextProductId = event.currentTarget.value;
+                setSelectedProductId(nextProductId);
+                const selectedProduct = availableProducts.find((product) => product.id === nextProductId);
+                if (!selectedProduct) {
+                  setAmountInclVat("");
+                  setVatRate(defaultVatRate);
+                  return;
+                }
+                setAmountInclVat(selectedProduct.priceInclVat);
+                setVatRate(selectedProduct.vatRate);
+              }}
+              disabled={!selectedCategory || availableProducts.length === 0}
+            >
+              <option value="">Selectionner...</option>
+              {availableProducts.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.title} ({formatAmountLabel(product.priceInclVat)} EUR TTC)
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedCategory && availableProducts.length === 0 ? (
+            <p className="muted span-2">Aucun produit actif disponible dans cette categorie.</p>
+          ) : null}
+        </>
+      ) : null}
+    </>
+  );
+}
