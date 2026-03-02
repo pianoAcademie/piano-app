@@ -256,6 +256,7 @@ class InvoicePeriodLine:
     vat_amount: Decimal
     total_incl_vat: Decimal
     currency: str
+    is_section_header: bool = False
 
 
 class _SimplePdfDocument:
@@ -632,6 +633,23 @@ def render_invoice_period_pdf(
 
     current_row_top = draw_table_header_for_new_page()
     for row in lines:
+        if row.is_section_header:
+            row_height = 20.0
+            if current_row_top + row_height > 760.0:
+                pdf.new_page()
+                current_row_top = draw_table_header_for_new_page()
+            pdf.rect(
+                x=left,
+                top_y=current_row_top,
+                width=right - left,
+                height=row_height,
+                stroke_color=(0.90, 0.92, 0.95),
+                fill_color=(0.98, 0.98, 0.99),
+            )
+            pdf.text(x=col_label_x, top_y=current_row_top + 14, value=row.label, size=10, bold=True)
+            current_row_top += row_height
+            continue
+
         date_lines = _wrap_text(row.date_label, 18)
         label_lines = _wrap_text(row.label, 44)
         max_lines = max(len(date_lines), len(label_lines))

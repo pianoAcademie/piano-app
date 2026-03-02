@@ -175,6 +175,7 @@ MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 SIMPLE_PLACEHOLDER_RE = re.compile(r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}")
 EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 INVOICE_RANGE_PUBLIC_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
+WEEKDAY_LABELS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
 COUNTRY_NAME_BY_CODE = {
     "FR": "France",
@@ -4776,23 +4777,103 @@ def download_admin_client_range_invoice(
                 )
             )
     else:
-        grouped: dict[tuple[str, str, str], dict[str, Decimal | int]] = {}
+        booking_ids = {row.id for row in payments if row.source.strip().upper() == "BOOKING"}
+        booking_context_by_id: dict[UUID, dict[str, object]] = {}
+        if booking_ids:
+            booking_rows = db.execute(
+                select(
+                    Booking.id,
+                    Booking.user_id,
+                    CourseType.name,
+                    Location.name,
+                    CourseSession.start_at_utc,
+                    CourseSession.end_at_utc,
+                    CourseSession.timezone,
+                )
+                .join(CourseSession, CourseSession.id == Booking.session_id)
+                .join(CourseType, CourseType.id == CourseSession.course_type_id)
+                .join(Location, Location.id == CourseSession.location_id)
+                .where(Booking.id.in_(booking_ids))
+            ).all()
+            scoped_users = _payment_scope_users(db, client=client)
+            for (
+                booking_id,
+                booking_user_id,
+                course_type_name,
+                location_name,
+                session_start_at,
+                session_end_at,
+                session_timezone,
+            ) in booking_rows:
+                student = scoped_users.get(booking_user_id)
+                student_name = (
+                    _display_name(student.first_name, student.last_name, student.email)
+                    if student is not None
+                    else _display_name(client.first_name, client.last_name, client.email)
+                )
+                duration_minutes = int(max((session_end_at - session_start_at).total_seconds(), 0) // 60)
+                booking_context_by_id[booking_id] = {
+                    "student_name": student_name,
+                    "course_type_name": str(course_type_name),
+                    "location_name": str(location_name),
+                    "duration_minutes": duration_minutes,
+                    "timezone": str(session_timezone or "UTC"),
+                }
+
+        grouped_bookings: dict[str, dict[tuple[int, str, str, int, str, str, str, str], dict[str, Decimal | int]]] = {}
+        grouped_others: dict[tuple[str, str, str], dict[str, Decimal | int]] = {}
         for row in payments:
             currency = _normalize_currency(row.currency, fallback="EUR")
             type_label = _payment_source_label(row.source)
             base_label = row.label
             if row.source.strip().upper() == "BOOKING" and " - " in base_label:
                 base_label = base_label.split(" - ", maxsplit=1)[0]
-            key = (base_label, type_label, currency)
-            bucket = grouped.setdefault(
-                key,
-                {
-                    "quantity": 0,
-                    "amount_excl_vat": Decimal("0.00"),
-                    "vat_amount": Decimal("0.00"),
-                    "total_incl_vat": Decimal("0.00"),
-                },
-            )
+            source_key = row.source.strip().upper()
+            if source_key == "BOOKING" and row.id in booking_context_by_id:
+                context = booking_context_by_id[row.id]
+                timezone_name = str(context.get("timezone") or "UTC")
+                try:
+                    local_dt = row.occurred_at.astimezone(ZoneInfo(timezone_name))
+                except ZoneInfoNotFoundError:
+                    local_dt = row.occurred_at.astimezone(timezone.utc)
+                weekday_index = int(local_dt.weekday())
+                weekday_label = WEEKDAY_LABELS_FR[weekday_index] if 0 <= weekday_index < len(WEEKDAY_LABELS_FR) else local_dt.strftime("%A")
+                time_label = local_dt.strftime("%H:%M")
+                duration_minutes = int(context.get("duration_minutes") or 0)
+                slot_key = (
+                    weekday_index,
+                    weekday_label,
+                    time_label,
+                    duration_minutes,
+                    str(context.get("course_type_name") or base_label),
+                    str(context.get("location_name") or ""),
+                )
+                student_name = str(
+                    context.get("student_name")
+                    or _display_name(client.first_name, client.last_name, client.email)
+                )
+                student_group = grouped_bookings.setdefault(student_name, {})
+                bucket = student_group.setdefault(
+                    slot_key + (currency, type_label),
+                    {
+                        "quantity": 0,
+                        "duration_minutes": duration_minutes,
+                        "amount_excl_vat": Decimal("0.00"),
+                        "vat_amount": Decimal("0.00"),
+                        "total_incl_vat": Decimal("0.00"),
+                    },
+                )
+            else:
+                key = (base_label, type_label, currency)
+                bucket = grouped_others.setdefault(
+                    key,
+                    {
+                        "quantity": 0,
+                        "amount_excl_vat": Decimal("0.00"),
+                        "vat_amount": Decimal("0.00"),
+                        "total_incl_vat": Decimal("0.00"),
+                    },
+                )
             bucket["quantity"] = int(bucket["quantity"]) + 1
             bucket["amount_excl_vat"] = _quantize_money(
                 Decimal(bucket["amount_excl_vat"]) + Decimal(row.amount_excl_vat)
@@ -4801,8 +4882,60 @@ def download_admin_client_range_invoice(
             bucket["total_incl_vat"] = _quantize_money(Decimal(bucket["total_incl_vat"]) + Decimal(row.total_incl_vat))
 
         period_label = f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}"
-        for (base_label, type_label, currency) in sorted(grouped.keys(), key=lambda item: (item[1], item[0], item[2])):
-            values = grouped[(base_label, type_label, currency)]
+        sorted_students = sorted(grouped_bookings.keys(), key=lambda value: value.casefold())
+        for student_name in sorted_students:
+            invoice_lines.append(
+                InvoicePeriodLine(
+                    date_label="",
+                    type_label="",
+                    label=student_name,
+                    quantity=0,
+                    amount_excl_vat=Decimal("0.00"),
+                    vat_rate=Decimal("0.00"),
+                    vat_amount=Decimal("0.00"),
+                    total_incl_vat=Decimal("0.00"),
+                    currency="EUR",
+                    is_section_header=True,
+                )
+            )
+            student_groups = grouped_bookings[student_name]
+            for key in sorted(student_groups.keys(), key=lambda item: (item[0], item[2], item[4], item[5], item[6], item[7])):
+                (
+                    _weekday_index,
+                    weekday_label,
+                    time_label,
+                    duration_minutes,
+                    course_type_name,
+                    location_name,
+                    currency,
+                    type_label,
+                ) = key
+                values = student_groups[key]
+                if duration_minutes <= 0:
+                    duration_minutes = int(values.get("duration_minutes") or 0)
+                amount_excl_vat = _quantize_money(Decimal(values["amount_excl_vat"]))
+                vat_amount = _quantize_money(Decimal(values["vat_amount"]))
+                vat_rate = Decimal("0.00")
+                if amount_excl_vat > Decimal("0.00"):
+                    vat_rate = ((vat_amount / amount_excl_vat) * Decimal("100")).quantize(Decimal("0.01"))
+                duration_suffix = f" ({duration_minutes} min)" if duration_minutes > 0 else ""
+                location_suffix = f" - {location_name}" if location_name else ""
+                invoice_lines.append(
+                    InvoicePeriodLine(
+                        date_label=f"{weekday_label} {time_label}",
+                        type_label=type_label,
+                        label=f"{course_type_name}{duration_suffix}{location_suffix}",
+                        quantity=int(values["quantity"]),
+                        amount_excl_vat=amount_excl_vat,
+                        vat_rate=vat_rate,
+                        vat_amount=vat_amount,
+                        total_incl_vat=_quantize_money(Decimal(values["total_incl_vat"])),
+                        currency=currency,
+                    )
+                )
+
+        for (base_label, type_label, currency) in sorted(grouped_others.keys(), key=lambda item: (item[1], item[0], item[2])):
+            values = grouped_others[(base_label, type_label, currency)]
             amount_excl_vat = _quantize_money(Decimal(values["amount_excl_vat"]))
             vat_amount = _quantize_money(Decimal(values["vat_amount"]))
             vat_rate = Decimal("0.00")
