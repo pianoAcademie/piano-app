@@ -298,7 +298,7 @@ def _forfait_hourly_ttc_with_overrides(
     pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal, Decimal]] | None = None,
 ) -> Decimal:
     if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
-        return base_hourly_ttc.quantize(Decimal("0.01"))
+        return base_hourly_ttc
 
     loyalty_discount = Decimal("0.00")
     family_discount = Decimal("0.00")
@@ -341,6 +341,12 @@ def _forfait_hourly_ttc_with_overrides(
         )
     ):
         loyalty_discount += second_course_weekly_discount
+    if (
+        loyalty_discount <= Decimal("0.00")
+        and family_discount <= Decimal("0.00")
+        and short_commitment_supplement <= Decimal("0.00")
+    ):
+        return base_hourly_ttc
     adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
     if adjusted < Decimal("0.00"):
         return Decimal("0.00")
@@ -442,7 +448,7 @@ def _resolve_activity_base_hourly_ttc(course_type: CourseType) -> Decimal | None
         reference_hours = Decimal(reference_minutes) / Decimal("60")
         if reference_hours <= Decimal("0.00"):
             return None
-        return (Decimal(course_type.default_course_rate_ttc) / reference_hours).quantize(Decimal("0.01"))
+        return Decimal(course_type.default_course_rate_ttc) / reference_hours
     if course_type.default_hourly_rate is not None:
         return Decimal(course_type.default_hourly_rate).quantize(Decimal("0.01"))
     return None
