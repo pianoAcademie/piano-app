@@ -3368,6 +3368,7 @@ def _future_subscription_bookings_after(
     active_statuses = (BookingStatus.BOOKED, BookingStatus.WAITLISTED)
     base_stmt = (
         select(CourseSession.start_at_utc)
+        .select_from(Booking)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .where(
             Booking.user_id == client_id,
