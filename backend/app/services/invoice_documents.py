@@ -696,6 +696,15 @@ def render_invoice_period_pdf(
         )
 
     normalized_note = _ascii_safe((note or "").strip())
+    period_start_label = ""
+    if " - " in period_label:
+        period_start_candidate = _ascii_safe(period_label.split(" - ", 1)[0].strip())
+        if re.match(r"^\d{2}/\d{2}/\d{4}$", period_start_candidate):
+            period_start_label = period_start_candidate
+    else:
+        period_start_candidate = _ascii_safe(period_label.strip())
+        if re.match(r"^\d{2}/\d{2}/\d{4}$", period_start_candidate):
+            period_start_label = period_start_candidate
     normalized_opening_balance_by_currency: dict[str, Decimal] = {}
     for currency_code, amount in (opening_balance_by_currency or {}).items():
         currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
@@ -773,7 +782,8 @@ def render_invoice_period_pdf(
             total_to_pay_amount = Decimal(
                 normalized_total_to_pay_by_currency.get(currency_code, period_amount)
             ).quantize(Decimal("0.01"))
-            pdf.text(x=col_label_x, top_y=current_row_top, value=f"Ancien solde debut periode ({currency_code})", size=9)
+            opening_label = f"Ancien soldes - {period_start_label}" if period_start_label else "Ancien soldes"
+            pdf.text(x=col_label_x, top_y=current_row_top, value=opening_label, size=9)
             pdf.text_right(
                 right_x=totals_col_ttc_right,
                 top_y=current_row_top,
