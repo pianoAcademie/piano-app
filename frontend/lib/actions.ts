@@ -4636,15 +4636,21 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   const title = String(formData.get("title") ?? "").trim();
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
   const primaryLocationId = parseUuid(String(formData.get("primary_location_id") ?? ""));
-  const priceExclVat = parseNonNegativeDecimal(String(formData.get("price_excl_vat") ?? ""));
+  const priceExclVatInput = parseNonNegativeDecimal(String(formData.get("price_excl_vat") ?? ""));
   const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
   const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
-  if (!title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Produit invalide (champs obligatoires)"));
+  if (!title || !categoryId || priceInclVat === null || vatRate === null || reserveStock === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Titre, categorie et prix TTC obligatoires"));
   }
+  const divisor = 1 + vatRate / 100;
+  if (!Number.isFinite(divisor) || divisor <= 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Taux TVA invalide"));
+  }
+  const computedPriceExclVat = Math.round((priceInclVat / divisor) * 100) / 100;
+  const priceExclVat = priceExclVatInput ?? computedPriceExclVat;
 
   const payload = {
     category_id: categoryId,
@@ -4679,7 +4685,9 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   }
   revalidatePath("/admin/config");
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Produit cree"));
+  let successPath = removeQueryParam(removeQueryParam(returnTo, "ok"), "error");
+  successPath = removeQueryParam(successPath, "add");
+  redirect(appendQueryMessage(successPath, "ok", "Produit cree"));
 }
 
 export async function updateAdminCatalogProductAction(formData: FormData): Promise<void> {
