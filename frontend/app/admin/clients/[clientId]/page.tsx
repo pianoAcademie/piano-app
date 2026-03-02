@@ -1397,6 +1397,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             {sub.plan.kind === "FORFAIT" ? (
                               <Link
                                 className="client-action-icon"
+                                href={ficheHref(client.id, { subscription_modal: "billing", subscription_id: sub.id })}
+                                title="Modifier le mode de paiement du forfait"
+                              >
+                                $
+                              </Link>
+                            ) : null}
+                            {sub.plan.kind === "FORFAIT" ? (
+                              <Link
+                                className="client-action-icon"
                                 href={ficheHref(client.id, { subscription_modal: "forfait_pricing", subscription_id: sub.id })}
                                 title="Modifier la surcouche tarifaire forfait"
                               >
@@ -1508,6 +1517,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     {sub.plan.kind === "SUBSCRIPTION" ? (
                       <p className="muted">
                         Actions rapides: utilisez les icones pour configurer le prelevement, suspendre ou resilier.
+                      </p>
+                    ) : sub.plan.kind === "FORFAIT" ? (
+                      <p className="muted">
+                        Actions rapides: modifiez le mode de paiement, la surcouche tarifaire, la date d expiration ou cloturez immediatement.
                       </p>
                     ) : (
                       <p className="muted">Actions rapides: modifiez la date d expiration ou cloturez immediatement.</p>
@@ -1783,18 +1796,35 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
               ×
             </Link>
-            <h3 className="modal-title">Configurer le prelevement</h3>
+            <h3 className="modal-title">
+              {selectedSubscriptionForModal.plan.kind === "FORFAIT" ? "Modifier le mode de paiement" : "Configurer le prelevement"}
+            </h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
             <form action={setupAdminClientSubscriptionBillingAction} className="grid cols-2 top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
               <label>
                 Methode de paiement
-                <select name="billing_method_code" defaultValue={selectedSubscriptionForModal.billing_method_code ?? "CARD_ONLINE"}>
-                  <option value="CARD_ONLINE">CARD_ONLINE (CB en ligne - Mollie / Payplug)</option>
-                  <option value="SEPA_DEBIT">SEPA_DEBIT</option>
-                  <option value="CARD_TERMINAL">CARD_TERMINAL</option>
-                  <option value="BANK_TRANSFER">BANK_TRANSFER</option>
+                <select
+                  name="billing_method_code"
+                  defaultValue={
+                    selectedSubscriptionForModal.billing_method_code ??
+                    (selectedSubscriptionForModal.plan.kind === "FORFAIT" ? "FACTURATION_AUTO" : "CARD_ONLINE")
+                  }
+                >
+                  {enabledPaymentMethods.length > 0 ? (
+                    enabledPaymentMethods.map((method) => (
+                      <option key={method.code} value={method.code}>
+                        {method.label}
+                      </option>
+                    ))
+                  ) : (
+                    DEFAULT_PAYMENT_METHOD_OPTIONS.map((method) => (
+                      <option key={method.code} value={method.code}>
+                        {method.label}
+                      </option>
+                    ))
+                  )}
                 </select>
               </label>
               <label>
@@ -1821,7 +1851,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
                   Annuler
                 </Link>
-                <button type="submit">Enregistrer</button>
+                <button type="submit">
+                  {selectedSubscriptionForModal.plan.kind === "FORFAIT" ? "Enregistrer le mode de paiement" : "Enregistrer"}
+                </button>
               </div>
             </form>
           </article>

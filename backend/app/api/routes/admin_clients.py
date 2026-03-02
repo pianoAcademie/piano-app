@@ -3480,8 +3480,11 @@ def setup_admin_client_subscription_billing(
 ) -> AdminClientSubscriptionOut:
     client = _require_client(db, client_id)
     sub, plan = _admin_subscription_with_plan_for_client(db, client_id=client_id, subscription_id=subscription_id)
-    if plan.kind != PlanKind.SUBSCRIPTION:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only SUBSCRIPTION can be configured")
+    if plan.kind not in {PlanKind.SUBSCRIPTION, PlanKind.FORFAIT}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only SUBSCRIPTION or FORFAIT can be configured",
+        )
 
     method = _normalize_optional(payload.billing_method_code)
     if method is not None:
@@ -3495,7 +3498,10 @@ def setup_admin_client_subscription_billing(
         client_id=client_id,
         author_user_id=actor.id,
         entry_type="AUTO",
-        message=f"Mise a jour des references de prelevement pour l'abonnement '{plan.name}'.",
+        message=(
+            f"Mise a jour du mode de paiement et des references de facturation pour le "
+            f"{'forfait' if plan.kind == PlanKind.FORFAIT else 'abonnement'} '{plan.name}'."
+        ),
     )
     db.commit()
     db.refresh(sub)
