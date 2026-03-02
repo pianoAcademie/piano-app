@@ -116,6 +116,14 @@ function formatDateOnly(value: string | null): string {
   });
 }
 
+function formatDateOnlyNumeric(value: string): string {
+  return new Date(value).toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 function formatDateInput(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
@@ -3582,8 +3590,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           <tr>
                             <th aria-label="Selection">Sel.</th>
                             <th>Date facture</th>
-                            <th>Numero facture</th>
                             <th>Montant</th>
+                            <th>Numero facture</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -3592,9 +3600,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               <td>
                                 <input type="checkbox" name="reconciled_invoice_note_ids" value={row.noteId} />
                               </td>
-                              <td>{formatDate(row.occurredAt)}</td>
-                              <td>{row.invoiceNumber}</td>
+                              <td>{formatDateOnlyNumeric(row.occurredAt)}</td>
                               <td>{row.totalLabel}</td>
+                              <td>{row.invoiceNumber}</td>
                             </tr>
                           ))}
                         </tbody>
