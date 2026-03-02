@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import {
   adminAddClientToSessionAction,
   adminRemoveClientFromSessionAction,
+  adminSendSessionBroadcastAction,
   adminUpdateSessionAttendanceAction,
   adminUpdateSessionBookingNoteAction,
   adminUpdateSessionGroupNoteAction,
@@ -558,6 +559,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const notesModal = readParam(searchParams, "notes").toLowerCase();
   const groupNotesModalOpen = notesModal === "group";
   const duplicateModalOpen = readParam(searchParams, "duplicate") === "1";
+  const messageModalRaw = readParam(searchParams, "message").trim().toLowerCase();
+  const sessionEmailModalOpen = messageModalRaw === "email";
+  const sessionSmsModalOpen = messageModalRaw === "sms";
   const bookingFocusId = readParam(searchParams, "booking_focus");
   const editSessionOpen = readParam(searchParams, "edit") === "1";
   const confirmActionRaw = readParam(searchParams, "confirm_action").toLowerCase();
@@ -806,6 +810,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const attendanceModalHref = selectedSession ? withQueryParam(modalHref, "attendance", "1") : modalHref;
   const groupNotesModalHref = selectedSession ? withQueryParam(modalHref, "notes", "group") : modalHref;
   const duplicateModalHref = selectedSession ? withQueryParam(modalHref, "duplicate", "1") : modalHref;
+  const sessionEmailModalHref = selectedSession ? withQueryParam(modalHref, "message", "email") : modalHref;
+  const sessionSmsModalHref = selectedSession ? withQueryParam(modalHref, "message", "sms") : modalHref;
   const editSessionHref = selectedSession ? withQueryParam(modalHref, "edit", "1") : modalHref;
   const attendanceBookingHref = (bookingId: string): string => withQueryParam(attendanceModalHref, "booking_focus", bookingId);
   const confirmCloseHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
@@ -1249,6 +1255,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     const groupNotesSessionHref = withQueryParam(openSessionHref, "notes", "group");
                     const duplicateSessionHref = withQueryParam(openSessionHref, "duplicate", "1");
                     const editSessionCardHref = withQueryParam(openSessionHref, "edit", "1");
+                    const sessionEmailHref = withQueryParam(openSessionHref, "message", "email");
+                    const sessionSmsHref = withQueryParam(openSessionHref, "message", "sms");
                     const deleteSessionHref = withQueryParam(openSessionHref, "confirm_action", "delete");
                     const hasBookedStudents = session.booked_count > 0;
                     const activityColor = courseType?.color_hex ?? "#d8ccb9";
@@ -1292,23 +1300,53 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                         <div className="agenda-event-hover-actions" aria-label="Actions creneau">
                           {hasBookedStudents ? (
-                            <a className="agenda-event-action" href={attendanceSessionHref}>
-                              Presences
+                            <a
+                              className="agenda-event-action icon"
+                              href={attendanceSessionHref}
+                              aria-label="Prendre les presences"
+                              title="Prendre les presences"
+                            >
+                              ✅
                             </a>
                           ) : null}
                           {hasBookedStudents ? (
-                            <a className="agenda-event-action" href={groupNotesSessionHref}>
-                              Note groupe
+                            <a
+                              className="agenda-event-action icon"
+                              href={groupNotesSessionHref}
+                              aria-label="Ajouter une note de groupe"
+                              title="Ajouter une note de groupe"
+                            >
+                              📝
                             </a>
                           ) : null}
-                          <a className="agenda-event-action" href={duplicateSessionHref}>
-                            Dupliquer
+                          {hasBookedStudents ? (
+                            <a
+                              className="agenda-event-action icon"
+                              href={sessionEmailHref}
+                              aria-label="Envoyer un email"
+                              title="Envoyer un email"
+                            >
+                              ✉️
+                            </a>
+                          ) : null}
+                          {hasBookedStudents ? (
+                            <a
+                              className="agenda-event-action icon"
+                              href={sessionSmsHref}
+                              aria-label="Envoyer un SMS"
+                              title="Envoyer un SMS"
+                            >
+                              💬
+                            </a>
+                          ) : null}
+                          <a className="agenda-event-action icon" href={duplicateSessionHref} aria-label="Dupliquer" title="Dupliquer">
+                            📄
                           </a>
-                          <a className="agenda-event-action" href={editSessionCardHref}>
-                            Modifier
+                          <a className="agenda-event-action icon" href={editSessionCardHref} aria-label="Modifier" title="Modifier">
+                            ✏️
                           </a>
-                          <a className="agenda-event-action danger" href={deleteSessionHref}>
-                            Supprimer
+                          <a className="agenda-event-action danger icon" href={deleteSessionHref} aria-label="Supprimer" title="Supprimer">
+                            🗑
                           </a>
                         </div>
                       </article>
@@ -1438,6 +1476,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               {selectedSessionHasBookings ? (
                 <a className="mode-link" href={groupNotesModalHref}>
                   Note de groupe
+                </a>
+              ) : null}
+              {selectedSessionHasBookings ? (
+                <a className="mode-link" href={sessionEmailModalHref}>
+                  Envoyer email
+                </a>
+              ) : null}
+              {selectedSessionHasBookings ? (
+                <a className="mode-link" href={sessionSmsModalHref}>
+                  Envoyer SMS
                 </a>
               ) : null}
               <a className="mode-link" href={duplicateModalHref}>
@@ -1917,6 +1965,117 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   Fermer
                 </a>
                 <button type="submit">Sauvegarder note de groupe</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && sessionEmailModalOpen && selectedSessionHasBookings ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact session-group-notes-modal">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Envoyer un email</h2>
+            <p className="muted">Envoi groupe pour les eleves ou parents rattaches a ce creneau.</p>
+            <form action={adminSendSessionBroadcastAction} className="grid top-gap-sm">
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="channel" value="EMAIL" />
+              <input type="hidden" name="return_to" value={sessionEmailModalHref} />
+
+              <label>
+                Destinataires
+                <select name="audience" defaultValue="STUDENTS">
+                  <option value="STUDENTS">Eleves inscrits</option>
+                  <option value="PARENTS">Parents des eleves</option>
+                  <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
+                </select>
+              </label>
+
+              <label>
+                Sujet
+                <input type="text" name="subject" defaultValue={`Message creneau: ${selectedSession.title}`} maxLength={255} required />
+              </label>
+
+              <label className="session-edit-span">
+                Copie (emails, separes par virgule/point-virgule/retour ligne)
+                <textarea name="cc_emails" rows={2} placeholder="copie@example.com; autre@example.com" />
+              </label>
+
+              <label className="session-edit-span">
+                Message
+                <RichMessageEditor
+                  name="body"
+                  formatName="body_format"
+                  rows={10}
+                  maxLength={12000}
+                  defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.\n`}
+                  placeholder="Saisir votre message..."
+                />
+              </label>
+
+              <div className="row spread">
+                <a className="reset-link" href={modalHref}>
+                  Annuler
+                </a>
+                <button type="submit">Envoyer l email</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && sessionSmsModalOpen && selectedSessionHasBookings ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact session-group-notes-modal">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Envoyer un SMS</h2>
+            <p className="muted">Envoi groupe pour les eleves ou parents rattaches a ce creneau.</p>
+            <form action={adminSendSessionBroadcastAction} className="grid top-gap-sm">
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="channel" value="SMS" />
+              <input type="hidden" name="return_to" value={sessionSmsModalHref} />
+
+              <label>
+                Destinataires
+                <select name="audience" defaultValue="STUDENTS">
+                  <option value="STUDENTS">Eleves inscrits</option>
+                  <option value="PARENTS">Parents des eleves</option>
+                  <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
+                </select>
+              </label>
+
+              <label>
+                Sujet (optionnel)
+                <input type="text" name="subject" defaultValue={`Information creneau: ${selectedSession.title}`} maxLength={255} />
+              </label>
+
+              <label className="session-edit-span">
+                Copie (telephones, separes par virgule/point-virgule/retour ligne)
+                <textarea name="cc_phone_numbers" rows={2} placeholder="+33600000000; 0600000000" />
+              </label>
+
+              <label className="session-edit-span">
+                Message SMS
+                <RichMessageEditor
+                  name="body"
+                  formatName="body_format"
+                  defaultFormat="TEXT"
+                  rows={8}
+                  maxLength={12000}
+                  defaultValue={`Bonjour,\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.`}
+                  placeholder="Saisir votre message SMS..."
+                />
+              </label>
+
+              <div className="row spread">
+                <a className="reset-link" href={modalHref}>
+                  Annuler
+                </a>
+                <button type="submit">Envoyer le SMS</button>
               </div>
             </form>
           </article>

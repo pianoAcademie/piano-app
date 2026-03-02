@@ -1399,9 +1399,38 @@ class AdminSessionDuplicateOperationOut(BaseModel):
     duplicated_bookings: int
 
 
+class AdminSessionBroadcastChannel(str, enum.Enum):
+    EMAIL = "EMAIL"
+    SMS = "SMS"
+
+
+class AdminSessionBroadcastAudience(str, enum.Enum):
+    STUDENTS = "STUDENTS"
+    PARENTS = "PARENTS"
+    STUDENTS_AND_PARENTS = "STUDENTS_AND_PARENTS"
+
+
 class AdminSessionMessageFormat(str, enum.Enum):
     TEXT = "TEXT"
     HTML = "HTML"
+
+
+class AdminSessionBroadcastRequest(BaseModel):
+    channel: AdminSessionBroadcastChannel
+    audience: AdminSessionBroadcastAudience = AdminSessionBroadcastAudience.STUDENTS
+    subject: str | None = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=12000)
+    body_format: AdminSessionMessageFormat = AdminSessionMessageFormat.TEXT
+    cc_emails: list[str] = Field(default_factory=list)
+    cc_phone_numbers: list[str] = Field(default_factory=list)
+
+
+class AdminSessionBroadcastOut(BaseModel):
+    channel: AdminSessionBroadcastChannel
+    recipient_count: int
+    cc_count: int
+    skipped_count: int
+    details: list[str] = Field(default_factory=list)
 
 
 class AdminCollaboratorMessageRequest(BaseModel):

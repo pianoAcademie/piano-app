@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
+import re
 from typing import Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -34,11 +35,21 @@ from app.models.catalog import (
     Professor,
     SessionStatus,
 )
-from app.models.ops import AppSetting
+from app.models.family import ClientFamilyLink
+from app.models.ops import (
+    AppSetting,
+    CommunicationChannel,
+    CommunicationDeliveryStatus,
+    CommunicationSenderCategory,
+    MessageFormat,
+)
 from app.models.user import ClientStatus, User, UserRole
+from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_notifications import send_session_operation_email
 from app.schemas.admin import (
+    AdminSessionBroadcastOut,
+    AdminSessionBroadcastRequest,
     AdminSessionCancelOperationRequest,
     AdminSessionDeleteOperationRequest,
     AdminSessionDuplicateOperationOut,
@@ -106,6 +117,8 @@ BOOKING_STATUSES_ACTIVE = (
 VACATION_COURSE_TYPE_CODE = "VACATION_DAY"
 
 ApplyScope = Literal["ONE", "SERIES_FUTURE", "SERIES_ALL"]
+EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 
 
 def _utcnow() -> datetime:
@@ -225,6 +238,56 @@ def _normalize_message_field(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _display_name(user: User) -> str:
+    full_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+    return full_name or user.email
+
+
+def _normalize_email_recipient(value: str) -> str | None:
+    candidate = value.strip().lower()
+    if not candidate:
+        return None
+    if EMAIL_RECIPIENT_RE.match(candidate) is None:
+        return None
+    return candidate
+
+
+def _normalize_phone_recipient(value: str) -> str | None:
+    candidate = PHONE_CLEAN_RE.sub("", value.strip())
+    if candidate.startswith("00"):
+        candidate = f"+{candidate[2:]}"
+    if not candidate:
+        return None
+    if candidate.startswith("+"):
+        digits = candidate[1:]
+        if not digits.isdigit() or len(digits) < 8:
+            return None
+        return f"+{digits}"
+    if not candidate.isdigit() or len(candidate) < 8:
+        return None
+    return candidate
+
+
+def _preferred_sms_recipient(user: User) -> str | None:
+    for raw in (user.mobile_phone_1, user.mobile_phone_2, user.phone, user.home_phone):
+        if not raw:
+            continue
+        normalized = _normalize_phone_recipient(raw)
+        if normalized:
+            return normalized
+    return None
+
+
+def _session_active_student_ids(db: Session, *, session_id: UUID) -> set[UUID]:
+    rows = db.scalars(
+        select(Booking.user_id).where(
+            Booking.session_id == session_id,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+        )
+    ).all()
+    return {user_id for user_id in rows if user_id is not None}
 
 
 def _booked_counts_map(db: Session, session_ids: list[UUID]) -> dict[UUID, int]:
@@ -672,6 +735,62 @@ def _session_student_emails(db: Session, *, session_ids: list[UUID]) -> set[str]
         .distinct()
     ).all()
     return {email.strip().lower() for email in rows if email and email.strip()}
+
+
+def _session_student_recipient_map(
+    db: Session,
+    *,
+    student_ids: set[UUID],
+    channel: CommunicationChannel,
+) -> dict[str, UUID]:
+    if not student_ids:
+        return {}
+    users = db.scalars(select(User).where(User.id.in_(student_ids))).all()
+    recipients: dict[str, UUID] = {}
+    for user in users:
+        if channel == CommunicationChannel.EMAIL:
+            if not user.email_opt_in:
+                continue
+            email = _normalize_email_recipient(user.email)
+            if email:
+                recipients.setdefault(email, user.id)
+            continue
+        if not user.sms_opt_in:
+            continue
+        phone = _preferred_sms_recipient(user)
+        if phone:
+            recipients.setdefault(phone, user.id)
+    return recipients
+
+
+def _session_parent_recipient_map(
+    db: Session,
+    *,
+    student_ids: set[UUID],
+    channel: CommunicationChannel,
+) -> dict[str, UUID]:
+    if not student_ids:
+        return {}
+    parent_rows = db.scalars(
+        select(User)
+        .join(ClientFamilyLink, ClientFamilyLink.adult_user_id == User.id)
+        .where(ClientFamilyLink.child_user_id.in_(student_ids))
+    ).all()
+    recipients: dict[str, UUID] = {}
+    for parent in parent_rows:
+        if channel == CommunicationChannel.EMAIL:
+            if not parent.email_opt_in:
+                continue
+            email = _normalize_email_recipient(parent.email)
+            if email:
+                recipients.setdefault(email, parent.id)
+            continue
+        if not parent.sms_opt_in:
+            continue
+        phone = _preferred_sms_recipient(parent)
+        if phone:
+            recipients.setdefault(phone, parent.id)
+    return recipients
 
 
 def _session_professor_emails(db: Session, *, session_ids: list[UUID]) -> set[str]:
@@ -1361,6 +1480,165 @@ def update_admin_session_group_note(
 
     booked_count = _booked_count_by_session(db, session_obj.id)
     return _to_admin_session_out(session_obj, booked_count=booked_count)
+
+
+@router.post("/sessions/{session_id}/broadcast", response_model=AdminSessionBroadcastOut)
+def broadcast_admin_session_message(
+    session_id: UUID,
+    payload: AdminSessionBroadcastRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSessionBroadcastOut:
+    session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id))
+    if session_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    subject = _normalize_message_field(payload.subject)
+    body = _normalize_message_field(payload.body)
+    if body is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Message obligatoire")
+
+    channel = CommunicationChannel(payload.channel.value)
+    if channel == CommunicationChannel.EMAIL and subject is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Sujet obligatoire pour un email")
+
+    student_ids = _session_active_student_ids(db, session_id=session_obj.id)
+    recipients: dict[str, UUID] = {}
+
+    include_students = payload.audience.value in {"STUDENTS", "STUDENTS_AND_PARENTS"}
+    include_parents = payload.audience.value in {"PARENTS", "STUDENTS_AND_PARENTS"}
+    if include_students:
+        recipients.update(_session_student_recipient_map(db, student_ids=student_ids, channel=channel))
+    if include_parents:
+        parent_recipients = _session_parent_recipient_map(db, student_ids=student_ids, channel=channel)
+        for destination, user_id in parent_recipients.items():
+            recipients.setdefault(destination, user_id)
+
+    if not recipients:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Aucun destinataire valide (opt-in/email/telephone)",
+        )
+
+    sender_label = _display_name(current_user)
+    skipped_count = 0
+    details: list[str] = []
+    cc_count = 0
+
+    if channel == CommunicationChannel.EMAIL:
+        for to_email, recipient_user_id in sorted(recipients.items()):
+            send_session_operation_email(
+                to_email=to_email,
+                subject=subject or f"Message creneau: {session_obj.title}",
+                body=body,
+                body_format=payload.body_format.value,
+                operation="ADMIN_SESSION_BROADCAST_EMAIL",
+                session_title=session_obj.title,
+                sender_user_id=current_user.id,
+                sender_label=sender_label,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                professor_id=session_obj.professor_id,
+                recipient_user_id=recipient_user_id,
+            )
+
+        cc_emails: set[str] = set()
+        for raw in payload.cc_emails:
+            normalized = _normalize_email_recipient(raw)
+            if normalized is None:
+                skipped_count += 1
+                details.append(f"Copie email invalide ignoree: {raw.strip() or '-'}")
+                continue
+            if normalized in recipients or normalized in cc_emails:
+                continue
+            cc_emails.add(normalized)
+
+        for cc_email in sorted(cc_emails):
+            send_session_operation_email(
+                to_email=cc_email,
+                subject=subject or f"Message creneau: {session_obj.title}",
+                body=body,
+                body_format=payload.body_format.value,
+                operation="ADMIN_SESSION_BROADCAST_EMAIL",
+                session_title=session_obj.title,
+                sender_user_id=current_user.id,
+                sender_label=sender_label,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                professor_id=session_obj.professor_id,
+                recipient_user_id=None,
+            )
+        cc_count = len(cc_emails)
+        return AdminSessionBroadcastOut(
+            channel=payload.channel,
+            recipient_count=len(recipients),
+            cc_count=cc_count,
+            skipped_count=skipped_count,
+            details=details,
+        )
+
+    sms_subject = subject or f"SMS creneau: {session_obj.title}"
+    sms_body = body
+    if payload.body_format == AdminSessionMessageFormat.HTML:
+        sms_body = re.sub(r"<[^>]+>", " ", sms_body)
+    sms_body = re.sub(r"\s{2,}", " ", sms_body).strip()
+    if not sms_body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SMS vide apres normalisation")
+
+    for phone_number, recipient_user_id in sorted(recipients.items()):
+        log_communication(
+            db=db,
+            channel=CommunicationChannel.SMS,
+            source="ADMIN_SESSION_BROADCAST_SMS",
+            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            sender_category=CommunicationSenderCategory.OTHER_USER,
+            sender_user_id=current_user.id,
+            sender_label=sender_label,
+            recipient_user_id=recipient_user_id,
+            recipient=phone_number,
+            subject=sms_subject,
+            content=sms_body,
+            content_format=MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.UNKNOWN,
+            professor_id=session_obj.professor_id,
+        )
+
+    cc_phones: set[str] = set()
+    for raw in payload.cc_phone_numbers:
+        normalized = _normalize_phone_recipient(raw)
+        if normalized is None:
+            skipped_count += 1
+            details.append(f"Copie SMS invalide ignoree: {raw.strip() or '-'}")
+            continue
+        if normalized in recipients or normalized in cc_phones:
+            continue
+        cc_phones.add(normalized)
+
+    for cc_phone in sorted(cc_phones):
+        log_communication(
+            db=db,
+            channel=CommunicationChannel.SMS,
+            source="ADMIN_SESSION_BROADCAST_SMS",
+            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            sender_category=CommunicationSenderCategory.OTHER_USER,
+            sender_user_id=current_user.id,
+            sender_label=sender_label,
+            recipient_user_id=None,
+            recipient=cc_phone,
+            subject=sms_subject,
+            content=sms_body,
+            content_format=MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.UNKNOWN,
+            professor_id=session_obj.professor_id,
+        )
+    db.commit()
+    cc_count = len(cc_phones)
+
+    return AdminSessionBroadcastOut(
+        channel=payload.channel,
+        recipient_count=len(recipients),
+        cc_count=cc_count,
+        skipped_count=skipped_count,
+        details=details,
+    )
 
 
 @router.patch("/sessions/{session_id}/bookings/{booking_id}/note", response_model=AdminSessionBookingOut)

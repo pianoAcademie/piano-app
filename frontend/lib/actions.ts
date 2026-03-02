@@ -1776,6 +1776,77 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
   redirect(appendQueryMessage(returnTo, "ok", "Note eleve enregistree"));
 }
 
+export async function adminSendSessionBroadcastAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin");
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const channelRaw = String(formData.get("channel") ?? "EMAIL").trim().toUpperCase();
+  const channel = channelRaw === "SMS" ? "SMS" : "EMAIL";
+  const audienceRaw = String(formData.get("audience") ?? "STUDENTS").trim().toUpperCase();
+  const audience =
+    audienceRaw === "PARENTS" || audienceRaw === "STUDENTS_AND_PARENTS" || audienceRaw === "STUDENTS"
+      ? audienceRaw
+      : "STUDENTS";
+  const subject = optionalField(formData, "subject");
+  const body = String(formData.get("body") ?? "").trim();
+  const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+  const ccEmails = emailListField(formData, "cc_emails") ?? [];
+  const ccPhoneNumbers = emailListField(formData, "cc_phone_numbers") ?? [];
+
+  if (!sessionId || !body) {
+    redirect(appendQueryMessage(returnTo, "error", "Session, sujet/message invalides"));
+  }
+  if (channel === "EMAIL" && !subject) {
+    redirect(appendQueryMessage(returnTo, "error", "Sujet obligatoire pour un email"));
+  }
+
+  const result = await backendRequest<{
+    channel: "EMAIL" | "SMS";
+    recipient_count: number;
+    cc_count: number;
+    skipped_count: number;
+    details: string[];
+  }>(
+    `/api/v1/admin/sessions/${sessionId}/broadcast`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        channel,
+        audience,
+        subject,
+        body,
+        body_format: bodyFormat,
+        cc_emails: ccEmails,
+        cc_phone_numbers: ccPhoneNumbers,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  const successPath = removeQueryParam(returnTo, "message");
+  const channelLabel = result.data.channel === "SMS" ? "SMS" : "Email";
+  const copied = result.data.cc_count > 0 ? ` + ${result.data.cc_count} copie(s)` : "";
+  const skipped = result.data.skipped_count > 0 ? ` (${result.data.skipped_count} ignore(s))` : "";
+  redirect(
+    appendQueryMessage(
+      successPath,
+      "ok",
+      `${channelLabel} envoye: ${result.data.recipient_count} destinataire(s)${copied}${skipped}`,
+    ),
+  );
+}
+
 export async function updatePlanningSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
