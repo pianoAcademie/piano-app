@@ -4355,7 +4355,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 AdminClientPaymentOut(
                     id=booking.id,
                     source=credit_source,
-                    occurred_at=booking.cancelled_at or session_obj.start_at_utc,
+                    occurred_at=session_obj.start_at_utc,
                     label=credit_label,
                     status="PENDING",
                     amount_excl_vat=credit_amount_excl_vat,
