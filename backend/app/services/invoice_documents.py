@@ -711,7 +711,7 @@ def render_invoice_period_pdf(
             )
             title_x = left + logo_width + 12.0
         pdf.text(x=title_x, top_y=34.0, value=identity.company_name, size=20, bold=True, color=(1, 1, 1))
-        pdf.text(x=left, top_y=54.0, value="FACTURE", size=12, bold=True, color=(0.95, 0.78, 0.48))
+        pdf.text(x=title_x, top_y=54.0, value="FACTURE", size=12, bold=True, color=(0.95, 0.78, 0.48))
         pdf.text_right(
             right_x=right - 2.0,
             top_y=30.0,
@@ -726,20 +726,6 @@ def render_invoice_period_pdf(
             value=f"Date: {issued_at.strftime('%d/%m/%Y')}",
             size=10,
             color=(0.92, 0.93, 0.96),
-        )
-        pdf.text_right(
-            right_x=right - 2.0,
-            top_y=66.0,
-            value=_truncate_text(f"Client: {client_name}", 54),
-            size=10,
-            color=(0.92, 0.93, 0.96),
-        )
-        pdf.text_right(
-            right_x=right - 2.0,
-            top_y=82.0,
-            value=_truncate_text(f"ID client: {client_id}", 54),
-            size=9,
-            color=(0.82, 0.86, 0.91),
         )
 
         # Bloc societe emettrice
@@ -932,7 +918,7 @@ def render_invoice_period_pdf(
             total_to_pay_amount = Decimal(
                 normalized_total_to_pay_by_currency.get(currency_code, period_amount)
             ).quantize(Decimal("0.01"))
-            opening_label = f"Ancien soldes - {period_start_label}" if period_start_label else "Ancien soldes"
+            opening_label = f"Ancien Solde au {period_start_label}" if period_start_label else "Ancien Solde"
             pdf.text(x=col_label_x, top_y=current_row_top, value=opening_label, size=9)
             pdf.text_right(
                 right_x=totals_col_ttc_right,
