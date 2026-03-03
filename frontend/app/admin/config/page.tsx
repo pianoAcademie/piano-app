@@ -233,39 +233,6 @@ function activityModeLabel(mode: string): string {
   return "Tous";
 }
 
-function reminderOffsetLabel(hoursBeforeStart: number | null): string {
-  if (hoursBeforeStart === null) {
-    return "Global";
-  }
-  if (hoursBeforeStart === 0) {
-    return "Aucun";
-  }
-  if (hoursBeforeStart === 1) {
-    return "1h";
-  }
-  if (hoursBeforeStart === 24) {
-    return "1j";
-  }
-  if (hoursBeforeStart % 24 === 0) {
-    return `${hoursBeforeStart / 24}j`;
-  }
-  return `${hoursBeforeStart}h`;
-}
-
-function planningRuleOverrideLabel(value: number | null): string {
-    if (value === null) {
-    return "Global";
-  }
-  return String(value);
-}
-
-function planningRuleHoursLabel(value: number | null): string {
-  if (value === null) {
-    return "Global";
-  }
-  return `${value}h`;
-}
-
 function contractModeLabel(mode: string): string {
   const normalized = mode.trim().toUpperCase();
   if (normalized === "PRESENTIEL") {
@@ -2246,7 +2213,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   <h3>Activites existantes</h3>
                   <small className="muted">{activities.length} activite(s)</small>
                 </div>
-                <p className="muted">Cliquez une activite pour ouvrir sa fiche de modification.</p>
+                <p className="muted">La liste affiche uniquement les informations essentielles. Ouvrez Modifier pour voir tous les parametres.</p>
                 {activities.length === 0 ? (
                   <p className="muted">Aucune activite dans le referentiel.</p>
                 ) : (
@@ -2260,31 +2227,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <span className="activity-row-color" style={{ backgroundColor: activity.color_hex }} aria-hidden />
                         <div className="activity-row-main">
                           <strong>{activity.name}</strong>
+                          <small className="muted">
+                            {activity.code} · {activity.credit_type_name ?? "Type credit non mappe"} · {activityModeLabel(activity.mode)} ·{" "}
+                            {activity.duration_minutes} min
+                          </small>
                           <small className="muted">{activity.description || "Sans description"}</small>
                         </div>
                         <div className="activity-row-meta">
-                          <span className="status-pill status-off">{activity.code}</span>
-                          <span className="status-pill status-off">{activity.credit_type_name ?? "Type credit non mappe"}</span>
-                          <span className="status-pill status-warn">{activityModeLabel(activity.mode)}</span>
-                          <span className="status-pill status-ok">{activity.duration_minutes} min</span>
-                          <span className="status-pill status-off">
-                            Rappel email: {reminderOffsetLabel(activity.email_reminder_hours_before_start)}
-                          </span>
-                          <span className="status-pill status-off">
-                            Rappel SMS: {reminderOffsetLabel(activity.sms_reminder_hours_before_start)}
-                          </span>
-                          <span className="status-pill status-off">
-                            Min resa: {planningRuleHoursLabel(activity.min_booking_notice_hours_override)}
-                          </span>
-                          <span className="status-pill status-off">
-                            Delai annulation: {planningRuleHoursLabel(activity.cancellation_deadline_hours_override)}
-                          </span>
-                          <span className="status-pill status-off">
-                            Auto if {"<"} {planningRuleOverrideLabel(activity.auto_cancel_if_booked_less_than_override)}
-                          </span>
-                          <span className="status-pill status-off">
-                            Auto Xh: {planningRuleHoursLabel(activity.auto_cancel_hours_before_start_override)}
-                          </span>
                           <span className="status-pill status-warn">
                             {activity.default_course_rate_ttc
                               ? `${activity.default_course_rate_ttc} ${accountDefaultCurrency}/cours TTC`
@@ -2292,7 +2241,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 ? `${activity.default_hourly_rate} ${accountDefaultCurrency}/h TTC`
                                 : "Tarif TTC non defini"}
                           </span>
-                          <span className="status-pill status-off">Cap. max {activity.default_capacity}</span>
                           <span className={`status-pill ${activity.active ? "status-ok" : "status-warn"}`}>
                             {activity.active ? "Active" : "Inactive"}
                           </span>
