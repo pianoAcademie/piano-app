@@ -255,6 +255,11 @@ button.danger {
   gap: 4px;
 }
 
+.agenda-event-shell {
+  display: grid;
+  gap: 4px;
+}
+
 .agenda-more-link {
   display: inline-flex;
   align-items: center;
@@ -323,6 +328,61 @@ button.danger {
   line-height: 1.05;
 }
 
+.agenda-event-hover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-height 0.15s ease, opacity 0.15s ease;
+}
+
+.agenda-event-shell:hover .agenda-event-hover-actions,
+.agenda-event-shell:focus-within .agenda-event-hover-actions {
+  max-height: 120px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agenda-event-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #d2b184;
+  background: #fff2dd;
+  color: #5a3b16;
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agenda-event-action.icon {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.agenda-event-action:hover {
+  background: #f2d6ab;
+}
+
+.agenda-event-action.danger {
+  border-color: #ce8b8b;
+  background: #fbe5e5;
+  color: #7c1914;
+}
+
+.agenda-event-action.danger:hover {
+  background: #f2c9c9;
+}
+
 .agenda-event-completed {
   background: #eceff3;
   border-color: #c9d1da;
@@ -377,6 +437,12 @@ button.danger {
   .agenda-grid-month,
   .agenda-grid-week {
     grid-template-columns: 1fr;
+  }
+
+  .agenda-event-hover-actions {
+    max-height: 120px;
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
@@ -498,6 +564,7 @@ button.danger {
 }
 
 .agenda-event-link {
+  display: block;
   text-decoration: none;
   color: inherit;
 }
@@ -980,6 +1047,25 @@ button.danger {
   background: #f6f8fb;
 }
 
+.message-full-text {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  background: #fffdf9;
+  border: 1px solid #dce3eb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.message-html-preview {
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid #dce3eb;
+  border-radius: 8px;
+  background: #fffdf9;
+  overflow-wrap: anywhere;
+}
+
 .sort-link {
   color: inherit;
   text-decoration: none;
@@ -1418,6 +1504,10 @@ button.danger {
   display: none;
 }
 
+.session-edit-form:has(input[name="is_all_day"]:checked) .session-time-field {
+  display: none;
+}
+
 .create-session-toggle {
   width: 100%;
   min-height: 46px;
@@ -1569,6 +1659,14 @@ button.danger {
 
 .recurrence-panel:has(input[name="recurrence_mode"][value="RECURRING"]:checked) .recurrence-settings {
   display: grid;
+}
+
+.invoice-range-form .invoice-auto-options {
+  display: none;
+}
+
+.invoice-range-form:has(select[name="generation_mode"] option[value="AUTO"]:checked) .invoice-auto-options {
+  display: contents;
 }
 
 .session-bookings-summary-list {
@@ -2007,6 +2105,41 @@ button.danger {
   cursor: pointer;
 }
 
+.rich-message-toolbar select {
+  border: 1px solid #d6c3a8;
+  border-radius: 8px;
+  background: #fff;
+  color: #3b2e1d;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-weight: 600;
+}
+
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.toolbar-color-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #5a4325;
+}
+
+.toolbar-color-field input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #d6c3a8;
+  border-radius: 6px;
+  background: #fff;
+}
+
 .rich-message-surface {
   min-height: 260px;
   padding: 10px;
@@ -2017,6 +2150,10 @@ button.danger {
 
 .rich-message-surface:focus {
   box-shadow: inset 0 0 0 1px #d9b98a;
+}
+
+.hidden-file-input {
+  display: none;
 }
 
 .client-create-modal {

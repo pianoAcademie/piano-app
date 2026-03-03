@@ -59,6 +59,36 @@ def _public_base_url(db: Session) -> str:
     return f"https://{website.rstrip('/')}"
 
 
+def _resolve_activity_reminder_hours(db: Session, *, course_type_id: UUID, channel: str) -> int:
+    if channel == "SMS":
+        setting_key = "sms_reminder_hours_before_start"
+        default_hours = 1
+        attribute_name = "sms_reminder_hours_before_start"
+    else:
+        setting_key = "reminder_hours_before_start"
+        default_hours = 24
+        attribute_name = "email_reminder_hours_before_start"
+
+    fallback = get_setting_int(db, setting_key, default_hours)
+    if fallback < 0:
+        fallback = default_hours
+
+    course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
+    if course_type is None:
+        return fallback
+
+    raw_override = getattr(course_type, attribute_name, None)
+    if raw_override is None:
+        return fallback
+    try:
+        override = int(raw_override)
+    except (TypeError, ValueError):
+        return fallback
+    if override < 0:
+        return fallback
+    return override
+
+
 def ensure_booking_reminder(
     db: Session,
     *,
@@ -69,7 +99,11 @@ def ensure_booking_reminder(
     if booking.status != BookingStatus.BOOKED:
         return None
 
-    reminder_hours = get_setting_int(db, "reminder_hours_before_start", 24)
+    reminder_hours = _resolve_activity_reminder_hours(
+        db,
+        course_type_id=session_obj.course_type_id,
+        channel="EMAIL",
+    )
     scheduled_for = session_obj.start_at_utc - timedelta(hours=reminder_hours)
 
     reminder = db.scalar(

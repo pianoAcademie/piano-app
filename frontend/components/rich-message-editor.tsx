@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type MessageBodyFormat = "TEXT" | "HTML";
+type EditorMode = "TEXT" | "WYSIWYG" | "HTML_SOURCE";
 
 type RichMessageEditorProps = {
   name: string;
@@ -64,71 +65,107 @@ function htmlToPlainText(value: string): string {
   return decoder.value.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("File read failed"));
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function RichMessageEditor({
   name,
   formatName = "body_format",
   defaultValue,
-  defaultFormat = "TEXT",
+  defaultFormat = "HTML",
   placeholder,
   rows = 12,
   maxLength,
 }: RichMessageEditorProps) {
   const initialFormat = useMemo(() => normalizeFormat(defaultFormat), [defaultFormat]);
   const initialValue = defaultValue ?? "";
+  const initialEditorValue = useMemo(() => {
+    if (initialFormat === "HTML") {
+      return initialValue;
+    }
+    return looksLikeHtml(initialValue) ? initialValue : plainTextToHtml(initialValue);
+  }, [initialFormat, initialValue]);
 
-  const [format, setFormat] = useState<MessageBodyFormat>(initialFormat);
-  const [value, setValue] = useState(initialValue);
-  const [sourceMode, setSourceMode] = useState(false);
+  const [mode, setMode] = useState<EditorMode>("WYSIWYG");
+  const [value, setValue] = useState(initialEditorValue);
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (format !== "HTML" || sourceMode || !editorRef.current) {
+    if (mode !== "WYSIWYG" || !editorRef.current) {
       return;
     }
     if (editorRef.current.innerHTML !== value) {
       editorRef.current.innerHTML = value;
     }
-  }, [format, sourceMode, value]);
+  }, [mode, value]);
 
-  const switchToTextView = () => {
-    if (format === "HTML") {
-      setSourceMode(false);
+  const updateValue = (next: string) => {
+    if (maxLength && next.length > maxLength) {
+      setValue(next.slice(0, maxLength));
       return;
     }
-    setFormat("TEXT");
-    setSourceMode(false);
+    setValue(next);
   };
 
-  const switchToHtmlSource = () => {
-    if (format === "HTML") {
-      setSourceMode(true);
+  const switchToTextMode = () => {
+    if (mode === "TEXT") {
       return;
     }
-    setValue(looksLikeHtml(value) ? value : plainTextToHtml(value));
-    setFormat("HTML");
-    setSourceMode(true);
+    updateValue(htmlToPlainText(value));
+    setMode("TEXT");
   };
 
-  const convertHtmlToPlainText = () => {
-    if (format !== "HTML") {
+  const switchToWysiwygMode = () => {
+    if (mode === "WYSIWYG") {
       return;
     }
-    setValue(htmlToPlainText(value));
-    setFormat("TEXT");
-    setSourceMode(false);
+    if (mode === "TEXT") {
+      updateValue(looksLikeHtml(value) ? value : plainTextToHtml(value));
+    }
+    setMode("WYSIWYG");
   };
 
-  const applyCommand = (command: string) => {
-    if (format !== "HTML" || sourceMode || !editorRef.current) {
+  const switchToHtmlSourceMode = () => {
+    if (mode === "HTML_SOURCE") {
+      return;
+    }
+    if (mode === "TEXT") {
+      updateValue(looksLikeHtml(value) ? value : plainTextToHtml(value));
+    } else if (editorRef.current) {
+      updateValue(editorRef.current.innerHTML);
+    }
+    setMode("HTML_SOURCE");
+  };
+
+  const applyCommand = (command: string, commandValue?: string) => {
+    if (mode !== "WYSIWYG" || !editorRef.current) {
       return;
     }
     editorRef.current.focus();
-    document.execCommand(command, false);
-    setValue(editorRef.current.innerHTML);
+    document.execCommand("styleWithCSS", false);
+    document.execCommand(command, false, commandValue);
+    updateValue(editorRef.current.innerHTML);
+  };
+
+  const insertHtmlAtCursor = (html: string) => {
+    if (mode !== "WYSIWYG" || !editorRef.current) {
+      return;
+    }
+    editorRef.current.focus();
+    document.execCommand("insertHTML", false, html);
+    updateValue(editorRef.current.innerHTML);
   };
 
   const insertLink = () => {
-    if (format !== "HTML" || sourceMode || !editorRef.current) {
+    if (mode !== "WYSIWYG" || !editorRef.current) {
       return;
     }
     const href = window.prompt("URL du lien (https://...)");
@@ -137,36 +174,102 @@ export default function RichMessageEditor({
     }
     editorRef.current.focus();
     document.execCommand("createLink", false, href);
-    setValue(editorRef.current.innerHTML);
+    updateValue(editorRef.current.innerHTML);
+  };
+
+  const insertImageUrl = () => {
+    if (mode !== "WYSIWYG") {
+      return;
+    }
+    const src = window.prompt("URL de l image (https://...)");
+    if (!src) {
+      return;
+    }
+    applyCommand("insertImage", src);
+  };
+
+  const insertAttachmentFromFile = async (file: File | null) => {
+    if (!file || mode !== "WYSIWYG") {
+      return;
+    }
+    const dataUrl = await readFileAsDataUrl(file);
+    const safeName = escapeHtml(file.name || "fichier");
+    insertHtmlAtCursor(`<a href="${dataUrl}" download="${safeName}" target="_blank" rel="noreferrer">📎 ${safeName}</a>`);
+  };
+
+  const insertImageFromFile = async (file: File | null) => {
+    if (!file || mode !== "WYSIWYG") {
+      return;
+    }
+    const dataUrl = await readFileAsDataUrl(file);
+    const safeName = escapeHtml(file.name || "image");
+    insertHtmlAtCursor(`<img src="${dataUrl}" alt="${safeName}" style="max-width:100%;height:auto;" />`);
+  };
+
+  const currentFormat: MessageBodyFormat = mode === "TEXT" ? "TEXT" : "HTML";
+
+  const showWysiwygToolbar = mode === "WYSIWYG";
+  const showTextArea = mode === "TEXT";
+  const showHtmlSource = mode === "HTML_SOURCE";
+
+  const switchToSize = (size: string) => {
+    if (!size) {
+      return;
+    }
+    applyCommand("fontSize", size);
+  };
+
+  const switchToFont = (font: string) => {
+    if (!font) {
+      return;
+    }
+    applyCommand("fontName", font);
+  };
+
+  const applyForeColor = (color: string) => {
+    if (!color) {
+      return;
+    }
+    applyCommand("foreColor", color);
+  };
+
+  const applyHighlightColor = (color: string) => {
+    if (!color) {
+      return;
+    }
+    applyCommand("hiliteColor", color);
+    applyCommand("backColor", color);
   };
 
   return (
     <div className="rich-message-editor">
       <div className="rich-message-editor-top">
-        <div className="segmented-inline" role="tablist" aria-label="Format du message">
+        <div className="segmented-inline" role="tablist" aria-label="Mode de l editeur">
           <button
             type="button"
-            className={format === "TEXT" || (format === "HTML" && !sourceMode) ? "active" : ""}
-            onClick={switchToTextView}
+            className={mode === "WYSIWYG" ? "active" : ""}
+            onClick={switchToWysiwygMode}
           >
-            {format === "HTML" ? "Apercu" : "Texte"}
+            Editeur
           </button>
           <button
             type="button"
-            className={format === "HTML" && sourceMode ? "active" : ""}
-            onClick={switchToHtmlSource}
+            className={mode === "HTML_SOURCE" ? "active" : ""}
+            onClick={switchToHtmlSourceMode}
           >
             HTML
           </button>
-        </div>
-        {format === "HTML" ? (
-          <button type="button" className="ghost compact" onClick={convertHtmlToPlainText}>
-            Convertir en texte brut
+          <button
+            type="button"
+            className={mode === "TEXT" ? "active" : ""}
+            onClick={switchToTextMode}
+          >
+            Texte
           </button>
-        ) : null}
+        </div>
       </div>
 
-      {format === "TEXT" ? (
+      {showTextArea ? (
         <textarea
           className="rich-message-textarea"
           rows={rows}
@@ -174,9 +277,9 @@ export default function RichMessageEditor({
           value={value}
           maxLength={maxLength}
           placeholder={placeholder}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => updateValue(event.target.value)}
         />
-      ) : sourceMode ? (
+      ) : showHtmlSource ? (
         <textarea
           className="rich-message-textarea rich-message-source"
           rows={rows}
@@ -184,20 +287,68 @@ export default function RichMessageEditor({
           value={value}
           maxLength={maxLength}
           placeholder={placeholder}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => updateValue(event.target.value)}
         />
       ) : (
         <div className="rich-message-shell">
-          <div className="rich-message-toolbar" aria-label="Outils de mise en forme">
-            <button type="button" onClick={() => applyCommand("bold")}>B</button>
-            <button type="button" onClick={() => applyCommand("italic")}>I</button>
-            <button type="button" onClick={() => applyCommand("underline")}>U</button>
-            <button type="button" onClick={() => applyCommand("insertUnorderedList")}>UL</button>
-            <button type="button" onClick={() => applyCommand("insertOrderedList")}>1.</button>
-            <button type="button" onClick={insertLink}>Lien</button>
-            <button type="button" onClick={() => applyCommand("undo")}>↶</button>
-            <button type="button" onClick={() => applyCommand("redo")}>↷</button>
-          </div>
+          {showWysiwygToolbar ? (
+            <div className="rich-message-toolbar" aria-label="Outils de mise en forme">
+              <div className="toolbar-group">
+                <button type="button" onClick={() => applyCommand("bold")}>B</button>
+                <button type="button" onClick={() => applyCommand("italic")}>I</button>
+                <button type="button" onClick={() => applyCommand("underline")}>U</button>
+              </div>
+
+              <div className="toolbar-group">
+                <button type="button" onClick={() => applyCommand("insertUnorderedList")}>• Liste</button>
+                <button type="button" onClick={() => applyCommand("insertOrderedList")}>1. Liste</button>
+              </div>
+
+              <div className="toolbar-group">
+                <select defaultValue="" onChange={(event) => switchToFont(event.target.value)}>
+                  <option value="" disabled>Police</option>
+                  <option value="Arial">Arial</option>
+                  <option value="'Avenir Next'">Avenir Next</option>
+                  <option value="'Times New Roman'">Times New Roman</option>
+                  <option value="Georgia">Georgia</option>
+                  <option value="'Courier New'">Courier New</option>
+                </select>
+                <select defaultValue="" onChange={(event) => switchToSize(event.target.value)}>
+                  <option value="" disabled>Taille</option>
+                  <option value="1">10</option>
+                  <option value="2">12</option>
+                  <option value="3">14</option>
+                  <option value="4">16</option>
+                  <option value="5">18</option>
+                  <option value="6">24</option>
+                  <option value="7">32</option>
+                </select>
+              </div>
+
+              <div className="toolbar-group">
+                <label className="toolbar-color-field">
+                  Texte
+                  <input type="color" defaultValue="#111111" onChange={(event) => applyForeColor(event.target.value)} />
+                </label>
+                <label className="toolbar-color-field">
+                  Surligner
+                  <input type="color" defaultValue="#fff176" onChange={(event) => applyHighlightColor(event.target.value)} />
+                </label>
+              </div>
+
+              <div className="toolbar-group">
+                <button type="button" onClick={insertLink}>Lien</button>
+                <button type="button" onClick={insertImageUrl}>Image URL</button>
+                <button type="button" onClick={() => imageFileInputRef.current?.click()}>Image fichier</button>
+                <button type="button" onClick={() => attachmentFileInputRef.current?.click()}>Ajouter fichier</button>
+              </div>
+
+              <div className="toolbar-group">
+                <button type="button" onClick={() => applyCommand("undo")}>↶</button>
+                <button type="button" onClick={() => applyCommand("redo")}>↷</button>
+              </div>
+            </div>
+          ) : null}
           <div
             ref={editorRef}
             className="rich-message-surface"
@@ -205,14 +356,36 @@ export default function RichMessageEditor({
             suppressContentEditableWarning
             onInput={(event) => {
               const next = (event.currentTarget as HTMLDivElement).innerHTML;
-              setValue(maxLength && next.length > maxLength ? next.slice(0, maxLength) : next);
+              updateValue(next);
             }}
           />
         </div>
       )}
 
+      <input
+        ref={imageFileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden-file-input"
+        onChange={async (event) => {
+          const file = event.currentTarget.files?.[0] ?? null;
+          await insertImageFromFile(file);
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={attachmentFileInputRef}
+        type="file"
+        className="hidden-file-input"
+        onChange={async (event) => {
+          const file = event.currentTarget.files?.[0] ?? null;
+          await insertAttachmentFromFile(file);
+          event.currentTarget.value = "";
+        }}
+      />
+
       <input type="hidden" name={name} value={value} />
-      <input type="hidden" name={formatName} value={format} />
+      <input type="hidden" name={formatName} value={currentFormat} />
     </div>
   );
 }

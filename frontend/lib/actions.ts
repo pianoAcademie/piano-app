@@ -1,5 +1,6 @@
 "use server";
 
+import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -12,6 +13,7 @@ import type {
   AdminClientPasswordEmailTemplateOut,
   AdminRangeInvoiceEmailOut,
   AdminRangeInvoiceOut,
+  AdminClientPaymentOut,
   AdminCreditTypeOut,
   AdminFormulaOut,
   AdminMessagingSettingsOut,
@@ -29,6 +31,7 @@ import type {
   AdminProfessorContractGridOut,
   AdminProfessorContractOut,
   AdminProfessorRateOut,
+  AdminProfessorSalaryPaymentOut,
   AdminProfessorUpdateResult,
   AdminSubscriptionSettingsOut,
   AdminConfigAccountOut,
@@ -328,6 +331,30 @@ function parseNonNegativeInt(raw: string): number | null {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 0) {
     return null;
+  }
+  return parsed;
+}
+
+function parseReminderHoursOverride(raw: string): number | null | "INVALID" {
+  const value = raw.trim();
+  if (!value || value.toLowerCase() === "global") {
+    return null;
+  }
+  const parsed = parseNonNegativeInt(value);
+  if (parsed === null) {
+    return "INVALID";
+  }
+  return parsed;
+}
+
+function parseOptionalPlanningRuleOverride(raw: string): number | null | "INVALID" {
+  const value = raw.trim();
+  if (!value || value.toLowerCase() === "global") {
+    return null;
+  }
+  const parsed = parseNonNegativeInt(value);
+  if (parsed === null) {
+    return "INVALID";
   }
   return parsed;
 }
@@ -1073,12 +1100,21 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
   const end_time = String(formData.get("end_time") ?? "");
+  const duration_minutes_raw = String(formData.get("duration_minutes") ?? "").trim();
+  const duration_minutes = duration_minutes_raw ? parsePositiveInt(duration_minutes_raw) : null;
   const start_at_utc = parseUtcFromDateAndTimeInTimezone(start_date, is_all_day ? "00:00" : start_time, session_timezone);
-  const end_at_utc = is_all_day
+  const parsed_end_at_utc = is_all_day
     ? null
     : end_time.trim()
       ? parseUtcFromDateAndTimeInTimezone(start_date, end_time, session_timezone)
       : null;
+  let end_at_utc = parsed_end_at_utc;
+  if (!is_all_day && !end_at_utc && start_at_utc && duration_minutes !== null) {
+    const startMs = Date.parse(start_at_utc);
+    if (Number.isFinite(startMs)) {
+      end_at_utc = new Date(startMs + duration_minutes * 60000).toISOString();
+    }
+  }
 
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const parsed_capacity_max = parseNonNegativeInt(capacity_raw);
@@ -1092,8 +1128,24 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     redirect(appendQueryMessage(returnTo, "error", "Heure de debut obligatoire"));
   }
 
-  if (!is_all_day && end_time.trim() && !end_at_utc) {
+  if (!is_all_day && end_time.trim() && !parsed_end_at_utc) {
     redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+  }
+
+  if (!is_all_day && duration_minutes_raw && duration_minutes === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Duree invalide"));
+  }
+
+  if (!is_all_day && !parsed_end_at_utc && duration_minutes === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Heure de fin ou duree obligatoire"));
+  }
+
+  if (!is_all_day && start_at_utc && end_at_utc) {
+    const startMs = Date.parse(start_at_utc);
+    const endMs = Date.parse(end_at_utc);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+    }
   }
 
   if (!capacity_raw.trim() || parsed_capacity_max === null || capacity_max < 0) {
@@ -1189,24 +1241,77 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
+  const recurrence_mode = String(formData.get("recurrence_mode") ?? "NONE").trim().toUpperCase();
+  const recurrence_frequency = String(formData.get("recurrence_frequency") ?? "WEEKLY").trim().toUpperCase();
+  const recurrence_interval_raw = String(formData.get("recurrence_interval") ?? "1").trim();
+  const recurrence_interval = parsePositiveInt(recurrence_interval_raw);
+  const recurrence_until_date = String(formData.get("recurrence_until_date") ?? "").trim();
 
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
   const end_time = String(formData.get("end_time") ?? "");
+  const duration_minutes_raw = String(formData.get("duration_minutes") ?? "").trim();
+  const duration_minutes = duration_minutes_raw ? parsePositiveInt(duration_minutes_raw) : null;
   const start_at_utc = parseUtcFromDateAndTimeInTimezone(start_date, is_all_day ? "00:00" : start_time, session_timezone);
-  const end_at_utc = is_all_day ? null : parseUtcFromDateAndTimeInTimezone(start_date, end_time, session_timezone);
+  const parsed_end_at_utc = is_all_day ? null : parseUtcFromDateAndTimeInTimezone(start_date, end_time, session_timezone);
+  let end_at_utc = parsed_end_at_utc;
+  if (!is_all_day && !end_at_utc && start_at_utc && duration_minutes !== null) {
+    const startMs = Date.parse(start_at_utc);
+    if (Number.isFinite(startMs)) {
+      end_at_utc = new Date(startMs + duration_minutes * 60000).toISOString();
+    }
+  }
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const capacity_max = parseNonNegativeInt(capacity_raw);
 
   if (!session_id || !title || !start_at_utc || !course_type_id || !location_id || !professor_id) {
     redirect(appendQueryMessage(returnTo, "error", "Champs de modification invalides"));
   }
-  if (!is_all_day && !end_at_utc) {
+  if (!is_all_day && !start_time.trim()) {
+    redirect(appendQueryMessage(returnTo, "error", "Heure de debut obligatoire"));
+  }
+
+  if (!is_all_day && end_time.trim() && !parsed_end_at_utc) {
     redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+  }
+
+  if (!is_all_day && duration_minutes_raw && duration_minutes === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Duree invalide"));
+  }
+
+  if (!is_all_day && !parsed_end_at_utc && duration_minutes === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Heure de fin ou duree obligatoire"));
+  }
+
+  if (!is_all_day && start_at_utc && end_at_utc) {
+    const startMs = Date.parse(start_at_utc);
+    const endMs = Date.parse(end_at_utc);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+    }
   }
 
   if (capacity_raw.trim() && capacity_max === null) {
     redirect(appendQueryMessage(returnTo, "error", "Capacite max invalide"));
+  }
+
+  const recurrenceEnabled = recurrence_mode === "RECURRING";
+  if (recurrenceEnabled) {
+    if (apply_scope !== "ONE") {
+      redirect(appendQueryMessage(returnTo, "error", "Conversion en recurrence: portee 'Ce creneau' requise"));
+    }
+    if (!(recurrence_frequency === "DAILY" || recurrence_frequency === "WEEKLY" || recurrence_frequency === "MONTHLY")) {
+      redirect(appendQueryMessage(returnTo, "error", "Frequence de recurrence invalide"));
+    }
+    if (recurrence_interval === null || recurrence_interval < 1) {
+      redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence invalide"));
+    }
+    if (recurrence_interval !== 1) {
+      redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence > 1 pas encore supporte"));
+    }
+    if (!recurrence_until_date) {
+      redirect(appendQueryMessage(returnTo, "error", "Choisir une date de fin de recurrence"));
+    }
   }
 
   const payload: Record<string, unknown> = {
@@ -1239,6 +1344,12 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     if (status === "CANCELLED") {
       payload.cancel_reason = "ADMIN_CANCELLED";
     }
+  }
+  if (recurrenceEnabled) {
+    payload.recurrence = {
+      frequency: recurrence_frequency,
+      until_date: recurrence_until_date,
+    };
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -1312,6 +1423,56 @@ export async function shiftAdminSessionAction(formData: FormData): Promise<void>
 
   revalidatePath("/admin");
   redirect(appendQueryMessage(returnTo, "ok", "Creneau decale"));
+}
+
+export async function duplicateAdminSessionAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin");
+
+  const session_id = String(formData.get("session_id") ?? "").trim();
+  const target_date = String(formData.get("target_date") ?? "").trim();
+  const target_time = String(formData.get("target_time") ?? "").trim();
+  const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
+  const parsedScope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
+  const apply_scope: "ONE" | "SERIES_FUTURE" = parsedScope === "SERIES_FUTURE" ? "SERIES_FUTURE" : "ONE";
+  const target_start_at_utc = parseUtcFromDateAndTimeInTimezone(target_date, target_time, session_timezone);
+
+  if (!session_id || !target_start_at_utc) {
+    redirect(appendQueryMessage(returnTo, "error", "Duplication invalide (date/heure cible)"));
+  }
+
+  const result = await backendRequest<{
+    processed_sessions: number;
+    duplicated_bookings: number;
+  }>(
+    `/api/v1/admin/sessions/${session_id}/duplicate?apply_scope=${apply_scope}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        target_start_at_utc,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  const successPath = removeQueryParam(returnTo, "duplicate");
+  redirect(
+    appendQueryMessage(
+      successPath,
+      "ok",
+      `Creneau duplique (${result.data.processed_sessions} creneau(x), ${result.data.duplicated_bookings} eleve(s))`,
+    ),
+  );
 }
 
 export async function cancelAdminSessionAction(formData: FormData): Promise<void> {
@@ -1642,6 +1803,79 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
   redirect(appendQueryMessage(returnTo, "ok", "Note eleve enregistree"));
 }
 
+export async function adminSendSessionBroadcastAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin");
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const channelRaw = String(formData.get("channel") ?? "EMAIL").trim().toUpperCase();
+  const channel = channelRaw === "SMS" ? "SMS" : "EMAIL";
+  const audienceRaw = String(formData.get("audience") ?? "STUDENTS").trim().toUpperCase();
+  const audience =
+    audienceRaw === "PARENTS" || audienceRaw === "STUDENTS_AND_PARENTS" || audienceRaw === "STUDENTS"
+      ? audienceRaw
+      : "STUDENTS";
+  const subject = optionalField(formData, "subject");
+  const body = String(formData.get("body") ?? "").trim();
+  const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+  const includedStudentIds = parseStringList(formData.getAll("included_student_ids"));
+  const ccEmails = emailListField(formData, "cc_emails") ?? [];
+  const ccPhoneNumbers = emailListField(formData, "cc_phone_numbers") ?? [];
+
+  if (!sessionId || !body || includedStudentIds.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Session, sujet/message invalides"));
+  }
+  if (channel === "EMAIL" && !subject) {
+    redirect(appendQueryMessage(returnTo, "error", "Sujet obligatoire pour un email"));
+  }
+
+  const result = await backendRequest<{
+    channel: "EMAIL" | "SMS";
+    recipient_count: number;
+    cc_count: number;
+    skipped_count: number;
+    details: string[];
+  }>(
+    `/api/v1/admin/sessions/${sessionId}/broadcast`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        channel,
+        audience,
+        included_student_ids: includedStudentIds,
+        subject,
+        body,
+        body_format: bodyFormat,
+        cc_emails: ccEmails,
+        cc_phone_numbers: ccPhoneNumbers,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  const successPath = removeQueryParam(returnTo, "message");
+  const channelLabel = result.data.channel === "SMS" ? "SMS" : "Email";
+  const copied = result.data.cc_count > 0 ? ` + ${result.data.cc_count} copie(s)` : "";
+  const skipped = result.data.skipped_count > 0 ? ` (${result.data.skipped_count} ignore(s))` : "";
+  redirect(
+    appendQueryMessage(
+      successPath,
+      "ok",
+      `${channelLabel} envoye: ${result.data.recipient_count} destinataire(s)${copied}${skipped}`,
+    ),
+  );
+}
+
 export async function updatePlanningSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -1848,6 +2082,93 @@ export async function adminClientActionPlaceholder(formData: FormData): Promise<
   }
 
   redirect(`/admin/clients/${clientId}?ok=${encodeURIComponent(actionName + " en preparation")}`);
+}
+
+export async function sendAdminClientMessageAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const toRecipientsChecked = parseStringList(formData.getAll("to_emails"));
+  const toRecipientsFree = emailListField(formData, "to_emails_free") ?? [];
+  const ccRecipientsChecked = parseStringList(formData.getAll("cc_emails"));
+  const ccRecipientsFree = emailListField(formData, "cc_emails_free") ?? [];
+  const sendCopyToSelf = parseCheckboxFlag(formData, "send_copy_to_self", false);
+  const mergeUniqueEmails = (values: string[]): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of values) {
+      const value = String(raw || "").trim();
+      if (!value) {
+        continue;
+      }
+      const key = value.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(value);
+    }
+    return out;
+  };
+  const toRecipients = mergeUniqueEmails([...toRecipientsChecked, ...toRecipientsFree]);
+  const ccRecipients = mergeUniqueEmails([...ccRecipientsChecked, ...ccRecipientsFree]);
+  const subject = String(formData.get("subject") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  const bodyFormatRaw = String(formData.get("body_format") ?? "HTML").trim().toUpperCase();
+  const bodyFormat = bodyFormatRaw === "TEXT" ? "TEXT" : "HTML";
+  const source = optionalField(formData, "source");
+  const messagesMonthsRaw = String(formData.get("messages_months") ?? "").trim();
+  const messagesMonths = messagesMonthsRaw === "6" || messagesMonthsRaw === "12" ? messagesMonthsRaw : "3";
+  const messagesQuery = String(formData.get("messages_q") ?? "").trim();
+  const messageSearch = new URLSearchParams({
+    tab: "messages",
+    messages_months: messagesMonths,
+  });
+  if (messagesQuery) {
+    messageSearch.set("messages_q", messagesQuery);
+  }
+
+  if (!clientId) {
+    redirect("/admin/clients?error=Client%20invalide");
+  }
+
+  if (!subject || !body) {
+    messageSearch.set("message_modal", "compose");
+    messageSearch.set("error", "Objet et message obligatoires");
+    redirect(`/admin/clients/${clientId}?${messageSearch.toString()}`);
+  }
+
+  const result = await backendRequest<{ sent_at: string; to_recipients: string[]; cc_recipients: string[]; message_ids: string[] }>(
+    `/api/v1/admin/clients/${clientId}/messages/email`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        to_emails: toRecipients,
+        cc_emails: ccRecipients,
+        send_copy_to_self: sendCopyToSelf,
+        subject,
+        body,
+        body_format: bodyFormat,
+        source,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    messageSearch.set("message_modal", "compose");
+    messageSearch.set("error", result.message);
+    redirect(`/admin/clients/${clientId}?${messageSearch.toString()}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  messageSearch.set("ok", "Message envoye");
+  redirect(`/admin/clients/${clientId}?${messageSearch.toString()}`);
 }
 
 export async function sendAdminClientPasswordAction(formData: FormData): Promise<void> {
@@ -2205,16 +2526,19 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
     loyalty_discount_per_hour_ttc: string;
     family_discount_per_hour_ttc: string;
     short_commitment_supplement_per_hour_ttc: string;
+    second_course_weekly_discount_per_hour_ttc: string;
   }> = [];
   for (const rowKey of rowKeys) {
     const courseTypeId = String(formData.get(`forfait_course_type_id_${rowKey}`) ?? "").trim();
     const loyaltyRaw = String(formData.get(`forfait_loyalty_discount_per_hour_ttc_${rowKey}`) ?? "").trim();
     const familyRaw = String(formData.get(`forfait_family_discount_per_hour_ttc_${rowKey}`) ?? "").trim();
     const shortCommitmentRaw = String(formData.get(`forfait_short_commitment_supplement_per_hour_ttc_${rowKey}`) ?? "").trim();
+    const secondCourseWeeklyRaw = String(formData.get(`forfait_second_course_weekly_discount_per_hour_ttc_${rowKey}`) ?? "").trim();
     const loyalty = loyaltyRaw ? parseNonNegativeDecimal(loyaltyRaw.replace(",", ".")) : 0;
     const family = familyRaw ? parseNonNegativeDecimal(familyRaw.replace(",", ".")) : 0;
     const shortCommitment = shortCommitmentRaw ? parseNonNegativeDecimal(shortCommitmentRaw.replace(",", ".")) : 0;
-    if (!courseTypeId || loyalty === null || family === null || shortCommitment === null) {
+    const secondCourseWeekly = secondCourseWeeklyRaw ? parseNonNegativeDecimal(secondCourseWeeklyRaw.replace(",", ".")) : 0;
+    if (!courseTypeId || loyalty === null || family === null || shortCommitment === null || secondCourseWeekly === null) {
       redirect(
         `/admin/clients/${clientId}?tab=fiche&subscription_modal=forfait_pricing&subscription_id=${subscriptionId}&error=Valeurs%20tarifaires%20invalides`,
       );
@@ -2224,6 +2548,7 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
       loyalty_discount_per_hour_ttc: loyalty.toFixed(2),
       family_discount_per_hour_ttc: family.toFixed(2),
       short_commitment_supplement_per_hour_ttc: shortCommitment.toFixed(2),
+      second_course_weekly_discount_per_hour_ttc: secondCourseWeekly.toFixed(2),
     });
   }
 
@@ -2740,11 +3065,28 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   const vatRate = parseNonNegativeDecimal(vatRateRaw);
   const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
   const customReference = optionalField(formData, "reference");
-  const resolvedReference = customReference ?? (paymentMethodCode ? `MODE:${paymentMethodCode}` : null);
-
   if (!clientId) {
     redirect("/admin/clients?error=Client%20invalide");
   }
+  const reconciledInvoiceNoteIdsRaw = formData
+    .getAll("reconciled_invoice_note_ids")
+    .map((entry) => String(entry ?? "").trim())
+    .filter((entry) => entry.length > 0);
+  const reconciledInvoiceNoteIds: string[] = [];
+  const seenReconciledInvoiceNoteIds = new Set<string>();
+  for (const rawId of reconciledInvoiceNoteIdsRaw) {
+    const parsedId = parseUuid(rawId);
+    if (!parsedId) {
+      redirect(`/admin/clients/${clientId}?tab=paiements&error=Facture%20a%20rapprocher%20invalide`);
+    }
+    if (seenReconciledInvoiceNoteIds.has(parsedId)) {
+      continue;
+    }
+    seenReconciledInvoiceNoteIds.add(parsedId);
+    reconciledInvoiceNoteIds.push(parsedId);
+  }
+  const markReconciledInvoicesPaid = parseCheckboxFlag(formData, "mark_reconciled_invoices_paid", false);
+  const sendReceiptEmail = parseCheckboxFlag(formData, "send_receipt_email", false);
   if (!["PAYMENT", "REFUND", "CHARGE", "DISCOUNT"].includes(transactionType)) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Type%20de%20transaction%20invalide`);
   }
@@ -2768,11 +3110,15 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         label: optionalField(formData, "label"),
         description: optionalField(formData, "description"),
         category: optionalField(formData, "category"),
-        reference: resolvedReference,
+        reference: customReference,
+        payment_method_code: paymentMethodCode,
         student_id: optionalField(formData, "student_id"),
         amount_incl_vat: amountInclVat,
         vat_rate: vatRate,
         currency: optionalField(formData, "currency"),
+        reconciled_invoice_note_ids: reconciledInvoiceNoteIds,
+        mark_reconciled_invoices_paid: markReconciledInvoicesPaid,
+        send_receipt_email: sendReceiptEmail,
       }),
     },
     token,
@@ -2784,6 +3130,93 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
 
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20ajoutee`);
+}
+
+export async function updateAdminClientManualTransactionAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const transactionId = String(formData.get("transaction_id") ?? "").trim();
+  const amountRaw = String(formData.get("amount_incl_vat") ?? "").trim().replace(",", ".");
+  const vatRateRaw = String(formData.get("vat_rate") ?? "").trim().replace(",", ".");
+  const occurredAtRaw = String(formData.get("occurred_at") ?? "").trim();
+  const occurredAt = occurredAtRaw ? parseUtcStartOfDate(occurredAtRaw) : null;
+  const amountInclVat = parseNonNegativeDecimal(amountRaw);
+  const vatRate = vatRateRaw ? parseNonNegativeDecimal(vatRateRaw) : null;
+  const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
+
+  if (!clientId || !transactionId) {
+    redirect("/admin/clients?error=Transaction%20invalide");
+  }
+  if (amountInclVat === null || amountInclVat <= 0) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Montant%20invalide`);
+  }
+  if (vatRateRaw && (vatRate === null || vatRate < 0 || vatRate > 100)) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
+  }
+  if (occurredAtRaw && !occurredAt) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Date%20invalide`);
+  }
+
+  const result = await backendRequest<AdminClientPaymentOut>(
+    `/api/v1/admin/clients/${clientId}/manual-transactions/${transactionId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        occurred_at: occurredAt,
+        label: optionalField(formData, "label"),
+        description: optionalField(formData, "description"),
+        category: optionalField(formData, "category"),
+        reference: optionalField(formData, "reference"),
+        student_id: optionalField(formData, "student_id"),
+        amount_incl_vat: amountInclVat,
+        vat_rate: vatRate ?? undefined,
+        currency: optionalField(formData, "currency"),
+        payment_method_code: paymentMethodCode,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20mise%20a%20jour`);
+}
+
+export async function deleteAdminClientManualTransactionAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const transactionId = String(formData.get("transaction_id") ?? "").trim();
+  if (!clientId || !transactionId) {
+    redirect("/admin/clients?error=Transaction%20invalide");
+  }
+
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/clients/${clientId}/manual-transactions/${transactionId}`,
+    {
+      method: "DELETE",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20supprimee`);
 }
 
 export async function createAdminClientAction(formData: FormData): Promise<void> {
@@ -3554,6 +3987,63 @@ export async function sendAdminCollaboratorsMessageAction(formData: FormData): P
   );
 }
 
+function parseMoneyInput(raw: string): string | null {
+  const normalized = raw.trim().replace(",", ".");
+  if (!normalized) {
+    return null;
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+export async function createAdminCollaboratorSalaryPaymentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminReturnPath(formData, "/admin/salary-payments");
+  const professorId = String(formData.get("professor_id") ?? "").trim();
+  const referenceDate = String(formData.get("reference_date") ?? "").trim();
+  const paymentDate = String(formData.get("payment_date") ?? "").trim();
+  const invoiceNumber = String(formData.get("invoice_number") ?? "").trim();
+  const paymentMethodRaw = String(formData.get("payment_method") ?? "BANK_TRANSFER").trim().toUpperCase();
+  const paymentMethod = paymentMethodRaw === "CHEQUE" || paymentMethodRaw === "CASH" ? paymentMethodRaw : "BANK_TRANSFER";
+  const amountExclVat = parseMoneyInput(String(formData.get("amount_excl_vat") ?? ""));
+  const amountInclVat = parseMoneyInput(String(formData.get("amount_incl_vat") ?? ""));
+
+  if (!professorId || !referenceDate || !paymentDate || !invoiceNumber || !amountExclVat || !amountInclVat) {
+    redirect(appendQueryMessage(returnTo, "error", "Numero facture, montants HT/TTC, dates et collaborateur obligatoires"));
+  }
+
+  const result = await backendRequest<AdminProfessorSalaryPaymentOut>(
+    `/api/v1/admin/collaborators/${professorId}/salary-payments`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        reference_date: referenceDate,
+        payment_date: paymentDate,
+        invoice_number: invoiceNumber,
+        payment_method: paymentMethod,
+        amount_excl_vat: amountExclVat,
+        amount_incl_vat: amountInclVat,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/professors");
+  revalidatePath("/admin/salary-payments");
+  redirect(appendQueryMessage(returnTo, "ok", "Paiement collaborateur enregistre"));
+}
+
 export async function updateAdminCollaboratorProfileAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -4014,9 +4504,23 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
   const defaultHourlyRateRaw = String(formData.get("default_hourly_rate") ?? "").trim();
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
+  const defaultCourseRateRaw = String(formData.get("default_course_rate_ttc") ?? "").trim();
+  const defaultCourseRate = parseNonNegativeDecimal(defaultCourseRateRaw);
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
+  const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
+  const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
+  const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
+  const cancellationDeadlineHoursOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("cancellation_deadline_hours_override") ?? ""),
+  );
+  const autoCancelIfBookedLessThanOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("auto_cancel_if_booked_less_than_override") ?? ""),
+  );
+  const autoCancelHoursBeforeStartOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("auto_cancel_hours_before_start_override") ?? ""),
+  );
 
   if (!name) {
     redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
@@ -4033,6 +4537,27 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
     redirect("/admin/config?section=activities&error=Taux%20horaire%20par%20defaut%20invalide");
   }
+  if (defaultCourseRateRaw && defaultCourseRate === null) {
+    redirect("/admin/config?section=activities&error=Tarif%20par%20cours%20invalide");
+  }
+  if (emailReminderHours === "INVALID") {
+    redirect("/admin/config?section=activities&error=Rappel%20email%20invalide");
+  }
+  if (smsReminderHours === "INVALID") {
+    redirect("/admin/config?section=activities&error=Rappel%20SMS%20invalide");
+  }
+  if (minBookingNoticeHoursOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Delai%20minimum%20reservation%20invalide");
+  }
+  if (cancellationDeadlineHoursOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Delai%20annulation%20invalide");
+  }
+  if (autoCancelIfBookedLessThanOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20inscrits%20invalide");
+  }
+  if (autoCancelHoursBeforeStartOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20heures%20invalide");
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -4044,6 +4569,13 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     mode,
     default_capacity: defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
+    default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
+    email_reminder_hours_before_start: emailReminderHours,
+    sms_reminder_hours_before_start: smsReminderHours,
+    min_booking_notice_hours_override: minBookingNoticeHoursOverride,
+    cancellation_deadline_hours_override: cancellationDeadlineHoursOverride,
+    auto_cancel_if_booked_less_than_override: autoCancelIfBookedLessThanOverride,
+    auto_cancel_hours_before_start_override: autoCancelHoursBeforeStartOverride,
     active: checkboxField(formData, "active"),
   };
   if (code) {
@@ -4090,9 +4622,23 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
   const defaultHourlyRateRaw = String(formData.get("default_hourly_rate") ?? "").trim();
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
+  const defaultCourseRateRaw = String(formData.get("default_course_rate_ttc") ?? "").trim();
+  const defaultCourseRate = parseNonNegativeDecimal(defaultCourseRateRaw);
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
+  const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
+  const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
+  const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
+  const cancellationDeadlineHoursOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("cancellation_deadline_hours_override") ?? ""),
+  );
+  const autoCancelIfBookedLessThanOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("auto_cancel_if_booked_less_than_override") ?? ""),
+  );
+  const autoCancelHoursBeforeStartOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("auto_cancel_hours_before_start_override") ?? ""),
+  );
 
   if (!name) {
     redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
@@ -4109,6 +4655,27 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
     redirect("/admin/config?section=activities&error=Taux%20horaire%20par%20defaut%20invalide");
   }
+  if (defaultCourseRateRaw && defaultCourseRate === null) {
+    redirect("/admin/config?section=activities&error=Tarif%20par%20cours%20invalide");
+  }
+  if (emailReminderHours === "INVALID") {
+    redirect("/admin/config?section=activities&error=Rappel%20email%20invalide");
+  }
+  if (smsReminderHours === "INVALID") {
+    redirect("/admin/config?section=activities&error=Rappel%20SMS%20invalide");
+  }
+  if (minBookingNoticeHoursOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Delai%20minimum%20reservation%20invalide");
+  }
+  if (cancellationDeadlineHoursOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Delai%20annulation%20invalide");
+  }
+  if (autoCancelIfBookedLessThanOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20inscrits%20invalide");
+  }
+  if (autoCancelHoursBeforeStartOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20heures%20invalide");
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -4121,6 +4688,13 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     mode,
     default_capacity: defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
+    default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
+    email_reminder_hours_before_start: emailReminderHours,
+    sms_reminder_hours_before_start: smsReminderHours,
+    min_booking_notice_hours_override: minBookingNoticeHoursOverride,
+    cancellation_deadline_hours_override: cancellationDeadlineHoursOverride,
+    auto_cancel_if_booked_less_than_override: autoCancelIfBookedLessThanOverride,
+    auto_cancel_hours_before_start_override: autoCancelHoursBeforeStartOverride,
     active: checkboxField(formData, "active"),
   };
 
@@ -4273,6 +4847,23 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
 
   await ensureAdmin(token);
 
+  let logoDataUrl = String(formData.get("logo_data_url") ?? "").trim();
+  const clearLogo = checkboxField(formData, "clear_logo");
+  const rawLogoFile = formData.get("logo_file");
+  if (clearLogo) {
+    logoDataUrl = "";
+  } else if (rawLogoFile instanceof File && rawLogoFile.size > 0) {
+    const contentType = String(rawLogoFile.type || "").trim().toLowerCase();
+    if (contentType !== "image/jpeg" && contentType !== "image/jpg") {
+      redirect("/admin/config?section=params-account&error=Le%20logo%20doit%20etre%20au%20format%20JPEG");
+    }
+    if (rawLogoFile.size > 1024 * 1024) {
+      redirect("/admin/config?section=params-account&error=Le%20logo%20depasse%201%20Mo");
+    }
+    const buffer = Buffer.from(await rawLogoFile.arrayBuffer());
+    logoDataUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+  }
+
   const payload = {
     contact_first_name: String(formData.get("contact_first_name") ?? "").trim(),
     contact_last_name: String(formData.get("contact_last_name") ?? "").trim(),
@@ -4291,6 +4882,7 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
     allowed_currencies: parseStringList(formData.getAll("allowed_currencies")).map((code) => code.toUpperCase()),
     default_currency: String(formData.get("default_currency") ?? "EUR").trim().toUpperCase(),
     legal_terms: String(formData.get("legal_terms") ?? "").trim(),
+    logo_data_url: logoDataUrl,
   };
 
   const result = await backendRequest<AdminConfigAccountOut>(
@@ -4590,14 +5182,23 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   const title = String(formData.get("title") ?? "").trim();
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
   const primaryLocationId = parseUuid(String(formData.get("primary_location_id") ?? ""));
-  const priceExclVat = parseNonNegativeDecimal(String(formData.get("price_excl_vat") ?? ""));
+  const priceExclVatInput = parseNonNegativeDecimal(String(formData.get("price_excl_vat") ?? ""));
   const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
-  const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
-  const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
+  const vatRateInput = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? ""));
+  const reserveStockInput = parseNonNegativeInt(String(formData.get("reserve_stock") ?? ""));
+  const vatRate = vatRateInput ?? 20;
+  const reserveStock = reserveStockInput ?? 0;
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
-  if (!title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Produit invalide (champs obligatoires)"));
+  const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
+  if (!title || !categoryId || priceInclVat === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Titre, categorie et prix TTC obligatoires"));
   }
+  const divisor = 1 + vatRate / 100;
+  if (!Number.isFinite(divisor) || divisor <= 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Taux TVA invalide"));
+  }
+  const computedPriceExclVat = Math.round((priceInclVat / divisor) * 100) / 100;
+  const priceExclVat = priceExclVatInput ?? computedPriceExclVat;
 
   const payload = {
     category_id: categoryId,
@@ -4607,12 +5208,13 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
     price_excl_vat: priceExclVat,
     price_incl_vat: priceInclVat,
     vat_rate: vatRate,
-    reserve_stock: reserveStock,
-    reorder_status: reorderStatus,
+    reserve_stock: isVirtual ? 0 : reserveStock,
+    reorder_status: isVirtual ? "NORMAL" : reorderStatus,
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
     web_link: optionalField(formData, "web_link"),
+    is_virtual: isVirtual,
     purchasable_online: checkboxField(formData, "purchasable_online"),
     is_public: checkboxFieldWithDefault(formData, "is_public", true),
     active: checkboxFieldWithDefault(formData, "active", true),
@@ -4631,7 +5233,9 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   }
   revalidatePath("/admin/config");
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Produit cree"));
+  let successPath = removeQueryParam(removeQueryParam(returnTo, "ok"), "error");
+  successPath = removeQueryParam(successPath, "add");
+  redirect(appendQueryMessage(successPath, "ok", "Produit cree"));
 }
 
 export async function updateAdminCatalogProductAction(formData: FormData): Promise<void> {
@@ -4651,6 +5255,7 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
+  const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
   if (!productId || !title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
     redirect(appendQueryMessage(returnTo, "error", "Produit invalide"));
   }
@@ -4663,12 +5268,13 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
     price_excl_vat: priceExclVat,
     price_incl_vat: priceInclVat,
     vat_rate: vatRate,
-    reserve_stock: reserveStock,
-    reorder_status: reorderStatus,
+    reserve_stock: isVirtual ? 0 : reserveStock,
+    reorder_status: isVirtual ? "NORMAL" : reorderStatus,
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
     web_link: optionalField(formData, "web_link"),
+    is_virtual: isVirtual,
     purchasable_online: checkboxField(formData, "purchasable_online"),
     is_public: checkboxFieldWithDefault(formData, "is_public", true),
     active: checkboxFieldWithDefault(formData, "active", true),

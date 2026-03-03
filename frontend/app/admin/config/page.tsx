@@ -117,6 +117,16 @@ const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
   { key: "params-messaging", label: "Messagerie" },
 ];
 
+const REMINDER_OFFSET_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "global", label: "Parametrage global (defaut systeme)" },
+  { value: "0", label: "Aucun rappel" },
+  { value: "1", label: "1 heure avant" },
+  { value: "2", label: "2 heures avant" },
+  { value: "3", label: "3 heures avant" },
+  { value: "24", label: "1 jour avant" },
+  { value: "48", label: "2 jours avant" },
+];
+
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
   if (Array.isArray(value)) {
@@ -221,6 +231,39 @@ function activityModeLabel(mode: string): string {
     return "Presentiel";
   }
   return "Tous";
+}
+
+function reminderOffsetLabel(hoursBeforeStart: number | null): string {
+  if (hoursBeforeStart === null) {
+    return "Global";
+  }
+  if (hoursBeforeStart === 0) {
+    return "Aucun";
+  }
+  if (hoursBeforeStart === 1) {
+    return "1h";
+  }
+  if (hoursBeforeStart === 24) {
+    return "1j";
+  }
+  if (hoursBeforeStart % 24 === 0) {
+    return `${hoursBeforeStart / 24}j`;
+  }
+  return `${hoursBeforeStart}h`;
+}
+
+function planningRuleOverrideLabel(value: number | null): string {
+    if (value === null) {
+    return "Global";
+  }
+  return String(value);
+}
+
+function planningRuleHoursLabel(value: number | null): string {
+  if (value === null) {
+    return "Global";
+  }
+  return `${value}h`;
 }
 
 function contractModeLabel(mode: string): string {
@@ -615,7 +658,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {!account ? (
                 <p className="muted">Impossible de charger les informations du compte.</p>
               ) : (
-                <form action={updateAdminConfigAccountAction} className="grid cols-2 config-form-grid">
+                <form action={updateAdminConfigAccountAction} className="grid cols-2 config-form-grid" encType="multipart/form-data">
                   <label>
                     Prenom
                     <input type="text" name="contact_first_name" defaultValue={account.contact_first_name} maxLength={100} />
@@ -659,6 +702,26 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   <label>
                     Site web
                     <input type="text" name="website" defaultValue={account.website} maxLength={255} />
+                  </label>
+
+                  <input type="hidden" name="logo_data_url" value={account.logo_data_url || ""} />
+                  <label className="span-2">
+                    Logo societe (JPEG, max 1 Mo)
+                    <input type="file" name="logo_file" accept="image/jpeg,image/jpg" />
+                    {account.logo_data_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={account.logo_data_url}
+                        alt="Logo societe"
+                        style={{ marginTop: 10, maxHeight: 64, width: "auto", border: "1px solid #d8c8ab", borderRadius: 8, padding: 6, background: "#fff" }}
+                      />
+                    ) : (
+                      <small className="muted">Aucun logo configure.</small>
+                    )}
+                  </label>
+                  <label className="checkline span-2">
+                    <input type="checkbox" name="clear_logo" value="on" />
+                    Supprimer le logo actuel
                   </label>
 
                   <label className="span-2">
@@ -1184,6 +1247,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     Lien web
                     <input type="url" name="web_link" />
                   </label>
+                  <fieldset className="span-2">
+                    <legend>Type de produit</legend>
+                    <label className="checkline">
+                      <input type="radio" name="is_virtual" value="false" defaultChecked />
+                      Physique (stock gere)
+                    </label>
+                    <label className="checkline">
+                      <input type="radio" name="is_virtual" value="true" />
+                      Virtuel (pas de stock)
+                    </label>
+                  </fieldset>
                   <label className="span-2">
                     Visuel (URL)
                     <input type="url" name="image_url" />
@@ -1224,10 +1298,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <strong>{product.title}</strong>
                             <p className="muted">
                               {product.category_name || "Sans categorie"} | TTC {formatMoney(product.price_incl_vat, "EUR")} | Stock global{" "}
-                              {product.stock_global_quantity}
+                              {product.is_virtual ? "n/a (virtuel)" : product.stock_global_quantity}
                             </p>
                           </div>
                           <div className="row">
+                            <span className="badge">Virtuel: {yesNoLabel(product.is_virtual)}</span>
                             <span className="badge">Online: {yesNoLabel(product.purchasable_online)}</span>
                             <span className="badge">Public: {yesNoLabel(product.is_public)}</span>
                             <span className="badge">Actif: {yesNoLabel(product.active)}</span>
@@ -1272,6 +1347,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               Lien web
                               <input type="url" name="web_link" defaultValue={product.web_link || ""} />
                             </label>
+                            <fieldset className="span-2">
+                              <legend>Type de produit</legend>
+                              <label className="checkline">
+                                <input type="radio" name="is_virtual" value="false" defaultChecked={!product.is_virtual} />
+                                Physique (stock gere)
+                              </label>
+                              <label className="checkline">
+                                <input type="radio" name="is_virtual" value="true" defaultChecked={product.is_virtual} />
+                                Virtuel (pas de stock)
+                              </label>
+                            </fieldset>
                             <label className="span-2">
                               Visuel (URL)
                               <input type="url" name="image_url" defaultValue={product.image_url || ""} />
@@ -2147,7 +2233,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </Link>
                 </div>
                 <p className="muted">
-                  Une activite definit le titre, la description, la duree, la couleur, la capacite maximum et le tarif horaire TTC.
+                  Une activite definit le titre, la description, la duree, la couleur, la capacite maximum et le tarif
+                  (horaire TTC ou par cours TTC).
                 </p>
                 {activeCreditTypes.length === 0 ? (
                   <p className="flash-err">Aucun type de credit actif: ajoutez/activez d abord un type de credit.</p>
@@ -2180,8 +2267,30 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <span className="status-pill status-off">{activity.credit_type_name ?? "Type credit non mappe"}</span>
                           <span className="status-pill status-warn">{activityModeLabel(activity.mode)}</span>
                           <span className="status-pill status-ok">{activity.duration_minutes} min</span>
+                          <span className="status-pill status-off">
+                            Rappel email: {reminderOffsetLabel(activity.email_reminder_hours_before_start)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Rappel SMS: {reminderOffsetLabel(activity.sms_reminder_hours_before_start)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Min resa: {planningRuleHoursLabel(activity.min_booking_notice_hours_override)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Delai annulation: {planningRuleHoursLabel(activity.cancellation_deadline_hours_override)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Auto if {"<"} {planningRuleOverrideLabel(activity.auto_cancel_if_booked_less_than_override)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Auto Xh: {planningRuleHoursLabel(activity.auto_cancel_hours_before_start_override)}
+                          </span>
                           <span className="status-pill status-warn">
-                            {activity.default_hourly_rate ? `${activity.default_hourly_rate} ${accountDefaultCurrency}/h TTC` : "Tarif TTC non defini"}
+                            {activity.default_course_rate_ttc
+                              ? `${activity.default_course_rate_ttc} ${accountDefaultCurrency}/cours TTC`
+                              : activity.default_hourly_rate
+                                ? `${activity.default_hourly_rate} ${accountDefaultCurrency}/h TTC`
+                                : "Tarif TTC non defini"}
                           </span>
                           <span className="status-pill status-off">Cap. max {activity.default_capacity}</span>
                           <span className={`status-pill ${activity.active ? "status-ok" : "status-warn"}`}>
@@ -2256,6 +2365,66 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <input type="number" name="default_capacity" min={1} max={500} defaultValue={8} required />
                         </label>
                         <label>
+                          Rappels par courriel
+                          <select name="email_reminder_hours_before_start" defaultValue="global">
+                            {REMINDER_OFFSET_OPTIONS.map((option) => (
+                              <option key={`activity-email-reminder-create-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Rappels SMS
+                          <select name="sms_reminder_hours_before_start" defaultValue="global">
+                            {REMINDER_OFFSET_OPTIONS.map((option) => (
+                              <option key={`activity-sms-reminder-create-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Delai minimum reservation (h)
+                          <input
+                            type="number"
+                            name="min_booking_notice_hours_override"
+                            min={0}
+                            step="1"
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Delai autorise pour annulation (h)
+                          <input
+                            type="number"
+                            name="cancellation_deadline_hours_override"
+                            min={0}
+                            step="1"
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Auto-annulation si inscrits {"<"}
+                          <input
+                            type="number"
+                            name="auto_cancel_if_booked_less_than_override"
+                            min={0}
+                            step="1"
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Auto-annulation X heures avant debut
+                          <input
+                            type="number"
+                            name="auto_cancel_hours_before_start_override"
+                            min={0}
+                            step="1"
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
                           Tarif horaire TTC
                           <input
                             type="number"
@@ -2263,6 +2432,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             min={0}
                             step="0.01"
                             placeholder="ex: 35.00"
+                          />
+                        </label>
+                        <label>
+                          Tarif par cours TTC
+                          <input
+                            type="number"
+                            name="default_course_rate_ttc"
+                            min={0}
+                            step="0.01"
+                            placeholder="ex: 200.00"
                           />
                         </label>
                         <label>
@@ -2365,6 +2544,100 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           />
                         </label>
                         <label>
+                          Rappels par courriel
+                          <select
+                            name="email_reminder_hours_before_start"
+                            defaultValue={
+                              selectedActivity.email_reminder_hours_before_start === null
+                                ? "global"
+                                : String(selectedActivity.email_reminder_hours_before_start)
+                            }
+                          >
+                            {selectedActivity.email_reminder_hours_before_start !== null &&
+                            !REMINDER_OFFSET_OPTIONS.some(
+                              (option) => option.value === String(selectedActivity.email_reminder_hours_before_start),
+                            ) ? (
+                              <option value={String(selectedActivity.email_reminder_hours_before_start)}>
+                                {selectedActivity.email_reminder_hours_before_start} heures avant (personnalise)
+                              </option>
+                            ) : null}
+                            {REMINDER_OFFSET_OPTIONS.map((option) => (
+                              <option key={`activity-email-reminder-update-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Rappels SMS
+                          <select
+                            name="sms_reminder_hours_before_start"
+                            defaultValue={
+                              selectedActivity.sms_reminder_hours_before_start === null
+                                ? "global"
+                                : String(selectedActivity.sms_reminder_hours_before_start)
+                            }
+                          >
+                            {selectedActivity.sms_reminder_hours_before_start !== null &&
+                            !REMINDER_OFFSET_OPTIONS.some(
+                              (option) => option.value === String(selectedActivity.sms_reminder_hours_before_start),
+                            ) ? (
+                              <option value={String(selectedActivity.sms_reminder_hours_before_start)}>
+                                {selectedActivity.sms_reminder_hours_before_start} heures avant (personnalise)
+                              </option>
+                            ) : null}
+                            {REMINDER_OFFSET_OPTIONS.map((option) => (
+                              <option key={`activity-sms-reminder-update-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Delai minimum reservation (h)
+                          <input
+                            type="number"
+                            name="min_booking_notice_hours_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedActivity.min_booking_notice_hours_override ?? ""}
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Delai autorise pour annulation (h)
+                          <input
+                            type="number"
+                            name="cancellation_deadline_hours_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedActivity.cancellation_deadline_hours_override ?? ""}
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Auto-annulation si inscrits {"<"}
+                          <input
+                            type="number"
+                            name="auto_cancel_if_booked_less_than_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedActivity.auto_cancel_if_booked_less_than_override ?? ""}
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Auto-annulation X heures avant debut
+                          <input
+                            type="number"
+                            name="auto_cancel_hours_before_start_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedActivity.auto_cancel_hours_before_start_override ?? ""}
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
                           Tarif horaire TTC
                           <input
                             type="number"
@@ -2373,6 +2646,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             step="0.01"
                             defaultValue={selectedActivity.default_hourly_rate ?? ""}
                             placeholder="ex: 35.00"
+                          />
+                        </label>
+                        <label>
+                          Tarif par cours TTC
+                          <input
+                            type="number"
+                            name="default_course_rate_ttc"
+                            min={0}
+                            step="0.01"
+                            defaultValue={selectedActivity.default_course_rate_ttc ?? ""}
+                            placeholder="ex: 200.00"
                           />
                         </label>
                         <label>

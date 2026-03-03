@@ -49,6 +49,13 @@ export type CourseTypeOut = {
   mode: string;
   default_capacity: number;
   default_hourly_rate: string | null;
+  default_course_rate_ttc: string | null;
+  email_reminder_hours_before_start: number | null;
+  sms_reminder_hours_before_start: number | null;
+  min_booking_notice_hours_override: number | null;
+  cancellation_deadline_hours_override: number | null;
+  auto_cancel_if_booked_less_than_override: number | null;
+  auto_cancel_hours_before_start_override: number | null;
   active: boolean;
 };
 
@@ -224,6 +231,7 @@ export type AdminClientSubscriptionOut = {
     loyalty_discount_per_hour_ttc: string;
     family_discount_per_hour_ttc: string;
     short_commitment_supplement_per_hour_ttc: string;
+    second_course_weekly_discount_per_hour_ttc: string;
     effective_hourly_rate_ttc: string | null;
   }>;
   last_payment_at: string | null;
@@ -271,15 +279,22 @@ export type AdminClientBookingOut = {
 
 export type AdminClientMessageOut = {
   id: string;
-  booking_id: string;
-  session_id: string;
-  session_title: string;
+  booking_id: string | null;
+  session_id: string | null;
+  session_title: string | null;
+  channel: "EMAIL" | "SMS";
+  source: string | null;
+  recipient: string | null;
   scheduled_for_utc: string;
   sent_at: string | null;
-  status: "PENDING" | "SENT" | "FAILED" | "SKIPPED" | string;
+  status: string;
   provider_message_id: string | null;
   error_message: string | null;
   subject_preview: string;
+  body_preview: string | null;
+  body_full: string | null;
+  body_format: "TEXT" | "HTML";
+  can_forward: boolean;
 };
 
 export type AdminClientPaymentOut = {
@@ -296,8 +311,18 @@ export type AdminClientPaymentOut = {
   reference: string | null;
   invoice_number: string | null;
   invoice_status: string | null;
+  invoice_note_id: string | null;
   refunded_at: string | null;
   refund_reason: string | null;
+  payment_method_code: string | null;
+  payment_method_label: string | null;
+  manual_transaction_type: string | null;
+  student_user_id: string | null;
+  description: string | null;
+  category: string | null;
+  can_edit: boolean;
+  can_cancel: boolean;
+  locked_by_invoice_number: string | null;
 };
 
 export type AdminClientManualCreditOut = {
@@ -669,6 +694,26 @@ export type AdminProfessorPayoutLedgerOut = {
   rows: AdminProfessorPayoutLedgerRowOut[];
 };
 
+export type SalaryPaymentMethod = "BANK_TRANSFER" | "CHEQUE" | "CASH";
+
+export type AdminProfessorSalaryPaymentOut = {
+  id: string;
+  professor_id: string;
+  professor_first_name: string;
+  professor_last_name: string;
+  professor_email: string;
+  reference_date: string;
+  payment_date: string;
+  invoice_number: string;
+  payment_method: SalaryPaymentMethod;
+  amount_excl_vat: string;
+  amount_incl_vat: string;
+  currency_code: string;
+  settled_payout_count: number;
+  actor_user_id: string | null;
+  created_at: string;
+};
+
 export type AdminProfessorContractLocationOptionOut = {
   code: string;
   label: string;
@@ -910,6 +955,7 @@ export type AdminConfigAccountOut = {
   allowed_currencies: string[];
   default_currency: string;
   legal_terms: string;
+  logo_data_url: string;
 };
 
 export type AdminSubscriptionSettingsOut = {
@@ -966,6 +1012,7 @@ export type AdminCatalogProductOut = {
   short_description: string | null;
   long_description: string | null;
   web_link: string | null;
+  is_virtual: boolean;
   purchasable_online: boolean;
   is_public: boolean;
   active: boolean;
@@ -1238,6 +1285,13 @@ export type AdminActivityOut = {
   mode: "ONLINE" | "ONSITE" | "ANY" | string;
   default_capacity: number;
   default_hourly_rate: string | null;
+  default_course_rate_ttc: string | null;
+  email_reminder_hours_before_start: number | null;
+  sms_reminder_hours_before_start: number | null;
+  min_booking_notice_hours_override: number | null;
+  cancellation_deadline_hours_override: number | null;
+  auto_cancel_if_booked_less_than_override: number | null;
+  auto_cancel_hours_before_start_override: number | null;
   active: boolean;
 };
 

@@ -158,6 +158,7 @@ def _product_out(
         short_description=row.short_description,
         long_description=row.long_description,
         web_link=row.web_link,
+        is_virtual=bool(row.is_virtual),
         purchasable_online=bool(row.purchasable_online),
         is_public=bool(row.is_public),
         active=bool(row.active),
@@ -279,6 +280,7 @@ def _request_out(db: Session, row: ProductRequest) -> AdminCatalogRequestOut:
     )
 
     student = users.get(row.student_user_id)
+    is_virtual = bool(product.is_virtual) if product is not None else False
     return AdminCatalogRequestOut(
         id=row.id,
         student_user_id=row.student_user_id,
@@ -305,8 +307,8 @@ def _request_out(db: Session, row: ProductRequest) -> AdminCatalogRequestOut:
         delivery_marked_by_name=_display_name(users.get(row.delivery_marked_by_user_id)),
         delivery_marked_at=row.delivery_marked_at,
         note=row.note,
-        stock_real_quantity=(int(stock.real_quantity) if stock is not None else None),
-        stock_estimated_quantity=(int(stock.estimated_quantity) if stock is not None else None),
+        stock_real_quantity=(None if is_virtual else (int(stock.real_quantity) if stock is not None else None)),
+        stock_estimated_quantity=(None if is_virtual else (int(stock.estimated_quantity) if stock is not None else None)),
     )
 
 
@@ -458,6 +460,7 @@ def create_admin_catalog_product(
         _require_location(db, payload.primary_location_id)
 
     now = utcnow()
+    is_virtual = bool(payload.is_virtual)
     row = CatalogProduct(
         category_id=payload.category_id,
         primary_location_id=payload.primary_location_id,
@@ -466,13 +469,14 @@ def create_admin_catalog_product(
         price_excl_vat=Decimal(payload.price_excl_vat).quantize(Decimal("0.01")),
         price_incl_vat=Decimal(payload.price_incl_vat).quantize(Decimal("0.01")),
         vat_rate=Decimal(payload.vat_rate).quantize(Decimal("0.001")),
-        reserve_stock=max(int(payload.reserve_stock or 0), 0),
-        reorder_status=payload.reorder_status,
+        reserve_stock=(0 if is_virtual else max(int(payload.reserve_stock or 0), 0)),
+        reorder_status=(ProductReorderStatus.NORMAL if is_virtual else payload.reorder_status),
         reorder_status_updated_at=now,
         image_url=normalize_optional(payload.image_url),
         short_description=normalize_optional(payload.short_description),
         long_description=normalize_optional(payload.long_description),
         web_link=normalize_optional(payload.web_link),
+        is_virtual=is_virtual,
         purchasable_online=payload.purchasable_online,
         is_public=payload.is_public,
         active=payload.active,
@@ -481,8 +485,9 @@ def create_admin_catalog_product(
     db.add(row)
     db.flush()
 
-    ensure_product_stock_rows(db, product_id=row.id)
-    recalculate_product_global_stock(db, product_id=row.id)
+    if not row.is_virtual:
+        ensure_product_stock_rows(db, product_id=row.id)
+        recalculate_product_global_stock(db, product_id=row.id)
     db.commit()
     db.refresh(row)
 
@@ -511,9 +516,11 @@ def update_admin_catalog_product(
     row.price_excl_vat = Decimal(payload.price_excl_vat).quantize(Decimal("0.01"))
     row.price_incl_vat = Decimal(payload.price_incl_vat).quantize(Decimal("0.01"))
     row.vat_rate = Decimal(payload.vat_rate).quantize(Decimal("0.001"))
-    row.reserve_stock = max(int(payload.reserve_stock or 0), 0)
-    if row.reorder_status != payload.reorder_status:
-        row.reorder_status = payload.reorder_status
+    row.is_virtual = bool(payload.is_virtual)
+    row.reserve_stock = 0 if row.is_virtual else max(int(payload.reserve_stock or 0), 0)
+    target_reorder_status = ProductReorderStatus.NORMAL if row.is_virtual else payload.reorder_status
+    if row.reorder_status != target_reorder_status:
+        row.reorder_status = target_reorder_status
         row.reorder_status_updated_at = utcnow()
     row.image_url = normalize_optional(payload.image_url)
     row.short_description = normalize_optional(payload.short_description)
@@ -524,8 +531,12 @@ def update_admin_catalog_product(
     row.active = payload.active
     row.updated_at = utcnow()
 
-    ensure_product_stock_rows(db, product_id=row.id)
-    recalculate_product_global_stock(db, product_id=row.id)
+    if row.is_virtual:
+        row.stock_global_quantity = 0
+        db.execute(delete(ProductLocationStock).where(ProductLocationStock.product_id == row.id))
+    else:
+        ensure_product_stock_rows(db, product_id=row.id)
+        recalculate_product_global_stock(db, product_id=row.id)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -710,7 +721,7 @@ def list_admin_catalog_stocks(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminCatalogStockOut]:
-    products = db.scalars(select(CatalogProduct).order_by(CatalogProduct.title.asc())).all()
+    products = db.scalars(select(CatalogProduct).where(CatalogProduct.is_virtual.is_(False)).order_by(CatalogProduct.title.asc())).all()
     if product_id is not None:
         products = [row for row in products if row.id == product_id]
     for product in products:
@@ -722,7 +733,11 @@ def list_admin_catalog_stocks(
     product_title_by_id = {row.id: row.title for row in products}
     location_name_by_id = {row.id: row.name for row in db.scalars(select(Location)).all()}
 
-    stmt = select(ProductLocationStock)
+    stmt = (
+        select(ProductLocationStock)
+        .join(CatalogProduct, CatalogProduct.id == ProductLocationStock.product_id)
+        .where(CatalogProduct.is_virtual.is_(False))
+    )
     if product_id is not None:
         stmt = stmt.where(ProductLocationStock.product_id == product_id)
     rows = db.scalars(stmt.order_by(ProductLocationStock.product_id.asc(), ProductLocationStock.location_id.asc())).all()
@@ -755,6 +770,8 @@ def update_admin_catalog_stock_inventory(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCatalogStockOut:
     product = _require_product(db, product_id)
+    if product.is_virtual:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Virtual products have no stock management")
     location = _require_location(db, location_id)
     row = reset_inventory_stock(
         db,
@@ -788,7 +805,7 @@ def list_admin_catalog_reorder_products(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminCatalogReorderProductOut]:
-    rows = db.scalars(select(CatalogProduct).order_by(CatalogProduct.title.asc())).all()
+    rows = db.scalars(select(CatalogProduct).where(CatalogProduct.is_virtual.is_(False)).order_by(CatalogProduct.title.asc())).all()
     for row in rows:
         ensure_product_stock_rows(db, product_id=row.id)
         recalculate_product_global_stock(db, product_id=row.id)
@@ -823,6 +840,8 @@ def update_admin_catalog_reorder_status(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCatalogReorderProductOut:
     row = _require_product(db, product_id)
+    if row.is_virtual:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Virtual products have no reorder workflow")
     row.reorder_status = payload.reorder_status
     row.reorder_status_updated_at = utcnow()
     row.updated_at = utcnow()
@@ -888,7 +907,9 @@ def create_admin_catalog_stock_transfer(
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCatalogStockTransferOut:
-    _require_product(db, payload.product_id)
+    product = _require_product(db, payload.product_id)
+    if product.is_virtual:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Virtual products have no stock transfer")
     _require_location(db, payload.source_location_id)
     _require_location(db, payload.target_location_id)
     if payload.assigned_to_user_id is not None:

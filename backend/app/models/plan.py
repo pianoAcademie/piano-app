@@ -287,6 +287,11 @@ class ClientForfaitActivityPricing(Base):
         nullable=False,
         server_default=text("0"),
     )
+    second_course_weekly_discount_per_hour_ttc: Mapped[float] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        server_default=text("0"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

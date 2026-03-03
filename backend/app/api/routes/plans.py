@@ -417,11 +417,6 @@ def purchase_plan(
         on_date=subscription_started_at.date(),
     )
     requires_online_checkout = amount_due > Decimal("0.00")
-    if requires_online_checkout and not _is_online_collection_method(method_code):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Cette offre doit etre reglee en ligne (CB/SEPA/PayPal)",
-        )
     should_start_pending = requires_online_checkout and _is_online_collection_method(method_code)
 
     if plan.kind == PlanKind.PACK:

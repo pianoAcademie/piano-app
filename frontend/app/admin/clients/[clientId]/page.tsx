@@ -15,8 +15,11 @@ import {
   adminPurchasePlanForClientAction,
   createAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
+  updateAdminClientManualTransactionAction,
+  deleteAdminClientManualTransactionAction,
   refundAdminClientPaymentAction,
   sendAdminClientRangeInvoiceEmailAction,
+  sendAdminClientMessageAction,
   sendAdminClientPasswordAction,
   setFamilyBillingRecipientAction,
   setupAdminClientSubscriptionBillingAction,
@@ -39,6 +42,7 @@ import {
   TIMEZONE_OPTIONS,
   labelFromOptions,
 } from "../../../../lib/reference-data";
+import ManualTransactionNonCashFlowFields from "../../../../components/manual-transaction-noncashflow-fields";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import type {
   AdminClientBookingOut,
@@ -52,6 +56,7 @@ import type {
   AdminRangeInvoiceEmailPreviewOut,
   AdminClientSubscriptionOut,
   AdminPaymentMethodsOut,
+  AdminCatalogProductOut,
   AdminProductCategoriesOut,
   PlanOut,
 } from "../../../../lib/types";
@@ -114,6 +119,14 @@ function formatDateOnly(value: string | null): string {
   });
 }
 
+function formatDateOnlyNumeric(value: string): string {
+  return new Date(value).toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 function formatDateInput(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
@@ -168,6 +181,14 @@ function formatDateInputLabel(value: string): string {
   });
 }
 
+function truncatePreview(value: string, maxLength = 100): string {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
+}
+
 function formatMoney(value: string | null | undefined, currency: string): string {
   const amount = Number(value ?? "0");
   return new Intl.NumberFormat("fr-FR", {
@@ -219,6 +240,9 @@ function billingMethodLabel(code: string | null): string {
   if (normalized === "PAYPAL") {
     return "PayPal";
   }
+  if (normalized === "FACTURATION_AUTO") {
+    return "Paiement sur facture";
+  }
   return code || "Non defini";
 }
 
@@ -229,6 +253,9 @@ function paymentSourceLabel(source: string): string {
   }
   if (normalized === "BOOKING") {
     return "Reservation";
+  }
+  if (normalized === "BOOKING_CREDIT") {
+    return "Avoir";
   }
   if (normalized === "MANUAL") {
     return "Manuel";
@@ -249,6 +276,9 @@ function paymentStatusLabel(status: string): string {
   }
   if (normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "NO_SHOW") {
     return "A facturer";
+  }
+  if (normalized === "INVOICED") {
+    return "Facturee";
   }
   if (normalized === "FAILED") {
     return "Echec";
@@ -316,6 +346,7 @@ const PENDING_PAYMENT_STATUSES = new Set([
   "BOOKED",
   "ATTENDED",
   "NO_SHOW",
+  "INVOICED",
 ]);
 const CANCELLED_PAYMENT_STATUSES = new Set(["CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"]);
 const ACTIVE_SUBSCRIPTION_BOOKING_STATUSES = new Set(["BOOKED", "WAITLISTED"]);
@@ -534,43 +565,12 @@ function rangeInvoiceTotalLabel(totalsByCurrency: Record<string, string>): strin
     .join(" | ");
 }
 
-function rangeInvoicePdfHref(clientId: string, payload: RangeInvoiceNotePayload, inline = false): string {
+function rangeInvoicePdfHref(clientId: string, noteId: string, inline = false): string {
   const params = new URLSearchParams({
-    payment_return_tab: "factures",
-    start_date: payload.start_date,
-    end_date: payload.end_date,
-    issued_date: payload.issued_date,
-    due_date: payload.due_date,
-    no_due_date: payload.no_due_date ? "true" : "false",
-    include_pending: payload.include_pending ? "true" : "false",
-    include_cancelled: payload.include_cancelled ? "true" : "false",
-    layout: payload.layout,
-    generation_mode: payload.generation_mode,
-    group_adjustments_by_type: payload.group_adjustments_by_type ? "true" : "false",
-    include_discount_adjustments: payload.include_discount_adjustments ? "true" : "false",
-    include_supplement_adjustments: payload.include_supplement_adjustments ? "true" : "false",
-    auto_period_scope: payload.auto_period_scope,
-    auto_frequency: payload.auto_frequency,
-    auto_repeat_every: String(payload.auto_repeat_every),
-    auto_layout_style: payload.auto_layout_style,
-    auto_include_previous_balance: payload.auto_include_previous_balance ? "true" : "false",
-    auto_send_email: payload.auto_send_email ? "true" : "false",
-    auto_exclude_pack_subscription_lines: payload.auto_exclude_pack_subscription_lines ? "true" : "false",
-    invoice_number: payload.invoice_number,
-    persist_note: "false",
-    invoice_status: payload.invoice_status,
     inline: inline ? "true" : "false",
+    payment_return_tab: "factures",
   });
-  if (payload.auto_cycle_start_date) {
-    params.set("auto_cycle_start_date", payload.auto_cycle_start_date);
-  }
-  if (payload.auto_footer_note) {
-    params.set("auto_footer_note", payload.auto_footer_note);
-  }
-  if (payload.public_note) {
-    params.set("public_note", payload.public_note);
-  }
-  return `/admin/clients/${clientId}/payments/invoice-range?${params.toString()}`;
+  return `/admin/clients/${clientId}/invoices/range/${noteId}/pdf?${params.toString()}`;
 }
 
 function rangeInvoiceStatusLabel(status: string): string {
@@ -629,6 +629,11 @@ function invoicesHref(clientId: string, params: Record<string, string>): string 
   return `/admin/clients/${clientId}?${search.toString()}`;
 }
 
+function messagesHref(clientId: string, params: Record<string, string>): string {
+  const search = new URLSearchParams({ tab: "messages", ...params });
+  return `/admin/clients/${clientId}?${search.toString()}`;
+}
+
 const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount"] as const;
 type ManualTransactionModalType = (typeof MANUAL_TRANSACTION_MODAL_TYPES)[number];
 
@@ -640,17 +645,88 @@ const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{ code: string; label: string }> = [
   { code: "PAYPAL", label: "PayPal" },
   { code: "SEPA_DEBIT", label: "Prelevement SEPA" },
   { code: "BANK_TRANSFER", label: "Virement bancaire" },
+  { code: "FACTURATION_AUTO", label: "Paiement sur facture" },
 ];
 
 function statusClass(status: string): string {
   const normalized = status.toUpperCase();
-  if (normalized === "ACTIVE" || normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "SENT" || normalized === "PAID") {
+  if (
+    normalized === "ACTIVE" ||
+    normalized === "BOOKED" ||
+    normalized === "ATTENDED" ||
+    normalized === "SENT" ||
+    normalized === "DELIVERED" ||
+    normalized === "PAID"
+  ) {
     return "status-ok";
   }
   if (normalized === "WAITLISTED" || normalized === "PENDING" || normalized === "TRIAL" || normalized === "FAILED") {
     return "status-warn";
   }
   return "status-off";
+}
+
+function messageStatusMeta(status: string, errorMessage?: string | null): { label: string; toneClass: string; helpText: string } {
+  const normalized = String(status || "").trim().toUpperCase();
+  const normalizedError = String(errorMessage || "").toLowerCase();
+  const looksLikeBounce =
+    normalized === "BOUNCED" ||
+    normalizedError.includes("bounce") ||
+    normalizedError.includes("bounced") ||
+    normalizedError.includes("undeliverable") ||
+    normalizedError.includes("mailbox unavailable");
+  if (normalized === "DELIVERED" || normalized === "SENT") {
+    return { label: "LIVRE", toneClass: "status-ok", helpText: "Message envoye." };
+  }
+  if (looksLikeBounce) {
+    return { label: "BOUNCE", toneClass: "status-warn", helpText: "Message rejete par la messagerie destinataire." };
+  }
+  if (normalized === "FAILED") {
+    return { label: "ECHEC", toneClass: "status-warn", helpText: "Echec d envoi." };
+  }
+  if (normalized === "SKIPPED") {
+    return {
+      label: "NON ENVOYE",
+      toneClass: "status-off",
+      helpText: "Skipped = envoi ignore (condition non remplie, mode LOG ou destinataire indisponible).",
+    };
+  }
+  if (normalized === "PENDING") {
+    return { label: "EN ATTENTE", toneClass: "status-warn", helpText: "Envoi en attente de traitement." };
+  }
+  return { label: normalized || "INCONNU", toneClass: statusClass(normalized || "INCONNU"), helpText: "Statut brut du provider." };
+}
+
+function buildForwardSubject(subject: string): string {
+  const normalized = String(subject || "").trim();
+  if (!normalized) {
+    return "TR: Message";
+  }
+  if (normalized.toUpperCase().startsWith("TR:")) {
+    return normalized;
+  }
+  return `TR: ${normalized}`;
+}
+
+function buildForwardBody(message: AdminClientMessageOut): string {
+  const dateLabel = formatDate(message.sent_at ?? message.scheduled_for_utc);
+  const statusLabel = messageStatusMeta(message.status, message.error_message).label;
+  const recipientLabel = message.recipient || "-";
+  const subjectLabel = message.subject_preview || "Message";
+  const content = message.body_full || message.body_preview || "";
+  if ((message.body_format || "TEXT").toUpperCase() === "HTML") {
+    return `<p><strong>Message transfere</strong></p>
+<p><strong>Date:</strong> ${dateLabel}<br><strong>Statut:</strong> ${statusLabel}<br><strong>Destinataire:</strong> ${recipientLabel}<br><strong>Sujet:</strong> ${subjectLabel}</p>
+<hr>
+${content}`;
+  }
+  return `Message transfere
+Date: ${dateLabel}
+Statut: ${statusLabel}
+Destinataire: ${recipientLabel}
+Sujet: ${subjectLabel}
+
+${content}`;
 }
 
 function paymentStatusClass(status: string): string {
@@ -718,6 +794,11 @@ function planKindLabel(kind: string): string {
   return "Abonnement";
 }
 
+function contactDisplayLabel(firstName: string | null | undefined, lastName: string | null | undefined, email: string): string {
+  const name = [String(firstName || "").trim(), String(lastName || "").trim()].filter(Boolean).join(" ").trim();
+  return name ? `${name} <${email}>` : email;
+}
+
 export default async function AdminClientDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
   const token = cookies().get("access_token")?.value;
   if (!token) {
@@ -750,6 +831,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const purchasePaymentMethod = readParam(searchParams, "purchase_payment_method").toUpperCase();
   const purchaseDiscountedTotalRaw = readParam(searchParams, "purchase_discounted_total").replace(",", ".");
   const purchaseStartDateRaw = readParam(searchParams, "purchase_start_date").trim();
+  const noteModalAction = readParam(searchParams, "note_modal").toLowerCase();
+  const noteModalId = readParam(searchParams, "note_id");
   const purchaseReturnTab = parseTab(readParam(searchParams, "purchase_return_tab") || currentTab);
   const paymentReturnTab = parseTab(paymentReturnTabRaw || currentTab);
   const balanceDateParam = readParam(searchParams, "balance_date");
@@ -757,6 +840,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const paymentFilterAmountRaw = readParam(searchParams, "payment_filter_amount").trim();
   const paymentFilterAmount = parseAmountFilter(paymentFilterAmountRaw);
   const hasPaymentFilters = paymentFilterQuery.length > 0 || paymentFilterAmount !== null;
+  const messageModalAction = readParam(searchParams, "message_modal").toLowerCase();
+  const messageModalId = readParam(searchParams, "message_id");
+  const messageQuery = readParam(searchParams, "messages_q").trim();
+  const messageMonthsRaw = readParam(searchParams, "messages_months").trim();
+  const messageMonths = messageMonthsRaw === "6" || messageMonthsRaw === "12" ? Number.parseInt(messageMonthsRaw, 10) : 3;
+  const messageApiSearch = new URLSearchParams({ months: String(messageMonths) });
+  if (messageQuery) {
+    messageApiSearch.set("q", messageQuery);
+  }
+  const messagesApiPath = `/api/v1/admin/clients/${params.clientId}/messages?${messageApiSearch.toString()}`;
 
   const [
     clientResult,
@@ -766,6 +859,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     messagesResult,
     paymentsResult,
     productCategoriesResult,
+    catalogProductsResult,
     paymentMethodsResult,
     familyResult,
     allClientsResult,
@@ -777,9 +871,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
     backendRequest<AdminClientSubscriptionOut[]>(`/api/v1/admin/clients/${params.clientId}/subscriptions`, {}, token),
     backendRequest<AdminClientBookingOut[]>(`/api/v1/admin/clients/${params.clientId}/bookings`, {}, token),
-    backendRequest<AdminClientMessageOut[]>(`/api/v1/admin/clients/${params.clientId}/messages`, {}, token),
+    backendRequest<AdminClientMessageOut[]>(messagesApiPath, {}, token),
     backendRequest<AdminClientPaymentOut[]>(`/api/v1/admin/clients/${params.clientId}/payments`, {}, token),
     backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
+    backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
     backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${params.clientId}/family`, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
@@ -848,6 +943,27 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         errors.push(`product_categories: ${productCategoriesResult.message}`);
         return [] as string[];
       })();
+  const catalogProducts = catalogProductsResult.ok
+    ? catalogProductsResult.data
+    : (() => {
+        errors.push(`catalog_products: ${catalogProductsResult.message}`);
+        return [] as AdminCatalogProductOut[];
+      })();
+  const manualChargeProductOptions = catalogProducts
+    .filter((product) => product.active && product.category_name)
+    .map((product) => ({
+      id: product.id,
+      title: product.title,
+      categoryName: product.category_name,
+      priceInclVat: product.price_incl_vat,
+      vatRate: product.vat_rate,
+    }));
+  const manualChargeCategories = Array.from(
+    new Set([
+      ...productCategories,
+      ...manualChargeProductOptions.map((product) => String(product.categoryName ?? "").trim()).filter((value) => value.length > 0),
+    ]),
+  ).sort((a, b) => a.localeCompare(b, "fr-FR"));
 
   const enabledPaymentMethods = paymentMethodsResult.ok
     ? paymentMethodsResult.data.methods.filter((method) => method.enabled)
@@ -906,24 +1022,119 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         return [] as AdminClientNoteOut[];
       })();
 
-  const messageRows = [
-    ...messages.map((msg) => ({
-      id: `reminder:${msg.id}`,
+  const messageRecipientOptions = (() => {
+    const byEmail = new Map<string, { email: string; label: string }>();
+    const addOption = (emailRaw: string | null | undefined, firstName?: string | null, lastName?: string | null) => {
+      const email = String(emailRaw || "").trim();
+      if (!email) {
+        return;
+      }
+      const key = email.toLowerCase();
+      if (byEmail.has(key)) {
+        return;
+      }
+      byEmail.set(key, {
+        email,
+        label: contactDisplayLabel(firstName, lastName, email),
+      });
+    };
+
+    addOption(client.email, client.first_name, client.last_name);
+    for (const link of family.links_as_adult) {
+      addOption(link.adult.email, link.adult.first_name, link.adult.last_name);
+      addOption(link.child.email, link.child.first_name, link.child.last_name);
+    }
+    for (const link of family.links_as_child) {
+      addOption(link.adult.email, link.adult.first_name, link.adult.last_name);
+      addOption(link.child.email, link.child.first_name, link.child.last_name);
+    }
+
+    return Array.from(byEmail.values()).sort((a, b) => a.label.localeCompare(b.label, "fr-FR"));
+  })();
+  const billingRecipientEmail = (() => {
+    const billingId = family.billing_recipient_adult_id;
+    if (!billingId) {
+      return null;
+    }
+    for (const link of family.links_as_child) {
+      if (link.adult.id === billingId) {
+        return String(link.adult.email || "").trim() || null;
+      }
+    }
+    for (const link of family.links_as_adult) {
+      if (link.adult.id === billingId) {
+        return String(link.adult.email || "").trim() || null;
+      }
+    }
+    return null;
+  })();
+
+  const messageRows = messages
+    .map((msg) => ({
+      id: msg.id,
       occurredAt: msg.sent_at ?? msg.scheduled_for_utc,
       subject: msg.subject_preview,
+      preview: truncatePreview(msg.body_preview || msg.subject_preview || "", 100),
       status: msg.status,
-      session: msg.session_title,
-    })),
-    ...notes
-      .filter((note) => (note.entry_type || "").toUpperCase() === "EMAIL")
-      .map((note) => ({
-        id: `email-note:${note.id}`,
-        occurredAt: note.created_at,
-        subject: note.message,
-        status: "SENT",
-        session: "-",
-      })),
-  ].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+      statusMeta: messageStatusMeta(msg.status, msg.error_message),
+      session: msg.session_title ?? "-",
+      recipient: msg.recipient ?? "-",
+      source: msg.source ?? "-",
+      bodyFull: msg.body_full ?? "",
+      bodyFormat: msg.body_format,
+      errorMessage: msg.error_message,
+      canForward: Boolean(msg.can_forward && msg.channel === "EMAIL"),
+    }))
+    .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+  const selectedMessageForModal = messageModalId ? messages.find((row) => row.id === messageModalId) ?? null : null;
+  const openMessageViewModal = currentTab === "messages" && messageModalAction === "view" && selectedMessageForModal !== null;
+  const openMessageComposeModal =
+    currentTab === "messages" &&
+    (messageModalAction === "compose" || (messageModalAction === "forward" && selectedMessageForModal !== null));
+  const isForwardCompose = messageModalAction === "forward" && selectedMessageForModal !== null;
+  const messageComposeDefaultToEmails = (() => {
+    const defaults = new Set<string>();
+    const add = (emailRaw: string | null | undefined) => {
+      const email = String(emailRaw || "").trim().toLowerCase();
+      if (email) {
+        defaults.add(email);
+      }
+    };
+    if (isForwardCompose && selectedMessageForModal?.recipient) {
+      add(selectedMessageForModal.recipient);
+      return defaults;
+    }
+    add(client.email);
+    add(billingRecipientEmail);
+    if (defaults.size === 0 && messageRecipientOptions.length > 0) {
+      add(messageRecipientOptions[0].email);
+    }
+    return defaults;
+  })();
+  const messageComposeDefaultToFree = (() => {
+    if (!isForwardCompose || !selectedMessageForModal?.recipient) {
+      return "";
+    }
+    const recipient = selectedMessageForModal.recipient.trim();
+    if (!recipient) {
+      return "";
+    }
+    const existsInOptions = messageRecipientOptions.some((option) => option.email.toLowerCase() === recipient.toLowerCase());
+    return existsInOptions ? "" : recipient;
+  })();
+  const messageComposeSubject =
+    isForwardCompose && selectedMessageForModal ? buildForwardSubject(selectedMessageForModal.subject_preview) : "";
+  const messageComposeBody = isForwardCompose && selectedMessageForModal ? buildForwardBody(selectedMessageForModal) : "";
+  const messageComposeBodyFormat =
+    isForwardCompose && selectedMessageForModal
+      ? selectedMessageForModal.body_format === "TEXT"
+        ? "TEXT"
+        : "HTML"
+      : "HTML";
+  const messageComposeSource = isForwardCompose ? "ADMIN_CLIENT_FORWARD_MESSAGE" : "ADMIN_CLIENT_DIRECT_MESSAGE";
+
+  const openNoteViewModal = currentTab === "fiche" && noteModalAction === "view" && noteModalId.length > 0;
+  const selectedNoteForView = openNoteViewModal ? notes.find((row) => row.id === noteModalId) ?? null : null;
 
   const selectedPlanForPurchase = purchasePlanId ? plans.find((plan) => plan.id === purchasePlanId) ?? null : null;
   const discountedTotalForPurchase = purchaseDiscountedTotalRaw ? Number(purchaseDiscountedTotalRaw) : Number.NaN;
@@ -967,6 +1178,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const selectedPaymentForModal =
     paymentModalAction === "refund"
       ? payments.find((row) => row.id === paymentModalId && row.source.toUpperCase() === paymentModalSource) ?? null
+      : null;
+  const selectedManualTransactionForEdit =
+    paymentModalAction === "edit_manual"
+      ? payments.find((row) => row.id === paymentModalId && row.source.toUpperCase() === "MANUAL") ?? null
       : null;
   const cancellationEffectiveAtMs = (() => {
     if (!selectedSubscriptionForModal) {
@@ -1021,6 +1236,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .join(", ");
   const openManualTransactionSelector = paymentModalAction === "manual" && manualTransactionModalType === null;
   const openManualTransactionForm = paymentModalAction === "manual" && manualTransactionModalType !== null;
+  const openManualTransactionEditModal = paymentModalAction === "edit_manual" && selectedManualTransactionForEdit !== null;
   const openPaymentFiltersModal = paymentModalAction === "filters";
 
   const totalRemainingCredits = activeSubscriptions.reduce((acc, sub) => {
@@ -1059,6 +1275,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     if (paymentFilterQuery.length > 0) {
       const searchable = [
         paymentSourceLabel(row.source),
+        row.payment_method_label ?? "",
         row.label,
         row.reference ?? "",
         paymentStatusDisplayLabel(row),
@@ -1123,8 +1340,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       emailedAt: payload.emailed_at ?? null,
       remindedAt: payload.reminded_at ?? null,
       totalLabel: rangeInvoiceTotalLabel(payload.totals_by_currency),
-      downloadHref: rangeInvoicePdfHref(client.id, payload, false),
-      viewHref: rangeInvoicePdfHref(client.id, payload, true),
+      downloadHref: rangeInvoicePdfHref(client.id, note.id, false),
+      viewHref: rangeInvoicePdfHref(client.id, note.id, true),
     });
     return acc;
   }, []);
@@ -1132,6 +1349,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoices = [...generatedRangeInvoices, ...paymentInvoices].sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
   );
+  const reconcilableRangeInvoices = generatedRangeInvoices.filter((row) => (row.status || "").trim().toUpperCase() === "ISSUED");
   const selectedRangeInvoiceForModal =
     paymentModalAction === "invoice_email" && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
@@ -1238,7 +1456,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const manualTransactionDefaultLabel =
     manualTransactionModalType === null ? "" : manualTransactionDefaultLabelByModal[manualTransactionModalType];
   const manualIsCashFlow = manualTransactionModalType === "payment" || manualTransactionModalType === "refund";
+  const manualIsPayment = manualTransactionModalType === "payment";
   const manualVatDefault = manualIsCashFlow ? "0" : "20";
+  const manualNonCashFlowType = manualTransactionTypeCode === "CHARGE" || manualTransactionTypeCode === "DISCOUNT" ? manualTransactionTypeCode : null;
+  const editManualTransactionTypeCode = (selectedManualTransactionForEdit?.manual_transaction_type || "").trim().toUpperCase();
+  const editManualIsPayment = editManualTransactionTypeCode === "PAYMENT";
+  const editManualVatDefault = selectedManualTransactionForEdit?.vat_rate
+    ? String(selectedManualTransactionForEdit.vat_rate)
+    : editManualIsPayment
+      ? "0"
+      : "20";
+  const editManualAmountAbs = selectedManualTransactionForEdit
+    ? Math.abs(Number(selectedManualTransactionForEdit.total_incl_vat || "0")).toFixed(2)
+    : "0.00";
+  const editManualOccurredAt = selectedManualTransactionForEdit
+    ? formatDateForInput(selectedManualTransactionForEdit.occurred_at, todayInputValue)
+    : todayInputValue;
 
   return (
     <section className="admin-page-grid client-detail-page">
@@ -1391,6 +1624,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             {sub.plan.kind === "FORFAIT" ? (
                               <Link
                                 className="client-action-icon"
+                                href={ficheHref(client.id, { subscription_modal: "billing", subscription_id: sub.id })}
+                                title="Modifier le mode de paiement du forfait"
+                              >
+                                $
+                              </Link>
+                            ) : null}
+                            {sub.plan.kind === "FORFAIT" ? (
+                              <Link
+                                className="client-action-icon"
                                 href={ficheHref(client.id, { subscription_modal: "forfait_pricing", subscription_id: sub.id })}
                                 title="Modifier la surcouche tarifaire forfait"
                               >
@@ -1443,7 +1685,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   (row) =>
                                     Number.parseFloat(row.loyalty_discount_per_hour_ttc || "0") > 0 ||
                                     Number.parseFloat(row.family_discount_per_hour_ttc || "0") > 0 ||
-                                    Number.parseFloat(row.short_commitment_supplement_per_hour_ttc || "0") > 0,
+                                    Number.parseFloat(row.short_commitment_supplement_per_hour_ttc || "0") > 0 ||
+                                    Number.parseFloat(row.second_course_weekly_discount_per_hour_ttc || "0") > 0,
                                 ).length
                               }/${sub.forfait_activity_pricing.length}`
                             : ""}
@@ -1501,6 +1744,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     {sub.plan.kind === "SUBSCRIPTION" ? (
                       <p className="muted">
                         Actions rapides: utilisez les icones pour configurer le prelevement, suspendre ou resilier.
+                      </p>
+                    ) : sub.plan.kind === "FORFAIT" ? (
+                      <p className="muted">
+                        Actions rapides: modifiez le mode de paiement, la surcouche tarifaire, la date d expiration ou cloturez immediatement.
                       </p>
                     ) : (
                       <p className="muted">Actions rapides: modifiez la date d expiration ou cloturez immediatement.</p>
@@ -1572,6 +1819,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <th>Type</th>
                       <th>Auteur</th>
                       <th>Message</th>
+                      <th>Voir</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1580,7 +1828,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <td>{formatDate(row.created_at)}</td>
                         <td>{row.entry_type}</td>
                         <td>{row.author_display_name}</td>
-                        <td>{row.message}</td>
+                        <td title={row.message}>{truncatePreview(row.message, 100)}</td>
+                        <td>
+                          <Link
+                            className="client-action-icon"
+                            href={ficheHref(client.id, { note_modal: "view", note_id: row.id })}
+                            title="Voir le message complet"
+                          >
+                            V
+                          </Link>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1598,6 +1855,26 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <button type="submit">Enregistrer</button>
               </div>
             </form>
+          </article>
+        </section>
+      ) : null}
+
+      {openNoteViewModal && selectedNoteForView ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Detail de la note</h3>
+            <p className="muted">
+              {formatDate(selectedNoteForView.created_at)} | {selectedNoteForView.entry_type} | {selectedNoteForView.author_display_name}
+            </p>
+            <textarea readOnly rows={12} value={selectedNoteForView.message} />
+            <div className="row modal-actions-end top-gap-sm">
+              <Link className="reset-link" href={tabHref(client.id, "fiche")}>
+                Fermer
+              </Link>
+            </div>
           </article>
         </section>
       ) : null}
@@ -1666,6 +1943,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <option value="CARD_ONLINE">CB en ligne (Mollie / Payplug)</option>
                       <option value="PAYPAL">PayPal</option>
                       <option value="CARD_TERMINAL">CB sur place (TPE)</option>
+                      <option value="FACTURATION_AUTO">Paiement sur facture</option>
                     </>
                   )}
                 </select>
@@ -1775,18 +2053,35 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
               ×
             </Link>
-            <h3 className="modal-title">Configurer le prelevement</h3>
+            <h3 className="modal-title">
+              {selectedSubscriptionForModal.plan.kind === "FORFAIT" ? "Modifier le mode de paiement" : "Configurer le prelevement"}
+            </h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
             <form action={setupAdminClientSubscriptionBillingAction} className="grid cols-2 top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
               <label>
                 Methode de paiement
-                <select name="billing_method_code" defaultValue={selectedSubscriptionForModal.billing_method_code ?? "CARD_ONLINE"}>
-                  <option value="CARD_ONLINE">CARD_ONLINE (CB en ligne - Mollie / Payplug)</option>
-                  <option value="SEPA_DEBIT">SEPA_DEBIT</option>
-                  <option value="CARD_TERMINAL">CARD_TERMINAL</option>
-                  <option value="BANK_TRANSFER">BANK_TRANSFER</option>
+                <select
+                  name="billing_method_code"
+                  defaultValue={
+                    selectedSubscriptionForModal.billing_method_code ??
+                    (selectedSubscriptionForModal.plan.kind === "FORFAIT" ? "FACTURATION_AUTO" : "CARD_ONLINE")
+                  }
+                >
+                  {enabledPaymentMethods.length > 0 ? (
+                    enabledPaymentMethods.map((method) => (
+                      <option key={method.code} value={method.code}>
+                        {method.label}
+                      </option>
+                    ))
+                  ) : (
+                    DEFAULT_PAYMENT_METHOD_OPTIONS.map((method) => (
+                      <option key={method.code} value={method.code}>
+                        {method.label}
+                      </option>
+                    ))
+                  )}
                 </select>
               </label>
               <label>
@@ -1813,7 +2108,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
                   Annuler
                 </Link>
-                <button type="submit">Enregistrer</button>
+                <button type="submit">
+                  {selectedSubscriptionForModal.plan.kind === "FORFAIT" ? "Enregistrer le mode de paiement" : "Enregistrer"}
+                </button>
               </div>
             </form>
           </article>
@@ -1886,7 +2183,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         ? `${formatMoney(row.base_hourly_rate_ttc, selectedSubscriptionForModal.estimated_currency || client.preferred_currency)}/h`
                         : "n/a"}{" "}
                       |
-                      Apres surcouche:{" "}
+                      Apres surcouche max:{" "}
                       {row.effective_hourly_rate_ttc
                         ? `${formatMoney(
                             row.effective_hourly_rate_ttc,
@@ -1894,7 +2191,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           )}/h`
                         : "n/a"}
                     </p>
-                    <div className="grid cols-3 config-form-grid">
+                    <div className="grid cols-4 config-form-grid">
                       <label>
                         Remise fidelite / h TTC
                         <input
@@ -1917,6 +2214,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           type="text"
                           name={`forfait_short_commitment_supplement_per_hour_ttc_${row.course_type_id}`}
                           defaultValue={row.short_commitment_supplement_per_hour_ttc ?? "0"}
+                        />
+                      </label>
+                      <label>
+                        Remise 2e cours semaine / h TTC
+                        <input
+                          type="text"
+                          name={`forfait_second_course_weekly_discount_per_hour_ttc_${row.course_type_id}`}
+                          defaultValue={row.second_course_weekly_discount_per_hour_ttc ?? "0"}
                         />
                       </label>
                     </div>
@@ -2868,9 +3173,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           <article className="card">
             <h3>Communiquer</h3>
             <div className="grid">
-              <a className="mode-link" href={`mailto:${encodeURIComponent(client.email)}`}>
+              <Link
+                className="mode-link"
+                href={messagesHref(client.id, {
+                  message_modal: "compose",
+                  messages_months: String(messageMonths),
+                  messages_q: messageQuery,
+                })}
+              >
                 Envoyer un email
-              </a>
+              </Link>
               <form action={adminClientActionPlaceholder}>
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="action_name" value="Envoi SMS" />
@@ -2887,7 +3199,29 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           </article>
 
           <article className="card">
-            <h3>Messages envoyes</h3>
+            <div className="row spread">
+              <h3>Messages envoyes</h3>
+              <span className="muted">Historique des messages passes uniquement</span>
+            </div>
+            <form method="get" className="row">
+              <input type="hidden" name="tab" value="messages" />
+              <label className="balance-date-label">
+                Periode
+                <select name="messages_months" defaultValue={String(messageMonths)}>
+                  <option value="3">3 derniers mois</option>
+                  <option value="6">6 derniers mois</option>
+                  <option value="12">12 derniers mois</option>
+                </select>
+              </label>
+              <label className="balance-date-label" style={{ minWidth: 240 }}>
+                Recherche
+                <input type="text" name="messages_q" defaultValue={messageQuery} placeholder="Sujet, contenu, session..." />
+              </label>
+              <button type="submit">Filtrer</button>
+              <Link className="reset-link" href={messagesHref(client.id, { messages_months: "3" })}>
+                Reinitialiser
+              </Link>
+            </form>
             {messageRows.length === 0 ? (
               <p className="muted">Aucun message pour ce client.</p>
             ) : (
@@ -2897,8 +3231,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <tr>
                       <th>Date</th>
                       <th>Sujet</th>
+                      <th>Message</th>
                       <th>Statut</th>
                       <th>Session</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2906,16 +3242,192 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <tr key={msg.id}>
                         <td>{formatDate(msg.occurredAt)}</td>
                         <td>{msg.subject}</td>
+                        <td>{msg.preview || "-"}</td>
                         <td>
-                          <span className={`status-pill ${statusClass(msg.status)}`}>{msg.status}</span>
+                          <span
+                            className={`status-pill ${msg.statusMeta.toneClass}`}
+                            title={`${msg.statusMeta.helpText}${msg.errorMessage ? ` (${msg.errorMessage})` : ""}`}
+                          >
+                            {msg.statusMeta.label}
+                          </span>
                         </td>
                         <td>{msg.session}</td>
+                        <td>
+                          <div className="row payment-row-actions">
+                            <Link
+                              className="client-action-icon"
+                              href={messagesHref(client.id, {
+                                message_modal: "view",
+                                message_id: msg.id,
+                                messages_months: String(messageMonths),
+                                messages_q: messageQuery,
+                              })}
+                              title="Voir le message complet"
+                            >
+                              👁
+                            </Link>
+                            {msg.canForward ? (
+                              <Link
+                                className="client-action-icon"
+                                href={messagesHref(client.id, {
+                                  message_modal: "forward",
+                                  message_id: msg.id,
+                                  messages_months: String(messageMonths),
+                                  messages_q: messageQuery,
+                                })}
+                                title="Transferer le message"
+                              >
+                                ↪
+                              </Link>
+                            ) : null}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
+          </article>
+        </section>
+      ) : null}
+
+      {openMessageViewModal && selectedMessageForModal ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link
+              className="modal-close-x"
+              href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}
+              aria-label="Fermer"
+            >
+              ×
+            </Link>
+            <h3 className="modal-title">Detail message</h3>
+            <div className="stack-sm top-gap-sm">
+              <p className="muted">
+                {formatDate(selectedMessageForModal.sent_at ?? selectedMessageForModal.scheduled_for_utc)} |{" "}
+                {messageStatusMeta(selectedMessageForModal.status, selectedMessageForModal.error_message).label}
+              </p>
+              <p>
+                <strong>Sujet :</strong> {selectedMessageForModal.subject_preview || "-"}
+              </p>
+              <p>
+                <strong>Destinataire :</strong> {selectedMessageForModal.recipient || "-"}
+              </p>
+              <p>
+                <strong>Type :</strong> {selectedMessageForModal.source || "-"}
+              </p>
+              {selectedMessageForModal.error_message ? (
+                <p className="flash-err" style={{ margin: 0 }}>
+                  {selectedMessageForModal.error_message}
+                </p>
+              ) : null}
+              <div className="item">
+                <strong>Contenu</strong>
+                {(selectedMessageForModal.body_format || "TEXT").toUpperCase() === "HTML" ? (
+                  <div
+                    className="message-html-preview top-gap-sm"
+                    dangerouslySetInnerHTML={{ __html: selectedMessageForModal.body_full || "<p>-</p>" }}
+                  />
+                ) : (
+                  <pre className="message-full-text">{selectedMessageForModal.body_full || "-"}</pre>
+                )}
+              </div>
+            </div>
+            <div className="row modal-actions-end">
+              <Link className="reset-link" href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}>
+                Fermer
+              </Link>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {openMessageComposeModal ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link
+              className="modal-close-x"
+              href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}
+              aria-label="Fermer"
+            >
+              ×
+            </Link>
+            <h3 className="modal-title">{isForwardCompose ? "Transferer un message" : "Envoyer un email"}</h3>
+            <p className="muted">{isForwardCompose ? "Le contenu est pre-rempli et modifiable." : "Envoyer un message a ce client."}</p>
+            <form action={sendAdminClientMessageAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="return_tab" value="messages" />
+              <input type="hidden" name="source" value={messageComposeSource} />
+              <input type="hidden" name="messages_months" value={String(messageMonths)} />
+              <input type="hidden" name="messages_q" value={messageQuery} />
+              <label className="span-2">
+                Destinataires
+                <div className="item top-gap-sm">
+                  <div className="grid">
+                    {messageRecipientOptions.map((option) => (
+                      <label key={`to-${option.email}`} className="checkbox">
+                        <input
+                          type="checkbox"
+                          name="to_emails"
+                          value={option.email}
+                          defaultChecked={messageComposeDefaultToEmails.has(option.email.toLowerCase())}
+                        />
+                        {option.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </label>
+              <label className="span-2">
+                Autres destinataires (un email par ligne)
+                <textarea name="to_emails_free" rows={2} defaultValue={messageComposeDefaultToFree} placeholder="contact@exemple.com" />
+              </label>
+              <label className="span-2">
+                Copie (Cc)
+                <div className="item top-gap-sm">
+                  <div className="grid">
+                    {messageRecipientOptions.map((option) => (
+                      <label key={`cc-${option.email}`} className="checkbox">
+                        <input type="checkbox" name="cc_emails" value={option.email} />
+                        {option.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </label>
+              <label className="span-2">
+                Autres Cc (un email par ligne)
+                <textarea name="cc_emails_free" rows={2} placeholder="copie@exemple.com" />
+              </label>
+              <input type="hidden" name="send_copy_to_self" value="off" />
+              <label className="checkbox span-2">
+                <input type="checkbox" name="send_copy_to_self" value="on" />
+                M envoyer une copie de ce message
+              </label>
+              <label className="span-2">
+                Objet
+                <input type="text" name="subject" maxLength={255} defaultValue={messageComposeSubject} required />
+              </label>
+              <label className="span-2">
+                Message
+                <RichMessageEditor
+                  name="body"
+                  formatName="body_format"
+                  defaultValue={messageComposeBody}
+                  defaultFormat={messageComposeBodyFormat}
+                  rows={12}
+                  maxLength={20000}
+                  placeholder="Contenu du courriel"
+                />
+              </label>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}>
+                  Annuler
+                </Link>
+                <button type="submit">Envoyer</button>
+              </div>
+            </form>
           </article>
         </section>
       ) : null}
@@ -3213,6 +3725,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <tr>
                       <th>Date</th>
                       <th>Type</th>
+                      <th>Mode paiement</th>
                       <th>Libelle</th>
                       <th>Formule liee</th>
                       <th>Tarif prestation</th>
@@ -3226,6 +3739,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <tr key={`${row.source}-${row.id}`}>
                         <td>{formatDate(row.occurred_at)}</td>
                         <td>{paymentSourceLabel(row.source)}</td>
+                        <td>{row.payment_method_label ?? "-"}</td>
                         <td>
                           <div className="stack-xs">
                             <span>{row.label}</span>
@@ -3252,13 +3766,40 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <td>{formatMoney(row.total_incl_vat, row.currency)}</td>
                         <td>
                           <div className="row payment-row-actions">
-                            <a
-                              className="client-action-icon"
-                              href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.id}/invoice`}
-                              title="Telecharger la facture"
-                            >
-                              ↓
-                            </a>
+                            {row.source.toUpperCase() === "MANUAL" ? (
+                              <>
+                                {row.can_edit ? (
+                                  <Link
+                                    className="client-action-icon"
+                                    href={paymentsHref(client.id, {
+                                      payment_modal: "edit_manual",
+                                      payment_id: row.id,
+                                      payment_source: "MANUAL",
+                                      payment_return_tab: "paiements",
+                                    })}
+                                    title="Modifier la transaction"
+                                  >
+                                    ✎
+                                  </Link>
+                                ) : row.locked_by_invoice_number ? (
+                                  <span
+                                    className="client-action-icon"
+                                    title={`Transaction verrouillee par la facture ${row.locked_by_invoice_number}`}
+                                  >
+                                    🔒
+                                  </span>
+                                ) : null}
+                                {row.can_cancel ? (
+                                  <form action={deleteAdminClientManualTransactionAction}>
+                                    <input type="hidden" name="client_id" value={client.id} />
+                                    <input type="hidden" name="transaction_id" value={row.id} />
+                                    <button type="submit" className="client-action-icon danger" title="Supprimer la transaction">
+                                      ×
+                                    </button>
+                                  </form>
+                                ) : null}
+                              </>
+                            ) : null}
                             {row.status !== "REFUNDED" && row.source.toUpperCase() === "PLAN_PURCHASE" ? (
                               <Link
                                 className="client-action-icon danger"
@@ -3472,28 +4013,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
               ) : null}
-              <label>
-                {manualTransactionModalType === "discount" ? "Le montant" : "Montant TTC"}
-                <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
-              </label>
-              {!manualIsCashFlow ? (
-                <>
-                  <label>
-                    TVA (%)
-                    <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={manualVatDefault} required />
-                  </label>
-                  <label>
-                    Categorie (optionnel)
-                    <select name="category" defaultValue="">
-                      <option value="">Selectionner...</option>
-                      {productCategories.map((category) => (
-                        <option key={category} value={category}>
-                          {category}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </>
+              {manualIsCashFlow ? (
+                <label>
+                  Montant TTC
+                  <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
+                </label>
+              ) : manualNonCashFlowType ? (
+                <ManualTransactionNonCashFlowFields
+                  transactionType={manualNonCashFlowType}
+                  amountLabel={manualTransactionModalType === "discount" ? "Le montant" : "Montant TTC"}
+                  defaultVatRate={manualVatDefault}
+                  categories={manualChargeCategories}
+                  products={manualChargeProductOptions}
+                />
               ) : null}
               <label>
                 Libelle (optionnel)
@@ -3507,7 +4039,58 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 Description (optionnel)
                 <textarea name="description" rows={3} maxLength={2000} placeholder="Ce texte apparaitra dans la facture." />
               </label>
-              {!manualIsCashFlow && productCategories.length === 0 ? (
+              {manualIsPayment ? (
+                <fieldset className="config-payment-fieldset span-2">
+                  <legend>Rapprochement facture (optionnel)</legend>
+                  {reconcilableRangeInvoices.length > 0 ? (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th aria-label="Selection">Sel.</th>
+                            <th>Date facture</th>
+                            <th>Montant</th>
+                            <th>Numero facture</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reconcilableRangeInvoices.map((row) => (
+                            <tr key={`manual-reconcile-${row.noteId}`}>
+                              <td>
+                                <input type="checkbox" name="reconciled_invoice_note_ids" value={row.noteId} />
+                              </td>
+                              <td>{formatDateOnlyNumeric(row.occurredAt)}</td>
+                              <td>{row.totalLabel}</td>
+                              <td>{row.invoiceNumber}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="muted">Aucune facture emise en attente de paiement a rapprocher.</p>
+                  )}
+                  <input type="hidden" name="mark_reconciled_invoices_paid" value="off" />
+                  <label className="checkline">
+                    <input type="checkbox" name="mark_reconciled_invoices_paid" value="on" />
+                    Marquer manuellement les factures selectionnees comme payees (si montant regle suffisant)
+                  </label>
+                  <p className="muted">
+                    Si montant paiement &lt; total facture(s), elles restent a payer. Si montant paiement &gt;= total facture(s), vous pouvez les
+                    valider comme payees.
+                  </p>
+                </fieldset>
+              ) : null}
+              {manualIsPayment ? (
+                <>
+                  <input type="hidden" name="send_receipt_email" value="off" />
+                  <label className="checkline span-2">
+                    <input type="checkbox" name="send_receipt_email" value="on" />
+                    Envoyer un recu par courriel (validation manuelle)
+                  </label>
+                </>
+              ) : null}
+              {!manualIsCashFlow && manualChargeCategories.length === 0 ? (
                 <p className="muted">
                   Aucune categorie disponible. Configurez-les dans{" "}
                   <Link className="mode-link" href="/admin/products">
@@ -3527,6 +4110,99 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
+      {currentTab === "paiements" && openManualTransactionEditModal && selectedManualTransactionForEdit ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Modifier la transaction</h3>
+            {selectedManualTransactionForEdit.can_edit ? (
+              <form action={updateAdminClientManualTransactionAction} className="grid top-gap-sm">
+                <input type="hidden" name="client_id" value={client.id} />
+                <input type="hidden" name="transaction_id" value={selectedManualTransactionForEdit.id} />
+                <input type="hidden" name="currency" value={selectedManualTransactionForEdit.currency || client.preferred_currency || "EUR"} />
+
+                <label>
+                  Etudiant (optionnel)
+                  <select name="student_id" defaultValue={selectedManualTransactionForEdit.student_user_id ?? ""}>
+                    <option value="">(Non precise)</option>
+                    <option value={client.id}>{fullName || client.email}</option>
+                    {family.links_as_adult.map((link) => (
+                      <option key={link.child.id} value={link.child.id}>
+                        {[link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Date
+                  <input type="date" name="occurred_at" defaultValue={editManualOccurredAt} required />
+                </label>
+                <label>
+                  Montant TTC
+                  <input type="number" name="amount_incl_vat" step="0.01" min="0.01" defaultValue={editManualAmountAbs} required />
+                </label>
+                <label>
+                  TVA (%)
+                  <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={editManualVatDefault} required />
+                </label>
+                {editManualIsPayment ? (
+                  <label>
+                    Mode de paiement
+                    <select name="payment_method_code" defaultValue={selectedManualTransactionForEdit.payment_method_code ?? ""}>
+                      <option value="">(Non precise)</option>
+                      {enabledPaymentMethods.map((method) => (
+                        <option key={method.code} value={method.code}>
+                          {method.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <label>
+                  Libelle (optionnel)
+                  <input type="text" name="label" maxLength={255} defaultValue={selectedManualTransactionForEdit.label} />
+                </label>
+                <label>
+                  Categorie (optionnelle)
+                  <input type="text" name="category" maxLength={120} defaultValue={selectedManualTransactionForEdit.category ?? ""} />
+                </label>
+                <label>
+                  Reference (optionnelle)
+                  <input type="text" name="reference" maxLength={120} defaultValue={selectedManualTransactionForEdit.reference ?? ""} />
+                </label>
+                <label>
+                  Description (optionnel)
+                  <textarea name="description" rows={3} maxLength={2000} defaultValue={selectedManualTransactionForEdit.description ?? ""} />
+                </label>
+
+                <div className="row modal-actions-end">
+                  <Link className="reset-link" href={tabHref(client.id, "paiements")}>
+                    Annuler
+                  </Link>
+                  <button type="submit">Enregistrer</button>
+                </div>
+              </form>
+            ) : (
+              <div className="stack-sm top-gap-sm">
+                <p className="muted">
+                  Cette transaction ne peut plus etre modifiee car elle est liee a une facture non annulee.
+                </p>
+                {selectedManualTransactionForEdit.locked_by_invoice_number ? (
+                  <p className="muted">Facture: {selectedManualTransactionForEdit.locked_by_invoice_number}</p>
+                ) : null}
+                <div className="row modal-actions-end">
+                  <Link className="reset-link" href={tabHref(client.id, "paiements")}>
+                    Fermer
+                  </Link>
+                </div>
+              </div>
+            )}
+          </article>
+        </section>
+      ) : null}
+
       {(currentTab === "paiements" || currentTab === "factures") && paymentModalAction === "invoice_range" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
@@ -3535,7 +4211,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </Link>
             <h3 className="modal-title">Generer une facture</h3>
             <p className="muted">Genere un document pour une plage de dates.</p>
-            <form action={createAdminClientRangeInvoiceAction} className="grid top-gap-sm">
+            <form action={createAdminClientRangeInvoiceAction} className="grid top-gap-sm invoice-range-form">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value="factures" />
               <p className="badge span-2">Etape 1: Details de la facture</p>
@@ -3588,7 +4264,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </select>
               </label>
               {hasForfaitPlan ? (
-                <>
+                <div className="invoice-auto-options">
                   <p className="badge span-2">Etape 2: Options de facturation automatique</p>
                   <label>
                     Date de debut du cycle (auto)
@@ -3656,7 +4332,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <input type="checkbox" name="include_supplement_adjustments" value="on" defaultChecked />
                     Inclure les supplements
                   </label>
-                </>
+                </div>
               ) : (
                 <>
                   <input type="hidden" name="group_adjustments_by_type" value="off" />

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.models.catalog import DeliveryMode, SessionStatus
 from app.models.ops import ReminderStatus
-from app.models.payout import PayoutStatus
+from app.models.payout import PayoutStatus, SalaryPaymentMethod
 from app.models.plan import PlanCreditGrantsRelation, PlanKind, PlanPriceTaxMode, PlanRestrictionPeriod, SubscriptionStatus
 from app.models.professor_contract import ProfessorContractLineMode
 from app.models.user import ClientKind, ClientStatus, UserRole
@@ -44,6 +44,7 @@ class AdminConfigAccountOut(BaseModel):
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str
     legal_terms: str
+    logo_data_url: str = ""
 
 
 class AdminConfigAccountUpdateRequest(BaseModel):
@@ -64,6 +65,7 @@ class AdminConfigAccountUpdateRequest(BaseModel):
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str = Field(default="EUR", min_length=3, max_length=3)
     legal_terms: str = Field(default="")
+    logo_data_url: str = Field(default="", max_length=2000000)
 
 
 class AdminSubscriptionSettingsOut(BaseModel):
@@ -415,6 +417,13 @@ class AdminActivityOut(BaseModel):
     mode: DeliveryMode
     default_capacity: int
     default_hourly_rate: Decimal | None
+    default_course_rate_ttc: Decimal | None
+    email_reminder_hours_before_start: int | None
+    sms_reminder_hours_before_start: int | None
+    min_booking_notice_hours_override: int | None
+    cancellation_deadline_hours_override: int | None
+    auto_cancel_if_booked_less_than_override: int | None
+    auto_cancel_hours_before_start_override: int | None
     active: bool
 
 
@@ -429,6 +438,13 @@ class AdminActivityUpsertRequest(BaseModel):
     mode: DeliveryMode = DeliveryMode.ANY
     default_capacity: int = Field(default=8, ge=1, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
+    default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
+    email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
+    sms_reminder_hours_before_start: int | None = Field(default=None, ge=0)
+    min_booking_notice_hours_override: int | None = Field(default=None, ge=0)
+    cancellation_deadline_hours_override: int | None = Field(default=None, ge=0)
+    auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=0)
+    auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
     active: bool = True
 
 
@@ -443,6 +459,13 @@ class AdminActivityUpdateRequest(BaseModel):
     mode: DeliveryMode | None = None
     default_capacity: int | None = Field(default=None, ge=1, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
+    default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
+    email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
+    sms_reminder_hours_before_start: int | None = Field(default=None, ge=0)
+    min_booking_notice_hours_override: int | None = Field(default=None, ge=0)
+    cancellation_deadline_hours_override: int | None = Field(default=None, ge=0)
+    auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=0)
+    auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
     active: bool | None = None
 
 
@@ -747,6 +770,7 @@ class AdminClientForfaitActivityPricingIn(BaseModel):
     loyalty_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     family_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     short_commitment_supplement_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    second_course_weekly_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
 
 
 class AdminClientForfaitActivityPricingOut(BaseModel):
@@ -756,6 +780,7 @@ class AdminClientForfaitActivityPricingOut(BaseModel):
     loyalty_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     family_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     short_commitment_supplement_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
+    second_course_weekly_discount_per_hour_ttc: Decimal = Field(default=Decimal("0.00"), ge=0)
     effective_hourly_rate_ttc: Decimal | None = None
 
 
@@ -902,15 +927,40 @@ class AdminClientBookingOut(BaseModel):
 
 class AdminClientMessageOut(BaseModel):
     id: UUID
-    booking_id: UUID
-    session_id: UUID
-    session_title: str
+    booking_id: UUID | None = None
+    session_id: UUID | None = None
+    session_title: str | None = None
+    channel: Literal["EMAIL", "SMS"] = "EMAIL"
+    source: str | None = None
+    recipient: str | None = None
     scheduled_for_utc: datetime
     sent_at: datetime | None
-    status: ReminderStatus
+    status: str
     provider_message_id: str | None
     error_message: str | None
     subject_preview: str
+    body_preview: str | None = None
+    body_full: str | None = None
+    body_format: Literal["TEXT", "HTML"] = "TEXT"
+    can_forward: bool = False
+
+
+class AdminClientMessageEmailRequest(BaseModel):
+    to_emails: list[str] | None = None
+    cc_emails: list[str] | None = None
+    send_copy_to_self: bool = False
+    subject: str = Field(min_length=1, max_length=255)
+    body: str = Field(min_length=1, max_length=20000)
+    body_format: Literal["TEXT", "HTML"] = "HTML"
+    source: str | None = Field(default=None, max_length=120)
+
+
+class AdminClientMessageEmailOut(BaseModel):
+    client_id: UUID
+    sent_at: datetime
+    to_recipients: list[str] = Field(default_factory=list)
+    cc_recipients: list[str] = Field(default_factory=list)
+    message_ids: list[str] = Field(default_factory=list)
 
 
 class AdminClientPaymentOut(BaseModel):
@@ -927,8 +977,18 @@ class AdminClientPaymentOut(BaseModel):
     reference: str | None
     invoice_number: str | None = None
     invoice_status: str | None = None
+    invoice_note_id: UUID | None = None
     refunded_at: datetime | None = None
     refund_reason: str | None = None
+    payment_method_code: str | None = None
+    payment_method_label: str | None = None
+    manual_transaction_type: str | None = None
+    student_user_id: UUID | None = None
+    description: str | None = None
+    category: str | None = None
+    can_edit: bool = False
+    can_cancel: bool = False
+    locked_by_invoice_number: str | None = None
 
 
 class AdminClientManualTransactionType(str, enum.Enum):
@@ -949,6 +1009,23 @@ class AdminClientManualTransactionCreateRequest(BaseModel):
     amount_incl_vat: Decimal = Field(gt=Decimal("0"))
     vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    payment_method_code: str | None = Field(default=None, max_length=40)
+    reconciled_invoice_note_ids: list[UUID] = Field(default_factory=list)
+    mark_reconciled_invoices_paid: bool = False
+    send_receipt_email: bool = False
+
+
+class AdminClientManualTransactionUpdateRequest(BaseModel):
+    occurred_at: datetime | None = None
+    label: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=120)
+    reference: str | None = Field(default=None, max_length=120)
+    student_id: UUID | None = None
+    amount_incl_vat: Decimal | None = Field(default=None, gt=Decimal("0"))
+    vat_rate: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    payment_method_code: str | None = Field(default=None, max_length=40)
 
 
 class AdminClientPaymentRefundRequest(BaseModel):
@@ -1207,6 +1284,33 @@ class AdminProfessorPayoutLedgerOut(BaseModel):
     rows: list[AdminProfessorPayoutLedgerRowOut] = Field(default_factory=list)
 
 
+class AdminProfessorSalaryPaymentCreateRequest(BaseModel):
+    reference_date: date
+    payment_date: date
+    invoice_number: str = Field(min_length=1, max_length=120)
+    payment_method: SalaryPaymentMethod = SalaryPaymentMethod.BANK_TRANSFER
+    amount_excl_vat: Decimal = Field(ge=Decimal("0"))
+    amount_incl_vat: Decimal = Field(ge=Decimal("0"))
+
+
+class AdminProfessorSalaryPaymentOut(BaseModel):
+    id: UUID
+    professor_id: UUID
+    professor_first_name: str
+    professor_last_name: str
+    professor_email: str
+    reference_date: date
+    payment_date: date
+    invoice_number: str
+    payment_method: SalaryPaymentMethod
+    amount_excl_vat: Decimal
+    amount_incl_vat: Decimal
+    currency_code: str
+    settled_payout_count: int
+    actor_user_id: UUID | None
+    created_at: datetime
+
+
 class AdminProfessorContractLocationOptionOut(BaseModel):
     code: str
     label: str
@@ -1311,6 +1415,7 @@ class AdminSessionUpdateRequest(BaseModel):
     is_private: bool | None = None
     allow_online_booking: bool | None = None
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
+    recurrence: AdminSessionRecurrenceRequest | None = None
 
 
 class AdminSessionOut(BaseModel):
@@ -1384,9 +1489,48 @@ class AdminSessionBookingOperationOut(BaseModel):
     details: list[str] = Field(default_factory=list)
 
 
+class AdminSessionDuplicateRequest(BaseModel):
+    target_start_at_utc: datetime
+
+
+class AdminSessionDuplicateOperationOut(BaseModel):
+    processed_sessions: int
+    duplicated_bookings: int
+
+
+class AdminSessionBroadcastChannel(str, enum.Enum):
+    EMAIL = "EMAIL"
+    SMS = "SMS"
+
+
+class AdminSessionBroadcastAudience(str, enum.Enum):
+    STUDENTS = "STUDENTS"
+    PARENTS = "PARENTS"
+    STUDENTS_AND_PARENTS = "STUDENTS_AND_PARENTS"
+
+
 class AdminSessionMessageFormat(str, enum.Enum):
     TEXT = "TEXT"
     HTML = "HTML"
+
+
+class AdminSessionBroadcastRequest(BaseModel):
+    channel: AdminSessionBroadcastChannel
+    audience: AdminSessionBroadcastAudience = AdminSessionBroadcastAudience.STUDENTS
+    included_student_ids: list[UUID] = Field(default_factory=list)
+    subject: str | None = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=12000)
+    body_format: AdminSessionMessageFormat = AdminSessionMessageFormat.TEXT
+    cc_emails: list[str] = Field(default_factory=list)
+    cc_phone_numbers: list[str] = Field(default_factory=list)
+
+
+class AdminSessionBroadcastOut(BaseModel):
+    channel: AdminSessionBroadcastChannel
+    recipient_count: int
+    cc_count: int
+    skipped_count: int
+    details: list[str] = Field(default_factory=list)
 
 
 class AdminCollaboratorMessageRequest(BaseModel):

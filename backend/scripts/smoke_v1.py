@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -129,13 +130,19 @@ def get_subscription_plan_id() -> str:
         return str(row)
 
 
-def get_online_location_and_professor() -> tuple[str, str]:
+def get_online_location_and_professor() -> tuple[str, str, str]:
     with SessionLocal() as db:
         location = db.scalar(select(Location).where(Location.code == "ONLINE"))
         professor = db.scalar(select(Professor).where(Professor.email == "prof.demo@piano-academie.local"))
         ensure(location is not None, "ONLINE location not found")
         ensure(professor is not None, "demo professor not found")
-        return str(location.id), str(professor.id)
+        return str(location.id), str(professor.id), location.timezone
+
+
+def force_local_hour(base_start_utc: datetime, *, timezone_name: str, hour: int = 15) -> datetime:
+    tz = ZoneInfo(timezone_name)
+    local_target = base_start_utc.astimezone(tz).replace(hour=hour, minute=0, second=0, microsecond=0)
+    return local_target.astimezone(UTC)
 
 
 def create_session_as_admin(
@@ -241,13 +248,13 @@ def main() -> None:
 
     plan_id, course_type_id = get_pack_plan_and_course_type()
     sub_plan_id = get_subscription_plan_id()
-    location_id, professor_id = get_online_location_and_professor()
+    location_id, professor_id, location_timezone = get_online_location_and_professor()
 
     step("waitlist scenario")
     waitlist_session_id = create_session_as_admin(
         admin_token,
         title=f"Smoke waitlist {ts}",
-        start_at=now + timedelta(hours=30),
+        start_at=force_local_hour(now + timedelta(hours=30), timezone_name=location_timezone),
         course_type_id=course_type_id,
         location_id=location_id,
         professor_id=professor_id,
@@ -287,7 +294,7 @@ def main() -> None:
     attendance_session_id = create_session_as_admin(
         admin_token,
         title=f"Smoke attendance {ts}",
-        start_at=now + timedelta(hours=30),
+        start_at=force_local_hour(now + timedelta(hours=30), timezone_name=location_timezone),
         course_type_id=course_type_id,
         location_id=location_id,
         professor_id=professor_id,
@@ -319,7 +326,7 @@ def main() -> None:
     auto_session_id = create_session_as_admin(
         admin_token,
         title=f"Smoke autocancel {ts}",
-        start_at=now + timedelta(hours=10),
+        start_at=force_local_hour(now + timedelta(hours=10), timezone_name=location_timezone),
         course_type_id=course_type_id,
         location_id=location_id,
         professor_id=professor_id,

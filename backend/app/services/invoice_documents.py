@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -256,6 +258,7 @@ class InvoicePeriodLine:
     vat_amount: Decimal
     total_incl_vat: Decimal
     currency: str
+    is_section_header: bool = False
 
 
 class _SimplePdfDocument:
@@ -264,6 +267,7 @@ class _SimplePdfDocument:
 
     def __init__(self) -> None:
         self._pages: list[list[str]] = []
+        self._images: dict[str, tuple[bytes, int, int]] = {}
         self.new_page()
 
     def new_page(self) -> None:
@@ -347,6 +351,25 @@ class _SimplePdfDocument:
         fr, fg, fb = fill_color
         self._push(f"{prefix}{fr:.3f} {fg:.3f} {fb:.3f} rg {x:.2f} {y:.2f} {width:.2f} {height:.2f} re B")
 
+    def register_jpeg_image(self, *, image_bytes: bytes, width_px: int, height_px: int) -> str:
+        image_name = f"Im{len(self._images) + 1}"
+        self._images[image_name] = (image_bytes, max(1, width_px), max(1, height_px))
+        return image_name
+
+    def draw_image(
+        self,
+        *,
+        image_name: str,
+        x: float,
+        top_y: float,
+        width: float,
+        height: float,
+    ) -> None:
+        if image_name not in self._images:
+            return
+        y = self._to_y(top_y + height)
+        self._push(f"q {width:.2f} 0 0 {height:.2f} {x:.2f} {y:.2f} cm /{image_name} Do Q")
+
     def add_page_numbers(self) -> None:
         total_pages = len(self._pages)
         if total_pages <= 1:
@@ -365,8 +388,24 @@ class _SimplePdfDocument:
         object_map[3] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
         object_map[4] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"
 
-        page_ids: list[int] = []
         next_id = 5
+        image_object_ids: dict[str, int] = {}
+        for image_name, (image_bytes, width_px, height_px) in self._images.items():
+            image_object_id = next_id
+            next_id += 1
+            object_map[image_object_id] = (
+                b"<< /Type /XObject /Subtype /Image "
+                + f"/Width {width_px} /Height {height_px} ".encode("ascii")
+                + b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode "
+                + b"/Length "
+                + str(len(image_bytes)).encode("ascii")
+                + b" >>\nstream\n"
+                + image_bytes
+                + b"\nendstream"
+            )
+            image_object_ids[image_name] = image_object_id
+
+        page_ids: list[int] = []
         for page_ops in self._pages:
             content_id = next_id
             page_id = next_id + 1
@@ -375,9 +414,15 @@ class _SimplePdfDocument:
             object_map[content_id] = (
                 b"<< /Length " + str(len(stream_data)).encode("ascii") + b" >>\nstream\n" + stream_data + b"endstream"
             )
+            xobject_resources = b""
+            if image_object_ids:
+                refs = " ".join(f"/{name} {obj_id} 0 R" for name, obj_id in image_object_ids.items())
+                xobject_resources = f" /XObject << {refs} >>".encode("ascii")
             object_map[page_id] = (
                 b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-                + b"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> "
+                + b"/Resources << /Font << /F1 3 0 R /F2 4 0 R >>"
+                + xobject_resources
+                + b" >> "
                 + f"/Contents {content_id} 0 R >>".encode("ascii")
             )
             page_ids.append(page_id)
@@ -486,7 +531,75 @@ class CompanyIdentity:
     company_email: str
     company_phone: str
     company_siret: str
+    company_vat_number: str
     company_address: str
+    company_logo_jpeg: bytes | None
+    company_logo_width_px: int | None
+    company_logo_height_px: int | None
+
+
+def _decode_jpeg_data_url(value: str | None) -> bytes | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    match = re.match(r"^data:image/(?:jpeg|jpg);base64,(?P<data>[A-Za-z0-9+/=\s]+)$", raw, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    base64_payload = re.sub(r"\s+", "", match.group("data"))
+    try:
+        decoded = base64.b64decode(base64_payload, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(decoded) < 4 or decoded[0:2] != b"\xff\xd8":
+        return None
+    return decoded
+
+
+def _jpeg_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
+    if len(image_bytes) < 4 or image_bytes[0:2] != b"\xff\xd8":
+        return None
+    index = 2
+    marker_with_size_exceptions = {0x01, *range(0xD0, 0xD8), 0xD8, 0xD9}
+    sof_markers = {
+        0xC0,
+        0xC1,
+        0xC2,
+        0xC3,
+        0xC5,
+        0xC6,
+        0xC7,
+        0xC9,
+        0xCA,
+        0xCB,
+        0xCD,
+        0xCE,
+        0xCF,
+    }
+    while index + 1 < len(image_bytes):
+        if image_bytes[index] != 0xFF:
+            index += 1
+            continue
+        while index < len(image_bytes) and image_bytes[index] == 0xFF:
+            index += 1
+        if index >= len(image_bytes):
+            break
+        marker = image_bytes[index]
+        index += 1
+        if marker in marker_with_size_exceptions:
+            continue
+        if index + 2 > len(image_bytes):
+            break
+        segment_length = int.from_bytes(image_bytes[index : index + 2], "big")
+        if segment_length < 2 or index + segment_length > len(image_bytes):
+            break
+        if marker in sof_markers and segment_length >= 7:
+            height = int.from_bytes(image_bytes[index + 3 : index + 5], "big")
+            width = int.from_bytes(image_bytes[index + 5 : index + 7], "big")
+            if width > 0 and height > 0:
+                return width, height
+            return None
+        index += segment_length
+    return None
 
 
 def _company_identity(db: Session) -> CompanyIdentity:
@@ -496,6 +609,7 @@ def _company_identity(db: Session) -> CompanyIdentity:
     company_email = _setting_value(db, "config_account_contact_email", "") or "-"
     company_phone = _setting_value(db, "config_account_contact_phone", "") or "-"
     company_siret = _setting_value(db, "config_account_siret", "") or "-"
+    company_vat_number = _setting_value(db, "config_account_vat_number", "") or "-"
     address_parts = [
         _setting_value(db, "config_account_address_line", ""),
         _setting_value(db, "config_account_postal_code", ""),
@@ -503,12 +617,19 @@ def _company_identity(db: Session) -> CompanyIdentity:
         _country_display_name(_setting_value(db, "config_account_country", "")),
     ]
     company_address = " ".join(part for part in address_parts if part).strip() or "-"
+    logo_raw = _setting_value(db, "config_account_logo_data_url", "")
+    logo_jpeg = _decode_jpeg_data_url(logo_raw)
+    logo_dimensions = _jpeg_dimensions(logo_jpeg) if logo_jpeg is not None else None
     return CompanyIdentity(
         company_name=company_name,
         company_email=company_email,
         company_phone=company_phone,
         company_siret=company_siret,
+        company_vat_number=company_vat_number,
         company_address=company_address,
+        company_logo_jpeg=logo_jpeg,
+        company_logo_width_px=logo_dimensions[0] if logo_dimensions else None,
+        company_logo_height_px=logo_dimensions[1] if logo_dimensions else None,
     )
 
 
@@ -522,6 +643,9 @@ def render_invoice_period_pdf(
     period_label: str,
     lines: list[InvoicePeriodLine],
     totals_by_currency: dict[str, dict[str, Decimal]],
+    opening_balance_by_currency: dict[str, Decimal] | None = None,
+    total_to_pay_by_currency: dict[str, Decimal] | None = None,
+    payment_link_url: str | None = None,
     adjustment_summary: list[tuple[str, str, Decimal]] | None = None,
     note: str | None,
     client_billing_address: str | None = None,
@@ -530,6 +654,24 @@ def render_invoice_period_pdf(
 ) -> bytes:
     identity = _company_identity(db)
     pdf = _SimplePdfDocument()
+    logo_resource_name: str | None = None
+    logo_width = 0.0
+    logo_height = 0.0
+    if (
+        identity.company_logo_jpeg is not None
+        and identity.company_logo_width_px is not None
+        and identity.company_logo_height_px is not None
+    ):
+        logo_resource_name = pdf.register_jpeg_image(
+            image_bytes=identity.company_logo_jpeg,
+            width_px=identity.company_logo_width_px,
+            height_px=identity.company_logo_height_px,
+        )
+        logo_height = 44.0
+        logo_width = min(
+            150.0,
+            logo_height * (identity.company_logo_width_px / max(1, identity.company_logo_height_px)),
+        )
 
     left = 34.0
     right = pdf.width - 34.0
@@ -543,6 +685,9 @@ def render_invoice_period_pdf(
     col_vat_rate_right = left + 446
     col_vat_right = left + 486
     col_ttc_right = right - 6
+    totals_col_ht_right = right - 166
+    totals_col_vat_right = right - 86
+    totals_col_ttc_right = right - 6
 
     def draw_header() -> None:
         pdf.rect(
@@ -554,8 +699,19 @@ def render_invoice_period_pdf(
             fill_color=(0.11, 0.15, 0.24),
             stroke_width=0.0,
         )
-        pdf.text(x=left, top_y=34.0, value=identity.company_name, size=20, bold=True, color=(1, 1, 1))
-        pdf.text(x=left, top_y=54.0, value="FACTURE", size=12, bold=True, color=(0.95, 0.78, 0.48))
+        title_x = left
+        if logo_resource_name is not None:
+            logo_top_y = 22.0
+            pdf.draw_image(
+                image_name=logo_resource_name,
+                x=left,
+                top_y=logo_top_y,
+                width=logo_width,
+                height=logo_height,
+            )
+            title_x = left + logo_width + 12.0
+        pdf.text(x=title_x, top_y=34.0, value=identity.company_name, size=20, bold=True, color=(1, 1, 1))
+        pdf.text(x=title_x, top_y=54.0, value="FACTURE", size=12, bold=True, color=(0.95, 0.78, 0.48))
         pdf.text_right(
             right_x=right - 2.0,
             top_y=30.0,
@@ -571,29 +727,16 @@ def render_invoice_period_pdf(
             size=10,
             color=(0.92, 0.93, 0.96),
         )
-        pdf.text_right(
-            right_x=right - 2.0,
-            top_y=66.0,
-            value=_truncate_text(f"Client: {client_name}", 54),
-            size=10,
-            color=(0.92, 0.93, 0.96),
-        )
-        pdf.text_right(
-            right_x=right - 2.0,
-            top_y=82.0,
-            value=_truncate_text(f"ID client: {client_id}", 54),
-            size=9,
-            color=(0.82, 0.86, 0.91),
-        )
 
         # Bloc societe emettrice
         pdf.text(x=left, top_y=116.0, value="Societe emettrice", size=11, bold=True)
         pdf.text(x=left, top_y=134.0, value=identity.company_name, size=10, bold=True)
         pdf.text(x=left, top_y=150.0, value=f"SIRET: {identity.company_siret}", size=10)
-        pdf.text(x=left, top_y=166.0, value=f"Telephone: {identity.company_phone}", size=10)
-        pdf.text(x=left, top_y=182.0, value=f"Email: {identity.company_email}", size=10)
+        pdf.text(x=left, top_y=166.0, value=f"TVA intracom: {identity.company_vat_number}", size=10)
+        pdf.text(x=left, top_y=182.0, value=f"Telephone: {identity.company_phone}", size=10)
+        pdf.text(x=left, top_y=198.0, value=f"Email: {identity.company_email}", size=10)
         for index, chunk in enumerate(_wrap_text(identity.company_address, 48)):
-            pdf.text(x=left, top_y=198.0 + (index * 14.0), value=chunk, size=10)
+            pdf.text(x=left, top_y=214.0 + (index * 14.0), value=chunk, size=10)
 
         # Bloc client facture
         billing_address = _ascii_safe((client_billing_address or "").strip()) or "-"
@@ -632,6 +775,23 @@ def render_invoice_period_pdf(
 
     current_row_top = draw_table_header_for_new_page()
     for row in lines:
+        if row.is_section_header:
+            row_height = 20.0
+            if current_row_top + row_height > 760.0:
+                pdf.new_page()
+                current_row_top = draw_table_header_for_new_page()
+            pdf.rect(
+                x=left,
+                top_y=current_row_top,
+                width=right - left,
+                height=row_height,
+                stroke_color=(0.90, 0.92, 0.95),
+                fill_color=(0.98, 0.98, 0.99),
+            )
+            pdf.text(x=col_label_x, top_y=current_row_top + 14, value=row.label, size=10, bold=True)
+            current_row_top += row_height
+            continue
+
         date_lines = _wrap_text(row.date_label, 18)
         label_lines = _wrap_text(row.label, 44)
         max_lines = max(len(date_lines), len(label_lines))
@@ -672,9 +832,36 @@ def render_invoice_period_pdf(
         )
 
     normalized_note = _ascii_safe((note or "").strip())
+    period_start_label = ""
+    if " - " in period_label:
+        period_start_candidate = _ascii_safe(period_label.split(" - ", 1)[0].strip())
+        if re.match(r"^\d{2}/\d{2}/\d{4}$", period_start_candidate):
+            period_start_label = period_start_candidate
+    else:
+        period_start_candidate = _ascii_safe(period_label.strip())
+        if re.match(r"^\d{2}/\d{2}/\d{4}$", period_start_candidate):
+            period_start_label = period_start_candidate
+    normalized_opening_balance_by_currency: dict[str, Decimal] = {}
+    for currency_code, amount in (opening_balance_by_currency or {}).items():
+        currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
+        normalized_opening_balance_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
+    normalized_total_to_pay_by_currency: dict[str, Decimal] = {}
+    for currency_code, amount in (total_to_pay_by_currency or {}).items():
+        currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
+        normalized_total_to_pay_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
+    summary_currencies = sorted(
+        set(totals_by_currency.keys()) | set(normalized_opening_balance_by_currency.keys()) | set(normalized_total_to_pay_by_currency.keys())
+    )
+    payment_link_text = _ascii_safe((payment_link_url or "").strip())
+    payment_link_lines = _wrap_text(payment_link_text, 88) if payment_link_text else []
     reserved_adjustment_space = (len(normalized_adjustments) * 18.0) + 34.0 if normalized_adjustments else 0.0
+    reserved_balance_space = 0.0
+    if summary_currencies:
+        reserved_balance_space = 24.0 + (len(summary_currencies) * 54.0)
+    if payment_link_lines:
+        reserved_balance_space += 16.0 + (len(payment_link_lines) * 12.0)
     reserved_note_space = 80.0 if normalized_note else 0.0
-    if current_row_top + 140 + reserved_adjustment_space + reserved_note_space > 780:
+    if current_row_top + 140 + reserved_adjustment_space + reserved_balance_space + reserved_note_space > 780:
         pdf.new_page()
         draw_header()
         current_row_top = 140.0
@@ -684,9 +871,9 @@ def render_invoice_period_pdf(
     current_row_top += 16
     pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.82, 0.86, 0.91), fill_color=(0.95, 0.96, 0.98))
     pdf.text(x=col_label_x, top_y=current_row_top + 14, value="Devise", size=9, bold=True)
-    pdf.text_right(right_x=col_ht_right, top_y=current_row_top + 14, value="HT", size=9, bold=True)
-    pdf.text_right(right_x=col_vat_right, top_y=current_row_top + 14, value="TVA", size=9, bold=True)
-    pdf.text_right(right_x=col_ttc_right, top_y=current_row_top + 14, value="TTC", size=9, bold=True)
+    pdf.text_right(right_x=totals_col_ht_right, top_y=current_row_top + 14, value="HT", size=9, bold=True)
+    pdf.text_right(right_x=totals_col_vat_right, top_y=current_row_top + 14, value="TVA", size=9, bold=True)
+    pdf.text_right(right_x=totals_col_ttc_right, top_y=current_row_top + 14, value="TTC", size=9, bold=True)
     current_row_top += 22
 
     for currency_code in sorted(totals_by_currency.keys()):
@@ -694,27 +881,78 @@ def render_invoice_period_pdf(
         pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.90, 0.92, 0.95))
         pdf.text(x=col_label_x, top_y=current_row_top + 14, value=currency_code.upper(), size=10, bold=True)
         pdf.text_right(
-            right_x=col_ht_right,
+            right_x=totals_col_ht_right,
             top_y=current_row_top + 14,
             value=_format_amount(Decimal(totals["amount_excl_vat"])),
             size=10,
             bold=True,
         )
         pdf.text_right(
-            right_x=col_vat_right,
+            right_x=totals_col_vat_right,
             top_y=current_row_top + 14,
             value=_format_amount(Decimal(totals["vat_amount"])),
             size=10,
             bold=True,
         )
         pdf.text_right(
-            right_x=col_ttc_right,
+            right_x=totals_col_ttc_right,
             top_y=current_row_top + 14,
             value=_format_amount(Decimal(totals["total_incl_vat"])),
             size=10,
             bold=True,
         )
         current_row_top += 22
+
+    if summary_currencies:
+        current_row_top += 14.0
+        pdf.text(x=left, top_y=current_row_top, value="Solde", size=10, bold=True)
+        current_row_top += 14.0
+        for currency_code in summary_currencies:
+            opening_amount = Decimal(normalized_opening_balance_by_currency.get(currency_code, Decimal("0.00"))).quantize(Decimal("0.01"))
+            period_totals = totals_by_currency.get(currency_code)
+            period_amount = (
+                Decimal(period_totals["total_incl_vat"]).quantize(Decimal("0.01"))
+                if period_totals is not None
+                else Decimal("0.00")
+            )
+            total_to_pay_amount = Decimal(
+                normalized_total_to_pay_by_currency.get(currency_code, period_amount)
+            ).quantize(Decimal("0.01"))
+            opening_label = f"Ancien Solde au {period_start_label}" if period_start_label else "Ancien Solde"
+            pdf.text(x=col_label_x, top_y=current_row_top, value=opening_label, size=9)
+            pdf.text_right(
+                right_x=totals_col_ttc_right,
+                top_y=current_row_top,
+                value=f"{_format_amount(opening_amount)} {currency_code}",
+                size=9,
+            )
+            current_row_top += 14.0
+            pdf.text(x=col_label_x, top_y=current_row_top, value=f"Montant periode facturee ({currency_code})", size=9)
+            pdf.text_right(
+                right_x=totals_col_ttc_right,
+                top_y=current_row_top,
+                value=f"{_format_amount(period_amount)} {currency_code}",
+                size=9,
+            )
+            current_row_top += 14.0
+            pdf.text(x=col_label_x, top_y=current_row_top, value=f"Montant total a payer ({currency_code})", size=10, bold=True)
+            pdf.text_right(
+                right_x=totals_col_ttc_right,
+                top_y=current_row_top,
+                value=f"{_format_amount(total_to_pay_amount)} {currency_code}",
+                size=10,
+                bold=True,
+                color=(0.18, 0.59, 0.82),
+            )
+            current_row_top += 26.0
+
+    if payment_link_lines:
+        pdf.text(x=col_label_x, top_y=current_row_top, value="Payer en ligne", size=9, bold=True)
+        current_row_top += 12.0
+        for chunk in payment_link_lines:
+            pdf.text(x=col_label_x, top_y=current_row_top, value=chunk, size=9, color=(0.18, 0.59, 0.82))
+            current_row_top += 12.0
+        current_row_top += 6.0
 
     if normalized_adjustments:
         if current_row_top + 34.0 + (len(normalized_adjustments) * 18.0) + reserved_note_space > 780:

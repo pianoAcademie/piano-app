@@ -133,6 +133,7 @@ class CatalogProduct(Base):
     short_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     long_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     web_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_virtual: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     purchasable_online: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))

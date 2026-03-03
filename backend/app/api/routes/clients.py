@@ -9,12 +9,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionStatus
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
 from app.models.ops import EmailReminder
@@ -292,15 +292,18 @@ def _forfait_hourly_ttc_with_overrides(
     subscription: ClientPlanSubscription | None,
     session_start_at: datetime,
     course_type_id: UUID,
+    session_timezone: str,
+    booking_id: UUID | None,
     db: Session,
-    pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] | None = None,
+    pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal, Decimal]] | None = None,
 ) -> Decimal:
     if not _forfait_subscription_pricing_applies(subscription, session_start_at=session_start_at):
-        return base_hourly_ttc.quantize(Decimal("0.01"))
+        return base_hourly_ttc
 
     loyalty_discount = Decimal("0.00")
     family_discount = Decimal("0.00")
     short_commitment_supplement = Decimal("0.00")
+    second_course_weekly_discount = Decimal("0.00")
     if subscription is not None:
         key = (subscription.id, course_type_id)
         values = pricing_map.get(key) if pricing_map is not None else None
@@ -310,6 +313,7 @@ def _forfait_hourly_ttc_with_overrides(
                     ClientForfaitActivityPricing.loyalty_discount_per_hour_ttc,
                     ClientForfaitActivityPricing.family_discount_per_hour_ttc,
                     ClientForfaitActivityPricing.short_commitment_supplement_per_hour_ttc,
+                    ClientForfaitActivityPricing.second_course_weekly_discount_per_hour_ttc,
                 ).where(
                     ClientForfaitActivityPricing.subscription_id == subscription.id,
                     ClientForfaitActivityPricing.course_type_id == course_type_id,
@@ -320,20 +324,101 @@ def _forfait_hourly_ttc_with_overrides(
                     _non_negative_money(row[0]),
                     _non_negative_money(row[1]),
                     _non_negative_money(row[2]),
+                    _non_negative_money(row[3]),
                 )
         if values is not None:
-            loyalty_discount, family_discount, short_commitment_supplement = values
+            loyalty_discount, family_discount, short_commitment_supplement, second_course_weekly_discount = values
+    second_course_weekly_applies = (
+        second_course_weekly_discount > Decimal("0.00")
+        and subscription is not None
+        and _forfait_second_course_weekly_applies(
+            db,
+            subscription=subscription,
+            course_type_id=course_type_id,
+            session_start_at=session_start_at,
+            session_timezone=session_timezone,
+            booking_id=booking_id,
+        )
+    )
+    if second_course_weekly_applies and second_course_weekly_discount > loyalty_discount:
+        # "2e cours semaine" replaces fidelity discount when it is more favorable.
+        loyalty_discount = second_course_weekly_discount
+    if (
+        loyalty_discount <= Decimal("0.00")
+        and family_discount <= Decimal("0.00")
+        and short_commitment_supplement <= Decimal("0.00")
+    ):
+        return base_hourly_ttc
     adjusted = (base_hourly_ttc - loyalty_discount - family_discount + short_commitment_supplement).quantize(Decimal("0.01"))
     if adjusted < Decimal("0.00"):
         return Decimal("0.00")
     return adjusted
 
 
+def _forfait_week_utc_bounds(*, session_start_at: datetime, session_timezone: str) -> tuple[datetime, datetime]:
+    tz_name = (session_timezone or "UTC").strip() or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = timezone.utc
+    local_start = session_start_at.astimezone(tz)
+    week_start_local = (local_start - timedelta(days=local_start.weekday())).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    week_end_local = week_start_local + timedelta(days=7)
+    return week_start_local.astimezone(timezone.utc), week_end_local.astimezone(timezone.utc)
+
+
+def _forfait_second_course_weekly_applies(
+    db: Session,
+    *,
+    subscription: ClientPlanSubscription,
+    course_type_id: UUID,
+    session_start_at: datetime,
+    session_timezone: str,
+    booking_id: UUID | None,
+) -> bool:
+    week_start_utc, week_end_utc = _forfait_week_utc_bounds(
+        session_start_at=session_start_at,
+        session_timezone=session_timezone,
+    )
+    counted_statuses = (
+        BookingStatus.BOOKED,
+        BookingStatus.ATTENDED,
+        BookingStatus.NO_SHOW,
+        BookingStatus.EXCUSED_ABSENCE,
+    )
+    earlier_filters = [CourseSession.start_at_utc < session_start_at]
+    if booking_id is not None:
+        earlier_filters.append((CourseSession.start_at_utc == session_start_at) & (Booking.id < booking_id))
+    earlier_count = int(
+        db.scalar(
+            select(func.count(Booking.id))
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .where(
+                Booking.user_id == subscription.user_id,
+                Booking.client_plan_subscription_id == subscription.id,
+                Booking.status.in_(counted_statuses),
+                CourseSession.status != SessionStatus.CANCELLED,
+                CourseSession.course_type_id == course_type_id,
+                CourseSession.start_at_utc >= week_start_utc,
+                CourseSession.start_at_utc < week_end_utc,
+                or_(*earlier_filters),
+            )
+        )
+        or 0
+    )
+    return earlier_count >= 1
+
+
 def _forfait_activity_pricing_map(
     db: Session,
     *,
     subscription_ids: set[UUID],
-) -> dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]]:
+) -> dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal, Decimal]]:
     if not subscription_ids:
         return {}
     rows = db.execute(
@@ -343,16 +428,53 @@ def _forfait_activity_pricing_map(
             ClientForfaitActivityPricing.loyalty_discount_per_hour_ttc,
             ClientForfaitActivityPricing.family_discount_per_hour_ttc,
             ClientForfaitActivityPricing.short_commitment_supplement_per_hour_ttc,
+            ClientForfaitActivityPricing.second_course_weekly_discount_per_hour_ttc,
         ).where(ClientForfaitActivityPricing.subscription_id.in_(subscription_ids))
     ).all()
-    out: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] = {}
-    for subscription_id, course_type_id, loyalty_discount, family_discount, short_commitment_supplement in rows:
+    out: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal, Decimal]] = {}
+    for subscription_id, course_type_id, loyalty_discount, family_discount, short_commitment_supplement, second_course_weekly_discount in rows:
         out[(subscription_id, course_type_id)] = (
             _non_negative_money(loyalty_discount),
             _non_negative_money(family_discount),
             _non_negative_money(short_commitment_supplement),
+            _non_negative_money(second_course_weekly_discount),
         )
     return out
+
+
+def _resolve_activity_base_hourly_ttc(course_type: CourseType) -> Decimal | None:
+    if course_type.default_course_rate_ttc is not None:
+        reference_minutes = int(course_type.duration_minutes or 0)
+        if reference_minutes <= 0:
+            return None
+        reference_hours = Decimal(reference_minutes) / Decimal("60")
+        if reference_hours <= Decimal("0.00"):
+            return None
+        return Decimal(course_type.default_course_rate_ttc) / reference_hours
+    if course_type.default_hourly_rate is not None:
+        return Decimal(course_type.default_hourly_rate).quantize(Decimal("0.01"))
+    return None
+
+
+def _booking_vat_country(
+    *,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    location: Location | None,
+    billing_profile: User,
+) -> str:
+    if course_type.mode == DeliveryMode.ONLINE:
+        is_online = True
+    elif course_type.mode == DeliveryMode.ONSITE:
+        is_online = False
+    else:
+        is_online = bool(location.is_online) if location is not None else False
+
+    if is_online:
+        return (billing_profile.residence_country or "FR").upper()
+    if location is not None:
+        return (location.country_code or "FR").upper()
+    return "FR"
 
 
 def _booking_amounts_from_activity(
@@ -360,12 +482,14 @@ def _booking_amounts_from_activity(
     booking: Booking,
     session_obj: CourseSession,
     course_type: CourseType,
+    location: Location | None,
     billing_profile: User,
     forfait_subscription: ClientPlanSubscription | None,
     db: Session,
-    pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal]] | None = None,
+    pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal, Decimal]] | None = None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
-    if course_type.default_hourly_rate is None:
+    base_hourly_ttc = _resolve_activity_base_hourly_ttc(course_type)
+    if base_hourly_ttc is None:
         return None
 
     duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
@@ -373,16 +497,23 @@ def _booking_amounts_from_activity(
         duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
     duration_hours = Decimal(duration_seconds) / Decimal("3600")
     hourly_ttc = _forfait_hourly_ttc_with_overrides(
-        base_hourly_ttc=Decimal(course_type.default_hourly_rate).quantize(Decimal("0.01")),
+        base_hourly_ttc=base_hourly_ttc,
         subscription=forfait_subscription,
         session_start_at=session_obj.start_at_utc,
         course_type_id=course_type.id,
+        session_timezone=session_obj.timezone,
+        booking_id=booking.id,
         db=db,
         pricing_map=pricing_map,
     )
     total_incl_vat = (hourly_ttc * duration_hours).quantize(Decimal("0.01"))
 
-    country_code = (billing_profile.residence_country or "FR").upper()
+    country_code = _booking_vat_country(
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        billing_profile=billing_profile,
+    )
     vat_rate = resolve_vat_rate(
         db,
         country=country_code,
@@ -1035,6 +1166,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                     booking=booking,
                     session_obj=session_obj,
                     course_type=course_type,
+                    location=location,
                     billing_profile=billing_profile,
                     forfait_subscription=forfait_subscription,
                     db=db,

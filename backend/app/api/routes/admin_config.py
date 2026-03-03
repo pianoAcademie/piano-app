@@ -121,6 +121,7 @@ PAYMENT_METHOD_CATALOG: list[tuple[str, str]] = [
     ("PAYPAL", "PayPal"),
     ("SEPA_DEBIT", "Prelevement SEPA"),
     ("BANK_TRANSFER", "Virement bancaire"),
+    ("FACTURATION_AUTO", "Paiement sur facture"),
 ]
 PAYMENT_METHOD_CODES = {code for code, _ in PAYMENT_METHOD_CATALOG}
 SUPPORTED_CURRENCIES = {"EUR", "USD"}
@@ -143,6 +144,7 @@ ACCOUNT_SETTING_MAP = {
     "city": "config_account_city",
     "country": "config_account_country",
     "legal_terms": "config_account_legal_terms",
+    "logo_data_url": "config_account_logo_data_url",
 }
 
 SUBSCRIPTION_SETTING_DEFAULTS = {
@@ -250,6 +252,13 @@ def _serialize_activity(activity: CourseType, *, credit_type_by_id: dict[UUID, C
         mode=activity.mode,
         default_capacity=activity.default_capacity,
         default_hourly_rate=activity.default_hourly_rate,
+        default_course_rate_ttc=activity.default_course_rate_ttc,
+        email_reminder_hours_before_start=activity.email_reminder_hours_before_start,
+        sms_reminder_hours_before_start=activity.sms_reminder_hours_before_start,
+        min_booking_notice_hours_override=activity.min_booking_notice_hours_override,
+        cancellation_deadline_hours_override=activity.cancellation_deadline_hours_override,
+        auto_cancel_if_booked_less_than_override=activity.auto_cancel_if_booked_less_than_override,
+        auto_cancel_hours_before_start_override=activity.auto_cancel_hours_before_start_override,
         active=activity.active,
     )
 
@@ -1126,6 +1135,13 @@ def create_admin_activity(
         mode=DeliveryMode(payload.mode),
         default_capacity=int(payload.default_capacity),
         default_hourly_rate=payload.default_hourly_rate,
+        default_course_rate_ttc=payload.default_course_rate_ttc,
+        email_reminder_hours_before_start=payload.email_reminder_hours_before_start,
+        sms_reminder_hours_before_start=payload.sms_reminder_hours_before_start,
+        min_booking_notice_hours_override=payload.min_booking_notice_hours_override,
+        cancellation_deadline_hours_override=payload.cancellation_deadline_hours_override,
+        auto_cancel_if_booked_less_than_override=payload.auto_cancel_if_booked_less_than_override,
+        auto_cancel_hours_before_start_override=payload.auto_cancel_hours_before_start_override,
         active=bool(payload.active),
     )
     db.add(activity)
@@ -1192,6 +1208,27 @@ def update_admin_activity(
     if "default_hourly_rate" in changes:
         activity.default_hourly_rate = changes["default_hourly_rate"]
 
+    if "default_course_rate_ttc" in changes:
+        activity.default_course_rate_ttc = changes["default_course_rate_ttc"]
+
+    if "email_reminder_hours_before_start" in changes:
+        activity.email_reminder_hours_before_start = changes["email_reminder_hours_before_start"]
+
+    if "sms_reminder_hours_before_start" in changes:
+        activity.sms_reminder_hours_before_start = changes["sms_reminder_hours_before_start"]
+
+    if "min_booking_notice_hours_override" in changes:
+        activity.min_booking_notice_hours_override = changes["min_booking_notice_hours_override"]
+
+    if "cancellation_deadline_hours_override" in changes:
+        activity.cancellation_deadline_hours_override = changes["cancellation_deadline_hours_override"]
+
+    if "auto_cancel_if_booked_less_than_override" in changes:
+        activity.auto_cancel_if_booked_less_than_override = changes["auto_cancel_if_booked_less_than_override"]
+
+    if "auto_cancel_hours_before_start_override" in changes:
+        activity.auto_cancel_hours_before_start_override = changes["auto_cancel_hours_before_start_override"]
+
     if "active" in changes:
         activity.active = bool(changes["active"])
 
@@ -1230,6 +1267,7 @@ def get_admin_config_account(
         allowed_currencies=allowed_currencies,
         default_currency=default_currency,
         legal_terms=_get_setting_value(db, ACCOUNT_SETTING_MAP["legal_terms"], ""),
+        logo_data_url=_get_setting_value(db, ACCOUNT_SETTING_MAP["logo_data_url"], ""),
     )
 
 
@@ -1304,6 +1342,9 @@ def get_admin_payment_methods(
     raw = _get_setting_value(db, PAYMENT_METHODS_SETTING_KEY, "")
     if raw:
         enabled_codes = _normalize_methods(raw.split(","))
+        legacy_default_codes = [code for code, _ in PAYMENT_METHOD_CATALOG if code != "FACTURATION_AUTO"]
+        if set(enabled_codes) == set(legacy_default_codes):
+            enabled_codes.append("FACTURATION_AUTO")
     else:
         enabled_codes = [code for code, _ in PAYMENT_METHOD_CATALOG]
 

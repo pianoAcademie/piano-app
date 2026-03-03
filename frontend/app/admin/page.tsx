@@ -5,12 +5,14 @@ import { redirect } from "next/navigation";
 import {
   adminAddClientToSessionAction,
   adminRemoveClientFromSessionAction,
+  adminSendSessionBroadcastAction,
   adminUpdateSessionAttendanceAction,
   adminUpdateSessionBookingNoteAction,
   adminUpdateSessionGroupNoteAction,
   cancelAdminSessionAction,
   createAdminSessionAction,
   deleteAdminSessionAction,
+  duplicateAdminSessionAction,
   shiftAdminSessionAction,
   updateAdminSessionAction,
 } from "../../lib/actions";
@@ -18,6 +20,7 @@ import { backendRequest } from "../../lib/backend";
 import AutoSubmitSelect from "../../components/auto-submit-select";
 import RichMessageEditor from "../../components/rich-message-editor";
 import SearchMultiSelect from "../../components/search-multi-select";
+import SessionTimeFields from "../../components/session-time-fields";
 import SessionVisibilityFields from "../../components/session-visibility-fields";
 import type {
   AdminClientOut,
@@ -348,11 +351,34 @@ function formatTime(value: string): string {
   });
 }
 
+function stripHtml(raw: string): string {
+  return raw
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*\/\s*p\s*>/gi, "\n")
+    .replace(/<\s*\/\s*div\s*>/gi, "\n")
+    .replace(/<\s*li\b[^>]*>/gi, "- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function sessionTimeRangeLabel(session: AdminSessionOut): string {
   if (session.is_all_day) {
     return "Toute la journee";
   }
   return `${formatTime(session.start_at_utc)} - ${formatTime(session.end_at_utc)}`;
+}
+
+function sessionDurationMinutes(session: AdminSessionOut): number | null {
+  if (session.is_all_day) {
+    return null;
+  }
+  const startMs = Date.parse(session.start_at_utc);
+  const endMs = Date.parse(session.end_at_utc);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return null;
+  }
+  return Math.floor((endMs - startMs) / 60000);
 }
 
 function occupancyClass(bookedCount: number, capacityMax: number): string {
@@ -532,7 +558,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const attendanceModalOpen = readParam(searchParams, "attendance") === "1";
   const notesModal = readParam(searchParams, "notes").toLowerCase();
   const groupNotesModalOpen = notesModal === "group";
+  const duplicateModalOpen = readParam(searchParams, "duplicate") === "1";
+  const messageModalRaw = readParam(searchParams, "message").trim().toLowerCase();
+  const sessionEmailModalOpen = messageModalRaw === "email";
+  const sessionSmsModalOpen = messageModalRaw === "sms";
   const bookingFocusId = readParam(searchParams, "booking_focus");
+  const editSessionOpen = readParam(searchParams, "edit") === "1";
   const confirmActionRaw = readParam(searchParams, "confirm_action").toLowerCase();
   const confirmAction: "" | "cancel" | "delete" = confirmActionRaw === "cancel" || confirmActionRaw === "delete" ? confirmActionRaw : "";
 
@@ -771,6 +802,20 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     id: client.id,
     label: clientDisplayName(client),
   }));
+  const sessionRecipientStudents = Array.from(
+    new Map(
+      selectedSessionBookings
+        .filter((booking) => Boolean(booking.client_id))
+        .map((booking) => [
+          booking.client_id,
+          {
+            id: booking.client_id,
+            label: `${booking.client_display_name || booking.client_email} <${booking.client_email}>`,
+          },
+        ]),
+    ).values(),
+  );
+  const sessionRecipientStudentIds = sessionRecipientStudents.map((item) => item.id);
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
@@ -778,12 +823,17 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const modalHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const attendanceModalHref = selectedSession ? withQueryParam(modalHref, "attendance", "1") : modalHref;
   const groupNotesModalHref = selectedSession ? withQueryParam(modalHref, "notes", "group") : modalHref;
+  const duplicateModalHref = selectedSession ? withQueryParam(modalHref, "duplicate", "1") : modalHref;
+  const sessionEmailModalHref = selectedSession ? withQueryParam(modalHref, "message", "email") : modalHref;
+  const sessionSmsModalHref = selectedSession ? withQueryParam(modalHref, "message", "sms") : modalHref;
+  const editSessionHref = selectedSession ? withQueryParam(modalHref, "edit", "1") : modalHref;
   const attendanceBookingHref = (bookingId: string): string => withQueryParam(attendanceModalHref, "booking_focus", bookingId);
   const confirmCloseHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const cancelConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "cancel") : baseHref;
   const deleteConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "delete") : baseHref;
   const focusedAttendanceBooking =
     selectedSessionBookings.find((booking) => booking.id === bookingFocusId) ?? selectedSessionBookings[0] ?? null;
+  const selectedSessionHasBookings = selectedSessionBookings.length > 0;
   const focusedAttendanceIndex = focusedAttendanceBooking
     ? selectedSessionBookings.findIndex((booking) => booking.id === focusedAttendanceBooking.id)
     : -1;
@@ -1091,15 +1141,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     Creneau sur toute la journee
                   </label>
 
-                  <label className="create-time-field">
-                    Heure debut
-                    <input type="time" name="start_time" defaultValue="12:00" />
-                  </label>
-
-                  <label className="create-time-field">
-                    Heure fin
-                    <input type="time" name="end_time" defaultValue="13:00" />
-                  </label>
+                  <SessionTimeFields
+                    labelClassName="create-time-field session-time-field"
+                    defaultStartTime="12:00"
+                    defaultEndTime="13:00"
+                    defaultDurationMinutes={60}
+                    requiredStart
+                  />
 
                   <label>
                     Capacite max
@@ -1217,6 +1265,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     const location = locationById.get(session.location_id);
                     const occupancyText = `${session.booked_count}/${session.capacity_max}`;
                     const openSessionHref = withSessionInHref(sessionModalBaseHref, session.id);
+                    const attendanceSessionHref = withQueryParam(openSessionHref, "attendance", "1");
+                    const groupNotesSessionHref = withQueryParam(openSessionHref, "notes", "group");
+                    const duplicateSessionHref = withQueryParam(openSessionHref, "duplicate", "1");
+                    const editSessionCardHref = withQueryParam(openSessionHref, "edit", "1");
+                    const sessionEmailHref = withQueryParam(openSessionHref, "message", "email");
+                    const sessionSmsHref = withQueryParam(openSessionHref, "message", "sms");
+                    const deleteSessionHref = withQueryParam(openSessionHref, "confirm_action", "delete");
+                    const hasBookedStudents = session.booked_count > 0;
                     const activityColor = courseType?.color_hex ?? "#d8ccb9";
                     const eventStateClass =
                       session.status === "COMPLETED"
@@ -1226,34 +1282,88 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           : "";
 
                     return (
-                      <a key={session.id} className="agenda-event-link" href={openSessionHref}>
-                        <article className={`agenda-event ${eventStateClass}`} style={{ borderLeft: `4px solid ${activityColor}` }}>
-                          <div className="row spread">
-                            <p className="muted">
-                              {sessionTimeRangeLabel(session)}
-                            </p>
-                            <div className="row">
-                              <span className={`occ-badge ${occupancyClass(session.booked_count, session.capacity_max)}`}>{occupancyText}</span>
-                              <span className={`status-badge ${statusClass(session.status)}`}>{session.status}</span>
-                              {session.is_private ? <span className="status-badge status-private">PRIVE</span> : null}
+                      <article key={session.id} className="agenda-event-shell">
+                        <a className="agenda-event-link" href={openSessionHref}>
+                          <section className={`agenda-event ${eventStateClass}`} style={{ borderLeft: `4px solid ${activityColor}` }}>
+                            <div className="row spread">
+                              <p className="muted">
+                                {sessionTimeRangeLabel(session)}
+                              </p>
+                              <div className="row">
+                                <span className={`occ-badge ${occupancyClass(session.booked_count, session.capacity_max)}`}>{occupancyText}</span>
+                                <span className={`status-badge ${statusClass(session.status)}`}>{session.status}</span>
+                                {session.is_private ? <span className="status-badge status-private">PRIVE</span> : null}
+                              </div>
                             </div>
-                          </div>
 
-                          <h3 className="event-title">{session.title}</h3>
-                          <small className="muted event-meta">
-                            <span className="meta-icon" aria-hidden="true">
-                              🎵
-                            </span>
-                            {courseType?.name ?? "Type non defini"}
-                          </small>
-                          <small className="muted event-meta">
-                            <span className="meta-icon" aria-hidden="true">
-                              📍
-                            </span>
-                            {location?.name ?? "Lieu non defini"}
-                          </small>
-                        </article>
-                      </a>
+                            <h3 className="event-title">{session.title}</h3>
+                            <small className="muted event-meta">
+                              <span className="meta-icon" aria-hidden="true">
+                                🎵
+                              </span>
+                              {courseType?.name ?? "Type non defini"}
+                            </small>
+                            <small className="muted event-meta">
+                              <span className="meta-icon" aria-hidden="true">
+                                📍
+                              </span>
+                              {location?.name ?? "Lieu non defini"}
+                            </small>
+                          </section>
+                        </a>
+
+                        <div className="agenda-event-hover-actions" aria-label="Actions creneau">
+                          {hasBookedStudents ? (
+                            <a
+                              className="agenda-event-action icon"
+                              href={attendanceSessionHref}
+                              aria-label="Prendre les presences"
+                              title="Prendre les presences"
+                            >
+                              ✅
+                            </a>
+                          ) : null}
+                          {hasBookedStudents ? (
+                            <a
+                              className="agenda-event-action icon"
+                              href={groupNotesSessionHref}
+                              aria-label="Ajouter une note de groupe"
+                              title="Ajouter une note de groupe"
+                            >
+                              📝
+                            </a>
+                          ) : null}
+                          {hasBookedStudents ? (
+                            <a
+                              className="agenda-event-action icon"
+                              href={sessionEmailHref}
+                              aria-label="Envoyer un email"
+                              title="Envoyer un email"
+                            >
+                              ✉️
+                            </a>
+                          ) : null}
+                          {hasBookedStudents ? (
+                            <a
+                              className="agenda-event-action icon"
+                              href={sessionSmsHref}
+                              aria-label="Envoyer un SMS"
+                              title="Envoyer un SMS"
+                            >
+                              💬
+                            </a>
+                          ) : null}
+                          <a className="agenda-event-action icon" href={duplicateSessionHref} aria-label="Dupliquer" title="Dupliquer">
+                            📄
+                          </a>
+                          <a className="agenda-event-action icon" href={editSessionCardHref} aria-label="Modifier" title="Modifier">
+                            ✏️
+                          </a>
+                          <a className="agenda-event-action danger icon" href={deleteSessionHref} aria-label="Supprimer" title="Supprimer">
+                            🗑
+                          </a>
+                        </div>
+                      </article>
                     );
                   })}
                   {day.sessions.length > maxVisibleSessionsByDay ? (
@@ -1372,6 +1482,32 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </p>
 
             <div className="row quick-actions-row">
+              {selectedSessionHasBookings ? (
+                <a className="mode-link" href={attendanceModalHref}>
+                  Prendre les presences
+                </a>
+              ) : null}
+              {selectedSessionHasBookings ? (
+                <a className="mode-link" href={groupNotesModalHref}>
+                  Note de groupe
+                </a>
+              ) : null}
+              {selectedSessionHasBookings ? (
+                <a className="mode-link" href={sessionEmailModalHref}>
+                  Envoyer email
+                </a>
+              ) : null}
+              {selectedSessionHasBookings ? (
+                <a className="mode-link" href={sessionSmsModalHref}>
+                  Envoyer SMS
+                </a>
+              ) : null}
+              <a className="mode-link" href={duplicateModalHref}>
+                Dupliquer
+              </a>
+              <a className="mode-link" href={editSessionHref}>
+                Modifier
+              </a>
               {selectedSession.status !== "CANCELLED" ? (
                 <a className="danger-link" href={cancelConfirmHref}>
                   Annuler le creneau...
@@ -1455,17 +1591,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   ))}
                 </div>
               )}
-              <div className="row session-primary-actions">
-                <a className="mode-link" href={attendanceModalHref}>
-                  Prendre les presences
-                </a>
-                <a className="mode-link" href={groupNotesModalHref}>
-                  Ajouter des notes de groupe
-                </a>
-              </div>
+              {selectedSessionHasBookings ? (
+                <div className="row session-primary-actions">
+                  <a className="mode-link" href={attendanceModalHref}>
+                    Prendre les presences
+                  </a>
+                  <a className="mode-link" href={groupNotesModalHref}>
+                    Ajouter des notes de groupe
+                  </a>
+                </div>
+              ) : null}
               {selectedSession.group_note ? (
                 <p className="muted top-gap-sm">
-                  <strong>Note de groupe:</strong> {selectedSession.group_note}
+                  <strong>Note de groupe:</strong> {stripHtml(selectedSession.group_note)}
                 </p>
               ) : null}
             </section>
@@ -1504,7 +1642,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </section>
 
             <section className="card modal-card">
-                  <details className="modal-details">
+                  <details className="modal-details" open={editSessionOpen}>
                     <summary>Modifier ce creneau</summary>
 
                     <form action={updateAdminSessionAction} className="grid session-edit-form" noValidate>
@@ -1575,15 +1713,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         Creneau sur toute la journee
                       </label>
 
-                      <label>
-                        Heure debut
-                        <input type="time" name="start_time" defaultValue={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)} />
-                      </label>
-
-                      <label>
-                        Heure fin
-                        <input type="time" name="end_time" defaultValue={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)} />
-                      </label>
+                      <SessionTimeFields
+                        labelClassName="session-time-field"
+                        defaultStartTime={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                        defaultEndTime={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                        defaultDurationMinutes={sessionDurationMinutes(selectedSession)}
+                        requiredStart
+                      />
 
                       <label>
                         Capacite max
@@ -1612,6 +1748,52 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">Toute la serie</option> : null}
                         </select>
                       </label>
+
+                      {!selectedSession.recurrence_group_id ? (
+                        <fieldset className="session-edit-span recurrence-panel">
+                          <legend>Recurrence</legend>
+                          <div className="recurrence-mode-row">
+                            <label className="checkline">
+                              <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
+                              Garder ponctuel
+                            </label>
+                            <label className="checkline">
+                              <input type="radio" name="recurrence_mode" value="RECURRING" />
+                              Transformer en recurrent
+                            </label>
+                          </div>
+
+                          <div className="recurrence-settings">
+                            <div className="grid cols-3 recurrence-grid">
+                              <label>
+                                Frequence
+                                <select name="recurrence_frequency" defaultValue="WEEKLY">
+                                  <option value="DAILY">Journaliere</option>
+                                  <option value="WEEKLY">Hebdomadaire</option>
+                                  <option value="MONTHLY">Mensuelle</option>
+                                </select>
+                              </label>
+
+                              <label>
+                                Se repete chaque
+                                <input type="number" name="recurrence_interval" min={1} defaultValue={1} />
+                              </label>
+
+                              <label>
+                                Repeter jusqu au
+                                <input type="date" name="recurrence_until_date" />
+                              </label>
+                            </div>
+                            <p className="muted">
+                              Le creneau actuel devient l ancre de la serie, puis les occurrences futures sont creees.
+                            </p>
+                          </div>
+                        </fieldset>
+                      ) : (
+                        <p className="session-edit-span muted">
+                          Ce creneau appartient deja a une serie recurrente. Utilisez la portee de modification pour ajuster la serie.
+                        </p>
+                      )}
 
                       <SessionVisibilityFields
                         initialIsPrivate={selectedSession.is_private}
@@ -1667,7 +1849,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      {selectedSession && attendanceModalOpen ? (
+      {selectedSession && attendanceModalOpen && selectedSessionHasBookings ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel session-attendance-modal">
             <a className="modal-close-x" href={modalHref} aria-label="Fermer">
@@ -1731,11 +1913,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <input type="hidden" name="session_id" value={selectedSession.id} />
                     <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
                     <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
-                    <label>
+                    <label className="session-edit-span">
                       Note eleve
-                      <textarea
+                      <RichMessageEditor
                         name="student_note"
-                        rows={6}
+                        formatName="student_note_format"
+                        rows={8}
+                        maxLength={12000}
                         placeholder="Saisir une note pour cet eleve..."
                         defaultValue={focusedAttendanceBooking.student_note ?? ""}
                       />
@@ -1768,7 +1952,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      {selectedSession && groupNotesModalOpen ? (
+      {selectedSession && groupNotesModalOpen && selectedSessionHasBookings ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel modal-compact session-group-notes-modal">
             <a className="modal-close-x" href={modalHref} aria-label="Fermer">
@@ -1779,15 +1963,220 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             <form action={adminUpdateSessionGroupNoteAction} className="grid top-gap-sm">
               <input type="hidden" name="session_id" value={selectedSession.id} />
               <input type="hidden" name="return_to" value={groupNotesModalHref} />
-              <label>
+              <label className="session-edit-span">
                 Note du creneau (groupe)
-                <textarea name="group_note" rows={10} placeholder="Saisir une note de groupe..." defaultValue={selectedSession.group_note ?? ""} />
+                <RichMessageEditor
+                  name="group_note"
+                  formatName="group_note_format"
+                  rows={10}
+                  maxLength={12000}
+                  placeholder="Saisir une note de groupe..."
+                  defaultValue={selectedSession.group_note ?? ""}
+                />
               </label>
               <div className="row spread">
                 <a className="reset-link" href={modalHref}>
                   Fermer
                 </a>
                 <button type="submit">Sauvegarder note de groupe</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && sessionEmailModalOpen && selectedSessionHasBookings ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact session-group-notes-modal">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Envoyer un email</h2>
+            <p className="muted">Envoi groupe pour les eleves ou parents rattaches a ce creneau.</p>
+            <form action={adminSendSessionBroadcastAction} className="grid top-gap-sm">
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="channel" value="EMAIL" />
+              <input type="hidden" name="return_to" value={sessionEmailModalHref} />
+
+              <label>
+                Destinataires
+                <select name="audience" defaultValue="STUDENTS">
+                  <option value="STUDENTS">Eleves inscrits</option>
+                  <option value="PARENTS">Parents des eleves</option>
+                  <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
+                </select>
+              </label>
+
+              <SearchMultiSelect
+                className="session-edit-span"
+                label="Eleves inclus (vous pouvez en retirer)"
+                name="included_student_ids"
+                options={sessionRecipientStudents}
+                selectedIds={sessionRecipientStudentIds}
+                placeholder="Rechercher un eleve..."
+                emptySelectionLabel="Aucun eleve selectionne."
+              />
+
+              <label>
+                Sujet
+                <input type="text" name="subject" defaultValue={`Message creneau: ${selectedSession.title}`} maxLength={255} required />
+              </label>
+
+              <label className="session-edit-span">
+                Copie (emails, separes par virgule/point-virgule/retour ligne)
+                <textarea name="cc_emails" rows={2} placeholder="copie@example.com; autre@example.com" />
+              </label>
+
+              <label className="session-edit-span">
+                Message
+                <RichMessageEditor
+                  name="body"
+                  formatName="body_format"
+                  rows={10}
+                  maxLength={12000}
+                  defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.\n`}
+                  placeholder="Saisir votre message..."
+                />
+              </label>
+
+              <div className="row spread">
+                <a className="reset-link" href={modalHref}>
+                  Annuler
+                </a>
+                <button type="submit">Envoyer l email</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && sessionSmsModalOpen && selectedSessionHasBookings ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact session-group-notes-modal">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Envoyer un SMS</h2>
+            <p className="muted">Envoi groupe pour les eleves ou parents rattaches a ce creneau.</p>
+            <form action={adminSendSessionBroadcastAction} className="grid top-gap-sm">
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="channel" value="SMS" />
+              <input type="hidden" name="return_to" value={sessionSmsModalHref} />
+
+              <label>
+                Destinataires
+                <select name="audience" defaultValue="STUDENTS">
+                  <option value="STUDENTS">Eleves inscrits</option>
+                  <option value="PARENTS">Parents des eleves</option>
+                  <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
+                </select>
+              </label>
+
+              <SearchMultiSelect
+                className="session-edit-span"
+                label="Eleves inclus (vous pouvez en retirer)"
+                name="included_student_ids"
+                options={sessionRecipientStudents}
+                selectedIds={sessionRecipientStudentIds}
+                placeholder="Rechercher un eleve..."
+                emptySelectionLabel="Aucun eleve selectionne."
+              />
+
+              <label>
+                Sujet (optionnel)
+                <input type="text" name="subject" defaultValue={`Information creneau: ${selectedSession.title}`} maxLength={255} />
+              </label>
+
+              <label className="session-edit-span">
+                Copie (telephones, separes par virgule/point-virgule/retour ligne)
+                <textarea name="cc_phone_numbers" rows={2} placeholder="+33600000000; 0600000000" />
+              </label>
+
+              <label className="session-edit-span">
+                Message SMS
+                <RichMessageEditor
+                  name="body"
+                  formatName="body_format"
+                  defaultFormat="TEXT"
+                  rows={8}
+                  maxLength={12000}
+                  defaultValue={`Bonjour,\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.`}
+                  placeholder="Saisir votre message SMS..."
+                />
+              </label>
+
+              <div className="row spread">
+                <a className="reset-link" href={modalHref}>
+                  Annuler
+                </a>
+                <button type="submit">Envoyer le SMS</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && duplicateModalOpen ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Dupliquer le creneau</h2>
+            <p className="muted">
+              Definir la date cible et l heure de debut. Les eleves rattaches au creneau seront dupliques automatiquement.
+            </p>
+
+            <form action={duplicateAdminSessionAction} className="grid top-gap-sm">
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="return_to" value={duplicateModalHref} />
+              <input type="hidden" name="session_timezone" value={selectedSession.timezone} />
+
+              <div className="grid cols-2">
+                <label>
+                  Date cible
+                  <input
+                    type="date"
+                    name="target_date"
+                    defaultValue={toDateInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                    required
+                  />
+                </label>
+                <label>
+                  Heure de debut
+                  <input
+                    type="time"
+                    name="target_time"
+                    defaultValue={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                    required
+                  />
+                </label>
+              </div>
+
+              {selectedSession.recurrence_group_id ? (
+                <fieldset className="grid">
+                  <legend>Portee de duplication</legend>
+                  <label className="checkline">
+                    <input type="radio" name="apply_scope" value="ONE" defaultChecked />
+                    Dupliquer ce creneau uniquement
+                  </label>
+                  <label className="checkline">
+                    <input type="radio" name="apply_scope" value="SERIES_FUTURE" />
+                    Dupliquer ce creneau et les occurrences recurrentes suivantes
+                  </label>
+                </fieldset>
+              ) : (
+                <>
+                  <input type="hidden" name="apply_scope" value="ONE" />
+                  <p className="muted">Creneau ponctuel: duplication d un seul creneau.</p>
+                </>
+              )}
+
+              <div className="row spread">
+                <a className="reset-link" href={modalHref}>
+                  Annuler
+                </a>
+                <button type="submit">Dupliquer le creneau</button>
               </div>
             </form>
           </article>

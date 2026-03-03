@@ -212,7 +212,10 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             "Piano Academie"
         ),
         description="Envoi de facture.",
-        variables_hint="{first_name} {invoice_number} {invoice_url}",
+        variables_hint=(
+            "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
+            "{payment_url} {amount_due} {total_incl_vat} {currency} {due_date} {issued_date}"
+        ),
     ),
     MessagingTemplateDefinition(
         code="INVOICE_REMINDER",
@@ -221,7 +224,10 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         subject="Rappel facture",
         body="Bonjour {first_name},\n\nCeci est un rappel concernant votre facture.\n\nPiano Academie",
         description="Relance de facture.",
-        variables_hint="{first_name}",
+        variables_hint=(
+            "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
+            "{payment_url} {amount_due} {total_incl_vat} {currency} {due_date} {issued_date}"
+        ),
     ),
     MessagingTemplateDefinition(
         code="PAYMENT",

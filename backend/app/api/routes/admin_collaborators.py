@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.ops import AppSetting
-from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
+from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSalaryPayment, ProfessorSessionPayout
 from app.models.professor_access import ProfessorPermission
 from app.models.professor_contract import (
     ProfessorContractGrid,
@@ -41,6 +41,8 @@ from app.schemas.admin import (
     AdminProfessorRateRuleInput,
     AdminProfessorRateRuleOut,
     AdminProfessorRatesUpdateRequest,
+    AdminProfessorSalaryPaymentCreateRequest,
+    AdminProfessorSalaryPaymentOut,
     AdminProfessorUpdateRequest,
     AdminProfessorUpdateResult,
     ProfessorPermissionOut,
@@ -675,6 +677,134 @@ def _session_duration_hours(session_obj: CourseSession) -> Decimal:
     )
 
 
+def _calculate_professor_due_amount(
+    db: Session,
+    *,
+    professor: Professor,
+    as_of_exclusive: datetime,
+    default_grid_lines: list[object] | None,
+) -> Decimal:
+    rows = db.execute(
+        select(CourseSession, ProfessorSessionPayout)
+        .outerjoin(ProfessorSessionPayout, ProfessorSessionPayout.session_id == CourseSession.id)
+        .where(
+            CourseSession.professor_id == professor.id,
+            CourseSession.status != SessionStatus.CANCELLED,
+            CourseSession.end_at_utc < as_of_exclusive,
+        )
+        .order_by(CourseSession.start_at_utc.asc(), CourseSession.id.asc())
+    ).all()
+
+    cumulative_due = Decimal("0.00")
+    for session_obj, payout in rows:
+        amount: Decimal | None = None
+        payout_status = payout.payout_status if payout is not None else None
+
+        if payout is not None:
+            amount = _quantize_money(Decimal(payout.amount_snapshot))
+        else:
+            resolved_rate = resolve_hourly_rate_for_session(
+                db,
+                session_obj=session_obj,
+                on_date=session_obj.start_at_utc.date(),
+                default_grid_lines=default_grid_lines,
+            )
+            if resolved_rate is not None:
+                duration_hours = _session_duration_hours(session_obj)
+                hourly_rate = _quantize_money(Decimal(resolved_rate.hourly_rate))
+                amount = _quantize_money(duration_hours * hourly_rate)
+
+        counted_in_due = False
+        if amount is not None:
+            if payout_status in (PayoutStatus.PENDING, PayoutStatus.APPROVED):
+                counted_in_due = True
+            elif payout_status is None:
+                counted_in_due = True
+        if counted_in_due and amount is not None:
+            cumulative_due = _quantize_money(cumulative_due + amount)
+
+    return _quantize_money(cumulative_due)
+
+
+def _ensure_professor_payout_rows_until_reference(
+    db: Session,
+    *,
+    professor: Professor,
+    as_of_exclusive: datetime,
+    default_grid_lines: list[object] | None,
+) -> None:
+    sessions = db.scalars(
+        select(CourseSession)
+        .where(
+            CourseSession.professor_id == professor.id,
+            CourseSession.status != SessionStatus.CANCELLED,
+            CourseSession.end_at_utc < as_of_exclusive,
+        )
+        .order_by(CourseSession.end_at_utc.asc(), CourseSession.id.asc())
+        .with_for_update()
+    ).all()
+
+    for session_obj in sessions:
+        existing = db.scalar(
+            select(ProfessorSessionPayout)
+            .where(ProfessorSessionPayout.session_id == session_obj.id)
+            .with_for_update()
+        )
+        if existing is not None:
+            continue
+
+        resolved_rate = resolve_hourly_rate_for_session(
+            db,
+            session_obj=session_obj,
+            on_date=session_obj.start_at_utc.date(),
+            default_grid_lines=default_grid_lines,
+        )
+        if resolved_rate is None:
+            continue
+
+        duration_hours = _session_duration_hours(session_obj)
+        hourly_rate = _quantize_money(Decimal(resolved_rate.hourly_rate))
+        amount = _quantize_money(duration_hours * hourly_rate)
+
+        db.add(
+            ProfessorSessionPayout(
+                session_id=session_obj.id,
+                professor_id=professor.id,
+                duration_hours=duration_hours,
+                hourly_rate_snapshot=hourly_rate,
+                currency_snapshot=(
+                    (resolved_rate.currency_code or professor.payout_currency or "EUR").strip().upper()[:3] or "EUR"
+                ),
+                amount_snapshot=amount,
+                payout_status=PayoutStatus.PENDING,
+            )
+        )
+
+
+def _serialize_salary_payment(
+    *,
+    payment: ProfessorSalaryPayment,
+    professor: Professor,
+) -> AdminProfessorSalaryPaymentOut:
+    return AdminProfessorSalaryPaymentOut(
+        id=payment.id,
+        professor_id=payment.professor_id,
+        professor_first_name=professor.first_name,
+        professor_last_name=professor.last_name,
+        professor_email=professor.email,
+        reference_date=payment.reference_date,
+        payment_date=payment.payment_date,
+        invoice_number=payment.invoice_number,
+        payment_method=payment.payment_method,
+        amount_excl_vat=_quantize_money(Decimal(payment.amount_excl_vat)),
+        amount_incl_vat=_quantize_money(Decimal(payment.amount_incl_vat)),
+        currency_code=payment.currency_code,
+        settled_payout_count=int(payment.settled_payout_count or 0),
+        actor_user_id=payment.actor_user_id,
+        created_at=payment.created_at,
+    )
+
+
 @router.get("", response_model=list[AdminProfessorDetailOut])
 def list_collaborators(
     search: str | None = Query(default=None, min_length=1, max_length=255),
@@ -714,36 +844,7 @@ def list_collaborators(
 
     as_of_date = payout_as_of or date.today()
     as_of_exclusive = datetime.combine(as_of_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
-    payout_rows = db.execute(
-        select(
-            ProfessorSessionPayout.professor_id,
-            Professor.payout_currency,
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            ProfessorSessionPayout.payout_status.in_((PayoutStatus.PENDING, PayoutStatus.APPROVED)),
-                            ProfessorSessionPayout.amount_snapshot,
-                        ),
-                        else_=Decimal("0.00"),
-                    )
-                ),
-                Decimal("0.00"),
-            ).label("balance_amount"),
-        )
-        .join(Professor, Professor.id == ProfessorSessionPayout.professor_id)
-        .join(CourseSession, CourseSession.id == ProfessorSessionPayout.session_id)
-        .where(
-            ProfessorSessionPayout.professor_id.in_(ids),
-            ProfessorSessionPayout.currency_snapshot == Professor.payout_currency,
-            CourseSession.start_at_utc < as_of_exclusive,
-        )
-        .group_by(ProfessorSessionPayout.professor_id, Professor.payout_currency)
-    ).all()
-    payout_by_professor: dict[UUID, tuple[Decimal, str]] = {
-        professor_id: (_quantize_money(Decimal(balance_amount or 0)), str(currency))
-        for professor_id, currency, balance_amount in payout_rows
-    }
+    default_grid_lines, _ = load_default_professor_grid(db)
 
     return [
         _to_detail(
@@ -751,8 +852,13 @@ def list_collaborators(
             linked_user=users_by_email.get(prof.email),
             permission_row=permissions_by_professor.get(prof.id),
             legacy_permissions_if_missing=True,
-            payout_balance_amount=payout_by_professor.get(prof.id, (Decimal("0.00"), prof.payout_currency))[0],
-            payout_balance_currency=payout_by_professor.get(prof.id, (Decimal("0.00"), prof.payout_currency))[1],
+            payout_balance_amount=_calculate_professor_due_amount(
+                db,
+                professor=prof,
+                as_of_exclusive=as_of_exclusive,
+                default_grid_lines=default_grid_lines,
+            ),
+            payout_balance_currency=prof.payout_currency,
             payout_balance_as_of=as_of_date,
         )
         for prof in professors
@@ -1408,6 +1514,95 @@ def get_collaborator_payout_ledger(
         total_due=_quantize_money(cumulative_due),
         rows=ledger_rows,
     )
+
+
+@router.get("/salary/payments", response_model=list[AdminProfessorSalaryPaymentOut])
+def list_salary_payments(
+    reference_date: date | None = None,
+    professor_id: UUID | None = None,
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminProfessorSalaryPaymentOut]:
+    stmt = (
+        select(ProfessorSalaryPayment, Professor)
+        .join(Professor, Professor.id == ProfessorSalaryPayment.professor_id)
+        .order_by(ProfessorSalaryPayment.payment_date.desc(), ProfessorSalaryPayment.created_at.desc())
+        .limit(limit)
+    )
+    if reference_date is not None:
+        stmt = stmt.where(ProfessorSalaryPayment.reference_date == reference_date)
+    if professor_id is not None:
+        stmt = stmt.where(ProfessorSalaryPayment.professor_id == professor_id)
+
+    rows = db.execute(stmt).all()
+    return [
+        _serialize_salary_payment(payment=payment, professor=professor)
+        for payment, professor in rows
+    ]
+
+
+@router.post("/{professor_id}/salary-payments", response_model=AdminProfessorSalaryPaymentOut, status_code=status.HTTP_201_CREATED)
+def create_salary_payment(
+    professor_id: UUID,
+    payload: AdminProfessorSalaryPaymentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProfessorSalaryPaymentOut:
+    professor = _load_professor_or_404(db, professor_id)
+    invoice_number = _normalize_required(payload.invoice_number, "invoice_number")
+    amount_excl_vat = _quantize_money(Decimal(payload.amount_excl_vat))
+    amount_incl_vat = _quantize_money(Decimal(payload.amount_incl_vat))
+    if amount_incl_vat < amount_excl_vat:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="amount_incl_vat must be greater than or equal to amount_excl_vat",
+        )
+
+    reference_exclusive = datetime.combine(payload.reference_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    default_grid_lines, _ = load_default_professor_grid(db)
+    _ensure_professor_payout_rows_until_reference(
+        db,
+        professor=professor,
+        as_of_exclusive=reference_exclusive,
+        default_grid_lines=default_grid_lines,
+    )
+
+    payouts = db.scalars(
+        select(ProfessorSessionPayout)
+        .join(CourseSession, CourseSession.id == ProfessorSessionPayout.session_id)
+        .where(
+            ProfessorSessionPayout.professor_id == professor_id,
+            ProfessorSessionPayout.payout_status.in_((PayoutStatus.PENDING, PayoutStatus.APPROVED)),
+            CourseSession.end_at_utc < reference_exclusive,
+        )
+        .with_for_update()
+    ).all()
+
+    paid_at = datetime.combine(payload.payment_date, datetime.min.time(), tzinfo=timezone.utc)
+    for payout in payouts:
+        payout.payout_status = PayoutStatus.PAID
+        payout.paid_at = paid_at
+        db.add(payout)
+
+    currency_code = (professor.payout_currency or "EUR").strip().upper() or "EUR"
+    payment = ProfessorSalaryPayment(
+        professor_id=professor_id,
+        reference_date=payload.reference_date,
+        payment_date=payload.payment_date,
+        invoice_number=invoice_number,
+        payment_method=payload.payment_method,
+        amount_excl_vat=amount_excl_vat,
+        amount_incl_vat=amount_incl_vat,
+        currency_code=currency_code,
+        settled_payout_count=len(payouts),
+        actor_user_id=current_user.id,
+    )
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+
+    return _serialize_salary_payment(payment=payment, professor=professor)
 
 
 @router.get("/contract-grid/locations", response_model=list[AdminProfessorContractLocationOptionOut])

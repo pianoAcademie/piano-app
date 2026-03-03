@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
+import re
 from typing import Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -34,13 +35,25 @@ from app.models.catalog import (
     Professor,
     SessionStatus,
 )
-from app.models.ops import AppSetting
+from app.models.family import ClientFamilyLink
+from app.models.ops import (
+    AppSetting,
+    CommunicationChannel,
+    CommunicationDeliveryStatus,
+    CommunicationSenderCategory,
+    MessageFormat,
+)
 from app.models.user import ClientStatus, User, UserRole
+from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_notifications import send_session_operation_email
 from app.schemas.admin import (
+    AdminSessionBroadcastOut,
+    AdminSessionBroadcastRequest,
     AdminSessionCancelOperationRequest,
     AdminSessionDeleteOperationRequest,
+    AdminSessionDuplicateOperationOut,
+    AdminSessionDuplicateRequest,
     AdminSessionMessageFormat,
     AdminSessionOperationNotificationRequest,
     AdminSessionOperationOut,
@@ -68,6 +81,7 @@ router = APIRouter()
 ALLOWED_SETTING_KEYS = {
     "auto_cancel_hours_before_start": 6,
     "reminder_hours_before_start": 24,
+    "sms_reminder_hours_before_start": 1,
 }
 
 PLANNING_DEFAULTS = {
@@ -104,6 +118,8 @@ BOOKING_STATUSES_ACTIVE = (
 VACATION_COURSE_TYPE_CODE = "VACATION_DAY"
 
 ApplyScope = Literal["ONE", "SERIES_FUTURE", "SERIES_ALL"]
+EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 
 
 def _utcnow() -> datetime:
@@ -223,6 +239,56 @@ def _normalize_message_field(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _display_name(user: User) -> str:
+    full_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+    return full_name or user.email
+
+
+def _normalize_email_recipient(value: str) -> str | None:
+    candidate = value.strip().lower()
+    if not candidate:
+        return None
+    if EMAIL_RECIPIENT_RE.match(candidate) is None:
+        return None
+    return candidate
+
+
+def _normalize_phone_recipient(value: str) -> str | None:
+    candidate = PHONE_CLEAN_RE.sub("", value.strip())
+    if candidate.startswith("00"):
+        candidate = f"+{candidate[2:]}"
+    if not candidate:
+        return None
+    if candidate.startswith("+"):
+        digits = candidate[1:]
+        if not digits.isdigit() or len(digits) < 8:
+            return None
+        return f"+{digits}"
+    if not candidate.isdigit() or len(candidate) < 8:
+        return None
+    return candidate
+
+
+def _preferred_sms_recipient(user: User) -> str | None:
+    for raw in (user.mobile_phone_1, user.mobile_phone_2, user.phone, user.home_phone):
+        if not raw:
+            continue
+        normalized = _normalize_phone_recipient(raw)
+        if normalized:
+            return normalized
+    return None
+
+
+def _session_active_student_ids(db: Session, *, session_id: UUID) -> set[UUID]:
+    rows = db.scalars(
+        select(Booking.user_id).where(
+            Booking.session_id == session_id,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+        )
+    ).all()
+    return {user_id for user_id in rows if user_id is not None}
 
 
 def _booked_counts_map(db: Session, session_ids: list[UUID]) -> dict[UUID, int]:
@@ -468,11 +534,22 @@ def _resolve_auto_cancel_deadline(
     *,
     start_at_utc: datetime,
     auto_cancel_deadline_utc: datetime | None,
+    location_id: UUID,
+    course_type_id: UUID,
 ) -> datetime:
     if auto_cancel_deadline_utc is not None:
         return auto_cancel_deadline_utc
 
-    hours = _setting_int(db, "auto_cancel_hours_before_start")
+    config = db.scalar(select(PlanningConfig).where(PlanningConfig.location_id == location_id))
+    hours = int(
+        config.auto_cancel_hours_before_start
+        if config is not None
+        else PLANNING_DEFAULTS["auto_cancel_hours_before_start"]
+    )
+    course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
+    if course_type is not None and course_type.auto_cancel_hours_before_start_override is not None:
+        hours = int(course_type.auto_cancel_hours_before_start_override)
+    hours = max(0, hours)
     return start_at_utc - timedelta(hours=hours)
 
 
@@ -670,6 +747,62 @@ def _session_student_emails(db: Session, *, session_ids: list[UUID]) -> set[str]
         .distinct()
     ).all()
     return {email.strip().lower() for email in rows if email and email.strip()}
+
+
+def _session_student_recipient_map(
+    db: Session,
+    *,
+    student_ids: set[UUID],
+    channel: CommunicationChannel,
+) -> dict[str, UUID]:
+    if not student_ids:
+        return {}
+    users = db.scalars(select(User).where(User.id.in_(student_ids))).all()
+    recipients: dict[str, UUID] = {}
+    for user in users:
+        if channel == CommunicationChannel.EMAIL:
+            if not user.email_opt_in:
+                continue
+            email = _normalize_email_recipient(user.email)
+            if email:
+                recipients.setdefault(email, user.id)
+            continue
+        if not user.sms_opt_in:
+            continue
+        phone = _preferred_sms_recipient(user)
+        if phone:
+            recipients.setdefault(phone, user.id)
+    return recipients
+
+
+def _session_parent_recipient_map(
+    db: Session,
+    *,
+    student_ids: set[UUID],
+    channel: CommunicationChannel,
+) -> dict[str, UUID]:
+    if not student_ids:
+        return {}
+    parent_rows = db.scalars(
+        select(User)
+        .join(ClientFamilyLink, ClientFamilyLink.adult_user_id == User.id)
+        .where(ClientFamilyLink.child_user_id.in_(student_ids))
+    ).all()
+    recipients: dict[str, UUID] = {}
+    for parent in parent_rows:
+        if channel == CommunicationChannel.EMAIL:
+            if not parent.email_opt_in:
+                continue
+            email = _normalize_email_recipient(parent.email)
+            if email:
+                recipients.setdefault(email, parent.id)
+            continue
+        if not parent.sms_opt_in:
+            continue
+        phone = _preferred_sms_recipient(parent)
+        if phone:
+            recipients.setdefault(phone, parent.id)
+    return recipients
 
 
 def _session_professor_emails(db: Session, *, session_ids: list[UUID]) -> set[str]:
@@ -1038,6 +1171,8 @@ def create_session(
         db,
         start_at_utc=start_at_utc,
         auto_cancel_deadline_utc=payload.auto_cancel_deadline_utc,
+        location_id=payload.location_id,
+        course_type_id=payload.course_type_id,
     )
     if is_vacation:
         capacity_max = 0
@@ -1361,6 +1496,169 @@ def update_admin_session_group_note(
     return _to_admin_session_out(session_obj, booked_count=booked_count)
 
 
+@router.post("/sessions/{session_id}/broadcast", response_model=AdminSessionBroadcastOut)
+def broadcast_admin_session_message(
+    session_id: UUID,
+    payload: AdminSessionBroadcastRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSessionBroadcastOut:
+    session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id))
+    if session_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    subject = _normalize_message_field(payload.subject)
+    body = _normalize_message_field(payload.body)
+    if body is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Message obligatoire")
+
+    channel = CommunicationChannel(payload.channel.value)
+    if channel == CommunicationChannel.EMAIL and subject is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Sujet obligatoire pour un email")
+
+    available_student_ids = _session_active_student_ids(db, session_id=session_obj.id)
+    selected_student_ids = set(payload.included_student_ids) if payload.included_student_ids else available_student_ids
+    student_ids = available_student_ids.intersection(selected_student_ids)
+    if not student_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun eleve selectionne")
+    recipients: dict[str, UUID] = {}
+
+    include_students = payload.audience.value in {"STUDENTS", "STUDENTS_AND_PARENTS"}
+    include_parents = payload.audience.value in {"PARENTS", "STUDENTS_AND_PARENTS"}
+    if include_students:
+        recipients.update(_session_student_recipient_map(db, student_ids=student_ids, channel=channel))
+    if include_parents:
+        parent_recipients = _session_parent_recipient_map(db, student_ids=student_ids, channel=channel)
+        for destination, user_id in parent_recipients.items():
+            recipients.setdefault(destination, user_id)
+
+    if not recipients:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Aucun destinataire valide (opt-in/email/telephone)",
+        )
+
+    sender_label = _display_name(current_user)
+    skipped_count = 0
+    details: list[str] = []
+    cc_count = 0
+
+    if channel == CommunicationChannel.EMAIL:
+        for to_email, recipient_user_id in sorted(recipients.items()):
+            send_session_operation_email(
+                to_email=to_email,
+                subject=subject or f"Message creneau: {session_obj.title}",
+                body=body,
+                body_format=payload.body_format.value,
+                operation="ADMIN_SESSION_BROADCAST_EMAIL",
+                session_title=session_obj.title,
+                sender_user_id=current_user.id,
+                sender_label=sender_label,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                professor_id=session_obj.professor_id,
+                recipient_user_id=recipient_user_id,
+            )
+
+        cc_emails: set[str] = set()
+        for raw in payload.cc_emails:
+            normalized = _normalize_email_recipient(raw)
+            if normalized is None:
+                skipped_count += 1
+                details.append(f"Copie email invalide ignoree: {raw.strip() or '-'}")
+                continue
+            if normalized in recipients or normalized in cc_emails:
+                continue
+            cc_emails.add(normalized)
+
+        for cc_email in sorted(cc_emails):
+            send_session_operation_email(
+                to_email=cc_email,
+                subject=subject or f"Message creneau: {session_obj.title}",
+                body=body,
+                body_format=payload.body_format.value,
+                operation="ADMIN_SESSION_BROADCAST_EMAIL",
+                session_title=session_obj.title,
+                sender_user_id=current_user.id,
+                sender_label=sender_label,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                professor_id=session_obj.professor_id,
+                recipient_user_id=None,
+            )
+        cc_count = len(cc_emails)
+        return AdminSessionBroadcastOut(
+            channel=payload.channel,
+            recipient_count=len(recipients),
+            cc_count=cc_count,
+            skipped_count=skipped_count,
+            details=details,
+        )
+
+    sms_subject = subject or f"SMS creneau: {session_obj.title}"
+    sms_body = body
+    if payload.body_format == AdminSessionMessageFormat.HTML:
+        sms_body = re.sub(r"<[^>]+>", " ", sms_body)
+    sms_body = re.sub(r"\s{2,}", " ", sms_body).strip()
+    if not sms_body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SMS vide apres normalisation")
+
+    for phone_number, recipient_user_id in sorted(recipients.items()):
+        log_communication(
+            db=db,
+            channel=CommunicationChannel.SMS,
+            source="ADMIN_SESSION_BROADCAST_SMS",
+            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            sender_category=CommunicationSenderCategory.OTHER_USER,
+            sender_user_id=current_user.id,
+            sender_label=sender_label,
+            recipient_user_id=recipient_user_id,
+            recipient=phone_number,
+            subject=sms_subject,
+            content=sms_body,
+            content_format=MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.UNKNOWN,
+            professor_id=session_obj.professor_id,
+        )
+
+    cc_phones: set[str] = set()
+    for raw in payload.cc_phone_numbers:
+        normalized = _normalize_phone_recipient(raw)
+        if normalized is None:
+            skipped_count += 1
+            details.append(f"Copie SMS invalide ignoree: {raw.strip() or '-'}")
+            continue
+        if normalized in recipients or normalized in cc_phones:
+            continue
+        cc_phones.add(normalized)
+
+    for cc_phone in sorted(cc_phones):
+        log_communication(
+            db=db,
+            channel=CommunicationChannel.SMS,
+            source="ADMIN_SESSION_BROADCAST_SMS",
+            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            sender_category=CommunicationSenderCategory.OTHER_USER,
+            sender_user_id=current_user.id,
+            sender_label=sender_label,
+            recipient_user_id=None,
+            recipient=cc_phone,
+            subject=sms_subject,
+            content=sms_body,
+            content_format=MessageFormat.TEXT,
+            delivery_status=CommunicationDeliveryStatus.UNKNOWN,
+            professor_id=session_obj.professor_id,
+        )
+    db.commit()
+    cc_count = len(cc_phones)
+
+    return AdminSessionBroadcastOut(
+        channel=payload.channel,
+        recipient_count=len(recipients),
+        cc_count=cc_count,
+        skipped_count=skipped_count,
+        details=details,
+    )
+
+
 @router.patch("/sessions/{session_id}/bookings/{booking_id}/note", response_model=AdminSessionBookingOut)
 def update_admin_session_booking_note(
     session_id: UUID,
@@ -1649,6 +1947,18 @@ def update_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     updates = payload.model_dump(exclude_unset=True)
+    recurrence_payload = updates.pop("recurrence", None)
+    if recurrence_payload is not None:
+        if apply_scope != "ONE":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Recurrence conversion is only supported with apply_scope=ONE",
+            )
+        if session_obj.recurrence_group_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Session is already recurring",
+            )
     if "public_description" not in updates and "description" in updates:
         updates["public_description"] = updates["description"]
 
@@ -1683,6 +1993,8 @@ def update_session(
                 db,
                 start_at_utc=anchor_start,
                 auto_cancel_deadline_utc=None,
+                location_id=location_id,
+                course_type_id=course_type_id,
             )
     else:
         if "end_at_utc" in updates:
@@ -1702,6 +2014,8 @@ def update_session(
                 db,
                 start_at_utc=anchor_start,
                 auto_cancel_deadline_utc=None,
+                location_id=location_id,
+                course_type_id=course_type_id,
             )
         else:
             anchor_deadline = original_anchor_deadline
@@ -1717,6 +2031,24 @@ def update_session(
         is_all_day=anchor_is_all_day,
         session_timezone=anchor_timezone,
     )
+
+    recurrence_rule: str | None = None
+    recurrence_group_id: UUID | None = None
+    recurrence_occurrences = 1
+    if recurrence_payload is not None:
+        recurrence_rule = str(recurrence_payload.get("frequency") or "").strip().upper()
+        recurrence_until_date = recurrence_payload.get("until_date")
+        recurrence_occurrences = _resolve_recurrence_occurrences(
+            recurrence_frequency=recurrence_rule,
+            recurrence_until_date=recurrence_until_date,
+            anchor_start_at_utc=anchor_start,
+        )
+        if recurrence_occurrences <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Recurrence end date must generate at least one future occurrence",
+            )
+        recurrence_group_id = uuid4()
 
     has_start_update = "start_at_utc" in updates
     has_end_update = "end_at_utc" in updates
@@ -1814,6 +2146,8 @@ def update_session(
                     db,
                     start_at_utc=resolved_start,
                     auto_cancel_deadline_utc=None,
+                    location_id=target.location_id,
+                    course_type_id=target.course_type_id,
                 )
 
         _validate_session_times(
@@ -1833,13 +2167,241 @@ def update_session(
         target.auto_cancel_deadline_utc = resolved_deadline
         target.is_all_day = resolved_is_all_day
         target.timezone = resolved_timezone
+        if recurrence_group_id is not None and recurrence_rule is not None:
+            target.recurrence_group_id = recurrence_group_id
+            target.recurrence_rule = recurrence_rule
         target.updated_at = now
+
+    if recurrence_group_id is not None and recurrence_rule is not None:
+        anchor_duration = session_obj.end_at_utc - session_obj.start_at_utc
+        anchor_deadline_delta = session_obj.start_at_utc - session_obj.auto_cancel_deadline_utc
+        created_future_count = 0
+
+        for index in range(1, recurrence_occurrences):
+            starts_at = _advance_recurrence_datetime(session_obj.start_at_utc, frequency=recurrence_rule, offset=index)
+            if session_obj.is_all_day:
+                starts_at = _start_of_utc_day(starts_at)
+                ends_at = starts_at + timedelta(days=1)
+            else:
+                ends_at = starts_at + anchor_duration
+            deadline_at = starts_at - anchor_deadline_delta
+
+            _validate_session_times(
+                start_at_utc=starts_at,
+                end_at_utc=ends_at,
+                auto_cancel_deadline_utc=deadline_at,
+            )
+            _validate_same_day_slot(
+                start_at_utc=starts_at,
+                end_at_utc=ends_at,
+                is_all_day=session_obj.is_all_day,
+                session_timezone=session_obj.timezone,
+            )
+
+            if not is_vacation and _has_vacation_on_day(
+                db,
+                location_id=session_obj.location_id,
+                day_start_utc=_start_of_utc_day(starts_at),
+            ):
+                continue
+
+            db.add(
+                CourseSession(
+                    course_type_id=session_obj.course_type_id,
+                    location_id=session_obj.location_id,
+                    professor_id=session_obj.professor_id,
+                    title=session_obj.title,
+                    description=session_obj.description,
+                    private_description=session_obj.private_description,
+                    group_note=session_obj.group_note,
+                    start_at_utc=starts_at,
+                    end_at_utc=ends_at,
+                    is_all_day=session_obj.is_all_day,
+                    capacity_max=session_obj.capacity_max,
+                    status=session_obj.status,
+                    auto_cancel_deadline_utc=deadline_at,
+                    cancel_reason=session_obj.cancel_reason,
+                    zoom_link=session_obj.zoom_link,
+                    is_private=session_obj.is_private,
+                    allow_online_booking=session_obj.allow_online_booking,
+                    timezone=session_obj.timezone,
+                    recurrence_group_id=recurrence_group_id,
+                    recurrence_rule=recurrence_rule,
+                    updated_at=now,
+                )
+            )
+            created_future_count += 1
+
+        if created_future_count <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="All recurring future occurrences were blocked by vacation day sessions",
+            )
 
     db.commit()
     db.refresh(session_obj)
 
     booked_count = _booked_count_by_session(db, session_id)
     return _to_admin_session_out(session_obj, booked_count=booked_count)
+
+
+@router.post("/sessions/{session_id}/duplicate", response_model=AdminSessionDuplicateOperationOut)
+def duplicate_session_operation(
+    session_id: UUID,
+    payload: AdminSessionDuplicateRequest,
+    apply_scope: ApplyScope = Query(default="ONE"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSessionDuplicateOperationOut:
+    if apply_scope == "SERIES_ALL":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Duplication supports ONE or SERIES_FUTURE scope only",
+        )
+
+    try:
+        session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
+        if session_obj is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+        targets = _target_sessions_for_scope(db, session_obj=session_obj, apply_scope=apply_scope)
+        targets.sort(key=lambda row: row.start_at_utc)
+        if not targets:
+            targets = [session_obj]
+
+        now = _utcnow()
+        target_anchor_start = payload.target_start_at_utc
+        if target_anchor_start.tzinfo is None:
+            target_anchor_start = target_anchor_start.replace(tzinfo=timezone.utc)
+        else:
+            target_anchor_start = target_anchor_start.astimezone(timezone.utc)
+        anchor_shift = target_anchor_start - session_obj.start_at_utc
+        duplicate_recurrence_group_id: UUID | None = None
+        if apply_scope == "SERIES_FUTURE" and session_obj.recurrence_group_id is not None:
+            duplicate_recurrence_group_id = uuid4()
+
+        duplicated_bookings = 0
+
+        for target in targets:
+            target_timezone = _normalize_session_timezone(target.timezone or "UTC")
+            target_duration = target.end_at_utc - target.start_at_utc
+            target_deadline_delta = target.start_at_utc - target.auto_cancel_deadline_utc
+
+            duplicate_start = target.start_at_utc + anchor_shift
+            if target.is_all_day:
+                duplicate_start = _start_of_utc_day(duplicate_start)
+                duplicate_end = duplicate_start + timedelta(days=1)
+            else:
+                duplicate_end = duplicate_start + target_duration
+            duplicate_deadline = duplicate_start - target_deadline_delta
+
+            _validate_session_times(
+                start_at_utc=duplicate_start,
+                end_at_utc=duplicate_end,
+                auto_cancel_deadline_utc=duplicate_deadline,
+            )
+            _validate_same_day_slot(
+                start_at_utc=duplicate_start,
+                end_at_utc=duplicate_end,
+                is_all_day=target.is_all_day,
+                session_timezone=target_timezone,
+            )
+
+            recurrence_group_id = (
+                duplicate_recurrence_group_id
+                if duplicate_recurrence_group_id is not None and target.recurrence_group_id is not None
+                else None
+            )
+            recurrence_rule = target.recurrence_rule if recurrence_group_id is not None else None
+
+            duplicate_session = CourseSession(
+                course_type_id=target.course_type_id,
+                location_id=target.location_id,
+                professor_id=target.professor_id,
+                title=target.title,
+                description=target.description,
+                private_description=target.private_description,
+                group_note=target.group_note,
+                start_at_utc=duplicate_start,
+                end_at_utc=duplicate_end,
+                is_all_day=target.is_all_day,
+                capacity_max=target.capacity_max,
+                status=SessionStatus.SCHEDULED,
+                auto_cancel_deadline_utc=duplicate_deadline,
+                cancel_reason=None,
+                zoom_link=target.zoom_link,
+                is_private=target.is_private,
+                allow_online_booking=target.allow_online_booking,
+                timezone=target_timezone,
+                recurrence_group_id=recurrence_group_id,
+                recurrence_rule=recurrence_rule,
+                updated_at=now,
+            )
+            db.add(duplicate_session)
+            db.flush()
+
+            source_bookings = db.scalars(
+                select(Booking)
+                .where(
+                    Booking.session_id == target.id,
+                    Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                )
+                .with_for_update()
+            ).all()
+
+            for source_booking in source_bookings:
+                duplicate_status = source_booking.status
+                if duplicate_status in (BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE):
+                    duplicate_status = BookingStatus.BOOKED
+
+                duplicate_booking = Booking(
+                    session_id=duplicate_session.id,
+                    user_id=source_booking.user_id,
+                    client_plan_subscription_id=source_booking.client_plan_subscription_id,
+                    status=duplicate_status,
+                    booked_at=now,
+                    cancelled_at=None,
+                    cancellation_reason=None,
+                    price_excl_vat_snapshot=source_booking.price_excl_vat_snapshot,
+                    vat_rate_snapshot=source_booking.vat_rate_snapshot,
+                    vat_amount_snapshot=source_booking.vat_amount_snapshot,
+                    total_incl_vat_snapshot=source_booking.total_incl_vat_snapshot,
+                    currency_snapshot=source_booking.currency_snapshot,
+                    student_note=source_booking.student_note,
+                )
+                db.add(duplicate_booking)
+                db.flush()
+
+                if duplicate_status == BookingStatus.BOOKED:
+                    ensure_booking_reminder(
+                        db,
+                        booking=duplicate_booking,
+                        session_obj=duplicate_session,
+                        now=now,
+                    )
+                else:
+                    skip_pending_reminders_for_booking(
+                        db,
+                        booking_id=duplicate_booking.id,
+                        reason="Booking duplicated as waitlist",
+                        now=now,
+                    )
+                duplicated_bookings += 1
+
+        db.commit()
+    except OperationalError as exc:
+        db.rollback()
+        if _is_retryable_lock_error(exc):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Planning en cours de modification. Reessayez dans quelques secondes.",
+            ) from exc
+        raise
+
+    return AdminSessionDuplicateOperationOut(
+        processed_sessions=len(targets),
+        duplicated_bookings=duplicated_bookings,
+    )
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=AdminSessionOperationOut)
