@@ -7,15 +7,17 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 import re
 import unicodedata
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.ops import AppSetting
+from app.models.ops import AppSetting, LegalEntity
 
 INVOICE_TEMPLATE_SETTING_KEY = "config_invoice_template_text_v1"
 INVOICE_NUMBER_FORMAT_SETTING_KEY = "config_invoice_number_format_v1"
 INVOICE_NUMBER_NEXT_SETTING_KEY = "config_invoice_number_next_v1"
+DEFAULT_BILLING_ENTITY_CODE = "ENTITE_NON_DEFINIE"
 DEFAULT_INVOICE_NUMBER_FORMAT = "PIANOACADEMIE-%YY%-%NNNN%"
 DEFAULT_INVOICE_NUMBER_NEXT = 1
 INVOICE_TEMPLATE_VARIABLES_HINT = (
@@ -54,6 +56,30 @@ def _setting_value(db: Session, key: str, default: str) -> str:
         return default
     value = row.value.strip()
     return value or default
+
+
+def normalize_billing_entity(value: str | None) -> str:
+    normalized = (value or "").strip().upper()
+    return normalized or DEFAULT_BILLING_ENTITY_CODE
+
+
+def _billing_entity_code(value: str | None) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", (value or "").strip().upper())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    return normalized
+
+
+def _is_legacy_services_entity(value: str | None) -> bool:
+    code = _billing_entity_code(value)
+    return code in {"PIANO_ACADEMIE_SERVICES", "SERVICES"}
+
+
+def _first_non_empty_setting_value(db: Session, keys: list[str], default: str = "") -> str:
+    for key in keys:
+        value = _setting_value(db, key, "").strip()
+        if value:
+            return value
+    return default
 
 
 def get_invoice_template(db: Session) -> tuple[str, datetime | None]:
@@ -205,17 +231,11 @@ def render_invoice_text(
     reference: str | None,
     refunded_at: datetime | None,
     refund_reason: str | None,
+    legal_entity_id: UUID | None = None,
+    billing_entity: str | None = None,
 ) -> str:
     template, _ = get_invoice_template(db)
-    company_name = _setting_value(db, "config_account_club_name", "Piano Academie")
-    company_email = _setting_value(db, "config_account_contact_email", "")
-    address_parts = [
-        _setting_value(db, "config_account_address_line", ""),
-        _setting_value(db, "config_account_postal_code", ""),
-        _setting_value(db, "config_account_city", ""),
-        _setting_value(db, "config_account_country", ""),
-    ]
-    company_address = " ".join(part for part in address_parts if part).strip() or "-"
+    identity = _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
 
     refund_info = ""
     if refunded_at is not None:
@@ -236,9 +256,9 @@ def render_invoice_text(
         "currency": (currency or "EUR").upper(),
         "reference": reference or "-",
         "refund_info": refund_info,
-        "company_name": company_name,
-        "company_email": company_email or "-",
-        "company_address": company_address,
+        "company_name": identity.company_name,
+        "company_email": identity.company_email or "-",
+        "company_address": identity.company_address,
     }
 
     rendered = template
@@ -530,6 +550,7 @@ class CompanyIdentity:
     company_name: str
     company_email: str
     company_phone: str
+    company_siren: str
     company_siret: str
     company_vat_number: str
     company_address: str
@@ -602,34 +623,90 @@ def _jpeg_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
     return None
 
 
-def _company_identity(db: Session) -> CompanyIdentity:
-    company_name = _setting_value(db, "config_account_club_name", "") or _setting_value(
-        db, "config_account_company_name", "Piano Academie"
+def _resolve_legal_entity(
+    db: Session,
+    *,
+    legal_entity_id: UUID | None = None,
+) -> LegalEntity | None:
+    if legal_entity_id is None:
+        return None
+    return db.scalar(select(LegalEntity).where(LegalEntity.id == legal_entity_id))
+
+
+def _legacy_company_identity_from_settings(
+    db: Session,
+    *,
+    billing_entity: str | None = None,
+) -> CompanyIdentity:
+    prefer_services_settings = _is_legacy_services_entity(billing_entity)
+
+    def _keys(suffix: str) -> list[str]:
+        if prefer_services_settings:
+            return [f"config_account_services_{suffix}", f"config_account_{suffix}"]
+        return [f"config_account_{suffix}"]
+
+    company_name = _first_non_empty_setting_value(
+        db,
+        _keys("club_name") + _keys("company_name"),
+        "Piano Academie",
     )
-    company_email = _setting_value(db, "config_account_contact_email", "") or "-"
-    company_phone = _setting_value(db, "config_account_contact_phone", "") or "-"
-    company_siret = _setting_value(db, "config_account_siret", "") or "-"
-    company_vat_number = _setting_value(db, "config_account_vat_number", "") or "-"
+    company_email = _first_non_empty_setting_value(db, _keys("contact_email"), "-")
+    company_phone = _first_non_empty_setting_value(db, _keys("contact_phone"), "-")
+    company_siren = _first_non_empty_setting_value(db, _keys("siren"), "-")
+    company_siret = _first_non_empty_setting_value(db, _keys("siret"), "-")
+    company_vat_number = _first_non_empty_setting_value(db, _keys("vat_number"), "-")
     address_parts = [
-        _setting_value(db, "config_account_address_line", ""),
-        _setting_value(db, "config_account_postal_code", ""),
-        _setting_value(db, "config_account_city", ""),
-        _country_display_name(_setting_value(db, "config_account_country", "")),
+        _first_non_empty_setting_value(db, _keys("address_line"), ""),
+        _first_non_empty_setting_value(db, _keys("postal_code"), ""),
+        _first_non_empty_setting_value(db, _keys("city"), ""),
+        _country_display_name(_first_non_empty_setting_value(db, _keys("country"), "")),
     ]
     company_address = " ".join(part for part in address_parts if part).strip() or "-"
-    logo_raw = _setting_value(db, "config_account_logo_data_url", "")
+    logo_raw = _first_non_empty_setting_value(db, _keys("logo_data_url"), "")
     logo_jpeg = _decode_jpeg_data_url(logo_raw)
     logo_dimensions = _jpeg_dimensions(logo_jpeg) if logo_jpeg is not None else None
     return CompanyIdentity(
         company_name=company_name,
         company_email=company_email,
         company_phone=company_phone,
+        company_siren=company_siren,
         company_siret=company_siret,
         company_vat_number=company_vat_number,
         company_address=company_address,
         company_logo_jpeg=logo_jpeg,
         company_logo_width_px=logo_dimensions[0] if logo_dimensions else None,
         company_logo_height_px=logo_dimensions[1] if logo_dimensions else None,
+    )
+
+
+def _company_identity(
+    db: Session,
+    *,
+    legal_entity_id: UUID | None = None,
+    billing_entity: str | None = None,
+) -> CompanyIdentity:
+    if legal_entity_id is None:
+        # Legacy fallback for historical invoices without legal entity id.
+        return _legacy_company_identity_from_settings(db, billing_entity=billing_entity)
+    entity = _resolve_legal_entity(db, legal_entity_id=legal_entity_id)
+    if entity is None:
+        raise ValueError(f"Unknown legal entity id for invoice rendering: {legal_entity_id}")
+
+    address = (entity.address_text or "").strip()
+    if address and entity.country_code:
+        address = f"{address} ({_country_display_name(entity.country_code)})"
+    company_address = address or "-"
+    return CompanyIdentity(
+        company_name=(entity.name or "").strip() or "Societe",
+        company_email="-",
+        company_phone="-",
+        company_siren=(entity.siren or "").strip() or "-",
+        company_siret=(entity.siret or "").strip() or "-",
+        company_vat_number=(entity.vat_number or "").strip() or "-",
+        company_address=company_address,
+        company_logo_jpeg=None,
+        company_logo_width_px=None,
+        company_logo_height_px=None,
     )
 
 
@@ -651,8 +728,10 @@ def render_invoice_period_pdf(
     client_billing_address: str | None = None,
     due_date: date | None = None,
     watermark: str | None = None,
+    legal_entity_id: UUID | None = None,
+    billing_entity: str | None = None,
 ) -> bytes:
-    identity = _company_identity(db)
+    identity = _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
     pdf = _SimplePdfDocument()
     logo_resource_name: str | None = None
     logo_width = 0.0
@@ -731,12 +810,13 @@ def render_invoice_period_pdf(
         # Bloc societe emettrice
         pdf.text(x=left, top_y=116.0, value="Societe emettrice", size=11, bold=True)
         pdf.text(x=left, top_y=134.0, value=identity.company_name, size=10, bold=True)
-        pdf.text(x=left, top_y=150.0, value=f"SIRET: {identity.company_siret}", size=10)
-        pdf.text(x=left, top_y=166.0, value=f"TVA intracom: {identity.company_vat_number}", size=10)
-        pdf.text(x=left, top_y=182.0, value=f"Telephone: {identity.company_phone}", size=10)
-        pdf.text(x=left, top_y=198.0, value=f"Email: {identity.company_email}", size=10)
+        pdf.text(x=left, top_y=150.0, value=f"SIREN: {identity.company_siren}", size=10)
+        pdf.text(x=left, top_y=166.0, value=f"SIRET: {identity.company_siret}", size=10)
+        pdf.text(x=left, top_y=182.0, value=f"TVA intracom: {identity.company_vat_number}", size=10)
+        pdf.text(x=left, top_y=198.0, value=f"Telephone: {identity.company_phone}", size=10)
+        pdf.text(x=left, top_y=214.0, value=f"Email: {identity.company_email}", size=10)
         for index, chunk in enumerate(_wrap_text(identity.company_address, 48)):
-            pdf.text(x=left, top_y=214.0 + (index * 14.0), value=chunk, size=10)
+            pdf.text(x=left, top_y=230.0 + (index * 14.0), value=chunk, size=10)
 
         # Bloc client facture
         billing_address = _ascii_safe((client_billing_address or "").strip()) or "-"

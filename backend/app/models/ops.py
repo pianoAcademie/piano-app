@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -89,6 +89,36 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(120), primary_key=True, nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
+class LegalEntity(Base):
+    __tablename__ = "legal_entities"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    siren: Mapped[str | None] = mapped_column(Text, nullable=True)
+    siret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vat_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False, server_default=text("'FR'"))
+    invoice_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
+    invoice_next_number: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("1"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

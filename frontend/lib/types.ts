@@ -374,6 +374,16 @@ export type AdminRangeInvoiceOut = {
   reminded_at: string | null;
   public_note: string | null;
   private_note: string | null;
+  related_invoices: AdminRangeInvoiceReferenceOut[];
+};
+
+export type AdminRangeInvoiceReferenceOut = {
+  note_id: string;
+  invoice_number: string;
+  billing_entity: string | null;
+  seller_legal_entity_id: string | null;
+  split_part_index: number;
+  split_part_count: number;
 };
 
 export type AdminRangeInvoiceEmailOut = {
@@ -1278,6 +1288,8 @@ export type AdminActivityOut = {
   name: string;
   description: string | null;
   service_code: string;
+  seller_legal_entity_id: string | null;
+  seller_legal_entity_name: string | null;
   credit_type_id: string | null;
   credit_type_code: string | null;
   credit_type_name: string | null;
@@ -1294,6 +1306,21 @@ export type AdminActivityOut = {
   auto_cancel_if_booked_less_than_override: number | null;
   auto_cancel_hours_before_start_override: number | null;
   active: boolean;
+};
+
+export type AdminLegalEntityOut = {
+  id: string;
+  name: string;
+  siren: string | null;
+  siret: string | null;
+  vat_number: string | null;
+  address_text: string | null;
+  country_code: string;
+  invoice_prefix: string;
+  invoice_next_number: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type AdminCreditTypeOut = {

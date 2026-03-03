@@ -1,6 +1,12 @@
 from app.models.family import ClientFamilyLink
 from app.models.client_group import ClientGroup, ClientGroupMembership
-from app.models.client_record import ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry, ClientPaymentRefund
+from app.models.client_record import (
+    ClientInvoiceLine,
+    ClientManualCreditBalance,
+    ClientManualTransaction,
+    ClientNoteEntry,
+    ClientPaymentRefund,
+)
 from app.models.catalog import (
     Booking,
     BookingStatus,
@@ -21,6 +27,7 @@ from app.models.ops import (
     CommunicationLog,
     CommunicationSenderCategory,
     EmailReminder,
+    LegalEntity,
     MessageFormat,
     PasswordResetToken,
     ProfessorSessionMessage,
@@ -72,6 +79,7 @@ __all__ = [
     "ClientGroup",
     "ClientGroupMembership",
     "ClientKind",
+    "ClientInvoiceLine",
     "ClientManualCreditBalance",
     "ClientManualTransaction",
     "ClientNoteEntry",
@@ -85,6 +93,7 @@ __all__ = [
     "DeliveryMode",
     "EmailReminder",
     "Location",
+    "LegalEntity",
     "PlanningConfig",
     "PlanningCourseType",
     "PayoutStatus",

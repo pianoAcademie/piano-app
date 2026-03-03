@@ -10,10 +10,12 @@ import {
   createAdminCatalogProductAction,
   createAdminActivityAction,
   createAdminCreditTypeAction,
+  createAdminLegalEntityAction,
   deleteAdminCatalogCategoryAction,
   deleteAdminCatalogKitAction,
   deleteAdminCatalogProductAction,
   deleteAdminCreditTypeAction,
+  disableAdminLegalEntityAction,
   disableAdminFormulaAction,
   duplicateAdminFormulaAction,
   updateAdminCatalogCategoryAction,
@@ -21,6 +23,7 @@ import {
   updateAdminCatalogProductAction,
   updateAdminActivityAction,
   updateAdminCreditTypeAction,
+  updateAdminLegalEntityAction,
   updateAdminConfigAccountAction,
   updateAdminConfigMessagingSettingsAction,
   updateAdminConfigInvoiceNumberingAction,
@@ -41,6 +44,7 @@ import type {
   AdminCatalogKitOut,
   AdminCatalogProductOut,
   AdminCreditTypeOut,
+  AdminLegalEntityOut,
   AdminConfigAccountOut,
   AdminFormulaOut,
   AdminMessagingSettingsOut,
@@ -60,6 +64,7 @@ type ConfigMainSection =
   | "params"
   | "formulas"
   | "activities"
+  | "legal-entities"
   | "promo"
   | "products"
   | "payment-rules"
@@ -75,6 +80,7 @@ type ConfigSection =
   | "params-messaging"
   | "formulas"
   | "activities"
+  | "legal-entities"
   | "promo"
   | "products"
   | "payment-rules"
@@ -115,6 +121,7 @@ const MAIN_NAV_ITEMS: MainNavItem[] = [
   { key: "params", label: "Parametres", section: "params-account" },
   { key: "formulas", label: "Les formules", section: "formulas" },
   { key: "activities", label: "Activites", section: "activities" },
+  { key: "legal-entities", label: "Entites legales", section: "legal-entities" },
   { key: "promo", label: "Code promo", section: "promo" },
   { key: "payment-rules", label: "Regles de paiement", section: "payment-rules" },
   { key: "integrations", label: "Integration", section: "integrations" },
@@ -170,6 +177,7 @@ function parseSection(raw: string): ConfigSection {
     value === "params-messaging" ||
     value === "formulas" ||
     value === "activities" ||
+    value === "legal-entities" ||
     value === "promo" ||
     value === "products" ||
     value === "payment-rules" ||
@@ -192,6 +200,7 @@ function toMainSection(section: ConfigSection): ConfigMainSection {
       return "params";
     case "formulas":
     case "activities":
+    case "legal-entities":
     case "promo":
     case "products":
     case "payment-rules":
@@ -390,6 +399,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     defaultProfessorGridResult,
     formulasResult,
     activitiesResult,
+    legalEntitiesResult,
     creditTypesResult,
     catalogCategoriesResult,
     catalogProductsResult,
@@ -418,6 +428,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminProfessorDefaultGridOut>("/api/v1/admin/config/professor-default-grid", {}, token),
     backendRequest<AdminFormulaOut[]>(formulasEndpoint, {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
+    backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=true", {}, token),
     backendRequest<AdminCreditTypeOut[]>("/api/v1/admin/credit-types?include_inactive=true", {}, token),
     backendRequest<AdminCatalogCategoryOut[]>("/api/v1/admin/config/catalog/categories?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
@@ -515,6 +526,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
         loadErrors.push(`Activites: ${activitiesResult.message}`);
         return [] as AdminActivityOut[];
       })();
+  const legalEntities = legalEntitiesResult.ok
+    ? legalEntitiesResult.data
+    : (() => {
+        loadErrors.push(`Entites legales: ${legalEntitiesResult.message}`);
+        return [] as AdminLegalEntityOut[];
+      })();
   const creditTypes = creditTypesResult.ok
     ? creditTypesResult.data
     : (() => {
@@ -548,6 +565,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const createActivityModalOpen = readParam(params, "new_activity") === "1";
   const selectedActivityId = readParam(params, "activity_id");
   const selectedActivity = activities.find((activity) => activity.id === selectedActivityId) ?? null;
+  const createLegalEntityModalOpen = readParam(params, "new_legal_entity") === "1";
+  const selectedLegalEntityId = readParam(params, "legal_entity_id");
+  const selectedLegalEntity = legalEntities.find((entity) => entity.id === selectedLegalEntityId) ?? null;
+  const activeLegalEntities = legalEntities.filter((entity) => entity.is_active);
   const createCreditTypeModalOpen = readParam(params, "new_credit_type") === "1";
   const selectedCreditTypeId = readParam(params, "credit_type_id");
   const selectedCreditType = creditTypes.find((creditType) => creditType.id === selectedCreditTypeId) ?? null;
@@ -599,6 +620,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       | "params-messaging"
       | "formulas"
       | "activities"
+      | "legal-entities"
       | "credit-types"
     >,
     string
@@ -2359,6 +2381,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 {activeCreditTypes.length === 0 ? (
                   <p className="flash-err">Aucun type de credit actif: ajoutez/activez d abord un type de credit.</p>
                 ) : null}
+                {activeLegalEntities.length === 0 ? (
+                  <p className="flash-err">Aucune entite legale active: ajoutez/activez d abord une entite legale.</p>
+                ) : null}
               </section>
 
               <section className="card">
@@ -2383,6 +2408,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <small className="muted">
                             {activity.code} · {activity.credit_type_name ?? "Type credit non mappe"} · {activityModeLabel(activity.mode)} ·{" "}
                             {activity.duration_minutes} min
+                          </small>
+                          <small className="muted">
+                            Entite: {activity.seller_legal_entity_name ?? "Non definie"}
                           </small>
                           <small className="muted">{activity.description || "Sans description"}</small>
                         </div>
@@ -2419,8 +2447,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </header>
 
                     <section className="card modal-card">
-                      {activeCreditTypes.length === 0 ? (
-                        <p className="flash-err">Impossible de creer une activite sans type de credit actif.</p>
+                      {activeCreditTypes.length === 0 || activeLegalEntities.length === 0 ? (
+                        <p className="flash-err">
+                          Impossible de creer une activite sans type de credit actif et sans entite legale active.
+                        </p>
                       ) : (
                       <form action={createAdminActivityAction} className="grid cols-4 config-form-grid activity-modal-grid">
                         <label className="span-2">
@@ -2434,6 +2464,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label>
                           Service code
                           <input type="text" name="service_code" defaultValue="ACTIVITY" maxLength={80} />
+                        </label>
+                        <label className="span-2">
+                          Entite legale vendeuse
+                          <select name="seller_legal_entity_id" defaultValue={activeLegalEntities[0]?.id ?? ""} required>
+                            <option value="" disabled>
+                              Selectionner
+                            </option>
+                            {activeLegalEntities.map((entity) => (
+                              <option key={entity.id} value={entity.id}>
+                                {entity.name} ({entity.invoice_prefix})
+                              </option>
+                            ))}
+                          </select>
                         </label>
 
                         <label>
@@ -2582,8 +2625,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </header>
 
                     <section className="card modal-card">
-                      {activeCreditTypes.length === 0 ? (
-                        <p className="flash-err">Impossible de modifier cette activite sans type de credit actif.</p>
+                      {activeCreditTypes.length === 0 || activeLegalEntities.length === 0 ? (
+                        <p className="flash-err">
+                          Impossible de modifier cette activite sans type de credit actif et sans entite legale active.
+                        </p>
                       ) : (
                       <form action={updateAdminActivityAction} className="grid cols-4 config-form-grid activity-modal-grid">
                         <input type="hidden" name="activity_id" value={selectedActivity.id} />
@@ -2599,6 +2644,23 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label>
                           Service code
                           <input type="text" name="service_code" defaultValue={selectedActivity.service_code} maxLength={80} />
+                        </label>
+                        <label className="span-2">
+                          Entite legale vendeuse
+                          <select
+                            name="seller_legal_entity_id"
+                            defaultValue={selectedActivity.seller_legal_entity_id ?? activeLegalEntities[0]?.id ?? ""}
+                            required
+                          >
+                            <option value="" disabled>
+                              Selectionner
+                            </option>
+                            {activeLegalEntities.map((entity) => (
+                              <option key={entity.id} value={entity.id}>
+                                {entity.name} ({entity.invoice_prefix})
+                              </option>
+                            ))}
+                          </select>
                         </label>
                         <label>
                           Mode
@@ -2778,6 +2840,228 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </div>
                       </form>
                       )}
+                    </section>
+                  </article>
+                </section>
+              ) : null}
+            </>
+          ) : null}
+
+          {section === "legal-entities" ? (
+            <>
+              <section className="card">
+                <div className="row between">
+                  <div>
+                    <h3>Entites legales</h3>
+                    <p className="muted">
+                      Identites emettrices utilisees pour la facturation (nom, SIREN/SIRET/TVA, prefixe de numerotation).
+                    </p>
+                  </div>
+                  <Link className="mode-link" href={buildConfigHref("legal-entities", { new_legal_entity: "1" })}>
+                    Ajouter une entite
+                  </Link>
+                </div>
+              </section>
+
+              <section className="card">
+                <h3>Referentiel entites</h3>
+                {legalEntities.length === 0 ? (
+                  <p className="muted">Aucune entite legale.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Entite</th>
+                          <th>Identifiants</th>
+                          <th>Numerotation</th>
+                          <th>Statut</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {legalEntities.map((entity) => (
+                          <tr key={entity.id}>
+                            <td>
+                              <div>
+                                <strong>{entity.name}</strong>
+                                <small className="muted">{entity.country_code}</small>
+                              </div>
+                            </td>
+                            <td>
+                              <div>
+                                <small>SIREN: {entity.siren || "-"}</small>
+                                <small>SIRET: {entity.siret || "-"}</small>
+                                <small>TVA: {entity.vat_number || "-"}</small>
+                              </div>
+                            </td>
+                            <td>
+                              <div>
+                                <small>Prefixe: {entity.invoice_prefix}</small>
+                                <small>Prochain no: {entity.invoice_next_number}</small>
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`status-pill ${entity.is_active ? "status-ok" : "status-warn"}`}>
+                                {entity.is_active ? "Active" : "Inactive"}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="row gap-xs">
+                                <Link className="small-btn" href={buildConfigHref("legal-entities", { legal_entity_id: entity.id })}>
+                                  Modifier
+                                </Link>
+                                <form action={disableAdminLegalEntityAction}>
+                                  <input type="hidden" name="legal_entity_id" value={entity.id} />
+                                  <button type="submit" className="danger small-btn" disabled={!entity.is_active}>
+                                    Desactiver
+                                  </button>
+                                </form>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              {createLegalEntityModalOpen ? (
+                <section className="modal-overlay">
+                  <article className="modal-panel activity-modal-panel">
+                    <Link className="modal-close-x" href={buildConfigHref("legal-entities")} aria-label="Fermer">
+                      ×
+                    </Link>
+                    <header className="activity-modal-header">
+                      <div>
+                        <h3>Nouvelle entite legale</h3>
+                        <p className="muted">Configurer une nouvelle identite emettrice.</p>
+                      </div>
+                    </header>
+
+                    <section className="card modal-card">
+                      <form action={createAdminLegalEntityAction} className="grid cols-4 config-form-grid activity-modal-grid">
+                        <label className="span-2">
+                          Nom legal
+                          <input type="text" name="name" required maxLength={255} />
+                        </label>
+                        <label>
+                          Prefixe facture
+                          <input type="text" name="invoice_prefix" required maxLength={20} placeholder="Ex: PA" />
+                        </label>
+                        <label>
+                          Prochain numero
+                          <input type="number" name="invoice_next_number" min={1} step="1" defaultValue={1} required />
+                        </label>
+
+                        <label>
+                          SIREN
+                          <input type="text" name="siren" maxLength={64} />
+                        </label>
+                        <label>
+                          SIRET
+                          <input type="text" name="siret" maxLength={64} />
+                        </label>
+                        <label>
+                          Numero TVA
+                          <input type="text" name="vat_number" maxLength={64} />
+                        </label>
+                        <label>
+                          Code pays (ISO2)
+                          <input type="text" name="country_code" defaultValue="FR" minLength={2} maxLength={2} required />
+                        </label>
+                        <label className="checkline">
+                          <input type="checkbox" name="is_active" defaultChecked />
+                          Active
+                        </label>
+
+                        <label className="span-3">
+                          Adresse facture
+                          <textarea name="address_text" rows={3} />
+                        </label>
+                        <div className="row">
+                          <button type="submit">Ajouter l entite</button>
+                        </div>
+                      </form>
+                    </section>
+                  </article>
+                </section>
+              ) : null}
+
+              {selectedLegalEntity ? (
+                <section className="modal-overlay">
+                  <article className="modal-panel activity-modal-panel">
+                    <Link className="modal-close-x" href={buildConfigHref("legal-entities")} aria-label="Fermer">
+                      ×
+                    </Link>
+                    <header className="activity-modal-header">
+                      <div>
+                        <h3>{selectedLegalEntity.name}</h3>
+                        <p className="muted">Modifier cette entite legale.</p>
+                      </div>
+                    </header>
+
+                    <section className="card modal-card">
+                      <form action={updateAdminLegalEntityAction} className="grid cols-4 config-form-grid activity-modal-grid">
+                        <input type="hidden" name="legal_entity_id" value={selectedLegalEntity.id} />
+
+                        <label className="span-2">
+                          Nom legal
+                          <input type="text" name="name" defaultValue={selectedLegalEntity.name} required maxLength={255} />
+                        </label>
+                        <label>
+                          Prefixe facture
+                          <input type="text" name="invoice_prefix" defaultValue={selectedLegalEntity.invoice_prefix} required maxLength={20} />
+                        </label>
+                        <label>
+                          Prochain numero
+                          <input
+                            type="number"
+                            name="invoice_next_number"
+                            min={1}
+                            step="1"
+                            defaultValue={selectedLegalEntity.invoice_next_number}
+                            required
+                          />
+                        </label>
+
+                        <label>
+                          SIREN
+                          <input type="text" name="siren" defaultValue={selectedLegalEntity.siren ?? ""} maxLength={64} />
+                        </label>
+                        <label>
+                          SIRET
+                          <input type="text" name="siret" defaultValue={selectedLegalEntity.siret ?? ""} maxLength={64} />
+                        </label>
+                        <label>
+                          Numero TVA
+                          <input type="text" name="vat_number" defaultValue={selectedLegalEntity.vat_number ?? ""} maxLength={64} />
+                        </label>
+                        <label>
+                          Code pays (ISO2)
+                          <input
+                            type="text"
+                            name="country_code"
+                            defaultValue={selectedLegalEntity.country_code}
+                            minLength={2}
+                            maxLength={2}
+                            required
+                          />
+                        </label>
+                        <label className="checkline">
+                          <input type="checkbox" name="is_active" defaultChecked={selectedLegalEntity.is_active} />
+                          Active
+                        </label>
+
+                        <label className="span-3">
+                          Adresse facture
+                          <textarea name="address_text" rows={3} defaultValue={selectedLegalEntity.address_text ?? ""} />
+                        </label>
+                        <div className="row">
+                          <button type="submit">Enregistrer</button>
+                        </div>
+                      </form>
                     </section>
                   </article>
                 </section>
@@ -2994,6 +3278,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           section !== "params-messaging" &&
           section !== "formulas" &&
           section !== "activities" &&
+          section !== "legal-entities" &&
           section !== "credit-types" ? (
             <section className="card config-placeholder-card">
               <h3>{placeholderTitleBySection[section]}</h3>

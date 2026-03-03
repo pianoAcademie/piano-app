@@ -162,3 +162,47 @@ class ClientManualTransaction(Base):
         nullable=False,
         server_default=text("now()"),
     )
+
+
+class ClientInvoiceLine(Base):
+    __tablename__ = "client_invoice_lines"
+    __table_args__ = (
+        UniqueConstraint("note_id", "source", "source_payment_id", name="uq_client_invoice_line_note_source_payment"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    note_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("client_note_entries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_payment_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    amount_excl_vat: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    vat_rate: Mapped[float] = mapped_column(Numeric(6, 3), nullable=False)
+    vat_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    total_incl_vat: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    billing_entity: Mapped[str] = mapped_column(String(40), nullable=False, server_default=text("'PIANO_ACADEMIE'"))
+    seller_legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )

@@ -410,6 +410,8 @@ class AdminActivityOut(BaseModel):
     name: str
     description: str | None
     service_code: str
+    seller_legal_entity_id: UUID | None
+    seller_legal_entity_name: str | None
     credit_type_id: UUID | None
     credit_type_code: str | None
     credit_type_name: str | None
@@ -433,6 +435,7 @@ class AdminActivityUpsertRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     service_code: str = Field(default="ACTIVITY", min_length=1, max_length=80)
+    seller_legal_entity_id: UUID
     credit_type_id: UUID
     duration_minutes: int = Field(default=60, ge=5, le=600)
     color_hex: str = Field(default="#94C973", min_length=7, max_length=7)
@@ -454,6 +457,7 @@ class AdminActivityUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     service_code: str | None = Field(default=None, min_length=1, max_length=80)
+    seller_legal_entity_id: UUID | None = None
     credit_type_id: UUID | None = None
     duration_minutes: int | None = Field(default=None, ge=5, le=600)
     color_hex: str | None = Field(default=None, min_length=7, max_length=7)
@@ -505,6 +509,45 @@ class AdminClientOut(BaseModel):
     next_session_start_at_utc: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class AdminLegalEntityOut(BaseModel):
+    id: UUID
+    name: str
+    siren: str | None
+    siret: str | None
+    vat_number: str | None
+    address_text: str | None
+    country_code: str
+    invoice_prefix: str
+    invoice_next_number: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminLegalEntityCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    siren: str | None = Field(default=None, max_length=64)
+    siret: str | None = Field(default=None, max_length=64)
+    vat_number: str | None = Field(default=None, max_length=64)
+    address_text: str | None = Field(default=None, max_length=2000)
+    country_code: str = Field(default="FR", min_length=2, max_length=2)
+    invoice_prefix: str = Field(min_length=1, max_length=20)
+    invoice_next_number: int = Field(default=1, ge=1)
+    is_active: bool = True
+
+
+class AdminLegalEntityUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    siren: str | None = Field(default=None, max_length=64)
+    siret: str | None = Field(default=None, max_length=64)
+    vat_number: str | None = Field(default=None, max_length=64)
+    address_text: str | None = Field(default=None, max_length=2000)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    invoice_prefix: str | None = Field(default=None, min_length=1, max_length=20)
+    invoice_next_number: int | None = Field(default=None, ge=1)
+    is_active: bool | None = None
 
 
 class AdminClientUpdateRequest(BaseModel):
@@ -843,6 +886,15 @@ class AdminRangeInvoiceCreateRequest(BaseModel):
     private_note: str | None = Field(default=None, max_length=2000)
 
 
+class AdminRangeInvoiceReferenceOut(BaseModel):
+    note_id: UUID
+    invoice_number: str
+    billing_entity: str | None = None
+    seller_legal_entity_id: UUID | None = None
+    split_part_index: int = 1
+    split_part_count: int = 1
+
+
 class AdminRangeInvoiceOut(BaseModel):
     note_id: UUID
     invoice_number: str
@@ -873,6 +925,7 @@ class AdminRangeInvoiceOut(BaseModel):
     reminded_at: datetime | None = None
     public_note: str | None = None
     private_note: str | None = None
+    related_invoices: list[AdminRangeInvoiceReferenceOut] = Field(default_factory=list)
 
 
 class AdminRangeInvoiceStatusUpdateRequest(BaseModel):
@@ -976,6 +1029,8 @@ class AdminClientPaymentOut(BaseModel):
     total_incl_vat: Decimal
     currency: str
     reference: str | None
+    seller_legal_entity_id: UUID | None = None
+    billing_entity: str | None = None
     invoice_number: str | None = None
     invoice_status: str | None = None
     invoice_note_id: UUID | None = None

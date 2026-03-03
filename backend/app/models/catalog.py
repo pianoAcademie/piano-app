@@ -192,6 +192,16 @@ class CourseType(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     service_code: Mapped[str] = mapped_column(String(80), nullable=False)
+    billing_entity_code: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        server_default=text("'PIANO_ACADEMIE'"),
+    )
+    seller_legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     credit_type_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("credit_types.id", ondelete="SET NULL"),
@@ -240,6 +250,16 @@ class CourseSession(Base):
         PGUUID(as_uuid=True),
         ForeignKey("course_types.id", ondelete="restrict"),
         nullable=False,
+    )
+    billing_entity_snapshot: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        server_default=text("'PIANO_ACADEMIE'"),
+    )
+    snapshot_seller_legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
     )
     location_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),

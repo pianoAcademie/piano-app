@@ -197,6 +197,8 @@ class ClientPaymentOut(BaseModel):
     total_incl_vat: Decimal
     currency: str
     reference: str | None
+    seller_legal_entity_id: UUID | None = None
+    billing_entity: str | None = None
     payment_url: str | None = None
 
 

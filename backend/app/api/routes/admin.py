@@ -45,6 +45,7 @@ from app.models.ops import (
 )
 from app.models.user import ClientStatus, User, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
+from app.services.invoice_documents import normalize_billing_entity
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_notifications import send_session_operation_email
 from app.schemas.admin import (
@@ -1311,6 +1312,8 @@ def create_session(
         sessions_to_create.append(
             CourseSession(
                 course_type_id=payload.course_type_id,
+                billing_entity_snapshot=normalize_billing_entity(course_type.billing_entity_code),
+                snapshot_seller_legal_entity_id=course_type.seller_legal_entity_id,
                 location_id=payload.location_id,
                 professor_id=payload.professor_id,
                 title=payload.title,
@@ -2153,6 +2156,8 @@ def update_session(
 
     for target in target_sessions:
         target.course_type_id = course_type_id
+        target.billing_entity_snapshot = normalize_billing_entity(course_type.billing_entity_code)
+        target.snapshot_seller_legal_entity_id = course_type.seller_legal_entity_id
         target.location_id = location_id
         target.professor_id = professor_id
 
@@ -2298,6 +2303,8 @@ def update_session(
             db.add(
                 CourseSession(
                     course_type_id=session_obj.course_type_id,
+                    billing_entity_snapshot=session_obj.billing_entity_snapshot,
+                    snapshot_seller_legal_entity_id=session_obj.snapshot_seller_legal_entity_id,
                     location_id=session_obj.location_id,
                     professor_id=session_obj.professor_id,
                     title=session_obj.title,
@@ -2407,6 +2414,8 @@ def duplicate_session_operation(
 
             duplicate_session = CourseSession(
                 course_type_id=target.course_type_id,
+                billing_entity_snapshot=target.billing_entity_snapshot,
+                snapshot_seller_legal_entity_id=target.snapshot_seller_legal_entity_id,
                 location_id=target.location_id,
                 professor_id=target.professor_id,
                 title=target.title,

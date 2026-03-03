@@ -8,6 +8,7 @@ import { redirect } from "next/navigation";
 import { backendRequest, backendUrl } from "./backend";
 import type {
   AdminActivityOut,
+  AdminLegalEntityOut,
   AdminInvoiceNumberingOut,
   AdminInvoiceTemplateOut,
   AdminClientPasswordEmailTemplateOut,
@@ -4628,6 +4629,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const code = String(formData.get("code") ?? "").trim();
   const description = optionalField(formData, "description");
   const serviceCode = String(formData.get("service_code") ?? "ACTIVITY").trim().toUpperCase();
+  const sellerLegalEntityId = String(formData.get("seller_legal_entity_id") ?? "").trim();
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? ""));
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
@@ -4663,6 +4665,9 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (!creditTypeId) {
     redirect("/admin/config?section=activities&error=Type%20de%20credit%20obligatoire");
   }
+  if (!sellerLegalEntityId) {
+    redirect("/admin/config?section=activities&error=Entite%20legale%20obligatoire");
+  }
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
     redirect("/admin/config?section=activities&error=Taux%20horaire%20par%20defaut%20invalide");
   }
@@ -4692,6 +4697,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     name,
     description,
     service_code: serviceCode || "ACTIVITY",
+    seller_legal_entity_id: sellerLegalEntityId,
     credit_type_id: creditTypeId,
     duration_minutes: durationMinutes,
     color_hex: colorHex,
@@ -4746,6 +4752,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const code = String(formData.get("code") ?? "").trim();
   const description = optionalField(formData, "description");
   const serviceCode = String(formData.get("service_code") ?? "ACTIVITY").trim().toUpperCase();
+  const sellerLegalEntityId = String(formData.get("seller_legal_entity_id") ?? "").trim();
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? ""));
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
@@ -4781,6 +4788,9 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (!creditTypeId) {
     redirect("/admin/config?section=activities&error=Type%20de%20credit%20obligatoire");
   }
+  if (!sellerLegalEntityId) {
+    redirect("/admin/config?section=activities&error=Entite%20legale%20obligatoire");
+  }
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
     redirect("/admin/config?section=activities&error=Taux%20horaire%20par%20defaut%20invalide");
   }
@@ -4811,6 +4821,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     code: code || undefined,
     description,
     service_code: serviceCode || "ACTIVITY",
+    seller_legal_entity_id: sellerLegalEntityId,
     credit_type_id: creditTypeId,
     duration_minutes: durationMinutes,
     color_hex: colorHex,
@@ -4966,6 +4977,159 @@ export async function deleteAdminCreditTypeAction(formData: FormData): Promise<v
   revalidatePath("/admin/config");
   revalidatePath("/admin");
   redirect("/admin/config?section=credit-types&ok=Type%20de%20credit%20supprime");
+}
+
+export async function createAdminLegalEntityAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const name = String(formData.get("name") ?? "").trim();
+  const invoicePrefix = String(formData.get("invoice_prefix") ?? "").trim().toUpperCase();
+  const countryCode = String(formData.get("country_code") ?? "FR").trim().toUpperCase();
+  const invoiceNextNumberRaw = String(formData.get("invoice_next_number") ?? "1").trim();
+  const invoiceNextNumber = parsePositiveInt(invoiceNextNumberRaw);
+
+  if (!name) {
+    redirect("/admin/config?section=legal-entities&error=Nom%20entite%20obligatoire");
+  }
+  if (!invoicePrefix) {
+    redirect("/admin/config?section=legal-entities&error=Prefixe%20facture%20obligatoire");
+  }
+  if (countryCode.length !== 2) {
+    redirect("/admin/config?section=legal-entities&error=Code%20pays%20invalide");
+  }
+  if (invoiceNextNumber === null || invoiceNextNumber < 1) {
+    redirect("/admin/config?section=legal-entities&error=Compteur%20facture%20invalide");
+  }
+
+  const payload = {
+    name,
+    siren: optionalField(formData, "siren"),
+    siret: optionalField(formData, "siret"),
+    vat_number: optionalField(formData, "vat_number"),
+    address_text: optionalField(formData, "address_text"),
+    country_code: countryCode,
+    invoice_prefix: invoicePrefix,
+    invoice_next_number: invoiceNextNumber,
+    is_active: checkboxFieldWithDefault(formData, "is_active", true),
+  };
+
+  const result = await backendRequest<AdminLegalEntityOut>(
+    "/api/v1/admin/legal-entities",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=legal-entities&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin");
+  redirect("/admin/config?section=legal-entities&ok=Entite%20legale%20cree");
+}
+
+export async function updateAdminLegalEntityAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const legalEntityId = String(formData.get("legal_entity_id") ?? "").trim();
+  if (!legalEntityId) {
+    redirect("/admin/config?section=legal-entities&error=Entite%20legale%20invalide");
+  }
+
+  const name = String(formData.get("name") ?? "").trim();
+  const invoicePrefix = String(formData.get("invoice_prefix") ?? "").trim().toUpperCase();
+  const countryCode = String(formData.get("country_code") ?? "FR").trim().toUpperCase();
+  const invoiceNextNumberRaw = String(formData.get("invoice_next_number") ?? "1").trim();
+  const invoiceNextNumber = parsePositiveInt(invoiceNextNumberRaw);
+
+  if (!name) {
+    redirect(`/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Nom%20entite%20obligatoire`);
+  }
+  if (!invoicePrefix) {
+    redirect(
+      `/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Prefixe%20facture%20obligatoire`,
+    );
+  }
+  if (countryCode.length !== 2) {
+    redirect(`/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Code%20pays%20invalide`);
+  }
+  if (invoiceNextNumber === null || invoiceNextNumber < 1) {
+    redirect(
+      `/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Compteur%20facture%20invalide`,
+    );
+  }
+
+  const payload = {
+    name,
+    siren: optionalField(formData, "siren"),
+    siret: optionalField(formData, "siret"),
+    vat_number: optionalField(formData, "vat_number"),
+    address_text: optionalField(formData, "address_text"),
+    country_code: countryCode,
+    invoice_prefix: invoicePrefix,
+    invoice_next_number: invoiceNextNumber,
+    is_active: checkboxFieldWithDefault(formData, "is_active", true),
+  };
+
+  const result = await backendRequest<AdminLegalEntityOut>(
+    `/api/v1/admin/legal-entities/${legalEntityId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin");
+  redirect(`/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&ok=Entite%20legale%20mise%20a%20jour`);
+}
+
+export async function disableAdminLegalEntityAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const legalEntityId = String(formData.get("legal_entity_id") ?? "").trim();
+  if (!legalEntityId) {
+    redirect("/admin/config?section=legal-entities&error=Entite%20legale%20invalide");
+  }
+
+  const result = await backendRequest<AdminLegalEntityOut>(
+    `/api/v1/admin/legal-entities/${legalEntityId}/disable`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=legal-entities&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin");
+  redirect("/admin/config?section=legal-entities&ok=Entite%20legale%20desactivee");
 }
 
 export async function updateAdminConfigAccountAction(formData: FormData): Promise<void> {

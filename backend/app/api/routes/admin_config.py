@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CourseType, CreditType, DeliveryMode
-from app.models.ops import AppSetting
+from app.models.ops import AppSetting, LegalEntity
 from app.models.product_catalog import ProductCategory
 from app.models.plan import (
     Plan,
@@ -58,6 +58,9 @@ from app.schemas.admin import (
     AdminInvoiceTemplateUpdateRequest,
     AdminInvoiceNumberingOut,
     AdminInvoiceNumberingUpdateRequest,
+    AdminLegalEntityCreateRequest,
+    AdminLegalEntityOut,
+    AdminLegalEntityUpdateRequest,
     AdminProfessorDefaultGridLineInput,
     AdminProfessorDefaultGridLineOut,
     AdminProfessorDefaultGridOut,
@@ -236,14 +239,24 @@ def _normalize_color_hex(raw_color: str | None) -> str:
     return normalized
 
 
-def _serialize_activity(activity: CourseType, *, credit_type_by_id: dict[UUID, CreditType]) -> AdminActivityOut:
+def _serialize_activity(
+    activity: CourseType,
+    *,
+    credit_type_by_id: dict[UUID, CreditType],
+    legal_entity_by_id: dict[UUID, LegalEntity],
+) -> AdminActivityOut:
     credit_type = credit_type_by_id.get(activity.credit_type_id) if activity.credit_type_id is not None else None
+    legal_entity = (
+        legal_entity_by_id.get(activity.seller_legal_entity_id) if activity.seller_legal_entity_id is not None else None
+    )
     return AdminActivityOut(
         id=activity.id,
         code=activity.code,
         name=activity.name,
         description=activity.description,
         service_code=activity.service_code,
+        seller_legal_entity_id=activity.seller_legal_entity_id,
+        seller_legal_entity_name=legal_entity.name if legal_entity is not None else None,
         credit_type_id=credit_type.id if credit_type is not None else None,
         credit_type_code=credit_type.code if credit_type is not None else None,
         credit_type_name=credit_type.name if credit_type is not None else None,
@@ -318,6 +331,99 @@ def _resolve_credit_type(
     if not allow_inactive and not credit_type.active:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Selected credit type is inactive")
     return credit_type
+
+
+def _normalize_legal_entity_text(value: str | None, *, max_length: int | None = None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.strip().split())
+    if not normalized:
+        return None
+    if max_length is not None:
+        return normalized[:max_length]
+    return normalized
+
+
+def _normalize_country_code(value: str | None) -> str:
+    normalized = (value or "").strip().upper()
+    if len(normalized) != 2 or not normalized.isalpha():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="country_code must contain exactly 2 letters",
+        )
+    return normalized
+
+
+def _normalize_invoice_prefix(value: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9_-]+", "", value.strip().upper())
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invoice_prefix is required",
+        )
+    return normalized[:20]
+
+
+def _ensure_legal_entity_minimum_fields(*, name: str | None, country_code: str | None, invoice_prefix: str | None) -> None:
+    if not (name or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="name is required",
+        )
+    if not (country_code or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="country_code is required",
+        )
+    if not (invoice_prefix or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invoice_prefix is required",
+        )
+
+
+def _legal_entity_by_id(db: Session) -> dict[UUID, LegalEntity]:
+    rows = db.scalars(select(LegalEntity).order_by(LegalEntity.name.asc())).all()
+    return {row.id: row for row in rows}
+
+
+def _resolve_legal_entity(
+    db: Session,
+    *,
+    legal_entity_id: UUID,
+    allow_inactive: bool = False,
+) -> LegalEntity:
+    entity = db.scalar(select(LegalEntity).where(LegalEntity.id == legal_entity_id))
+    if entity is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown legal entity")
+    if not allow_inactive and not entity.is_active:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Selected legal entity is inactive")
+    return entity
+
+
+def _legacy_billing_entity_code_from_legal_entity(entity: LegalEntity) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", (entity.name or "").strip().upper())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if not normalized:
+        normalized = "LEGAL_ENTITY"
+    return normalized[:40]
+
+
+def _serialize_legal_entity(entity: LegalEntity) -> AdminLegalEntityOut:
+    return AdminLegalEntityOut(
+        id=entity.id,
+        name=entity.name,
+        siren=entity.siren,
+        siret=entity.siret,
+        vat_number=entity.vat_number,
+        address_text=entity.address_text,
+        country_code=entity.country_code,
+        invoice_prefix=entity.invoice_prefix,
+        invoice_next_number=entity.invoice_next_number,
+        is_active=entity.is_active,
+        created_at=entity.created_at,
+        updated_at=entity.updated_at,
+    )
 
 
 def _get_setting(db: Session, key: str) -> AppSetting | None:
@@ -980,7 +1086,161 @@ def list_admin_activities(
         stmt = stmt.where(CourseType.active.is_(True))
     rows = db.scalars(stmt).all()
     credit_type_by_id = _credit_type_by_id(db)
-    return [_serialize_activity(row, credit_type_by_id=credit_type_by_id) for row in rows]
+    legal_entity_by_id = _legal_entity_by_id(db)
+    return [
+        _serialize_activity(
+            row,
+            credit_type_by_id=credit_type_by_id,
+            legal_entity_by_id=legal_entity_by_id,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/legal-entities", response_model=list[AdminLegalEntityOut])
+def list_admin_legal_entities(
+    include_inactive: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminLegalEntityOut]:
+    stmt = select(LegalEntity).order_by(LegalEntity.name.asc())
+    if not include_inactive:
+        stmt = stmt.where(LegalEntity.is_active.is_(True))
+    rows = db.scalars(stmt).all()
+    return [_serialize_legal_entity(row) for row in rows]
+
+
+@router.post("/legal-entities", response_model=AdminLegalEntityOut, status_code=status.HTTP_201_CREATED)
+def create_admin_legal_entity(
+    payload: AdminLegalEntityCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminLegalEntityOut:
+    name = _normalize_legal_entity_text(payload.name, max_length=255)
+    if name is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="name is required")
+    invoice_prefix = _normalize_invoice_prefix(payload.invoice_prefix)
+    existing_name = db.scalar(select(LegalEntity.id).where(LegalEntity.name == name))
+    if existing_name is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Legal entity name already exists")
+
+    existing_prefix = db.scalar(select(LegalEntity.id).where(LegalEntity.invoice_prefix == invoice_prefix))
+    if existing_prefix is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invoice prefix already exists")
+
+    now = _utcnow()
+    entity = LegalEntity(
+        name=name,
+        siren=_normalize_legal_entity_text(payload.siren, max_length=64),
+        siret=_normalize_legal_entity_text(payload.siret, max_length=64),
+        vat_number=_normalize_legal_entity_text(payload.vat_number, max_length=64),
+        address_text=_normalize_legal_entity_text(payload.address_text, max_length=2000),
+        country_code=_normalize_country_code(payload.country_code),
+        invoice_prefix=invoice_prefix,
+        invoice_next_number=int(payload.invoice_next_number),
+        is_active=bool(payload.is_active),
+        updated_at=now,
+    )
+    _ensure_legal_entity_minimum_fields(
+        name=entity.name,
+        country_code=entity.country_code,
+        invoice_prefix=entity.invoice_prefix,
+    )
+    db.add(entity)
+    db.commit()
+    db.refresh(entity)
+    return _serialize_legal_entity(entity)
+
+
+@router.patch("/legal-entities/{legal_entity_id}", response_model=AdminLegalEntityOut)
+def update_admin_legal_entity(
+    legal_entity_id: UUID,
+    payload: AdminLegalEntityUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminLegalEntityOut:
+    entity = db.scalar(select(LegalEntity).where(LegalEntity.id == legal_entity_id).with_for_update())
+    if entity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Legal entity not found")
+
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return _serialize_legal_entity(entity)
+
+    if "name" in changes:
+        name = _normalize_legal_entity_text(changes["name"], max_length=255)
+        if name is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="name is required")
+        existing = db.scalar(select(LegalEntity.id).where(LegalEntity.name == name, LegalEntity.id != entity.id))
+        if existing is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Legal entity name already exists")
+        entity.name = name
+
+    if "siren" in changes:
+        entity.siren = _normalize_legal_entity_text(changes["siren"], max_length=64)
+    if "siret" in changes:
+        entity.siret = _normalize_legal_entity_text(changes["siret"], max_length=64)
+    if "vat_number" in changes:
+        entity.vat_number = _normalize_legal_entity_text(changes["vat_number"], max_length=64)
+    if "address_text" in changes:
+        entity.address_text = _normalize_legal_entity_text(changes["address_text"], max_length=2000)
+
+    if "country_code" in changes:
+        entity.country_code = _normalize_country_code(changes["country_code"])
+
+    if "invoice_prefix" in changes:
+        invoice_prefix = _normalize_invoice_prefix(changes["invoice_prefix"])
+        existing = db.scalar(
+            select(LegalEntity.id).where(
+                LegalEntity.invoice_prefix == invoice_prefix,
+                LegalEntity.id != entity.id,
+            )
+        )
+        if existing is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invoice prefix already exists")
+        entity.invoice_prefix = invoice_prefix
+
+    if "invoice_next_number" in changes:
+        next_number = changes["invoice_next_number"]
+        if next_number is None or int(next_number) < 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="invoice_next_number must be >= 1",
+            )
+        entity.invoice_next_number = int(next_number)
+
+    if "is_active" in changes:
+        entity.is_active = bool(changes["is_active"])
+
+    _ensure_legal_entity_minimum_fields(
+        name=entity.name,
+        country_code=entity.country_code,
+        invoice_prefix=entity.invoice_prefix,
+    )
+    entity.updated_at = _utcnow()
+    db.add(entity)
+    db.commit()
+    db.refresh(entity)
+    return _serialize_legal_entity(entity)
+
+
+@router.post("/legal-entities/{legal_entity_id}/disable", response_model=AdminLegalEntityOut)
+def disable_admin_legal_entity(
+    legal_entity_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminLegalEntityOut:
+    entity = db.scalar(select(LegalEntity).where(LegalEntity.id == legal_entity_id).with_for_update())
+    if entity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Legal entity not found")
+    if not entity.is_active:
+        return _serialize_legal_entity(entity)
+    entity.is_active = False
+    entity.updated_at = _utcnow()
+    db.add(entity)
+    db.commit()
+    db.refresh(entity)
+    return _serialize_legal_entity(entity)
 
 
 @router.get("/credit-types", response_model=list[AdminCreditTypeOut])
@@ -1114,6 +1374,7 @@ def create_admin_activity(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="name is required")
 
     credit_type = _resolve_credit_type(db, credit_type_id=payload.credit_type_id)
+    seller_legal_entity = _resolve_legal_entity(db, legal_entity_id=payload.seller_legal_entity_id)
 
     requested_code = _normalize_activity_code(payload.code, fallback_name=name)
     if payload.code and db.scalar(select(CourseType.id).where(CourseType.code == requested_code)) is not None:
@@ -1129,6 +1390,8 @@ def create_admin_activity(
         name=name,
         description=(payload.description or "").strip() or None,
         service_code=payload.service_code.strip().upper(),
+        billing_entity_code=_legacy_billing_entity_code_from_legal_entity(seller_legal_entity),
+        seller_legal_entity_id=seller_legal_entity.id,
         credit_type_id=credit_type.id,
         duration_minutes=int(payload.duration_minutes),
         color_hex=_normalize_color_hex(payload.color_hex),
@@ -1147,7 +1410,11 @@ def create_admin_activity(
     db.add(activity)
     db.commit()
     db.refresh(activity)
-    return _serialize_activity(activity, credit_type_by_id=_credit_type_by_id(db))
+    return _serialize_activity(
+        activity,
+        credit_type_by_id=_credit_type_by_id(db),
+        legal_entity_by_id=_legal_entity_by_id(db),
+    )
 
 
 @router.patch("/activities/{activity_id}", response_model=AdminActivityOut)
@@ -1163,7 +1430,11 @@ def update_admin_activity(
 
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
-        return _serialize_activity(activity, credit_type_by_id=_credit_type_by_id(db))
+        return _serialize_activity(
+            activity,
+            credit_type_by_id=_credit_type_by_id(db),
+            legal_entity_by_id=_legal_entity_by_id(db),
+        )
 
     if "code" in changes:
         next_code = _normalize_activity_code(changes["code"], fallback_name=activity.name)
@@ -1186,6 +1457,17 @@ def update_admin_activity(
         if not service_code:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="service_code is required")
         activity.service_code = service_code
+
+    if "seller_legal_entity_id" in changes:
+        seller_legal_entity_id = changes["seller_legal_entity_id"]
+        if seller_legal_entity_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="seller_legal_entity_id is required",
+            )
+        seller_legal_entity = _resolve_legal_entity(db, legal_entity_id=seller_legal_entity_id)
+        activity.seller_legal_entity_id = seller_legal_entity.id
+        activity.billing_entity_code = _legacy_billing_entity_code_from_legal_entity(seller_legal_entity)
 
     if "credit_type_id" in changes:
         credit_type_id = changes["credit_type_id"]
@@ -1235,7 +1517,11 @@ def update_admin_activity(
     db.add(activity)
     db.commit()
     db.refresh(activity)
-    return _serialize_activity(activity, credit_type_by_id=_credit_type_by_id(db))
+    return _serialize_activity(
+        activity,
+        credit_type_by_id=_credit_type_by_id(db),
+        legal_entity_by_id=_legal_entity_by_id(db),
+    )
 
 
 @router.get("/config/account", response_model=AdminConfigAccountOut)

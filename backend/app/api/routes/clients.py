@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionStatus
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
-from app.models.ops import EmailReminder
+from app.models.ops import EmailReminder, LegalEntity
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.user import (
@@ -39,7 +39,10 @@ from app.schemas.user import (
 )
 from app.services.family_billing import resolve_billing_profile
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
-from app.services.invoice_documents import InvoicePeriodLine, render_invoice_period_pdf
+from app.services.invoice_documents import (
+    InvoicePeriodLine,
+    render_invoice_period_pdf,
+)
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
@@ -103,6 +106,31 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _billing_entity_text(value: str | None) -> str | None:
+    normalized = _normalize_optional(value)
+    if normalized is None:
+        return None
+    return " ".join(normalized.split())
+
+
+def _active_legal_entities_by_id(db: Session) -> dict[UUID, LegalEntity]:
+    rows = db.scalars(select(LegalEntity).where(LegalEntity.is_active.is_(True))).all()
+    return {row.id: row for row in rows}
+
+
+def _billing_entity_from_seller_id(
+    *,
+    legal_entities_by_id: dict[UUID, LegalEntity],
+    seller_legal_entity_id: UUID | None,
+    fallback_text: str | None = None,
+) -> str | None:
+    if seller_legal_entity_id is not None:
+        entity = legal_entities_by_id.get(seller_legal_entity_id)
+        if entity is not None:
+            return _billing_entity_text(entity.name)
+    return _billing_entity_text(fallback_text)
 
 
 def _normalize_required(value: str | None, field_name: str) -> str:
@@ -1048,6 +1076,7 @@ def list_client_messages(
 
 def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymentOut]:
     managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
+    legal_entities_by_id = _active_legal_entities_by_id(db)
 
     rows_subs = db.execute(
         select(ClientPlanSubscription, Plan, User)
@@ -1140,6 +1169,8 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 total_incl_vat=total_incl_vat,
                 currency=currency_code or "EUR",
                 reference=plan.code,
+                seller_legal_entity_id=None,
+                billing_entity=None,
                 payment_url=_frontend_url(path=f"/dashboard?tab=transactions&source=PLAN_PURCHASE&payment_id={sub.id}"),
             )
         )
@@ -1176,6 +1207,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                     amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = computed
         elif booking.status == BookingStatus.EXCUSED_ABSENCE:
             is_billable = False
+        seller_legal_entity_id = session_obj.snapshot_seller_legal_entity_id or course_type.seller_legal_entity_id
         items.append(
             ClientPaymentOut(
                 id=f"booking:{booking.id}",
@@ -1191,6 +1223,12 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 total_incl_vat=Decimal("0.00") if not is_billable else total_incl_vat,
                 currency=currency,
                 reference=str(session_obj.id),
+                seller_legal_entity_id=seller_legal_entity_id,
+                billing_entity=_billing_entity_from_seller_id(
+                    legal_entities_by_id=legal_entities_by_id,
+                    seller_legal_entity_id=seller_legal_entity_id,
+                    fallback_text=session_obj.billing_entity_snapshot or course_type.billing_entity_code,
+                ),
                 payment_url=None,
             )
         )
@@ -1522,6 +1560,7 @@ def download_client_invoice(
         currency=payment.currency,
     )
     currency_code = (payment.currency or "EUR").upper()
+    billing_entity = _billing_entity_text(payment.billing_entity)
     totals = {
         currency_code: {
             "amount_excl_vat": payment.amount_excl_vat,
@@ -1541,6 +1580,8 @@ def download_client_invoice(
         note=f"Reference: {payment.reference or '-'}",
         client_billing_address=_billing_address_label(billing_profile),
         due_date=payment.occurred_at.date(),
+        legal_entity_id=payment.seller_legal_entity_id,
+        billing_entity=billing_entity,
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")

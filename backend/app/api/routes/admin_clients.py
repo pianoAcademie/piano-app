@@ -21,7 +21,13 @@ from sqlalchemy.orm import Session, aliased
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
-from app.models.client_record import ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry, ClientPaymentRefund
+from app.models.client_record import (
+    ClientInvoiceLine,
+    ClientManualCreditBalance,
+    ClientManualTransaction,
+    ClientNoteEntry,
+    ClientPaymentRefund,
+)
 from app.models.family import ClientFamilyLink
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, DeliveryMode, Location, SessionStatus
 from app.models.ops import (
@@ -31,6 +37,7 @@ from app.models.ops import (
     CommunicationDeliveryStatus,
     CommunicationSenderCategory,
     EmailReminder,
+    LegalEntity,
     MessageFormat,
 )
 from app.models.plan import (
@@ -90,6 +97,7 @@ from app.schemas.admin import (
     AdminRangeInvoiceEmailOut,
     AdminRangeInvoiceEmailPreviewOut,
     AdminRangeInvoiceEmailRequest,
+    AdminRangeInvoiceReferenceOut,
     AdminRangeInvoiceOut,
     AdminRangeInvoiceStatusUpdateRequest,
     AdminClientUpdateRequest,
@@ -110,7 +118,12 @@ from app.services.client_payment_email import (
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
-from app.services.invoice_documents import InvoicePeriodLine, render_invoice_period_pdf, reserve_next_invoice_number
+from app.services.invoice_documents import (
+    InvoicePeriodLine,
+    render_invoice_period_pdf,
+    reserve_next_invoice_number,
+)
+from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
     resolve_predefined_template,
@@ -280,6 +293,50 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _billing_entity_text(value: str | None) -> str | None:
+    normalized = _normalize_optional(value)
+    if normalized is None:
+        return None
+    return " ".join(normalized.split())
+
+
+def _payment_billing_entity(payment: AdminClientPaymentOut) -> str:
+    return _billing_entity_text(payment.billing_entity) or "ENTITE_NON_DEFINIE"
+
+
+def _billing_entity_sort_key(entity: str) -> tuple[int, str]:
+    normalized = _billing_entity_text(entity)
+    if normalized is None:
+        return (1, "zzzz")
+    return (0, normalized.casefold())
+
+
+def _billing_entity_label(entity: str) -> str:
+    return _billing_entity_text(entity) or "Entite non definie"
+
+
+def _allocate_invoice_number_for_seller_entity(
+    db: Session,
+    *,
+    seller_legal_entity_id: UUID | None,
+    issued_at: datetime,
+) -> str:
+    # Legacy fallback for historical rows without seller legal entity snapshot.
+    if seller_legal_entity_id is None:
+        return reserve_next_invoice_number(db, issued_at=issued_at)
+    try:
+        return InvoiceNumberService.allocate_invoice_number(
+            db,
+            legal_entity_id=seller_legal_entity_id,
+            issued_at=issued_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown seller legal entity for invoice numbering",
+        ) from exc
 
 
 def _subtract_months_utc(value: datetime, months: int) -> datetime:
@@ -999,6 +1056,16 @@ def _parse_invoice_range_metadata_int(
     return max(minimum, min(value, maximum))
 
 
+def _parse_optional_uuid(value: object) -> UUID | None:
+    candidate = _normalize_optional(str(value or ""))
+    if candidate is None:
+        return None
+    try:
+        return UUID(candidate)
+    except ValueError:
+        return None
+
+
 def _normalize_invoice_range_payment_keys(raw: object) -> list[str]:
     if not isinstance(raw, list):
         return []
@@ -1062,6 +1129,30 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
     normalized["include_pending"] = bool(payload.get("include_pending"))
     normalized["include_cancelled"] = bool(payload.get("include_cancelled"))
     normalized["no_due_date"] = bool(payload.get("no_due_date"))
+    normalized["billing_entity"] = _billing_entity_text(str(payload.get("billing_entity") or "")) or "ENTITE_NON_DEFINIE"
+    raw_seller_legal_entity_id = _normalize_optional(str(payload.get("seller_legal_entity_id") or ""))
+    if raw_seller_legal_entity_id:
+        try:
+            normalized["seller_legal_entity_id"] = str(UUID(raw_seller_legal_entity_id))
+        except ValueError:
+            pass
+    split_group_id = _normalize_optional(str(payload.get("split_group_id") or ""))
+    if split_group_id:
+        normalized["split_group_id"] = split_group_id
+    normalized["split_part_index"] = _parse_invoice_range_metadata_int(
+        payload,
+        "split_part_index",
+        default=1,
+        minimum=1,
+        maximum=20,
+    )
+    normalized["split_part_count"] = _parse_invoice_range_metadata_int(
+        payload,
+        "split_part_count",
+        default=1,
+        minimum=1,
+        maximum=20,
+    )
     normalized["generation_mode"] = _normalize_invoice_generation_mode(str(payload.get("generation_mode") or "MANUAL"))
     normalized["group_adjustments_by_type"] = bool(payload.get("group_adjustments_by_type"))
     normalized["include_discount_adjustments"] = (
@@ -1172,7 +1263,35 @@ def _build_invoice_range_note_message(metadata: dict[str, object]) -> str:
     return f"{summary}\n{INVOICE_RANGE_NOTE_PREFIX}{payload_json}"
 
 
-def _invoice_range_out(*, note_id: UUID, metadata: dict[str, object]) -> AdminRangeInvoiceOut:
+def _invoice_range_reference_out(*, note_id: UUID, metadata: dict[str, object]) -> AdminRangeInvoiceReferenceOut:
+    return AdminRangeInvoiceReferenceOut(
+        note_id=note_id,
+        invoice_number=str(metadata.get("invoice_number")),
+        billing_entity=_normalize_optional(str(metadata.get("billing_entity") or "")),
+        seller_legal_entity_id=_parse_optional_uuid(metadata.get("seller_legal_entity_id")),
+        split_part_index=_parse_invoice_range_metadata_int(
+            metadata,
+            "split_part_index",
+            default=1,
+            minimum=1,
+            maximum=20,
+        ),
+        split_part_count=_parse_invoice_range_metadata_int(
+            metadata,
+            "split_part_count",
+            default=1,
+            minimum=1,
+            maximum=20,
+        ),
+    )
+
+
+def _invoice_range_out(
+    *,
+    note_id: UUID,
+    metadata: dict[str, object],
+    related_invoices: list[AdminRangeInvoiceReferenceOut] | None = None,
+) -> AdminRangeInvoiceOut:
     return AdminRangeInvoiceOut(
         note_id=note_id,
         invoice_number=str(metadata.get("invoice_number")),
@@ -1229,7 +1348,33 @@ def _invoice_range_out(*, note_id: UUID, metadata: dict[str, object]) -> AdminRa
         reminded_at=_parse_iso_datetime(metadata.get("reminded_at")),
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
+        related_invoices=related_invoices or [],
     )
+
+
+def _related_invoice_references_for_split_group(
+    db: Session,
+    *,
+    client_id: UUID,
+    split_group_id: str | None,
+) -> list[AdminRangeInvoiceReferenceOut]:
+    if not split_group_id:
+        return []
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.user_id == client_id)
+        .order_by(ClientNoteEntry.created_at.desc())
+    ).all()
+    refs: list[AdminRangeInvoiceReferenceOut] = []
+    for note in notes:
+        note_metadata = _parse_invoice_range_note_entry(note)
+        if note_metadata is None:
+            continue
+        if _normalize_optional(str(note_metadata.get("split_group_id") or "")) != split_group_id:
+            continue
+        refs.append(_invoice_range_reference_out(note_id=note.id, metadata=note_metadata))
+    refs.sort(key=lambda row: (row.split_part_index, row.invoice_number.casefold()))
+    return refs
 
 
 def _load_range_invoice_note(
@@ -1270,8 +1415,118 @@ def _range_invoice_metadatas_for_client(db: Session, *, client_id: UUID) -> list
     return out
 
 
-def _active_invoice_lock_by_payment_key(db: Session, *, client_id: UUID) -> dict[str, tuple[str, str, UUID | None]]:
-    locks: dict[str, tuple[str, str, UUID | None]] = {}
+def _invoice_lines_for_note(db: Session, *, note_id: UUID) -> list[ClientInvoiceLine]:
+    return db.scalars(
+        select(ClientInvoiceLine)
+        .where(ClientInvoiceLine.note_id == note_id)
+        .order_by(ClientInvoiceLine.created_at.asc(), ClientInvoiceLine.id.asc())
+    ).all()
+
+
+def _invoice_line_payment_keys(lines: list[ClientInvoiceLine]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        key = _payment_key(source=line.source, payment_id=line.source_payment_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _resolved_billing_entity_from_invoice_lines(
+    db: Session,
+    lines: list[ClientInvoiceLine],
+    *,
+    fallback: str | None = None,
+) -> tuple[str, UUID | None]:
+    legal_entities_by_id = _active_legal_entities_by_id(db)
+    entities = sorted(
+        {
+            _billing_entity_from_seller_id(
+                legal_entities_by_id=legal_entities_by_id,
+                seller_legal_entity_id=line.seller_legal_entity_id,
+                fallback_text=line.billing_entity,
+            )
+            for line in lines
+        },
+        key=_billing_entity_sort_key,
+    )
+    seller_ids = [line.seller_legal_entity_id for line in lines if line.seller_legal_entity_id is not None]
+    if len(entities) == 1:
+        return entities[0] or "ENTITE_NON_DEFINIE", seller_ids[0] if len(set(seller_ids)) == 1 else None
+    if fallback is not None:
+        return _billing_entity_text(fallback) or "ENTITE_NON_DEFINIE", None
+    if entities:
+        return entities[0] or "ENTITE_NON_DEFINIE", None
+    return "ENTITE_NON_DEFINIE", None
+
+
+def _frozen_invoice_selection_for_note(
+    db: Session,
+    *,
+    note_id: UUID,
+    metadata: dict[str, object],
+) -> tuple[list[str], str, UUID | None]:
+    frozen_lines = _invoice_lines_for_note(db, note_id=note_id)
+    if frozen_lines:
+        resolved_billing_entity, resolved_seller_legal_entity_id = _resolved_billing_entity_from_invoice_lines(
+            db,
+            frozen_lines,
+            fallback=_normalize_optional(str(metadata.get("billing_entity") or "")),
+        )
+        return (
+            _invoice_line_payment_keys(frozen_lines),
+            resolved_billing_entity,
+            resolved_seller_legal_entity_id,
+        )
+    return (
+        _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")),
+        _billing_entity_text(_normalize_optional(str(metadata.get("billing_entity") or ""))) or "ENTITE_NON_DEFINIE",
+        _parse_optional_uuid(metadata.get("seller_legal_entity_id")),
+    )
+
+
+def _persist_invoice_lines_for_note(
+    db: Session,
+    *,
+    note_id: UUID,
+    client_id: UUID,
+    payments: list[AdminClientPaymentOut],
+) -> None:
+    if not payments:
+        return
+    db.add_all(
+        [
+            ClientInvoiceLine(
+                note_id=note_id,
+                user_id=client_id,
+                source=(row.source or "").strip().upper(),
+                source_payment_id=row.id,
+                occurred_at=row.occurred_at,
+                label=row.label,
+                amount_excl_vat=_quantize_money(Decimal(row.amount_excl_vat)),
+                vat_rate=Decimal(row.vat_rate).quantize(Decimal("0.001")),
+                vat_amount=_quantize_money(Decimal(row.vat_amount)),
+                total_incl_vat=_quantize_money(Decimal(row.total_incl_vat)),
+                currency=_normalize_currency(row.currency, fallback="EUR"),
+                billing_entity=_payment_billing_entity(row),
+                seller_legal_entity_id=row.seller_legal_entity_id,
+            )
+            for row in payments
+        ]
+    )
+
+
+def _active_invoice_lock_by_payment_key(
+    db: Session,
+    *,
+    client_id: UUID,
+) -> dict[str, tuple[str, str, UUID | None, str, UUID | None]]:
+    locks: dict[str, tuple[str, str, UUID | None, str, UUID | None]] = {}
+    active_metadatas_by_note_id: dict[UUID, dict[str, object]] = {}
+    notes_without_lines: list[tuple[UUID, dict[str, object]]] = []
     for metadata in _range_invoice_metadatas_for_client(db, client_id=client_id):
         invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
         if invoice_status == "CANCELLED":
@@ -1284,10 +1539,57 @@ def _active_invoice_lock_by_payment_key(db: Session, *, client_id: UUID) -> dict
                 note_id = UUID(raw_note_id)
             except ValueError:
                 note_id = None
+        if note_id is None:
+            continue
+        active_metadatas_by_note_id[note_id] = metadata
+
+    if active_metadatas_by_note_id:
+        legal_entities_by_id = _active_legal_entities_by_id(db)
+        note_ids = list(active_metadatas_by_note_id.keys())
+        invoice_lines = db.scalars(
+            select(ClientInvoiceLine)
+            .where(
+                ClientInvoiceLine.user_id == client_id,
+                ClientInvoiceLine.note_id.in_(note_ids),
+            )
+            .order_by(ClientInvoiceLine.created_at.asc(), ClientInvoiceLine.id.asc())
+        ).all()
+        line_note_ids: set[UUID] = set()
+        for line in invoice_lines:
+            metadata = active_metadatas_by_note_id.get(line.note_id)
+            if metadata is None:
+                continue
+            line_note_ids.add(line.note_id)
+            key = _payment_key(source=line.source, payment_id=line.source_payment_id)
+            if key in locks:
+                continue
+            entity_name = _billing_entity_from_seller_id(
+                legal_entities_by_id=legal_entities_by_id,
+                seller_legal_entity_id=line.seller_legal_entity_id,
+                fallback_text=line.billing_entity,
+            )
+            locks[key] = (
+                str(metadata.get("invoice_status") or "ISSUED").strip().upper(),
+                _normalize_optional(str(metadata.get("invoice_number") or "")) or "-",
+                line.note_id,
+                _billing_entity_text(entity_name) or "ENTITE_NON_DEFINIE",
+                line.seller_legal_entity_id,
+            )
+
+        notes_without_lines = [
+            (note_id, metadata)
+            for note_id, metadata in active_metadatas_by_note_id.items()
+            if note_id not in line_note_ids
+        ]
+
+    for note_id, metadata in notes_without_lines:
+        invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+        invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or "-"
+        billing_entity = _billing_entity_text(_normalize_optional(str(metadata.get("billing_entity") or ""))) or "ENTITE_NON_DEFINIE"
         for key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")):
             if key in locks:
                 continue
-            locks[key] = (invoice_status, invoice_number, note_id)
+            locks[key] = (invoice_status, invoice_number, note_id, billing_entity, None)
     return locks
 
 
@@ -1301,7 +1603,7 @@ def _manual_transaction_lock_info(
     lock = _active_invoice_lock_by_payment_key(db, client_id=client_id).get(key)
     if lock is None:
         return False, None
-    _, invoice_number, _ = lock
+    _, invoice_number, _, _, _ = lock
     return True, invoice_number
 
 
@@ -4455,9 +4757,28 @@ def _payment_scope_users(db: Session, *, client: User) -> dict[UUID, User]:
     return users_by_id
 
 
+def _active_legal_entities_by_id(db: Session) -> dict[UUID, LegalEntity]:
+    rows = db.scalars(select(LegalEntity).where(LegalEntity.is_active.is_(True))).all()
+    return {row.id: row for row in rows}
+
+
+def _billing_entity_from_seller_id(
+    *,
+    legal_entities_by_id: dict[UUID, LegalEntity],
+    seller_legal_entity_id: UUID | None,
+    fallback_text: str | None = None,
+) -> str | None:
+    if seller_legal_entity_id is not None:
+        entity = legal_entities_by_id.get(seller_legal_entity_id)
+        if entity is not None:
+            return _billing_entity_text(entity.name)
+    return _billing_entity_text(fallback_text)
+
+
 def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminClientPaymentOut]:
     client = _require_client(db, client_id)
     billing_profile = resolve_billing_profile(db, client)
+    legal_entities_by_id = _active_legal_entities_by_id(db)
     scoped_users_by_id = _payment_scope_users(db, client=client)
     scoped_user_ids = list(scoped_users_by_id.keys())
 
@@ -4542,6 +4863,8 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 total_incl_vat=total_incl_vat,
                 currency=currency_code,
                 reference=plan.code,
+                seller_legal_entity_id=None,
+                billing_entity=None,
                 payment_method_code=_normalize_optional(sub.billing_method_code.upper() if sub.billing_method_code else None),
                 payment_method_label=(_payment_method_label_client(sub.billing_method_code) if sub.billing_method_code else None),
             )
@@ -4594,6 +4917,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         label = f"{course_type.name} - {location.name}"
         if owner is not None and owner.id != client.id:
             label = f"{label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+        seller_legal_entity_id = session_obj.snapshot_seller_legal_entity_id or course_type.seller_legal_entity_id
 
         items.append(
             AdminClientPaymentOut(
@@ -4608,6 +4932,12 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 total_incl_vat=Decimal("0.00") if not is_billable else _quantize_money(Decimal(total_incl_vat)),
                 currency=_normalize_currency(currency, fallback=(billing_profile.preferred_currency or "EUR").upper()),
                 reference=_linked_plan_label(plan),
+                seller_legal_entity_id=seller_legal_entity_id,
+                billing_entity=_billing_entity_from_seller_id(
+                    legal_entities_by_id=legal_entities_by_id,
+                    seller_legal_entity_id=seller_legal_entity_id,
+                    fallback_text=session_obj.billing_entity_snapshot or course_type.billing_entity_code,
+                ),
             )
         )
 
@@ -4633,6 +4963,12 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                     total_incl_vat=credit_total,
                     currency=_normalize_currency(currency, fallback=(billing_profile.preferred_currency or "EUR").upper()),
                     reference=f"AVOIR:{booking.id}",
+                    seller_legal_entity_id=seller_legal_entity_id,
+                    billing_entity=_billing_entity_from_seller_id(
+                        legal_entities_by_id=legal_entities_by_id,
+                        seller_legal_entity_id=seller_legal_entity_id,
+                        fallback_text=session_obj.billing_entity_snapshot or course_type.billing_entity_code,
+                    ),
                 )
             )
 
@@ -4668,6 +5004,8 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 student_user_id=row.student_user_id,
                 description=_normalize_optional(row.description),
                 category=_normalize_optional(row.category),
+                seller_legal_entity_id=None,
+                billing_entity=None,
                 can_edit=(row.status or "").strip().upper() != "REFUNDED",
                 can_cancel=(row.status or "").strip().upper() != "REFUNDED",
             )
@@ -4685,11 +5023,14 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
 
         lock = invoice_locks_by_payment_key.get(_payment_key(source=item.source, payment_id=item.id))
         if lock is not None:
-            locked_status, locked_invoice_number, locked_note_id = lock
+            locked_status, locked_invoice_number, locked_note_id, locked_billing_entity, locked_seller_legal_entity_id = lock
             item.invoice_number = locked_invoice_number
             item.invoice_status = "PAID" if locked_status == "PAID" else "ISSUED"
             item.invoice_note_id = locked_note_id
             item.status = "PAID" if locked_status == "PAID" else "INVOICED"
+            item.billing_entity = _billing_entity_text(locked_billing_entity)
+            if locked_seller_legal_entity_id is not None:
+                item.seller_legal_entity_id = locked_seller_legal_entity_id
             if item.source.strip().upper() == "MANUAL":
                 item.can_edit = False
                 item.can_cancel = False
@@ -5205,65 +5546,139 @@ def create_admin_client_range_invoice(
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
 
-    totals_by_currency: dict[str, str] = {}
-    totals_precise: dict[str, Decimal] = {}
+    payments_by_entity_group: dict[str, list[AdminClientPaymentOut]] = {}
+    entity_group_context: dict[str, tuple[UUID | None, str]] = {}
     for row in payments:
-        currency = _normalize_currency(row.currency, fallback="EUR")
-        current = totals_precise.get(currency, Decimal("0.00"))
-        totals_precise[currency] = _quantize_money(current + Decimal(row.total_incl_vat))
-    for currency, total in sorted(totals_precise.items()):
-        totals_by_currency[currency] = f"{_quantize_money(total):.2f}"
+        billing_entity = _payment_billing_entity(row)
+        if row.seller_legal_entity_id is not None:
+            group_key = f"seller:{row.seller_legal_entity_id}"
+            entity_group_context.setdefault(group_key, (row.seller_legal_entity_id, billing_entity))
+        else:
+            group_key = f"legacy:{billing_entity}"
+            entity_group_context.setdefault(group_key, (None, billing_entity))
+        payments_by_entity_group.setdefault(group_key, []).append(row)
 
     issued_at = datetime.combine(issued_date_value, datetime.min.time(), tzinfo=timezone.utc)
     requested_invoice_number = _normalize_optional(payload.invoice_number)
-    resolved_invoice_number = requested_invoice_number or reserve_next_invoice_number(db, issued_at=issued_at)
-    metadata: dict[str, object] = {
-        "kind": "INVOICE_RANGE",
-        "invoice_number": resolved_invoice_number,
-        "issued_date": issued_date_value.isoformat(),
-        "due_date": due_date_value.isoformat(),
-        "no_due_date": bool(payload.no_due_date),
-        "start_date": payload.start_date.isoformat(),
-        "end_date": payload.end_date.isoformat(),
-        "layout": normalized_layout,
-        "generation_mode": generation_mode,
-        "group_adjustments_by_type": bool(payload.group_adjustments_by_type),
-        "include_discount_adjustments": bool(payload.include_discount_adjustments),
-        "include_supplement_adjustments": bool(payload.include_supplement_adjustments),
-        "auto_cycle_start_date": payload.auto_cycle_start_date.isoformat() if payload.auto_cycle_start_date is not None else None,
-        "auto_period_scope": payload.auto_period_scope,
-        "auto_frequency": payload.auto_frequency,
-        "auto_repeat_every": payload.auto_repeat_every,
-        "auto_layout_style": payload.auto_layout_style,
-        "auto_include_previous_balance": bool(payload.auto_include_previous_balance),
-        "auto_send_email": bool(payload.auto_send_email),
-        "auto_exclude_pack_subscription_lines": bool(payload.auto_exclude_pack_subscription_lines),
-        "include_pending": bool(payload.include_pending),
-        "include_cancelled": bool(payload.include_cancelled),
-        "included_payment_keys": [_payment_key(source=row.source, payment_id=row.id) for row in payments],
-        "totals_by_currency": totals_by_currency,
-        "invoice_status": "ISSUED",
-    }
     auto_footer_note = _normalize_optional(payload.auto_footer_note)
-    if auto_footer_note:
-        metadata["auto_footer_note"] = auto_footer_note
     public_note = _normalize_optional(payload.public_note)
     private_note = _normalize_optional(payload.private_note)
-    if public_note:
-        metadata["public_note"] = public_note
-    if private_note:
-        metadata["private_note"] = private_note
+    split_group_id = str(uuid4()) if len(payments_by_entity_group) > 1 else None
+    split_part_count = max(1, len(payments_by_entity_group))
+    if requested_invoice_number is not None and split_part_count > 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invoice_number cannot be forced when invoice split by legal entity",
+        )
 
-    note = _create_client_note(
-        db,
-        client_id=client_id,
-        author_user_id=actor.id,
-        entry_type="MANUAL",
-        message=_build_invoice_range_note_message(metadata),
+    created_notes: list[tuple[ClientNoteEntry, dict[str, object]]] = []
+    ordered_entity_groups = sorted(
+        payments_by_entity_group.keys(),
+        key=lambda group_key: (
+            _billing_entity_sort_key(entity_group_context[group_key][1]),
+            group_key,
+        ),
     )
+    for split_part_index, group_key in enumerate(ordered_entity_groups, start=1):
+        entity_payments = payments_by_entity_group[group_key]
+        resolved_seller_legal_entity_id, billing_entity = entity_group_context[group_key]
+
+        totals_by_currency: dict[str, str] = {}
+        totals_precise: dict[str, Decimal] = {}
+        for row in entity_payments:
+            currency = _normalize_currency(row.currency, fallback="EUR")
+            current = totals_precise.get(currency, Decimal("0.00"))
+            totals_precise[currency] = _quantize_money(current + Decimal(row.total_incl_vat))
+        for currency, total in sorted(totals_precise.items()):
+            totals_by_currency[currency] = f"{_quantize_money(total):.2f}"
+
+        if requested_invoice_number is not None:
+            resolved_invoice_number = requested_invoice_number
+        else:
+            resolved_invoice_number = _allocate_invoice_number_for_seller_entity(
+                db,
+                seller_legal_entity_id=resolved_seller_legal_entity_id,
+                issued_at=issued_at,
+            )
+
+        metadata: dict[str, object] = {
+            "kind": "INVOICE_RANGE",
+            "invoice_number": resolved_invoice_number,
+            "issued_date": issued_date_value.isoformat(),
+            "due_date": due_date_value.isoformat(),
+            "no_due_date": bool(payload.no_due_date),
+            "start_date": payload.start_date.isoformat(),
+            "end_date": payload.end_date.isoformat(),
+            "layout": normalized_layout,
+            "billing_entity": billing_entity,
+            "seller_legal_entity_id": (str(resolved_seller_legal_entity_id) if resolved_seller_legal_entity_id is not None else None),
+            "generation_mode": generation_mode,
+            "group_adjustments_by_type": bool(payload.group_adjustments_by_type),
+            "include_discount_adjustments": bool(payload.include_discount_adjustments),
+            "include_supplement_adjustments": bool(payload.include_supplement_adjustments),
+            "auto_cycle_start_date": payload.auto_cycle_start_date.isoformat() if payload.auto_cycle_start_date is not None else None,
+            "auto_period_scope": payload.auto_period_scope,
+            "auto_frequency": payload.auto_frequency,
+            "auto_repeat_every": payload.auto_repeat_every,
+            "auto_layout_style": payload.auto_layout_style,
+            "auto_include_previous_balance": bool(payload.auto_include_previous_balance),
+            "auto_send_email": bool(payload.auto_send_email),
+            "auto_exclude_pack_subscription_lines": bool(payload.auto_exclude_pack_subscription_lines),
+            "include_pending": bool(payload.include_pending),
+            "include_cancelled": bool(payload.include_cancelled),
+            "included_payment_keys": [_payment_key(source=row.source, payment_id=row.id) for row in entity_payments],
+            "totals_by_currency": totals_by_currency,
+            "invoice_status": "ISSUED",
+            "split_part_index": split_part_index,
+            "split_part_count": split_part_count,
+            "billing_entity_label": _billing_entity_label(billing_entity),
+        }
+        if split_group_id is not None:
+            metadata["split_group_id"] = split_group_id
+        if auto_footer_note:
+            metadata["auto_footer_note"] = auto_footer_note
+        if public_note:
+            metadata["public_note"] = public_note
+        if private_note:
+            metadata["private_note"] = private_note
+
+        note = _create_client_note(
+            db,
+            client_id=client_id,
+            author_user_id=actor.id,
+            entry_type="MANUAL",
+            message=_build_invoice_range_note_message(metadata),
+        )
+        db.flush()
+        _persist_invoice_lines_for_note(
+            db,
+            note_id=note.id,
+            client_id=client_id,
+            payments=entity_payments,
+        )
+        created_notes.append((note, metadata))
+
     db.commit()
-    db.refresh(note)
-    return _invoice_range_out(note_id=note.id, metadata=metadata)
+    first_note, first_metadata = created_notes[0]
+    db.refresh(first_note)
+    related_invoices = [
+        _invoice_range_reference_out(note_id=note.id, metadata=metadata)
+        for note, metadata in sorted(
+            created_notes,
+            key=lambda row: _parse_invoice_range_metadata_int(
+                row[1],
+                "split_part_index",
+                default=1,
+                minimum=1,
+                maximum=20,
+            ),
+        )
+    ]
+    return _invoice_range_out(
+        note_id=first_note.id,
+        metadata=first_metadata,
+        related_invoices=related_invoices,
+    )
 
 
 @router.post("/{client_id}/invoices/range/{note_id}/status", response_model=AdminRangeInvoiceOut)
@@ -5280,7 +5695,16 @@ def update_admin_client_range_invoice_status(
     note.message = _build_invoice_range_note_message(metadata)
     db.add(note)
     db.commit()
-    return _invoice_range_out(note_id=note.id, metadata=metadata)
+    related_invoices = _related_invoice_references_for_split_group(
+        db,
+        client_id=client_id,
+        split_group_id=_normalize_optional(str(metadata.get("split_group_id") or "")),
+    )
+    return _invoice_range_out(
+        note_id=note.id,
+        metadata=metadata,
+        related_invoices=related_invoices,
+    )
 
 
 @router.post("/{client_id}/invoices/range/{note_id}/email", response_model=AdminRangeInvoiceEmailOut)
@@ -5293,6 +5717,11 @@ def send_admin_client_range_invoice_email(
 ) -> AdminRangeInvoiceEmailOut:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note.id,
+        metadata=metadata,
+    )
     normalized_kind = "REMINDER" if payload.kind == "REMINDER" else "INVOICE"
     default_recipients, default_subject, default_body, default_body_format = _build_range_invoice_email_defaults(
         db,
@@ -5356,7 +5785,13 @@ def send_admin_client_range_invoice_email(
         auto_exclude_pack_subscription_lines=_parse_invoice_range_metadata_bool(
             metadata, "auto_exclude_pack_subscription_lines", default=True
         ),
-        frozen_payment_keys=_normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")),
+        billing_entity=resolved_billing_entity,
+        seller_legal_entity_id=(
+            resolved_seller_legal_entity_id
+            if resolved_seller_legal_entity_id is not None
+            else _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+        ),
+        frozen_payment_keys=frozen_payment_keys,
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
@@ -5461,6 +5896,8 @@ def download_admin_client_range_invoice(
     auto_send_email: bool = Query(default=False),
     auto_footer_note: str | None = Query(default=None, max_length=2000),
     auto_exclude_pack_subscription_lines: bool = Query(default=True),
+    billing_entity: str | None = Query(default=None),
+    seller_legal_entity_id: UUID | None = Query(default=None),
     invoice_number: str | None = Query(default=None, max_length=120),
     persist_note: bool = Query(default=True),
     frozen_payment_keys: list[str] = Query(default=[]),
@@ -5491,14 +5928,13 @@ def download_admin_client_range_invoice(
     start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
     end_at_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
     all_payments = _build_admin_client_payments(db, client_id=client_id)
+    payments_by_key = {
+        _payment_key(source=row.source, payment_id=row.id): row
+        for row in all_payments
+    }
     normalized_frozen_keys = _normalize_invoice_range_payment_keys(frozen_payment_keys)
     if normalized_frozen_keys:
-        frozen_key_set = set(normalized_frozen_keys)
-        payments = [
-            row
-            for row in all_payments
-            if _payment_key(source=row.source, payment_id=row.id) in frozen_key_set
-        ]
+        payments = [row for key in normalized_frozen_keys if (row := payments_by_key.get(key)) is not None]
     else:
         payments = [row for row in all_payments if start_at <= row.occurred_at < end_at_exclusive]
 
@@ -5520,6 +5956,19 @@ def download_admin_client_range_invoice(
 
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
+
+    routed_entities = sorted({_payment_billing_entity(row) for row in payments}, key=_billing_entity_sort_key)
+    routed_seller_legal_entity_ids = {
+        row.seller_legal_entity_id
+        for row in payments
+        if row.seller_legal_entity_id is not None
+    }
+    resolved_billing_entity = _billing_entity_text(billing_entity) or "ENTITE_NON_DEFINIE"
+    resolved_seller_legal_entity_id = seller_legal_entity_id
+    if billing_entity is None and len(routed_entities) == 1:
+        resolved_billing_entity = routed_entities[0]
+    if seller_legal_entity_id is None and len(routed_seller_legal_entity_ids) == 1:
+        resolved_seller_legal_entity_id = next(iter(routed_seller_legal_entity_ids))
 
     payments.sort(key=lambda row: row.occurred_at)
     totals_by_currency: dict[str, dict[str, Decimal]] = {}
@@ -5758,7 +6207,14 @@ def download_admin_client_range_invoice(
 
     issued_at = datetime.combine(issued_date_value, datetime.min.time(), tzinfo=timezone.utc)
     requested_invoice_number = _normalize_optional(invoice_number)
-    resolved_invoice_number = requested_invoice_number or reserve_next_invoice_number(db, issued_at=issued_at)
+    if requested_invoice_number is not None:
+        resolved_invoice_number = requested_invoice_number
+    else:
+        resolved_invoice_number = _allocate_invoice_number_for_seller_entity(
+            db,
+            seller_legal_entity_id=resolved_seller_legal_entity_id,
+            issued_at=issued_at,
+        )
     normalized_auto_footer_note = _normalize_optional(auto_footer_note)
     normalized_public_note = _normalize_optional(public_note) or _normalize_optional(note) or normalized_auto_footer_note
     normalized_private_note = _normalize_optional(private_note)
@@ -5788,6 +6244,10 @@ def download_admin_client_range_invoice(
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "layout": normalized_layout,
+            "billing_entity": resolved_billing_entity,
+            "seller_legal_entity_id": (
+                str(resolved_seller_legal_entity_id) if resolved_seller_legal_entity_id is not None else None
+            ),
             "generation_mode": normalized_generation_mode,
             "group_adjustments_by_type": bool(group_adjustments_by_type),
             "include_discount_adjustments": bool(include_discount_adjustments),
@@ -5815,12 +6275,19 @@ def download_admin_client_range_invoice(
         if normalized_private_note:
             metadata["private_note"] = normalized_private_note
 
-        _create_client_note(
+        created_note = _create_client_note(
             db,
             client_id=client_id,
             author_user_id=actor.id,
             entry_type="MANUAL",
             message=_build_invoice_range_note_message(metadata),
+        )
+        db.flush()
+        _persist_invoice_lines_for_note(
+            db,
+            note_id=created_note.id,
+            client_id=client_id,
+            payments=payments,
         )
         db.commit()
     elif requested_invoice_number is None:
@@ -5856,6 +6323,8 @@ def download_admin_client_range_invoice(
             if ((invoice_status or "").strip().upper() in {"PAID", "PAYE"})
             else None
         ),
+        legal_entity_id=resolved_seller_legal_entity_id,
+        billing_entity=resolved_billing_entity,
     )
     file_name = f"{resolved_invoice_number}.pdf".replace('"', "")
     return Response(
@@ -5878,6 +6347,11 @@ def download_admin_client_range_invoice_from_note(
 ) -> Response:
     _require_client(db, client_id)
     _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note_id,
+        metadata=metadata,
+    )
     return download_admin_client_range_invoice(
         client_id=client_id,
         start_date=_parse_invoice_range_metadata_date(metadata, "start_date"),
@@ -5925,7 +6399,13 @@ def download_admin_client_range_invoice_from_note(
         auto_exclude_pack_subscription_lines=_parse_invoice_range_metadata_bool(
             metadata, "auto_exclude_pack_subscription_lines", default=True
         ),
-        frozen_payment_keys=_normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")),
+        billing_entity=resolved_billing_entity,
+        seller_legal_entity_id=(
+            resolved_seller_legal_entity_id
+            if resolved_seller_legal_entity_id is not None
+            else _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+        ),
+        frozen_payment_keys=frozen_payment_keys,
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
@@ -5948,6 +6428,11 @@ def download_admin_client_range_invoice_public(
 ) -> Response:
     client = _require_client(db, client_id)
     _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note_id,
+        metadata=metadata,
+    )
     _assert_invoice_range_public_download_token(
         token=token,
         client_id=client_id,
@@ -6001,7 +6486,13 @@ def download_admin_client_range_invoice_public(
         auto_exclude_pack_subscription_lines=_parse_invoice_range_metadata_bool(
             metadata, "auto_exclude_pack_subscription_lines", default=True
         ),
-        frozen_payment_keys=_normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")),
+        billing_entity=resolved_billing_entity,
+        seller_legal_entity_id=(
+            resolved_seller_legal_entity_id
+            if resolved_seller_legal_entity_id is not None
+            else _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+        ),
+        frozen_payment_keys=frozen_payment_keys,
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
@@ -6160,6 +6651,8 @@ def download_admin_client_payment_invoice(
         client_billing_address=_billing_address_label(billing_profile),
         due_date=payment.occurred_at.date(),
         watermark=("PAYE" if (payment.invoice_status or "").strip().upper() == "PAID" else None),
+        legal_entity_id=payment.seller_legal_entity_id,
+        billing_entity=_payment_billing_entity(payment),
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")
