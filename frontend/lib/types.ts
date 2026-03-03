@@ -887,6 +887,7 @@ export type AdminSessionOut = {
   description: string | null;
   public_description: string | null;
   private_description: string | null;
+  professor_reminder_note: string | null;
   group_note: string | null;
   start_at_utc: string;
   end_at_utc: string;

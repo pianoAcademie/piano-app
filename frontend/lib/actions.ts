@@ -995,9 +995,9 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
-  const recipientTarget = String(formData.get("recipient_target") ?? "GROUP").trim();
+  const recipientTarget = String(formData.get("recipient_target") ?? "GROUP").trim().toUpperCase();
   const targetUserId = recipientTarget.startsWith("STUDENT:") ? parseUuid(recipientTarget.slice("STUDENT:".length)) : null;
-  const recipientScope = targetUserId ? "STUDENT" : "GROUP";
+  const recipientScope = targetUserId ? "STUDENT" : recipientTarget === "ADMIN" ? "ADMIN" : "GROUP";
 
   if (!sessionId || !subject || !body) {
     redirect(appendQueryMessage(returnTo, "error", "Sujet et message obligatoires"));
@@ -1084,6 +1084,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const title = String(formData.get("title") ?? "").trim();
   const public_description = optionalField(formData, "public_description");
   const private_description = optionalField(formData, "private_description");
+  const professor_reminder_note = optionalField(formData, "professor_reminder_note");
   const zoom_link = optionalField(formData, "zoom_link");
   const sessionVisibility = parseSessionVisibility(formData);
   const is_private = sessionVisibility.isPrivate;
@@ -1187,6 +1188,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   if (private_description !== null) {
     payload.private_description = private_description;
   }
+  if (professor_reminder_note !== null) {
+    payload.professor_reminder_note = professor_reminder_note;
+  }
   if (zoom_link !== null) {
     payload.zoom_link = zoom_link;
   }
@@ -1230,6 +1234,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const title = String(formData.get("title") ?? "").trim();
   const public_description = optionalField(formData, "public_description");
   const private_description = optionalField(formData, "private_description");
+  const professor_reminder_note = optionalField(formData, "professor_reminder_note");
   const course_type_id = String(formData.get("course_type_id") ?? "").trim();
   const location_id = String(formData.get("location_id") ?? "").trim();
   const professor_id = String(formData.get("professor_id") ?? "").trim();
@@ -1318,6 +1323,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     title,
     public_description,
     private_description,
+    professor_reminder_note,
     course_type_id,
     location_id,
     professor_id,
@@ -1782,6 +1788,12 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
+  const studentId = String(formData.get("student_id") ?? "").trim();
+  const studentDisplayName = String(formData.get("student_display_name") ?? "").trim();
+  const sessionTitle = String(formData.get("session_title") ?? "").trim();
+  const noteAction = String(formData.get("note_action") ?? "SAVE_INTERNAL").trim().toUpperCase();
+  const studentNote = optionalField(formData, "student_note");
+  const studentNoteFormat = String(formData.get("student_note_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   if (!sessionId || !bookingId) {
     redirect(appendQueryMessage(returnTo, "error", "Reservation invalide"));
   }
@@ -1790,7 +1802,7 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
     `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}/note`,
     {
       method: "PATCH",
-      body: JSON.stringify({ student_note: optionalField(formData, "student_note") }),
+      body: JSON.stringify({ student_note: studentNote }),
     },
     token,
   );
@@ -1799,8 +1811,43 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
+  if (noteAction === "SEND_PARENTS") {
+    if (!studentId || !studentNote) {
+      redirect(appendQueryMessage(returnTo, "error", "Note eleve et destinataire parent obligatoires"));
+    }
+    const subject = `Note eleve - ${studentDisplayName || "Eleve"} (${sessionTitle || "Creneau"})`;
+    const broadcastResult = await backendRequest<{
+      channel: "EMAIL";
+      recipient_count: number;
+      cc_count: number;
+      skipped_count: number;
+      details: string[];
+    }>(
+      `/api/v1/admin/sessions/${sessionId}/broadcast`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          channel: "EMAIL",
+          audience: "PARENTS",
+          included_student_ids: [studentId],
+          subject,
+          body: studentNote,
+          body_format: studentNoteFormat,
+          cc_emails: [],
+          cc_phone_numbers: [],
+        }),
+      },
+      token,
+    );
+    if (!broadcastResult.ok) {
+      redirect(appendQueryMessage(returnTo, "error", `Note enregistree, envoi parents impossible: ${broadcastResult.message}`));
+    }
+    revalidatePath("/admin");
+    redirect(appendQueryMessage(returnTo, "ok", `Note envoyee aux parents (${broadcastResult.data.recipient_count})`));
+  }
+
   revalidatePath("/admin");
-  redirect(appendQueryMessage(returnTo, "ok", "Note eleve enregistree"));
+  redirect(appendQueryMessage(returnTo, "ok", "Note interne enregistree"));
 }
 
 export async function adminSendSessionBroadcastAction(formData: FormData): Promise<void> {

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
+    CommunicationLog,
     CommunicationDeliveryStatus,
     CommunicationSenderCategory,
     EmailReminder,
@@ -20,9 +22,15 @@ from app.models.ops import (
     ReminderStatus,
 )
 from app.models.user import User
-from app.services.communication_journal import COMMUNICATION_TYPE_COURSE_REMINDER, log_communication
+from app.services.communication_journal import (
+    COMMUNICATION_TYPE_COURSE_REMINDER,
+    COMMUNICATION_TYPE_OPERATIONAL,
+    log_communication,
+)
+from app.services.email_delivery import send_email
 
 logger = logging.getLogger(__name__)
+HTML_TAG_RE = re.compile(r"<\s*[a-z!/][^>]*>", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -220,6 +228,117 @@ def _build_email_payload(
     return subject, "\n".join(lines)
 
 
+def _professor_note_source(session_id: UUID) -> str:
+    return f"SYSTEM_PROFESSOR_NOTE_REMINDER:{session_id}"
+
+
+def _looks_like_html(value: str) -> bool:
+    return bool(HTML_TAG_RE.search(value or ""))
+
+
+def _build_professor_note_email_payload(
+    *,
+    professor_email: str,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    location: Location,
+    note: str,
+) -> tuple[str, str, str]:
+    start_human = _format_session_datetime(session_obj, location.timezone, location)
+    location_label = "Online" if location.is_online else location.name
+    subject = f"Rappel professeur (24h): {course_type.name} - {start_human}"
+    clean_note = (note or "").strip()
+    if _looks_like_html(clean_note):
+        body = (
+            f"<p>Bonjour {professor_email},</p>"
+            f"<p>Rappel de votre cours: <strong>{course_type.name}</strong><br>"
+            f"Date: {start_human}<br>"
+            f"Lieu: {location_label}</p>"
+            f"<p><strong>Note administration:</strong></p>{clean_note}"
+            "<p>Piano Academie</p>"
+        )
+        return subject, body, "HTML"
+
+    lines = [
+        f"Bonjour {professor_email},",
+        "",
+        f"Rappel de votre cours: {course_type.name}",
+        f"Date: {start_human}",
+        f"Lieu: {location_label}",
+        "",
+        "Note administration:",
+        clean_note,
+        "",
+        "Piano Academie",
+    ]
+    return subject, "\n".join(lines), "TEXT"
+
+
+def _send_professor_note_reminders(db: Session, *, now: datetime, limit: int) -> tuple[int, int, int]:
+    reminder_time = now + timedelta(hours=24)
+    rows = db.execute(
+        select(CourseSession, CourseType, Location, Professor)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .join(Professor, Professor.id == CourseSession.professor_id)
+        .where(
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc > now,
+            CourseSession.start_at_utc <= reminder_time,
+            CourseSession.professor_reminder_note.is_not(None),
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+        .limit(limit)
+    ).all()
+
+    sent = 0
+    skipped = 0
+    failed = 0
+
+    for session_obj, course_type, location, professor in rows:
+        note = (session_obj.professor_reminder_note or "").strip()
+        if not note:
+            skipped += 1
+            continue
+        recipient = (professor.email or "").strip().lower()
+        if not recipient:
+            skipped += 1
+            continue
+
+        source = _professor_note_source(session_obj.id)
+        already_sent = db.scalar(select(CommunicationLog.id).where(CommunicationLog.source == source).limit(1))
+        if already_sent is not None:
+            skipped += 1
+            continue
+
+        recipient_user_id = db.scalar(select(User.id).where(func.lower(User.email) == recipient).limit(1))
+        subject, body, body_format = _build_professor_note_email_payload(
+            professor_email=recipient,
+            session_obj=session_obj,
+            course_type=course_type,
+            location=location,
+            note=note,
+        )
+        try:
+            send_email(
+                to_email=recipient,
+                subject=subject,
+                body=body,
+                body_format=body_format,
+                context=source,
+                sender_category=CommunicationSenderCategory.SYSTEM,
+                sender_label="Systeme",
+                professor_id=session_obj.professor_id,
+                recipient_user_id=recipient_user_id,
+                communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            )
+            sent += 1
+        except Exception:  # pragma: no cover - defensive runtime guard
+            failed += 1
+
+    return sent, skipped, failed
+
+
 def run_send_reminders_job(db: Session, *, now: datetime, limit: int = 200) -> ReminderJobResult:
     created = backfill_future_booking_reminders(db, now=now, limit=limit)
 
@@ -312,4 +431,11 @@ def run_send_reminders_job(db: Session, *, now: datetime, limit: int = 200) -> R
             failed_at=(reminder.sent_at if delivery_status == CommunicationDeliveryStatus.FAILED else None),
         )
 
-    return ReminderJobResult(created=created, sent=sent, skipped=skipped, failed=failed)
+    professor_sent, professor_skipped, professor_failed = _send_professor_note_reminders(db, now=now, limit=limit)
+
+    return ReminderJobResult(
+        created=created,
+        sent=sent + professor_sent,
+        skipped=skipped + professor_skipped,
+        failed=failed + professor_failed,
+    )

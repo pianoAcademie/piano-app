@@ -1246,6 +1246,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     Description privee (interne)
                     <textarea name="private_description" rows={4} />
                   </label>
+
+                  <label className="span-2">
+                    Note pour le professeur (envoyee 24h avant)
+                    <RichMessageEditor
+                      name="professor_reminder_note"
+                      formatName="professor_reminder_note_format"
+                      rows={6}
+                      maxLength={12000}
+                      defaultFormat="HTML"
+                      placeholder="Saisir la note a joindre au rappel professeur..."
+                    />
+                  </label>
                 </div>
               </section>
 
@@ -1569,6 +1581,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <strong>Description privee:</strong> {selectedSession.private_description}
               </p>
             ) : null}
+            {selectedSession.professor_reminder_note ? (
+              <p className="muted">
+                <strong>Note professeur (rappel 24h):</strong> {stripHtml(selectedSession.professor_reminder_note)}
+              </p>
+            ) : null}
 
             <section className="card modal-card">
               <div className="row spread">
@@ -1843,6 +1860,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         <textarea name="private_description" rows={3} defaultValue={selectedSession.private_description ?? ""} />
                       </label>
 
+                      <label className="session-edit-span">
+                        Note pour le professeur (envoyee 24h avant)
+                        <RichMessageEditor
+                          name="professor_reminder_note"
+                          formatName="professor_reminder_note_format"
+                          rows={6}
+                          maxLength={12000}
+                          defaultFormat="HTML"
+                          defaultValue={selectedSession.professor_reminder_note ?? ""}
+                          placeholder="Saisir la note a joindre au rappel professeur..."
+                        />
+                      </label>
+
                       <div className="row">
                         <button type="submit">Enregistrer</button>
                       </div>
@@ -1945,6 +1975,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <form action={adminUpdateSessionBookingNoteAction} className="grid top-gap-sm">
                     <input type="hidden" name="session_id" value={selectedSession.id} />
                     <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
+                    <input type="hidden" name="student_id" value={focusedAttendanceBooking.client_id} />
+                    <input
+                      type="hidden"
+                      name="student_display_name"
+                      value={focusedAttendanceBooking.client_display_name || "Eleve"}
+                    />
+                    <input type="hidden" name="session_title" value={selectedSession.title} />
                     <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
                     <label className="session-edit-span">
                       Note eleve
@@ -1953,13 +1990,17 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         formatName="student_note_format"
                         rows={8}
                         maxLength={12000}
+                        defaultFormat="HTML"
                         placeholder="Saisir une note pour cet eleve..."
                         defaultValue={focusedAttendanceBooking.student_note ?? ""}
                       />
                     </label>
                     <div className="row">
-                      <button type="submit" className="ghost">
-                        Sauvegarder note eleve
+                      <button type="submit" name="note_action" value="SAVE_INTERNAL" className="ghost">
+                        Sauvegarder note interne
+                      </button>
+                      <button type="submit" name="note_action" value="SEND_PARENTS">
+                        Envoyer aux parents
                       </button>
                     </div>
                   </form>

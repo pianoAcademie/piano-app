@@ -255,6 +255,7 @@ class CourseSession(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     private_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     group_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    professor_reminder_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_all_day: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

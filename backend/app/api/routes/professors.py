@@ -627,11 +627,31 @@ def send_session_message(
         BookingStatus.EXCUSED_ABSENCE,
     )
     requested_scope = (payload.recipient_scope or "GROUP").strip().upper()
+    is_admin_only = requested_scope in {"ADMIN", "ADMINISTRATION", "STAFF"} and payload.target_user_id is None
     is_individual = requested_scope in {"STUDENT", "INDIVIDUAL", "INDIVIDUAL_STUDENT"} or payload.target_user_id is not None
 
-    recipients: list[str] = []
+    recipients: list[tuple[str, UUID | None]] = []
     target_display_name: str | None = None
-    if is_individual:
+    if is_admin_only:
+        admin_rows = db.scalars(
+            select(User)
+            .where(
+                User.role == UserRole.ADMIN,
+                User.is_active.is_(True),
+                User.email.is_not(None),
+            )
+            .order_by(User.created_at.asc())
+        ).all()
+        recipients = sorted(
+            {
+                ((row.email or "").strip().lower(), row.id)
+                for row in admin_rows
+                if row.email and row.email.strip()
+            },
+            key=lambda item: item[0],
+        )
+        target_display_name = "Administration"
+    elif is_individual:
         if payload.target_user_id is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Target student is required")
 
@@ -651,11 +671,11 @@ def send_session_message(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Target student not found or no email opt-in",
             )
-        recipients = [target.email.strip().lower()]
+        recipients = [(target.email.strip().lower(), target.id)]
         target_display_name = _display_name(target)
     else:
-        recipient_rows = db.scalars(
-            select(User.email)
+        recipient_rows = db.execute(
+            select(User.id, User.email)
             .join(Booking, Booking.user_id == User.id)
             .where(
                 Booking.session_id == session_id,
@@ -663,27 +683,41 @@ def send_session_message(
                 User.email_opt_in.is_(True),
             )
         ).all()
-        recipients = sorted({email.strip().lower() for email in recipient_rows if email and email.strip()})
+        recipients = sorted(
+            {
+                (((email or "").strip().lower()), user_id)
+                for user_id, email in recipient_rows
+                if email and email.strip()
+            },
+            key=lambda item: item[0],
+        )
 
     if not recipients:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No valid recipient found")
 
-        for email in recipients:
-            send_session_operation_email(
-                to_email=email,
-                subject=subject,
-                body=body,
-                body_format=payload.body_format.value,
-                operation="PROF_GROUP_MESSAGE",
-                session_title=session_obj.title,
-                sender_user_id=current_user.id,
-                sender_label=_display_name(current_user),
-                sender_category=CommunicationSenderCategory.PROFESSOR,
-                professor_id=professor.id,
-            )
+    operation = "PROF_ADMIN_NOTE" if is_admin_only else "PROF_GROUP_MESSAGE"
+    for email, recipient_user_id in recipients:
+        send_session_operation_email(
+            to_email=email,
+            subject=subject,
+            body=body,
+            body_format=payload.body_format.value,
+            operation=operation,
+            session_title=session_obj.title,
+            sender_user_id=current_user.id,
+            sender_label=_display_name(current_user),
+            sender_category=CommunicationSenderCategory.PROFESSOR,
+            professor_id=professor.id,
+            recipient_user_id=recipient_user_id,
+        )
 
     now = _utcnow()
-    logged_subject = subject if target_display_name is None else f"{subject} (eleve: {target_display_name})"
+    if target_display_name is None:
+        logged_subject = subject
+    elif target_display_name == "Administration":
+        logged_subject = f"{subject} (administration)"
+    else:
+        logged_subject = f"{subject} (eleve: {target_display_name})"
     message_log = ProfessorSessionMessage(
         session_id=session_obj.id,
         professor_id=professor.id,

@@ -136,6 +136,7 @@ def _to_admin_session_out(session_obj: CourseSession, *, booked_count: int) -> A
         description=session_obj.description,
         public_description=session_obj.description,
         private_description=session_obj.private_description,
+        professor_reminder_note=session_obj.professor_reminder_note,
         group_note=session_obj.group_note,
         start_at_utc=session_obj.start_at_utc,
         end_at_utc=session_obj.end_at_utc,
@@ -1251,6 +1252,7 @@ def create_session(
                 title=payload.title,
                 description=payload.public_description or payload.description,
                 private_description=payload.private_description,
+                professor_reminder_note=_normalize_message_field(payload.professor_reminder_note),
                 start_at_utc=starts_at,
                 end_at_utc=ends_at,
                 is_all_day=is_all_day,
@@ -2074,6 +2076,8 @@ def update_session(
             target.description = updates["public_description"]
         if "private_description" in updates:
             target.private_description = updates["private_description"]
+        if "professor_reminder_note" in updates:
+            target.professor_reminder_note = _normalize_message_field(updates["professor_reminder_note"])
         if "zoom_link" in updates:
             target.zoom_link = updates["zoom_link"]
         if is_vacation:
@@ -2213,6 +2217,7 @@ def update_session(
                     title=session_obj.title,
                     description=session_obj.description,
                     private_description=session_obj.private_description,
+                    professor_reminder_note=session_obj.professor_reminder_note,
                     group_note=session_obj.group_note,
                     start_at_utc=starts_at,
                     end_at_utc=ends_at,
@@ -2321,6 +2326,7 @@ def duplicate_session_operation(
                 title=target.title,
                 description=target.description,
                 private_description=target.private_description,
+                professor_reminder_note=target.professor_reminder_note,
                 group_note=target.group_note,
                 start_at_utc=duplicate_start,
                 end_at_utc=duplicate_end,

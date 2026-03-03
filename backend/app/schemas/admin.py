@@ -1384,6 +1384,7 @@ class AdminSessionCreateRequest(BaseModel):
     description: str | None = None
     public_description: str | None = None
     private_description: str | None = None
+    professor_reminder_note: str | None = Field(default=None, max_length=12000)
     start_at_utc: datetime
     end_at_utc: datetime | None = None
     is_all_day: bool = False
@@ -1404,6 +1405,7 @@ class AdminSessionUpdateRequest(BaseModel):
     description: str | None = None
     public_description: str | None = None
     private_description: str | None = None
+    professor_reminder_note: str | None = Field(default=None, max_length=12000)
     start_at_utc: datetime | None = None
     end_at_utc: datetime | None = None
     is_all_day: bool | None = None
@@ -1427,6 +1429,7 @@ class AdminSessionOut(BaseModel):
     description: str | None
     public_description: str | None
     private_description: str | None
+    professor_reminder_note: str | None
     group_note: str | None
     start_at_utc: datetime
     end_at_utc: datetime

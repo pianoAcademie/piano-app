@@ -277,15 +277,23 @@ function shiftAgendaDate(view: AgendaView, agendaDate: string, direction: -1 | 1
 }
 
 function parseMessageSubject(subject: string): { cleanedSubject: string; targetLabel: string | null } {
-  const match = subject.match(/\s*\(eleve:\s*(.+)\)\s*$/i);
-  if (!match) {
-    return { cleanedSubject: subject, targetLabel: null };
+  const studentMatch = subject.match(/\s*\(eleve:\s*(.+)\)\s*$/i);
+  if (studentMatch) {
+    const cleanedSubject = subject.replace(/\s*\(eleve:\s*(.+)\)\s*$/i, "").trim();
+    return {
+      cleanedSubject: cleanedSubject || subject,
+      targetLabel: studentMatch[1]?.trim() || null,
+    };
   }
-  const cleanedSubject = subject.replace(/\s*\(eleve:\s*(.+)\)\s*$/i, "").trim();
-  return {
-    cleanedSubject: cleanedSubject || subject,
-    targetLabel: match[1]?.trim() || null,
-  };
+  const adminMatch = subject.match(/\s*\(administration\)\s*$/i);
+  if (adminMatch) {
+    const cleanedSubject = subject.replace(/\s*\(administration\)\s*$/i, "").trim();
+    return {
+      cleanedSubject: cleanedSubject || subject,
+      targetLabel: "Administration",
+    };
+  }
+  return { cleanedSubject: subject, targetLabel: null };
 }
 
 function pendingAttendanceCount(session: ProfessorSessionOut): number {
@@ -1227,6 +1235,39 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               </section>
             ) : null}
 
+            {canMessageStudents ? (
+              <section className="modal-card">
+                <h4>Note a l administration</h4>
+                <form action={professorSendSessionMessageAction} className="grid">
+                  <input type="hidden" name="session_id" value={selectedSession.id} />
+                  <input
+                    type="hidden"
+                    name="return_to"
+                    value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id })}
+                  />
+                  <input type="hidden" name="recipient_target" value="ADMIN" />
+                  <label>
+                    Objet
+                    <input type="text" name="subject" required maxLength={255} defaultValue={`Note cours - ${selectedSession.title}`} />
+                  </label>
+                  <label>
+                    Message (administration uniquement)
+                    <RichMessageEditor
+                      name="body"
+                      formatName="body_format"
+                      rows={8}
+                      maxLength={12000}
+                      defaultFormat="HTML"
+                      placeholder="Saisir une note pour l administration..."
+                    />
+                  </label>
+                  <div className="row">
+                    <button type="submit">Envoyer a l administration</button>
+                  </div>
+                </form>
+              </section>
+            ) : null}
+
             {canEditPlanning && selectedSession.status !== "CANCELLED" ? (
               <section className="modal-card">
                 <h4>Absence professeur</h4>
@@ -1284,7 +1325,11 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   <h3 className="modal-title">{parsedSubject.cleanedSubject}</h3>
                   <p className="muted">
                     Envoye le {formatDateTime(selectedMessage.sent_at)} |{" "}
-                    {parsedSubject.targetLabel ? `Eleve: ${parsedSubject.targetLabel}` : "Message groupe"}
+                    {parsedSubject.targetLabel === "Administration"
+                      ? "Administration"
+                      : parsedSubject.targetLabel
+                        ? `Eleve: ${parsedSubject.targetLabel}`
+                        : "Message groupe"}
                   </p>
                 </>
               );
