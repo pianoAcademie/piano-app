@@ -164,6 +164,7 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
 class AdminMessagingChannel(str, enum.Enum):
     EMAIL = "EMAIL"
     SMS = "SMS"
+    GROUP_NOTE = "GROUP_NOTE"
 
 
 class AdminMessagingTemplateKind(str, enum.Enum):
@@ -1510,6 +1511,9 @@ class AdminSessionBroadcastAudience(str, enum.Enum):
     STUDENTS = "STUDENTS"
     PARENTS = "PARENTS"
     STUDENTS_AND_PARENTS = "STUDENTS_AND_PARENTS"
+    PROFESSOR = "PROFESSOR"
+    ADMINS = "ADMINS"
+    SELF = "SELF"
 
 
 class AdminSessionMessageFormat(str, enum.Enum):
@@ -1521,6 +1525,7 @@ class AdminSessionBroadcastRequest(BaseModel):
     channel: AdminSessionBroadcastChannel
     audience: AdminSessionBroadcastAudience = AdminSessionBroadcastAudience.STUDENTS
     included_student_ids: list[UUID] = Field(default_factory=list)
+    send_to_self: bool = False
     subject: str | None = Field(default=None, max_length=255)
     body: str = Field(min_length=1, max_length=12000)
     body_format: AdminSessionMessageFormat = AdminSessionMessageFormat.TEXT

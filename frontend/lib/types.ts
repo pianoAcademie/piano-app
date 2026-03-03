@@ -1168,7 +1168,7 @@ export type AdminMessagingSettingsOut = {
   updated_at: string | null;
 };
 
-export type AdminMessagingChannel = "EMAIL" | "SMS";
+export type AdminMessagingChannel = "EMAIL" | "SMS" | "GROUP_NOTE";
 export type AdminMessagingTemplateKind = "PREDEFINED" | "CUSTOM";
 
 export type AdminMessagingTemplateOut = {

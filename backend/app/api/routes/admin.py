@@ -48,6 +48,7 @@ from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, l
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_notifications import send_session_operation_email
 from app.schemas.admin import (
+    AdminSessionBroadcastAudience,
     AdminSessionBroadcastOut,
     AdminSessionBroadcastRequest,
     AdminSessionCancelOperationRequest,
@@ -759,7 +760,7 @@ def _session_student_recipient_map(
     if not student_ids:
         return {}
     users = db.scalars(select(User).where(User.id.in_(student_ids))).all()
-    recipients: dict[str, UUID] = {}
+    recipients: dict[str, UUID | None] = {}
     for user in users:
         if channel == CommunicationChannel.EMAIL:
             if not user.email_opt_in:
@@ -803,6 +804,69 @@ def _session_parent_recipient_map(
         phone = _preferred_sms_recipient(parent)
         if phone:
             recipients.setdefault(phone, parent.id)
+    return recipients
+
+
+def _single_user_recipient_map(
+    *,
+    user: User,
+    channel: CommunicationChannel,
+    enforce_opt_in: bool = True,
+) -> dict[str, UUID]:
+    if channel == CommunicationChannel.EMAIL:
+        if enforce_opt_in and not user.email_opt_in:
+            return {}
+        email = _normalize_email_recipient(user.email)
+        if not email:
+            return {}
+        return {email: user.id}
+
+    if enforce_opt_in and not user.sms_opt_in:
+        return {}
+    phone = _preferred_sms_recipient(user)
+    if not phone:
+        return {}
+    return {phone: user.id}
+
+
+def _session_professor_recipient_map(
+    db: Session,
+    *,
+    session_obj: CourseSession,
+    channel: CommunicationChannel,
+) -> dict[str, UUID | None]:
+    professor = db.scalar(select(Professor).where(Professor.id == session_obj.professor_id))
+    if professor is None:
+        return {}
+    if channel == CommunicationChannel.EMAIL:
+        email = _normalize_email_recipient(professor.email)
+        if not email:
+            return {}
+        return {email: None}
+    phone = _normalize_phone_recipient(professor.phone or "")
+    if not phone:
+        return {}
+    return {phone: None}
+
+
+def _admin_recipient_map(
+    db: Session,
+    *,
+    channel: CommunicationChannel,
+    exclude_user_id: UUID | None = None,
+) -> dict[str, UUID]:
+    admin_users = db.scalars(select(User).where(User.role == UserRole.ADMIN, User.is_active.is_(True))).all()
+    recipients: dict[str, UUID | None] = {}
+    for admin_user in admin_users:
+        if exclude_user_id is not None and admin_user.id == exclude_user_id:
+            continue
+        recipients.update(
+            _single_user_recipient_map(
+                user=admin_user,
+                channel=channel,
+                enforce_opt_in=True,
+            )
+        )
     return recipients
 
 
@@ -1518,20 +1582,42 @@ def broadcast_admin_session_message(
     if channel == CommunicationChannel.EMAIL and subject is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Sujet obligatoire pour un email")
 
-    available_student_ids = _session_active_student_ids(db, session_id=session_obj.id)
-    selected_student_ids = set(payload.included_student_ids) if payload.included_student_ids else available_student_ids
-    student_ids = available_student_ids.intersection(selected_student_ids)
-    if not student_ids:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun eleve selectionne")
     recipients: dict[str, UUID] = {}
-
     include_students = payload.audience.value in {"STUDENTS", "STUDENTS_AND_PARENTS"}
     include_parents = payload.audience.value in {"PARENTS", "STUDENTS_AND_PARENTS"}
+    include_professor = payload.audience == AdminSessionBroadcastAudience.PROFESSOR
+    include_admins = payload.audience == AdminSessionBroadcastAudience.ADMINS
+    include_self = payload.audience == AdminSessionBroadcastAudience.SELF
+
+    student_ids: set[UUID] = set()
+    if include_students or include_parents:
+        available_student_ids = _session_active_student_ids(db, session_id=session_obj.id)
+        selected_student_ids = set(payload.included_student_ids) if payload.included_student_ids else available_student_ids
+        student_ids = available_student_ids.intersection(selected_student_ids)
+        if not student_ids:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun eleve selectionne")
     if include_students:
         recipients.update(_session_student_recipient_map(db, student_ids=student_ids, channel=channel))
     if include_parents:
         parent_recipients = _session_parent_recipient_map(db, student_ids=student_ids, channel=channel)
         for destination, user_id in parent_recipients.items():
+            recipients.setdefault(destination, user_id)
+    if include_professor:
+        recipients.update(_session_professor_recipient_map(db, session_obj=session_obj, channel=channel))
+    if include_admins:
+        admin_recipients = _admin_recipient_map(
+            db,
+            channel=channel,
+            exclude_user_id=current_user.id if not payload.send_to_self else None,
+        )
+        for destination, user_id in admin_recipients.items():
+            recipients.setdefault(destination, user_id)
+    if include_self or payload.send_to_self:
+        for destination, user_id in _single_user_recipient_map(
+            user=current_user,
+            channel=channel,
+            enforce_opt_in=True,
+        ).items():
             recipients.setdefault(destination, user_id)
 
     if not recipients:

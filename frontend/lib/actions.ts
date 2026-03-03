@@ -1756,6 +1756,24 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
   const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
+  const sessionTitle = String(formData.get("session_title") ?? "").trim();
+  const noteAction = String(formData.get("note_action") ?? "SAVE_ONLY").trim().toUpperCase();
+  const destinationRaw = String(formData.get("note_destination") ?? "PRIVATE").trim().toUpperCase();
+  const noteDestination =
+    destinationRaw === "STUDENTS" ||
+    destinationRaw === "PARENTS" ||
+    destinationRaw === "STUDENTS_AND_PARENTS" ||
+    destinationRaw === "PROFESSOR" ||
+    destinationRaw === "ADMINS" ||
+    destinationRaw === "SELF" ||
+    destinationRaw === "PRIVATE"
+      ? destinationRaw
+      : "PRIVATE";
+  const groupNote = optionalField(formData, "group_note");
+  const groupNoteFormat = String(formData.get("group_note_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+  const includedStudentIds = parseStringList(formData.getAll("included_student_ids"));
+  const sendToSelf = checkboxField(formData, "send_to_self");
+  const subject = optionalField(formData, "subject") ?? `Note de groupe - ${sessionTitle || "Creneau"}`;
   if (!sessionId) {
     redirect(appendQueryMessage(returnTo, "error", "Session invalide"));
   }
@@ -1764,13 +1782,57 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
     `/api/v1/admin/sessions/${sessionId}/group-note`,
     {
       method: "PATCH",
-      body: JSON.stringify({ group_note: optionalField(formData, "group_note") }),
+      body: JSON.stringify({ group_note: groupNote }),
     },
     token,
   );
 
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  if (noteAction === "SEND_EMAIL" && noteDestination !== "PRIVATE") {
+    if (!groupNote) {
+      redirect(appendQueryMessage(returnTo, "error", "Note de groupe obligatoire pour l envoi"));
+    }
+    if (
+      (noteDestination === "STUDENTS" || noteDestination === "PARENTS" || noteDestination === "STUDENTS_AND_PARENTS") &&
+      includedStudentIds.length === 0
+    ) {
+      redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un eleve"));
+    }
+
+    const broadcastResult = await backendRequest<{
+      channel: "EMAIL";
+      recipient_count: number;
+      cc_count: number;
+      skipped_count: number;
+      details: string[];
+    }>(
+      `/api/v1/admin/sessions/${sessionId}/broadcast`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          channel: "EMAIL",
+          audience: noteDestination,
+          included_student_ids: includedStudentIds,
+          send_to_self: sendToSelf,
+          subject,
+          body: groupNote,
+          body_format: groupNoteFormat,
+          cc_emails: [],
+          cc_phone_numbers: [],
+        }),
+      },
+      token,
+    );
+
+    if (!broadcastResult.ok) {
+      redirect(appendQueryMessage(returnTo, "error", `Note enregistree, envoi impossible: ${broadcastResult.message}`));
+    }
+
+    revalidatePath("/admin");
+    redirect(appendQueryMessage(returnTo, "ok", `Note enregistree et envoyee (${broadcastResult.data.recipient_count})`));
   }
 
   revalidatePath("/admin");
@@ -1864,18 +1926,28 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
   const channel = channelRaw === "SMS" ? "SMS" : "EMAIL";
   const audienceRaw = String(formData.get("audience") ?? "STUDENTS").trim().toUpperCase();
   const audience =
-    audienceRaw === "PARENTS" || audienceRaw === "STUDENTS_AND_PARENTS" || audienceRaw === "STUDENTS"
+    audienceRaw === "PARENTS" ||
+    audienceRaw === "STUDENTS_AND_PARENTS" ||
+    audienceRaw === "STUDENTS" ||
+    audienceRaw === "PROFESSOR" ||
+    audienceRaw === "ADMINS" ||
+    audienceRaw === "SELF"
       ? audienceRaw
       : "STUDENTS";
   const subject = optionalField(formData, "subject");
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const includedStudentIds = parseStringList(formData.getAll("included_student_ids"));
+  const sendToSelf = checkboxField(formData, "send_to_self");
   const ccEmails = emailListField(formData, "cc_emails") ?? [];
   const ccPhoneNumbers = emailListField(formData, "cc_phone_numbers") ?? [];
+  const isStudentBasedAudience = audience === "STUDENTS" || audience === "PARENTS" || audience === "STUDENTS_AND_PARENTS";
 
-  if (!sessionId || !body || includedStudentIds.length === 0) {
+  if (!sessionId || !body) {
     redirect(appendQueryMessage(returnTo, "error", "Session, sujet/message invalides"));
+  }
+  if (isStudentBasedAudience && includedStudentIds.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un eleve"));
   }
   if (channel === "EMAIL" && !subject) {
     redirect(appendQueryMessage(returnTo, "error", "Sujet obligatoire pour un email"));
@@ -1895,6 +1967,7 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
         channel,
         audience,
         included_student_ids: includedStudentIds,
+        send_to_self: sendToSelf,
         subject,
         body,
         body_format: bodyFormat,
@@ -5872,6 +5945,34 @@ export async function updateAdminConfigPaymentProviderAction(formData: FormData)
   redirect("/admin/config?section=params-payments&ok=Configuration%20PSP%20mise%20a%20jour");
 }
 
+function normalizeMessagingConfigTab(raw: string, fallback = "settings"): string {
+  const value = raw.trim().toLowerCase();
+  if (
+    value === "settings" ||
+    value === "predefined-email" ||
+    value === "predefined-sms" ||
+    value === "custom-email" ||
+    value === "custom-sms" ||
+    value === "group-notes"
+  ) {
+    return value;
+  }
+  return fallback;
+}
+
+function buildMessagingConfigPath(tab: string, params: Record<string, string> = {}): string {
+  const searchParams = new URLSearchParams();
+  searchParams.set("section", "params-messaging");
+  searchParams.set("messaging_tab", normalizeMessagingConfigTab(tab));
+  for (const [key, value] of Object.entries(params)) {
+    if (!value) {
+      continue;
+    }
+    searchParams.set(key, value);
+  }
+  return `/admin/config?${searchParams.toString()}`;
+}
+
 export async function updateAdminConfigMessagingSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -5879,6 +5980,7 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
   }
 
   await ensureAdmin(token);
+  const messagingTab = normalizeMessagingConfigTab(String(formData.get("messaging_tab") ?? ""), "settings");
 
   const payload = {
     studio_email: String(formData.get("studio_email") ?? "").trim(),
@@ -5900,11 +6002,11 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+    redirect(buildMessagingConfigPath(messagingTab, { error: result.message }));
   }
 
   revalidatePath("/admin/config");
-  redirect("/admin/config?section=params-messaging&ok=Parametres%20messagerie%20mis%20a%20jour");
+  redirect(buildMessagingConfigPath(messagingTab, { ok: "Parametres messagerie mis a jour" }));
 }
 
 export async function updateAdminConfigInvoiceTemplateAction(formData: FormData): Promise<void> {
@@ -5995,14 +6097,27 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const active = checkboxField(formData, "active");
+  const requestedTabRaw = String(formData.get("messaging_tab") ?? "");
+
+  const defaultTabForChannel =
+    templateChannel === "EMAIL"
+      ? templateKind === "PREDEFINED"
+        ? "predefined-email"
+        : "custom-email"
+      : templateChannel === "SMS"
+        ? templateKind === "PREDEFINED"
+          ? "predefined-sms"
+          : "custom-sms"
+        : "group-notes";
+  const messagingTab = normalizeMessagingConfigTab(requestedTabRaw, defaultTabForChannel);
 
   if (!body) {
-    redirect("/admin/config?section=params-messaging&error=Corps%20du%20modele%20obligatoire");
+    redirect(buildMessagingConfigPath(messagingTab, { error: "Corps du modele obligatoire" }));
   }
 
   if (templateKind === "PREDEFINED") {
     if (!templateCode) {
-      redirect("/admin/config?section=params-messaging&error=Template%20predefini%20introuvable");
+      redirect(buildMessagingConfigPath(messagingTab, { error: "Template predefini introuvable" }));
     }
 
     const result = await backendRequest<AdminMessagingTemplateOut>(
@@ -6015,25 +6130,25 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
     );
 
     if (!result.ok) {
-      redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+      redirect(buildMessagingConfigPath(messagingTab, { error: result.message }));
     }
 
     revalidatePath("/admin/config");
-    redirect("/admin/config?section=params-messaging&ok=Modele%20predefini%20mis%20a%20jour");
+    redirect(buildMessagingConfigPath(messagingTab, { ok: "Modele predefini mis a jour" }));
   }
 
   if (templateKind !== "CUSTOM") {
-    redirect("/admin/config?section=params-messaging&error=Type%20de%20modele%20invalide");
+    redirect(buildMessagingConfigPath(messagingTab, { error: "Type de modele invalide" }));
   }
 
   if (!name) {
-    redirect("/admin/config?section=params-messaging&error=Nom%20du%20modele%20obligatoire");
+    redirect(buildMessagingConfigPath(messagingTab, { error: "Nom du modele obligatoire" }));
   }
-  if (templateChannel !== "EMAIL" && templateChannel !== "SMS") {
-    redirect("/admin/config?section=params-messaging&error=Canal%20invalide");
+  if (templateChannel !== "EMAIL" && templateChannel !== "SMS" && templateChannel !== "GROUP_NOTE") {
+    redirect(buildMessagingConfigPath(messagingTab, { error: "Canal invalide" }));
   }
   if (templateChannel === "EMAIL" && !subject) {
-    redirect("/admin/config?section=params-messaging&error=Objet%20obligatoire%20pour%20un%20email");
+    redirect(buildMessagingConfigPath(messagingTab, { error: "Objet obligatoire pour un email" }));
   }
 
   const payload = {
@@ -6059,15 +6174,11 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+    redirect(buildMessagingConfigPath(messagingTab, { error: result.message }));
   }
 
   revalidatePath("/admin/config");
-  redirect(
-    `/admin/config?section=params-messaging&ok=${encodeURIComponent(
-      templateId ? "Modele personnalise mis a jour" : "Modele personnalise cree",
-    )}`,
-  );
+  redirect(buildMessagingConfigPath(messagingTab, { ok: templateId ? "Modele personnalise mis a jour" : "Modele personnalise cree" }));
 }
 
 export async function resetAdminConfigPredefinedMessagingTemplateAction(formData: FormData): Promise<void> {
@@ -6077,10 +6188,11 @@ export async function resetAdminConfigPredefinedMessagingTemplateAction(formData
   }
 
   await ensureAdmin(token);
+  const messagingTab = normalizeMessagingConfigTab(String(formData.get("messaging_tab") ?? ""), "predefined-email");
 
   const templateCode = String(formData.get("template_code") ?? "").trim().toUpperCase();
   if (!templateCode) {
-    redirect("/admin/config?section=params-messaging&error=Template%20predefini%20introuvable");
+    redirect(buildMessagingConfigPath(messagingTab, { error: "Template predefini introuvable" }));
   }
 
   const result = await backendRequest<AdminMessagingTemplateOut>(
@@ -6092,11 +6204,11 @@ export async function resetAdminConfigPredefinedMessagingTemplateAction(formData
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+    redirect(buildMessagingConfigPath(messagingTab, { error: result.message }));
   }
 
   revalidatePath("/admin/config");
-  redirect("/admin/config?section=params-messaging&ok=Modele%20predefini%20retabli");
+  redirect(buildMessagingConfigPath(messagingTab, { ok: "Modele predefini retabli" }));
 }
 
 export async function deleteAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
@@ -6106,10 +6218,11 @@ export async function deleteAdminConfigMessagingTemplateAction(formData: FormDat
   }
 
   await ensureAdmin(token);
+  const messagingTab = normalizeMessagingConfigTab(String(formData.get("messaging_tab") ?? ""), "custom-email");
 
   const templateId = String(formData.get("template_id") ?? "").trim();
   if (!templateId) {
-    redirect("/admin/config?section=params-messaging&error=Template%20introuvable");
+    redirect(buildMessagingConfigPath(messagingTab, { error: "Template introuvable" }));
   }
 
   const result = await backendRequest<Record<string, never>>(
@@ -6119,11 +6232,11 @@ export async function deleteAdminConfigMessagingTemplateAction(formData: FormDat
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+    redirect(buildMessagingConfigPath(messagingTab, { error: result.message }));
   }
 
   revalidatePath("/admin/config");
-  redirect("/admin/config?section=params-messaging&ok=Modele%20personnalise%20supprime");
+  redirect(buildMessagingConfigPath(messagingTab, { ok: "Modele personnalise supprime" }));
 }
 
 export async function updateAdminClientPasswordEmailTemplateAction(formData: FormData): Promise<void> {

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.ops import AppSetting
 
-MessagingChannel = Literal["EMAIL", "SMS"]
+MessagingChannel = Literal["EMAIL", "SMS", "GROUP_NOTE"]
 MessagingTemplateKind = Literal["PREDEFINED", "CUSTOM"]
 
 MESSAGING_SETTINGS_STUDIO_EMAIL_KEY = "config_messaging_studio_email"
@@ -536,7 +536,7 @@ def _custom_templates(db: Session) -> list[dict[str, object]]:
         if not isinstance(row, dict):
             continue
         channel = str(row.get("channel", "")).strip().upper()
-        if channel not in {"EMAIL", "SMS"}:
+        if channel not in {"EMAIL", "SMS", "GROUP_NOTE"}:
             continue
         template_id = str(row.get("id", "")).strip()
         if not template_id:
@@ -742,7 +742,7 @@ def create_custom_template(
     cleaned_body_format = _normalize_body_format(body_format, default="TEXT")
     if channel == "EMAIL" and not cleaned_subject:
         raise ValueError("Template subject is required for email")
-    if channel != "EMAIL":
+    if channel == "SMS":
         cleaned_body_format = "TEXT"
 
     now = _utcnow()
@@ -801,7 +801,7 @@ def update_custom_template(
     cleaned_body_format = _normalize_body_format(body_format, default="TEXT")
     if channel == "EMAIL" and not cleaned_subject:
         raise ValueError("Template subject is required for email")
-    if channel != "EMAIL":
+    if channel == "SMS":
         cleaned_body_format = "TEXT"
 
     match["name"] = cleaned_name

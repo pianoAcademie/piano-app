@@ -24,6 +24,7 @@ import SessionTimeFields from "../../components/session-time-fields";
 import SessionVisibilityFields from "../../components/session-visibility-fields";
 import type {
   AdminClientOut,
+  AdminMessagingTemplateOut,
   AdminProfessorOut,
   AdminSessionBookingOut,
   AdminSessionOut,
@@ -498,6 +499,16 @@ function withQueryParam(href: string, key: string, value: string): string {
   }
 }
 
+function removeQueryParam(href: string, key: string): string {
+  try {
+    const url = new URL(href, "http://localhost");
+    url.searchParams.delete(key);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return href;
+  }
+}
+
 function recurrenceLabel(session: AdminSessionOut): string {
   if (!session.recurrence_rule) {
     return "Ponctuel";
@@ -565,6 +576,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const attendanceModalOpen = readParam(searchParams, "attendance") === "1";
   const notesModal = readParam(searchParams, "notes").toLowerCase();
   const groupNotesModalOpen = notesModal === "group";
+  const groupNoteTemplateId = readParam(searchParams, "group_note_template_id");
+  const groupNoteDestinationRaw = readParam(searchParams, "note_destination").trim().toUpperCase();
+  const groupNoteDestination =
+    groupNoteDestinationRaw === "STUDENTS" ||
+    groupNoteDestinationRaw === "PARENTS" ||
+    groupNoteDestinationRaw === "STUDENTS_AND_PARENTS" ||
+    groupNoteDestinationRaw === "PROFESSOR" ||
+    groupNoteDestinationRaw === "ADMINS" ||
+    groupNoteDestinationRaw === "SELF" ||
+    groupNoteDestinationRaw === "PRIVATE"
+      ? groupNoteDestinationRaw
+      : "PRIVATE";
   const duplicateModalOpen = readParam(searchParams, "duplicate") === "1";
   const messageModalRaw = readParam(searchParams, "message").trim().toLowerCase();
   const sessionEmailModalOpen = messageModalRaw === "email";
@@ -596,11 +619,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   }
   const sessionsEndpoint = sessionsQuery.toString() ? `/api/v1/admin/sessions?${sessionsQuery.toString()}` : "/api/v1/admin/sessions";
 
-  const [locationsResult, professorsResult, sessionsResult, clientsResult] = await Promise.all([
+  const [locationsResult, professorsResult, sessionsResult, clientsResult, groupNoteTemplatesResult] = await Promise.all([
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
     backendRequest<AdminProfessorOut[]>("/api/v1/admin/professors", {}, token),
     backendRequest<AdminSessionOut[]>(sessionsEndpoint, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?active_only=true&limit=500", {}, token),
+    backendRequest<AdminMessagingTemplateOut[]>(
+      "/api/v1/admin/config/messaging-templates?kind=CUSTOM&channel=GROUP_NOTE",
+      {},
+      token,
+    ),
   ]);
 
   const errors: string[] = [];
@@ -631,6 +659,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     : (() => {
         errors.push(`clients: ${clientsResult.message}`);
         return [] as AdminClientOut[];
+      })();
+  const groupNoteTemplates = groupNoteTemplatesResult.ok
+    ? groupNoteTemplatesResult.data.filter((template) => template.active)
+    : (() => {
+        errors.push(`group-note-templates: ${groupNoteTemplatesResult.message}`);
+        return [] as AdminMessagingTemplateOut[];
       })();
 
   const focusedLocationId = rawLocation || selectedLocationIdsFromQuery[0] || "";
@@ -840,6 +874,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const modalHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const attendanceModalHref = selectedSession ? withQueryParam(modalHref, "attendance", "1") : modalHref;
   const groupNotesModalHref = selectedSession ? withQueryParam(modalHref, "notes", "group") : modalHref;
+  const selectedGroupNoteTemplate =
+    groupNoteTemplateId && groupNoteTemplates.length > 0
+      ? groupNoteTemplates.find((template) => template.id === groupNoteTemplateId) ?? null
+      : null;
   const duplicateModalHref = selectedSession ? withQueryParam(modalHref, "duplicate", "1") : modalHref;
   const sessionEmailModalHref = selectedSession ? withQueryParam(modalHref, "message", "email") : modalHref;
   const sessionSmsModalHref = selectedSession ? withQueryParam(modalHref, "message", "sms") : modalHref;
@@ -851,6 +889,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const focusedAttendanceBooking =
     selectedSessionBookings.find((booking) => booking.id === bookingFocusId) ?? selectedSessionBookings[0] ?? null;
   const selectedSessionHasBookings = selectedSessionBookings.length > 0;
+  const isGroupNoteStudentAudience =
+    groupNoteDestination === "STUDENTS" ||
+    groupNoteDestination === "PARENTS" ||
+    groupNoteDestination === "STUDENTS_AND_PARENTS";
+  const groupNotePrefill = selectedGroupNoteTemplate?.body ?? selectedSession?.group_note ?? "";
+  const groupNotesModalBaseHref = removeQueryParam(groupNotesModalHref, "group_note_template_id");
+  const groupNotesModalClearTemplateHref = groupNotesModalBaseHref;
+  const groupNoteTemplateHref = (templateId: string): string =>
+    withQueryParam(withQueryParam(groupNotesModalBaseHref, "group_note_template_id", templateId), "note_destination", groupNoteDestination);
   const focusedAttendanceIndex = focusedAttendanceBooking
     ? selectedSessionBookings.findIndex((booking) => booking.id === focusedAttendanceBooking.id)
     : -1;
@@ -1532,21 +1579,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   Prendre les presences
                 </a>
               ) : null}
-              {selectedSessionHasBookings ? (
-                <a className="mode-link" href={groupNotesModalHref}>
-                  Note de groupe
-                </a>
-              ) : null}
-              {selectedSessionHasBookings ? (
-                <a className="mode-link" href={sessionEmailModalHref}>
-                  Envoyer email
-                </a>
-              ) : null}
-              {selectedSessionHasBookings ? (
-                <a className="mode-link" href={sessionSmsModalHref}>
-                  Envoyer SMS
-                </a>
-              ) : null}
+              <a className="mode-link" href={groupNotesModalHref}>
+                Note de groupe
+              </a>
+              <a className="mode-link" href={sessionEmailModalHref}>
+                Envoyer email
+              </a>
+              <a className="mode-link" href={sessionSmsModalHref}>
+                Envoyer SMS
+              </a>
               <a className="mode-link" href={duplicateModalHref}>
                 Dupliquer
               </a>
@@ -1641,16 +1682,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   ))}
                 </div>
               )}
-              {selectedSessionHasBookings ? (
-                <div className="row session-primary-actions">
+              <div className="row session-primary-actions">
+                {selectedSessionHasBookings ? (
                   <a className="mode-link" href={attendanceModalHref}>
                     Prendre les presences
                   </a>
-                  <a className="mode-link" href={groupNotesModalHref}>
-                    Ajouter des notes de groupe
-                  </a>
-                </div>
-              ) : null}
+                ) : null}
+                <a className="mode-link" href={groupNotesModalHref}>
+                  Ajouter des notes de groupe
+                </a>
+              </div>
               {selectedSession.group_note ? (
                 <p className="muted top-gap-sm">
                   <strong>Note de groupe:</strong> {stripHtml(selectedSession.group_note)}
@@ -2026,7 +2067,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      {selectedSession && groupNotesModalOpen && selectedSessionHasBookings ? (
+      {selectedSession && groupNotesModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel modal-compact session-group-notes-modal">
             <a className="modal-close-x" href={modalHref} aria-label="Fermer">
@@ -2034,9 +2075,69 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </a>
             <h2 className="modal-title">Notes de groupe</h2>
             <p className="muted">Notes partagees pour le groupe de ce creneau.</p>
+            {groupNoteTemplates.length > 0 ? (
+              <div className="row quick-actions-row top-gap-sm">
+                <span className="muted">Modeles:</span>
+                {groupNoteTemplates.map((template) => (
+                  <a
+                    key={template.id}
+                    className={`mode-link ${selectedGroupNoteTemplate?.id === template.id ? "mode-active" : ""}`}
+                    href={groupNoteTemplateHref(template.id)}
+                  >
+                    {template.name}
+                  </a>
+                ))}
+                {selectedGroupNoteTemplate ? (
+                  <a className="reset-link" href={groupNotesModalClearTemplateHref}>
+                    Retirer modele
+                  </a>
+                ) : null}
+              </div>
+            ) : (
+              <p className="muted top-gap-sm">
+                Aucun modele de note de groupe. Configurez-les dans Configuration › Messagerie › Modeles notes de groupe.
+              </p>
+            )}
             <form action={adminUpdateSessionGroupNoteAction} className="grid top-gap-sm">
               <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="session_title" value={selectedSession.title} />
               <input type="hidden" name="return_to" value={groupNotesModalHref} />
+              <label>
+                Destination de la note
+                <select name="note_destination" defaultValue={groupNoteDestination}>
+                  <option value="PRIVATE">Prive (administration)</option>
+                  <option value="STUDENTS">Etudiants du creneau</option>
+                  <option value="PARENTS">Parents des etudiants</option>
+                  <option value="STUDENTS_AND_PARENTS">Etudiants + parents</option>
+                  <option value="PROFESSOR">Professeur du creneau</option>
+                  <option value="ADMINS">Equipe administration</option>
+                  <option value="SELF">Moi-meme uniquement</option>
+                </select>
+              </label>
+
+              <SearchMultiSelect
+                className="session-edit-span"
+                label="Eleves inclus (utilise pour Etudiants / Parents)"
+                name="included_student_ids"
+                options={sessionRecipientStudents}
+                selectedIds={sessionRecipientStudentIds}
+                placeholder="Rechercher un eleve..."
+                emptySelectionLabel={selectedSessionHasBookings ? "Aucun eleve selectionne." : "Aucun eleve inscrit sur ce creneau."}
+              />
+              {!selectedSessionHasBookings && isGroupNoteStudentAudience ? (
+                <p className="flash-err">Aucun eleve inscrit sur ce creneau pour une diffusion Etudiants/Parents.</p>
+              ) : null}
+
+              <label className="checkline">
+                <input type="checkbox" name="send_to_self" />
+                M envoyer aussi une copie
+              </label>
+
+              <label>
+                Sujet email (si envoi)
+                <input type="text" name="subject" defaultValue={`Note de groupe - ${selectedSession.title}`} maxLength={255} />
+              </label>
+
               <label className="session-edit-span">
                 Note du creneau (groupe)
                 <RichMessageEditor
@@ -2045,21 +2146,28 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   rows={10}
                   maxLength={12000}
                   placeholder="Saisir une note de groupe..."
-                  defaultValue={selectedSession.group_note ?? ""}
+                  defaultValue={groupNotePrefill}
                 />
               </label>
               <div className="row spread">
                 <a className="reset-link" href={modalHref}>
                   Fermer
                 </a>
-                <button type="submit">Sauvegarder note de groupe</button>
+                <div className="row">
+                  <button type="submit" name="note_action" value="SAVE_ONLY" className="ghost">
+                    Sauvegarder (interne)
+                  </button>
+                  <button type="submit" name="note_action" value="SEND_EMAIL">
+                    Sauvegarder + envoyer email
+                  </button>
+                </div>
               </div>
             </form>
           </article>
         </section>
       ) : null}
 
-      {selectedSession && sessionEmailModalOpen && selectedSessionHasBookings ? (
+      {selectedSession && sessionEmailModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel modal-compact session-group-notes-modal">
             <a className="modal-close-x" href={modalHref} aria-label="Fermer">
@@ -2078,6 +2186,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <option value="STUDENTS">Eleves inscrits</option>
                   <option value="PARENTS">Parents des eleves</option>
                   <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
+                  <option value="PROFESSOR">Professeur</option>
+                  <option value="ADMINS">Administration</option>
+                  <option value="SELF">Moi-meme</option>
                 </select>
               </label>
 
@@ -2090,6 +2201,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 placeholder="Rechercher un eleve..."
                 emptySelectionLabel="Aucun eleve selectionne."
               />
+              {!selectedSessionHasBookings ? <p className="muted">Aucun eleve inscrit: utilisez Professeur, Administration ou Moi-meme.</p> : null}
+
+              <label className="checkline">
+                <input type="checkbox" name="send_to_self" />
+                M envoyer aussi une copie
+              </label>
 
               <label>
                 Sujet
@@ -2124,7 +2241,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      {selectedSession && sessionSmsModalOpen && selectedSessionHasBookings ? (
+      {selectedSession && sessionSmsModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel modal-compact session-group-notes-modal">
             <a className="modal-close-x" href={modalHref} aria-label="Fermer">
@@ -2143,6 +2260,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <option value="STUDENTS">Eleves inscrits</option>
                   <option value="PARENTS">Parents des eleves</option>
                   <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
+                  <option value="PROFESSOR">Professeur</option>
+                  <option value="ADMINS">Administration</option>
+                  <option value="SELF">Moi-meme</option>
                 </select>
               </label>
 
@@ -2155,6 +2275,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 placeholder="Rechercher un eleve..."
                 emptySelectionLabel="Aucun eleve selectionne."
               />
+              {!selectedSessionHasBookings ? <p className="muted">Aucun eleve inscrit: utilisez Professeur, Administration ou Moi-meme.</p> : null}
+
+              <label className="checkline">
+                <input type="checkbox" name="send_to_self" />
+                M envoyer aussi une copie
+              </label>
 
               <label>
                 Sujet (optionnel)

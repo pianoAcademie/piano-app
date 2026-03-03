@@ -98,6 +98,19 @@ type SubNavItem = {
   label: string;
 };
 
+type MessagingTab =
+  | "settings"
+  | "predefined-email"
+  | "predefined-sms"
+  | "custom-email"
+  | "custom-sms"
+  | "group-notes";
+
+type MessagingTabItem = {
+  key: MessagingTab;
+  label: string;
+};
+
 const MAIN_NAV_ITEMS: MainNavItem[] = [
   { key: "params", label: "Parametres", section: "params-account" },
   { key: "formulas", label: "Les formules", section: "formulas" },
@@ -115,6 +128,15 @@ const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
   { key: "params-professor-default-grid", label: "Grille salaire professeurs" },
   { key: "params-payments", label: "Moyens de paiement" },
   { key: "params-messaging", label: "Messagerie" },
+];
+
+const MESSAGING_TAB_ITEMS: MessagingTabItem[] = [
+  { key: "settings", label: "Parametres messagerie" },
+  { key: "predefined-email", label: "Modeles email predefinis" },
+  { key: "predefined-sms", label: "Modeles SMS predefinis" },
+  { key: "custom-email", label: "Modeles email personnalises" },
+  { key: "custom-sms", label: "Modeles SMS personnalises" },
+  { key: "group-notes", label: "Modeles notes de groupe" },
 ];
 
 const REMINDER_OFFSET_OPTIONS: Array<{ value: string; label: string }> = [
@@ -190,6 +212,21 @@ function buildConfigHref(section: ConfigSection, params: Record<string, string> 
     sp.set(key, value);
   }
   return `/admin/config?${sp.toString()}`;
+}
+
+function parseMessagingTab(raw: string): MessagingTab {
+  const value = raw.trim().toLowerCase();
+  if (
+    value === "settings" ||
+    value === "predefined-email" ||
+    value === "predefined-sms" ||
+    value === "custom-email" ||
+    value === "custom-sms" ||
+    value === "group-notes"
+  ) {
+    return value;
+  }
+  return "settings";
 }
 
 function restrictionPeriodLabel(period: "DAY" | "WEEK" | "MONTH" | "ROLLING_MONTH" | "SEMESTER"): string {
@@ -515,9 +552,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const selectedCreditTypeId = readParam(params, "credit_type_id");
   const selectedCreditType = creditTypes.find((creditType) => creditType.id === selectedCreditTypeId) ?? null;
   const activeCreditTypes = creditTypes.filter((creditType) => creditType.active);
+  const messagingTab = parseMessagingTab(readParam(params, "messaging_tab"));
   const messagingModalMode = readParam(params, "messaging_modal");
   const newCustomTemplateChannelRaw = readParam(params, "new_template_channel").toUpperCase();
-  const newCustomTemplateChannel = newCustomTemplateChannelRaw === "SMS" ? "SMS" : "EMAIL";
+  const newCustomTemplateChannel =
+    newCustomTemplateChannelRaw === "SMS"
+      ? "SMS"
+      : newCustomTemplateChannelRaw === "GROUP_NOTE"
+      ? "GROUP_NOTE"
+      : "EMAIL";
   const editingTemplateKind = readParam(params, "template_kind").toUpperCase();
   const editingTemplateCode = readParam(params, "template_code").toUpperCase();
   const editingTemplateId = readParam(params, "template_id");
@@ -530,6 +573,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const createCustomMessagingTemplate = messagingModalMode === "new-custom";
   const customEmailTemplates = customTemplates.filter((template) => template.channel === "EMAIL");
   const customSmsTemplates = customTemplates.filter((template) => template.channel === "SMS");
+  const customGroupNoteTemplates = customTemplates.filter((template) => template.channel === "GROUP_NOTE");
 
   const paymentMethodLabelByCode = new Map(paymentMethods.map((method) => [method.code, method.label]));
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
@@ -543,7 +587,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     formulaBaseParams.show_inactive = "1";
   }
   const formulasListPath = buildConfigHref("formulas", formulaBaseParams);
-  const messagingListPath = buildConfigHref("params-messaging");
+  const messagingListPath = buildConfigHref("params-messaging", { messaging_tab: messagingTab });
 
   const placeholderTitleBySection: Record<
     Exclude<
@@ -609,7 +653,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 <Link
                   key={item.key}
                   className={`config-sub-link ${section === item.key ? "active" : ""}`}
-                  href={buildConfigHref(item.key)}
+                  href={buildConfigHref(
+                    item.key,
+                    item.key === "params-messaging" ? { messaging_tab: messagingTab } : {},
+                  )}
                 >
                   {item.label}
                 </Link>
@@ -1604,11 +1651,27 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           {section === "params-messaging" ? (
             <>
               <section className="card">
+                <nav className="config-sub-nav">
+                  {MESSAGING_TAB_ITEMS.map((item) => (
+                    <Link
+                      key={item.key}
+                      className={`config-sub-link ${messagingTab === item.key ? "active" : ""}`}
+                      href={buildConfigHref("params-messaging", { messaging_tab: item.key })}
+                    >
+                      {item.label}
+                    </Link>
+                  ))}
+                </nav>
+              </section>
+
+              {messagingTab === "settings" ? (
+              <section className="card">
                 <h3>Parametres de messagerie</h3>
                 {!messagingSettings ? (
                   <p className="muted">Impossible de charger les parametres de messagerie.</p>
                 ) : (
                   <form action={updateAdminConfigMessagingSettingsAction} className="grid cols-2 config-form-grid">
+                    <input type="hidden" name="messaging_tab" value={messagingTab} />
                     <label className="span-2">
                       Courriel du studio
                       <input type="email" name="studio_email" defaultValue={messagingSettings.studio_email} maxLength={255} />
@@ -1688,7 +1751,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </form>
                 )}
               </section>
+              ) : null}
 
+              {messagingTab === "predefined-email" ? (
               <section className="card">
                 <h3>Modeles de courriels predefinis</h3>
                 {emailPredefinedTemplates.length === 0 ? (
@@ -1715,6 +1780,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 className="icon-link"
                                 title="Modifier"
                                 href={buildConfigHref("params-messaging", {
+                                  messaging_tab: messagingTab,
                                   messaging_modal: "edit",
                                   template_kind: "PREDEFINED",
                                   template_code: template.code || "",
@@ -1730,7 +1796,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </div>
                 )}
               </section>
+              ) : null}
 
+              {messagingTab === "predefined-sms" ? (
               <section className="card">
                 <h3>Modeles de SMS predefinis</h3>
                 {smsPredefinedTemplates.length === 0 ? (
@@ -1757,6 +1825,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 className="icon-link"
                                 title="Modifier"
                                 href={buildConfigHref("params-messaging", {
+                                  messaging_tab: messagingTab,
                                   messaging_modal: "edit",
                                   template_kind: "PREDEFINED",
                                   template_code: template.code || "",
@@ -1772,13 +1841,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </div>
                 )}
               </section>
+              ) : null}
 
+              {messagingTab === "custom-email" ? (
               <section className="card">
                 <div className="row spread">
                   <h3>Modeles des courriels personnalises</h3>
                   <Link
                     className="mode-link"
                     href={buildConfigHref("params-messaging", {
+                      messaging_tab: messagingTab,
                       messaging_modal: "new-custom",
                       new_template_channel: "EMAIL",
                     })}
@@ -1811,6 +1883,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   className="icon-link"
                                   title="Modifier"
                                   href={buildConfigHref("params-messaging", {
+                                    messaging_tab: messagingTab,
                                     messaging_modal: "edit",
                                     template_kind: "CUSTOM",
                                     template_id: template.id,
@@ -1820,6 +1893,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 </Link>
                                 <form action={deleteAdminConfigMessagingTemplateAction}>
                                   <input type="hidden" name="template_id" value={template.id} />
+                                  <input type="hidden" name="messaging_tab" value={messagingTab} />
                                   <button type="submit" className="icon-link danger-link" title="Supprimer">
                                     🗑
                                   </button>
@@ -1833,13 +1907,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </div>
                 )}
               </section>
+              ) : null}
 
+              {messagingTab === "custom-sms" ? (
               <section className="card">
                 <div className="row spread">
                   <h3>Modeles de SMS personnalises</h3>
                   <Link
                     className="mode-link"
                     href={buildConfigHref("params-messaging", {
+                      messaging_tab: messagingTab,
                       messaging_modal: "new-custom",
                       new_template_channel: "SMS",
                     })}
@@ -1875,6 +1952,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   className="icon-link"
                                   title="Modifier"
                                   href={buildConfigHref("params-messaging", {
+                                    messaging_tab: messagingTab,
                                     messaging_modal: "edit",
                                     template_kind: "CUSTOM",
                                     template_id: template.id,
@@ -1884,6 +1962,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 </Link>
                                 <form action={deleteAdminConfigMessagingTemplateAction}>
                                   <input type="hidden" name="template_id" value={template.id} />
+                                  <input type="hidden" name="messaging_tab" value={messagingTab} />
                                   <button type="submit" className="icon-link danger-link" title="Supprimer">
                                     🗑
                                   </button>
@@ -1897,6 +1976,76 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </div>
                 )}
               </section>
+              ) : null}
+
+              {messagingTab === "group-notes" ? (
+                <section className="card">
+                  <div className="row spread">
+                    <h3>Modeles de notes de groupe</h3>
+                    <Link
+                      className="mode-link"
+                      href={buildConfigHref("params-messaging", {
+                        messaging_tab: messagingTab,
+                        messaging_modal: "new-custom",
+                        new_template_channel: "GROUP_NOTE",
+                      })}
+                    >
+                      + Ajouter nouveau
+                    </Link>
+                  </div>
+                  {customGroupNoteTemplates.length === 0 ? (
+                    <p className="muted">Aucun modele personnalise.</p>
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Nom</th>
+                            <th>Contenu</th>
+                            <th>Actif</th>
+                            <th aria-label="Actions" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customGroupNoteTemplates.map((template) => (
+                            <tr key={template.id}>
+                              <td>{template.name}</td>
+                              <td>
+                                {template.body.slice(0, 90)}
+                                {template.body.length > 90 ? "..." : ""}
+                              </td>
+                              <td>{template.active ? "Oui" : "Non"}</td>
+                              <td>
+                                <div className="row">
+                                  <Link
+                                    className="icon-link"
+                                    title="Modifier"
+                                    href={buildConfigHref("params-messaging", {
+                                      messaging_tab: messagingTab,
+                                      messaging_modal: "edit",
+                                      template_kind: "CUSTOM",
+                                      template_id: template.id,
+                                    })}
+                                  >
+                                    ✎
+                                  </Link>
+                                  <form action={deleteAdminConfigMessagingTemplateAction}>
+                                    <input type="hidden" name="template_id" value={template.id} />
+                                    <input type="hidden" name="messaging_tab" value={messagingTab} />
+                                    <button type="submit" className="icon-link danger-link" title="Supprimer">
+                                      🗑
+                                    </button>
+                                  </form>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              ) : null}
 
               {editingTemplate || createCustomMessagingTemplate ? (
                 <section className="modal-overlay">
@@ -1913,7 +2062,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             ? "Modifier le modele de SMS systeme"
                             : editingTemplate
                             ? `Modifier le modele personnalise (${editingTemplate.channel})`
-                            : `Nouveau modele personnalise (${newCustomTemplateChannel === "SMS" ? "SMS" : "Email"})`}
+                            : `Nouveau modele personnalise (${
+                                newCustomTemplateChannel === "SMS"
+                                  ? "SMS"
+                                  : newCustomTemplateChannel === "GROUP_NOTE"
+                                  ? "Note de groupe"
+                                  : "Email"
+                              })`}
                         </h3>
                         <p className="muted">
                           {editingTemplate
@@ -1925,6 +2080,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
                     <section className="card modal-card messaging-template-modal-card">
                       <form action={saveAdminConfigMessagingTemplateAction} className="grid config-form-grid messaging-template-form">
+                        <input type="hidden" name="messaging_tab" value={messagingTab} />
                         {editingTemplate ? (
                           <>
                             <input type="hidden" name="template_kind" value={editingTemplate.kind} />
@@ -1981,6 +2137,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               <select name="template_channel" defaultValue={newCustomTemplateChannel}>
                                 <option value="EMAIL">Email</option>
                                 <option value="SMS">SMS</option>
+                                <option value="GROUP_NOTE">Note de groupe</option>
                               </select>
                             </label>
                             <label>
@@ -2005,11 +2162,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <div className="row spread messaging-template-actions">
                           <div className="row">
                             {editingTemplate?.kind === "PREDEFINED" && editingTemplate.code ? (
-                              <button
-                                type="submit"
-                                formAction={resetAdminConfigPredefinedMessagingTemplateAction}
-                                className="ghost"
-                              >
+                              <button type="submit" formAction={resetAdminConfigPredefinedMessagingTemplateAction} className="ghost">
                                 Retablir le modele par defaut
                               </button>
                             ) : null}
