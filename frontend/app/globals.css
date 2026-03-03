@@ -1047,6 +1047,25 @@ button.danger {
   background: #f6f8fb;
 }
 
+.message-full-text {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  background: #fffdf9;
+  border: 1px solid #dce3eb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.message-html-preview {
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid #dce3eb;
+  border-radius: 8px;
+  background: #fffdf9;
+  overflow-wrap: anywhere;
+}
+
 .sort-link {
   color: inherit;
   text-decoration: none;

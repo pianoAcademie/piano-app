@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import re
+from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
@@ -14,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 import jwt
 from jwt import PyJWTError
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
@@ -58,6 +59,8 @@ from app.schemas.admin import (
     AdminClientFamilyOut,
     AdminClientBookingOut,
     AdminFamilyMemberOut,
+    AdminClientMessageEmailOut,
+    AdminClientMessageEmailRequest,
     AdminClientMessageOut,
     AdminClientOut,
     AdminClientPasswordEmailTemplateOut,
@@ -277,6 +280,30 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _subtract_months_utc(value: datetime, months: int) -> datetime:
+    if months <= 0:
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+
+    year = value.year
+    month = value.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    day = min(value.day, monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
+
+
+def _message_preview(value: str | None, *, max_length: int = 100) -> str | None:
+    normalized = " ".join((value or "").split()).strip()
+    if not normalized:
+        return None
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[:max_length].rstrip()}..."
 
 
 def _quantize_money(value: Decimal) -> Decimal:
@@ -4061,13 +4088,86 @@ def list_admin_client_bookings(
     ]
 
 
+@router.post("/{client_id}/messages/email", response_model=AdminClientMessageEmailOut)
+def send_admin_client_message_email(
+    client_id: UUID,
+    payload: AdminClientMessageEmailRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientMessageEmailOut:
+    client = _require_client(db, client_id)
+    subject = _normalize_required(payload.subject, "subject")
+    body = _normalize_required(payload.body, "body")
+    body_format = "HTML" if str(payload.body_format or "TEXT").strip().upper() == "HTML" else "TEXT"
+    source = _normalize_optional(payload.source) or "ADMIN_CLIENT_DIRECT_MESSAGE"
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    actor_label = _display_name(actor.first_name, actor.last_name, actor.email)
+
+    billing_profile = resolve_billing_profile(db, client)
+    default_recipients = _normalize_email_recipients([client.email, billing_profile.email])
+    to_recipients = default_recipients if payload.to_emails is None else _normalize_email_recipients(payload.to_emails)
+    cc_recipients = _normalize_email_recipients(payload.cc_emails)
+    if payload.send_copy_to_self and _normalize_optional(actor.email):
+        actor_email = str(actor.email).strip()
+        if actor_email.casefold() not in {email.casefold() for email in cc_recipients}:
+            cc_recipients.append(actor_email)
+
+    recipients: list[str] = []
+    recipient_seen: set[str] = set()
+    for email in [*to_recipients, *cc_recipients]:
+        key = email.casefold()
+        if key in recipient_seen:
+            continue
+        recipient_seen.add(key)
+        recipients.append(email)
+    if not recipients:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
+
+    client_email = (client.email or "").strip().lower()
+    message_ids: list[str] = []
+    for recipient in recipients:
+        recipient_user_id = client.id if recipient.strip().lower() == client_email else None
+        message_ids.append(
+            send_email(
+                to_email=recipient,
+                subject=subject,
+                body=body,
+                body_format=body_format,
+                context=source,
+                from_email=sender.from_email,
+                from_name=sender.from_name,
+                reply_to=sender.reply_to,
+                subject_prefix=sender.subject_prefix,
+                sender_user_id=actor.id,
+                sender_label=actor_label,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                recipient_user_id=recipient_user_id,
+                communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            )
+        )
+
+    return AdminClientMessageEmailOut(
+        client_id=client.id,
+        sent_at=_utcnow(),
+        to_recipients=to_recipients,
+        cc_recipients=cc_recipients,
+        message_ids=message_ids,
+    )
+
+
 @router.get("/{client_id}/messages", response_model=list[AdminClientMessageOut])
 def list_admin_client_messages(
     client_id: UUID,
     limit: int = Query(default=200, ge=1, le=1000),
+    months: int = Query(default=3, ge=1, le=12),
+    q: str | None = Query(default=None, max_length=200),
+    include_future: bool = Query(default=False),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminClientMessageOut]:
+    normalized_months = months if months in {3, 6, 12} else 3
+    now = _utcnow()
+    cutoff = _subtract_months_utc(now, normalized_months)
     client = _require_client(db, client_id)
     scoped_users_by_id = _payment_scope_users(db, client=client)
     scoped_user_ids = list(scoped_users_by_id.keys())
@@ -4085,11 +4185,15 @@ def list_admin_client_messages(
     if recipient_emails:
         communication_filters.append(func.lower(CommunicationLog.recipient).in_(list(recipient_emails)))
 
-    communication_rows = db.scalars(
+    communication_stmt = (
         select(CommunicationLog)
         .where(or_(*communication_filters))
-        .order_by(CommunicationLog.occurred_at.desc())
-        .limit(max(limit * 2, limit))
+        .where(CommunicationLog.occurred_at >= cutoff)
+    )
+    if not include_future:
+        communication_stmt = communication_stmt.where(CommunicationLog.occurred_at <= now)
+    communication_rows = db.scalars(
+        communication_stmt.order_by(CommunicationLog.occurred_at.desc()).limit(max(limit * 4, limit))
     ).all()
     communication_provider_ids = {
         (row.provider_message_id or "").strip()
@@ -4097,16 +4201,23 @@ def list_admin_client_messages(
         if (row.provider_message_id or "").strip()
     }
 
-    rows = db.execute(
+    reminder_stmt = (
         select(EmailReminder, Booking, CourseSession, CourseType, Location)
         .join(Booking, Booking.id == EmailReminder.booking_id)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .where(Booking.user_id.in_(scoped_user_ids))
-        .order_by(EmailReminder.created_at.desc())
-        .limit(max(limit * 2, limit))
-    ).all()
+        .where(
+            or_(
+                and_(EmailReminder.sent_at.is_not(None), EmailReminder.sent_at >= cutoff),
+                and_(EmailReminder.sent_at.is_(None), EmailReminder.scheduled_for_utc >= cutoff),
+            )
+        )
+    )
+    if not include_future:
+        reminder_stmt = reminder_stmt.where(or_(EmailReminder.sent_at.is_not(None), EmailReminder.scheduled_for_utc <= now))
+    rows = db.execute(reminder_stmt.order_by(EmailReminder.created_at.desc()).limit(max(limit * 4, limit))).all()
 
     items: list[AdminClientMessageOut] = []
     for row in communication_rows:
@@ -4122,12 +4233,25 @@ def list_admin_client_messages(
                 booking_id=None,
                 session_id=None,
                 session_title=None,
+                channel=row.channel.value if isinstance(row.channel, CommunicationChannel) else str(row.channel or "EMAIL").strip().upper(),
+                source=_normalize_optional(row.source),
+                recipient=_normalize_optional(row.recipient),
                 scheduled_for_utc=row.occurred_at,
                 sent_at=sent_at,
                 status=status_value or "UNKNOWN",
                 provider_message_id=row.provider_message_id,
                 error_message=row.error_message,
                 subject_preview=_normalize_optional(row.subject) or _normalize_optional(row.source) or "Message",
+                body_preview=_message_preview(row.content),
+                body_full=_normalize_optional(row.content),
+                body_format=row.content_format.value
+                if isinstance(row.content_format, MessageFormat)
+                else ("HTML" if str(row.content_format or "TEXT").strip().upper() == "HTML" else "TEXT"),
+                can_forward=(
+                    (row.channel == CommunicationChannel.EMAIL)
+                    if isinstance(row.channel, CommunicationChannel)
+                    else str(row.channel or "").strip().upper() == "EMAIL"
+                ),
             )
         )
 
@@ -4144,14 +4268,43 @@ def list_admin_client_messages(
                 booking_id=booking.id,
                 session_id=session_obj.id,
                 session_title=session_obj.title,
+                channel="EMAIL",
+                source="COURSE_REMINDER",
+                recipient=(scoped_users_by_id.get(booking.user_id).email if booking.user_id in scoped_users_by_id else None),
                 scheduled_for_utc=reminder.scheduled_for_utc,
                 sent_at=reminder.sent_at,
                 status=reminder.status.value if hasattr(reminder.status, "value") else str(reminder.status),
                 provider_message_id=reminder.provider_message_id,
                 error_message=reminder.error_message,
                 subject_preview=subject_preview,
+                body_preview=_message_preview(reminder.error_message)
+                or _message_preview(f"Rappel automatique de cours: {course_type.name}."),
+                body_full=_normalize_optional(reminder.error_message)
+                or f"Rappel automatique de cours: {course_type.name}.",
+                body_format="TEXT",
+                can_forward=True,
             )
         )
+
+    q_normalized = _normalize_optional(q)
+    if q_normalized:
+        query_lower = q_normalized.casefold()
+
+        def _matches(item: AdminClientMessageOut) -> bool:
+            haystack = " ".join(
+                [
+                    str(item.subject_preview or ""),
+                    str(item.body_preview or ""),
+                    str(item.body_full or ""),
+                    str(item.session_title or ""),
+                    str(item.source or ""),
+                    str(item.recipient or ""),
+                    str(item.status or ""),
+                ]
+            ).casefold()
+            return query_lower in haystack
+
+        items = [item for item in items if _matches(item)]
 
     items.sort(
         key=lambda item: (

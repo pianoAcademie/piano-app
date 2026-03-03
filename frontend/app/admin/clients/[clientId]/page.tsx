@@ -19,6 +19,7 @@ import {
   deleteAdminClientManualTransactionAction,
   refundAdminClientPaymentAction,
   sendAdminClientRangeInvoiceEmailAction,
+  sendAdminClientMessageAction,
   sendAdminClientPasswordAction,
   setFamilyBillingRecipientAction,
   setupAdminClientSubscriptionBillingAction,
@@ -628,6 +629,11 @@ function invoicesHref(clientId: string, params: Record<string, string>): string 
   return `/admin/clients/${clientId}?${search.toString()}`;
 }
 
+function messagesHref(clientId: string, params: Record<string, string>): string {
+  const search = new URLSearchParams({ tab: "messages", ...params });
+  return `/admin/clients/${clientId}?${search.toString()}`;
+}
+
 const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount"] as const;
 type ManualTransactionModalType = (typeof MANUAL_TRANSACTION_MODAL_TYPES)[number];
 
@@ -658,6 +664,69 @@ function statusClass(status: string): string {
     return "status-warn";
   }
   return "status-off";
+}
+
+function messageStatusMeta(status: string, errorMessage?: string | null): { label: string; toneClass: string; helpText: string } {
+  const normalized = String(status || "").trim().toUpperCase();
+  const normalizedError = String(errorMessage || "").toLowerCase();
+  const looksLikeBounce =
+    normalized === "BOUNCED" ||
+    normalizedError.includes("bounce") ||
+    normalizedError.includes("bounced") ||
+    normalizedError.includes("undeliverable") ||
+    normalizedError.includes("mailbox unavailable");
+  if (normalized === "DELIVERED" || normalized === "SENT") {
+    return { label: "LIVRE", toneClass: "status-ok", helpText: "Message envoye." };
+  }
+  if (looksLikeBounce) {
+    return { label: "BOUNCE", toneClass: "status-warn", helpText: "Message rejete par la messagerie destinataire." };
+  }
+  if (normalized === "FAILED") {
+    return { label: "ECHEC", toneClass: "status-warn", helpText: "Echec d envoi." };
+  }
+  if (normalized === "SKIPPED") {
+    return {
+      label: "NON ENVOYE",
+      toneClass: "status-off",
+      helpText: "Skipped = envoi ignore (condition non remplie, mode LOG ou destinataire indisponible).",
+    };
+  }
+  if (normalized === "PENDING") {
+    return { label: "EN ATTENTE", toneClass: "status-warn", helpText: "Envoi en attente de traitement." };
+  }
+  return { label: normalized || "INCONNU", toneClass: statusClass(normalized || "INCONNU"), helpText: "Statut brut du provider." };
+}
+
+function buildForwardSubject(subject: string): string {
+  const normalized = String(subject || "").trim();
+  if (!normalized) {
+    return "TR: Message";
+  }
+  if (normalized.toUpperCase().startsWith("TR:")) {
+    return normalized;
+  }
+  return `TR: ${normalized}`;
+}
+
+function buildForwardBody(message: AdminClientMessageOut): string {
+  const dateLabel = formatDate(message.sent_at ?? message.scheduled_for_utc);
+  const statusLabel = messageStatusMeta(message.status, message.error_message).label;
+  const recipientLabel = message.recipient || "-";
+  const subjectLabel = message.subject_preview || "Message";
+  const content = message.body_full || message.body_preview || "";
+  if ((message.body_format || "TEXT").toUpperCase() === "HTML") {
+    return `<p><strong>Message transfere</strong></p>
+<p><strong>Date:</strong> ${dateLabel}<br><strong>Statut:</strong> ${statusLabel}<br><strong>Destinataire:</strong> ${recipientLabel}<br><strong>Sujet:</strong> ${subjectLabel}</p>
+<hr>
+${content}`;
+  }
+  return `Message transfere
+Date: ${dateLabel}
+Statut: ${statusLabel}
+Destinataire: ${recipientLabel}
+Sujet: ${subjectLabel}
+
+${content}`;
 }
 
 function paymentStatusClass(status: string): string {
@@ -725,6 +794,11 @@ function planKindLabel(kind: string): string {
   return "Abonnement";
 }
 
+function contactDisplayLabel(firstName: string | null | undefined, lastName: string | null | undefined, email: string): string {
+  const name = [String(firstName || "").trim(), String(lastName || "").trim()].filter(Boolean).join(" ").trim();
+  return name ? `${name} <${email}>` : email;
+}
+
 export default async function AdminClientDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
   const token = cookies().get("access_token")?.value;
   if (!token) {
@@ -766,6 +840,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const paymentFilterAmountRaw = readParam(searchParams, "payment_filter_amount").trim();
   const paymentFilterAmount = parseAmountFilter(paymentFilterAmountRaw);
   const hasPaymentFilters = paymentFilterQuery.length > 0 || paymentFilterAmount !== null;
+  const messageModalAction = readParam(searchParams, "message_modal").toLowerCase();
+  const messageModalId = readParam(searchParams, "message_id");
+  const messageQuery = readParam(searchParams, "messages_q").trim();
+  const messageMonthsRaw = readParam(searchParams, "messages_months").trim();
+  const messageMonths = messageMonthsRaw === "6" || messageMonthsRaw === "12" ? Number.parseInt(messageMonthsRaw, 10) : 3;
+  const messageApiSearch = new URLSearchParams({ months: String(messageMonths) });
+  if (messageQuery) {
+    messageApiSearch.set("q", messageQuery);
+  }
+  const messagesApiPath = `/api/v1/admin/clients/${params.clientId}/messages?${messageApiSearch.toString()}`;
 
   const [
     clientResult,
@@ -787,7 +871,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
     backendRequest<AdminClientSubscriptionOut[]>(`/api/v1/admin/clients/${params.clientId}/subscriptions`, {}, token),
     backendRequest<AdminClientBookingOut[]>(`/api/v1/admin/clients/${params.clientId}/bookings`, {}, token),
-    backendRequest<AdminClientMessageOut[]>(`/api/v1/admin/clients/${params.clientId}/messages`, {}, token),
+    backendRequest<AdminClientMessageOut[]>(messagesApiPath, {}, token),
     backendRequest<AdminClientPaymentOut[]>(`/api/v1/admin/clients/${params.clientId}/payments`, {}, token),
     backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token),
@@ -938,15 +1022,116 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         return [] as AdminClientNoteOut[];
       })();
 
+  const messageRecipientOptions = (() => {
+    const byEmail = new Map<string, { email: string; label: string }>();
+    const addOption = (emailRaw: string | null | undefined, firstName?: string | null, lastName?: string | null) => {
+      const email = String(emailRaw || "").trim();
+      if (!email) {
+        return;
+      }
+      const key = email.toLowerCase();
+      if (byEmail.has(key)) {
+        return;
+      }
+      byEmail.set(key, {
+        email,
+        label: contactDisplayLabel(firstName, lastName, email),
+      });
+    };
+
+    addOption(client.email, client.first_name, client.last_name);
+    for (const link of family.links_as_adult) {
+      addOption(link.adult.email, link.adult.first_name, link.adult.last_name);
+      addOption(link.child.email, link.child.first_name, link.child.last_name);
+    }
+    for (const link of family.links_as_child) {
+      addOption(link.adult.email, link.adult.first_name, link.adult.last_name);
+      addOption(link.child.email, link.child.first_name, link.child.last_name);
+    }
+
+    return Array.from(byEmail.values()).sort((a, b) => a.label.localeCompare(b.label, "fr-FR"));
+  })();
+  const billingRecipientEmail = (() => {
+    const billingId = family.billing_recipient_adult_id;
+    if (!billingId) {
+      return null;
+    }
+    for (const link of family.links_as_child) {
+      if (link.adult.id === billingId) {
+        return String(link.adult.email || "").trim() || null;
+      }
+    }
+    for (const link of family.links_as_adult) {
+      if (link.adult.id === billingId) {
+        return String(link.adult.email || "").trim() || null;
+      }
+    }
+    return null;
+  })();
+
   const messageRows = messages
     .map((msg) => ({
-      id: `msg:${msg.id}`,
+      id: msg.id,
       occurredAt: msg.sent_at ?? msg.scheduled_for_utc,
       subject: msg.subject_preview,
+      preview: truncatePreview(msg.body_preview || msg.subject_preview || "", 100),
       status: msg.status,
+      statusMeta: messageStatusMeta(msg.status, msg.error_message),
       session: msg.session_title ?? "-",
+      recipient: msg.recipient ?? "-",
+      source: msg.source ?? "-",
+      bodyFull: msg.body_full ?? "",
+      bodyFormat: msg.body_format,
+      errorMessage: msg.error_message,
+      canForward: Boolean(msg.can_forward && msg.channel === "EMAIL"),
     }))
     .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+  const selectedMessageForModal = messageModalId ? messages.find((row) => row.id === messageModalId) ?? null : null;
+  const openMessageViewModal = currentTab === "messages" && messageModalAction === "view" && selectedMessageForModal !== null;
+  const openMessageComposeModal =
+    currentTab === "messages" &&
+    (messageModalAction === "compose" || (messageModalAction === "forward" && selectedMessageForModal !== null));
+  const isForwardCompose = messageModalAction === "forward" && selectedMessageForModal !== null;
+  const messageComposeDefaultToEmails = (() => {
+    const defaults = new Set<string>();
+    const add = (emailRaw: string | null | undefined) => {
+      const email = String(emailRaw || "").trim().toLowerCase();
+      if (email) {
+        defaults.add(email);
+      }
+    };
+    if (isForwardCompose && selectedMessageForModal?.recipient) {
+      add(selectedMessageForModal.recipient);
+      return defaults;
+    }
+    add(client.email);
+    add(billingRecipientEmail);
+    if (defaults.size === 0 && messageRecipientOptions.length > 0) {
+      add(messageRecipientOptions[0].email);
+    }
+    return defaults;
+  })();
+  const messageComposeDefaultToFree = (() => {
+    if (!isForwardCompose || !selectedMessageForModal?.recipient) {
+      return "";
+    }
+    const recipient = selectedMessageForModal.recipient.trim();
+    if (!recipient) {
+      return "";
+    }
+    const existsInOptions = messageRecipientOptions.some((option) => option.email.toLowerCase() === recipient.toLowerCase());
+    return existsInOptions ? "" : recipient;
+  })();
+  const messageComposeSubject =
+    isForwardCompose && selectedMessageForModal ? buildForwardSubject(selectedMessageForModal.subject_preview) : "";
+  const messageComposeBody = isForwardCompose && selectedMessageForModal ? buildForwardBody(selectedMessageForModal) : "";
+  const messageComposeBodyFormat =
+    isForwardCompose && selectedMessageForModal
+      ? selectedMessageForModal.body_format === "TEXT"
+        ? "TEXT"
+        : "HTML"
+      : "HTML";
+  const messageComposeSource = isForwardCompose ? "ADMIN_CLIENT_FORWARD_MESSAGE" : "ADMIN_CLIENT_DIRECT_MESSAGE";
 
   const openNoteViewModal = currentTab === "fiche" && noteModalAction === "view" && noteModalId.length > 0;
   const selectedNoteForView = openNoteViewModal ? notes.find((row) => row.id === noteModalId) ?? null : null;
@@ -2988,9 +3173,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           <article className="card">
             <h3>Communiquer</h3>
             <div className="grid">
-              <a className="mode-link" href={`mailto:${encodeURIComponent(client.email)}`}>
+              <Link
+                className="mode-link"
+                href={messagesHref(client.id, {
+                  message_modal: "compose",
+                  messages_months: String(messageMonths),
+                  messages_q: messageQuery,
+                })}
+              >
                 Envoyer un email
-              </a>
+              </Link>
               <form action={adminClientActionPlaceholder}>
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="action_name" value="Envoi SMS" />
@@ -3007,7 +3199,29 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           </article>
 
           <article className="card">
-            <h3>Messages envoyes</h3>
+            <div className="row spread">
+              <h3>Messages envoyes</h3>
+              <span className="muted">Historique des messages passes uniquement</span>
+            </div>
+            <form method="get" className="row">
+              <input type="hidden" name="tab" value="messages" />
+              <label className="balance-date-label">
+                Periode
+                <select name="messages_months" defaultValue={String(messageMonths)}>
+                  <option value="3">3 derniers mois</option>
+                  <option value="6">6 derniers mois</option>
+                  <option value="12">12 derniers mois</option>
+                </select>
+              </label>
+              <label className="balance-date-label" style={{ minWidth: 240 }}>
+                Recherche
+                <input type="text" name="messages_q" defaultValue={messageQuery} placeholder="Sujet, contenu, session..." />
+              </label>
+              <button type="submit">Filtrer</button>
+              <Link className="reset-link" href={messagesHref(client.id, { messages_months: "3" })}>
+                Reinitialiser
+              </Link>
+            </form>
             {messageRows.length === 0 ? (
               <p className="muted">Aucun message pour ce client.</p>
             ) : (
@@ -3017,8 +3231,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <tr>
                       <th>Date</th>
                       <th>Sujet</th>
+                      <th>Message</th>
                       <th>Statut</th>
                       <th>Session</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3026,16 +3242,192 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <tr key={msg.id}>
                         <td>{formatDate(msg.occurredAt)}</td>
                         <td>{msg.subject}</td>
+                        <td>{msg.preview || "-"}</td>
                         <td>
-                          <span className={`status-pill ${statusClass(msg.status)}`}>{msg.status}</span>
+                          <span
+                            className={`status-pill ${msg.statusMeta.toneClass}`}
+                            title={`${msg.statusMeta.helpText}${msg.errorMessage ? ` (${msg.errorMessage})` : ""}`}
+                          >
+                            {msg.statusMeta.label}
+                          </span>
                         </td>
                         <td>{msg.session}</td>
+                        <td>
+                          <div className="row payment-row-actions">
+                            <Link
+                              className="client-action-icon"
+                              href={messagesHref(client.id, {
+                                message_modal: "view",
+                                message_id: msg.id,
+                                messages_months: String(messageMonths),
+                                messages_q: messageQuery,
+                              })}
+                              title="Voir le message complet"
+                            >
+                              👁
+                            </Link>
+                            {msg.canForward ? (
+                              <Link
+                                className="client-action-icon"
+                                href={messagesHref(client.id, {
+                                  message_modal: "forward",
+                                  message_id: msg.id,
+                                  messages_months: String(messageMonths),
+                                  messages_q: messageQuery,
+                                })}
+                                title="Transferer le message"
+                              >
+                                ↪
+                              </Link>
+                            ) : null}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
+          </article>
+        </section>
+      ) : null}
+
+      {openMessageViewModal && selectedMessageForModal ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link
+              className="modal-close-x"
+              href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}
+              aria-label="Fermer"
+            >
+              ×
+            </Link>
+            <h3 className="modal-title">Detail message</h3>
+            <div className="stack-sm top-gap-sm">
+              <p className="muted">
+                {formatDate(selectedMessageForModal.sent_at ?? selectedMessageForModal.scheduled_for_utc)} |{" "}
+                {messageStatusMeta(selectedMessageForModal.status, selectedMessageForModal.error_message).label}
+              </p>
+              <p>
+                <strong>Sujet :</strong> {selectedMessageForModal.subject_preview || "-"}
+              </p>
+              <p>
+                <strong>Destinataire :</strong> {selectedMessageForModal.recipient || "-"}
+              </p>
+              <p>
+                <strong>Type :</strong> {selectedMessageForModal.source || "-"}
+              </p>
+              {selectedMessageForModal.error_message ? (
+                <p className="flash-err" style={{ margin: 0 }}>
+                  {selectedMessageForModal.error_message}
+                </p>
+              ) : null}
+              <div className="item">
+                <strong>Contenu</strong>
+                {(selectedMessageForModal.body_format || "TEXT").toUpperCase() === "HTML" ? (
+                  <div
+                    className="message-html-preview top-gap-sm"
+                    dangerouslySetInnerHTML={{ __html: selectedMessageForModal.body_full || "<p>-</p>" }}
+                  />
+                ) : (
+                  <pre className="message-full-text">{selectedMessageForModal.body_full || "-"}</pre>
+                )}
+              </div>
+            </div>
+            <div className="row modal-actions-end">
+              <Link className="reset-link" href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}>
+                Fermer
+              </Link>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {openMessageComposeModal ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link
+              className="modal-close-x"
+              href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}
+              aria-label="Fermer"
+            >
+              ×
+            </Link>
+            <h3 className="modal-title">{isForwardCompose ? "Transferer un message" : "Envoyer un email"}</h3>
+            <p className="muted">{isForwardCompose ? "Le contenu est pre-rempli et modifiable." : "Envoyer un message a ce client."}</p>
+            <form action={sendAdminClientMessageAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="return_tab" value="messages" />
+              <input type="hidden" name="source" value={messageComposeSource} />
+              <input type="hidden" name="messages_months" value={String(messageMonths)} />
+              <input type="hidden" name="messages_q" value={messageQuery} />
+              <label className="span-2">
+                Destinataires
+                <div className="item top-gap-sm">
+                  <div className="grid">
+                    {messageRecipientOptions.map((option) => (
+                      <label key={`to-${option.email}`} className="checkbox">
+                        <input
+                          type="checkbox"
+                          name="to_emails"
+                          value={option.email}
+                          defaultChecked={messageComposeDefaultToEmails.has(option.email.toLowerCase())}
+                        />
+                        {option.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </label>
+              <label className="span-2">
+                Autres destinataires (un email par ligne)
+                <textarea name="to_emails_free" rows={2} defaultValue={messageComposeDefaultToFree} placeholder="contact@exemple.com" />
+              </label>
+              <label className="span-2">
+                Copie (Cc)
+                <div className="item top-gap-sm">
+                  <div className="grid">
+                    {messageRecipientOptions.map((option) => (
+                      <label key={`cc-${option.email}`} className="checkbox">
+                        <input type="checkbox" name="cc_emails" value={option.email} />
+                        {option.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </label>
+              <label className="span-2">
+                Autres Cc (un email par ligne)
+                <textarea name="cc_emails_free" rows={2} placeholder="copie@exemple.com" />
+              </label>
+              <input type="hidden" name="send_copy_to_self" value="off" />
+              <label className="checkbox span-2">
+                <input type="checkbox" name="send_copy_to_self" value="on" />
+                M envoyer une copie de ce message
+              </label>
+              <label className="span-2">
+                Objet
+                <input type="text" name="subject" maxLength={255} defaultValue={messageComposeSubject} required />
+              </label>
+              <label className="span-2">
+                Message
+                <RichMessageEditor
+                  name="body"
+                  formatName="body_format"
+                  defaultValue={messageComposeBody}
+                  defaultFormat={messageComposeBodyFormat}
+                  rows={12}
+                  maxLength={20000}
+                  placeholder="Contenu du courriel"
+                />
+              </label>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}>
+                  Annuler
+                </Link>
+                <button type="submit">Envoyer</button>
+              </div>
+            </form>
           </article>
         </section>
       ) : null}
