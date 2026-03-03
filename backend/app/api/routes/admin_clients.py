@@ -1332,6 +1332,120 @@ def _invoice_range_total_in_currency(metadata: dict[str, object], *, currency: s
     return amount
 
 
+def _recompute_reconciled_invoice_statuses_for_manual_payment_change(
+    db: Session,
+    *,
+    client_id: UUID,
+    transaction_ids: set[UUID],
+) -> None:
+    if not transaction_ids:
+        return
+
+    touched_ids = {str(value) for value in transaction_ids}
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.user_id == client_id)
+        .order_by(ClientNoteEntry.created_at.desc())
+    ).all()
+
+    impacted_notes: list[tuple[ClientNoteEntry, dict[str, object], list[str]]] = []
+    all_reconciled_ids: set[str] = set()
+    for note in notes:
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            continue
+        reconciled_ids_raw = metadata.get("reconciled_manual_payment_ids")
+        if not isinstance(reconciled_ids_raw, list):
+            continue
+        reconciled_ids: list[str] = []
+        seen_reconciled_ids: set[str] = set()
+        for raw_value in reconciled_ids_raw:
+            candidate = _normalize_optional(str(raw_value))
+            if not candidate:
+                continue
+            try:
+                normalized_candidate = str(UUID(candidate))
+            except ValueError:
+                continue
+            if normalized_candidate in seen_reconciled_ids:
+                continue
+            seen_reconciled_ids.add(normalized_candidate)
+            reconciled_ids.append(normalized_candidate)
+        if not reconciled_ids or touched_ids.isdisjoint(reconciled_ids):
+            continue
+        impacted_notes.append((note, metadata, reconciled_ids))
+        all_reconciled_ids.update(reconciled_ids)
+
+    if not impacted_notes:
+        return
+
+    reconciled_uuid_ids = [UUID(value) for value in all_reconciled_ids]
+    manual_rows = db.scalars(
+        select(ClientManualTransaction).where(
+            ClientManualTransaction.id.in_(reconciled_uuid_ids),
+            ClientManualTransaction.user_id == client_id,
+            ClientManualTransaction.transaction_type == "PAYMENT",
+        )
+    ).all()
+    manual_rows_by_id = {str(row.id): row for row in manual_rows}
+
+    for note, metadata, reconciled_ids in impacted_notes:
+        remaining_rows: list[ClientManualTransaction] = []
+        remaining_ids: list[str] = []
+        for payment_id in reconciled_ids:
+            row = manual_rows_by_id.get(payment_id)
+            if row is None:
+                continue
+            remaining_ids.append(payment_id)
+            remaining_rows.append(row)
+
+        if remaining_ids:
+            metadata["reconciled_manual_payment_ids"] = remaining_ids
+        else:
+            metadata.pop("reconciled_manual_payment_ids", None)
+
+        status_value = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+        if status_value != "CANCELLED":
+            should_mark_paid = False
+            if remaining_rows:
+                totals_raw = metadata.get("totals_by_currency")
+                available_currencies = (
+                    {
+                        str(raw_currency or "").strip().upper()
+                        for raw_currency in totals_raw.keys()
+                        if str(raw_currency or "").strip()
+                    }
+                    if isinstance(totals_raw, dict)
+                    else set()
+                )
+                invoice_currency = None
+                for payment in remaining_rows:
+                    payment_currency = _normalize_currency(payment.currency, fallback="EUR")
+                    if payment_currency in available_currencies:
+                        invoice_currency = payment_currency
+                        break
+                if invoice_currency is None and available_currencies:
+                    invoice_currency = sorted(available_currencies)[0]
+
+                if invoice_currency is not None:
+                    try:
+                        invoice_total = _invoice_range_total_in_currency(metadata, currency=invoice_currency)
+                    except HTTPException:
+                        invoice_total = None
+                    if invoice_total is not None and invoice_total > Decimal("0.00"):
+                        paid_total = Decimal("0.00")
+                        for payment in remaining_rows:
+                            payment_currency = _normalize_currency(payment.currency, fallback="EUR")
+                            if payment_currency != invoice_currency:
+                                continue
+                            paid_total = _quantize_money(paid_total + abs(Decimal(payment.total_incl_vat)))
+                        should_mark_paid = paid_total >= invoice_total
+            metadata["invoice_status"] = "PAID" if should_mark_paid else "ISSUED"
+
+        note.message = _build_invoice_range_note_message(metadata)
+        db.add(note)
+
+
 def _payment_key(*, source: str, payment_id: UUID) -> str:
     return f"{(source or '').strip().upper()}:{payment_id}"
 
@@ -4950,6 +5064,14 @@ def update_admin_client_manual_transaction(
     row.reference = _build_manual_reference(payment_method_code=payment_method_code, custom_reference=custom_reference)
     row.actor_user_id = actor.id
 
+    db.add(row)
+    if transaction_type == "PAYMENT":
+        _recompute_reconciled_invoice_statuses_for_manual_payment_change(
+            db,
+            client_id=client.id,
+            transaction_ids={row.id},
+        )
+
     note_message = (
         f"Transaction manuelle modifiee ({row.label}) : {Decimal(row.total_incl_vat):.2f} {row.currency}."
     )
@@ -4960,8 +5082,6 @@ def update_admin_client_manual_transaction(
         entry_type="AUTO",
         message=note_message,
     )
-
-    db.add(row)
     db.commit()
 
     updated = next(
@@ -5001,7 +5121,14 @@ def delete_admin_client_manual_transaction(
     label = row.label
     amount = Decimal(row.total_incl_vat)
     currency = row.currency
+    transaction_type = (row.transaction_type or "").strip().upper()
     db.delete(row)
+    if transaction_type == "PAYMENT":
+        _recompute_reconciled_invoice_statuses_for_manual_payment_change(
+            db,
+            client_id=client.id,
+            transaction_ids={row.id},
+        )
     _create_client_note(
         db,
         client_id=client.id,
