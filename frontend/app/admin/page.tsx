@@ -48,6 +48,7 @@ type PlanningQuery = {
   timezone: string;
   locationId: string;
   locationIds: string[];
+  activityIds: string[];
   courseTypeId: string;
   professorIds: string[];
   status: string;
@@ -448,6 +449,11 @@ function buildPlanningHref(query: PlanningQuery): string {
       sp.append("location_ids", locationId);
     }
   }
+  for (const activityId of query.activityIds) {
+    if (activityId) {
+      sp.append("activity_ids", activityId);
+    }
+  }
   for (const professorId of query.professorIds) {
     if (professorId) {
       sp.append("professor_ids", professorId);
@@ -534,6 +540,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   }
 
   const selectedCourseType = readParam(searchParams, "course_type_id");
+  const selectedActivityIds = readMultiParam(searchParams, "activity_ids");
   const rawLocation = readParam(searchParams, "location_id");
   const selectedLocationIdsFromQuery = readMultiParam(searchParams, "location_ids");
   const selectedProfessorLegacy = readParam(searchParams, "professor_id");
@@ -647,6 +654,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     timezone,
     locationId: focusedLocationId,
     locationIds: selectedLocationIds,
+    activityIds: selectedActivityIds,
     courseTypeId: selectedCourseType,
     professorIds: selectedProfessorIds,
     status: selectedStatus,
@@ -667,6 +675,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const filtersCloseHref = buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: "" });
   const filtersResetHref = buildPlanningHref({
     ...queryForLinks,
+    activityIds: [],
     courseTypeId: "",
     locationIds: [],
     professorIds: [],
@@ -694,7 +703,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const professorById = new Map(professors.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
   const selectedLocationSet = new Set(selectedLocationIds);
+  const selectedActivitySet = new Set(selectedActivityIds);
   const selectedProfessorSet = new Set(selectedProfessorIds);
+  const selectedActivityLabels = selectedActivityIds
+    .map((activityId) => courseTypeById.get(activityId)?.name ?? "")
+    .filter((name) => name.length > 0);
   const selectedLocationLabels = selectedLocationIdsFromQuery
     .map((locationId) => locationById.get(locationId)?.name ?? "")
     .filter((name) => name.length > 0);
@@ -709,6 +722,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     .filter((client): client is AdminClientOut => Boolean(client))
     .map((client) => clientDisplayName(client));
   const hasAdvancedFilters =
+    selectedActivityIds.length > 0 ||
     Boolean(selectedCourseType) ||
     selectedLocationIdsFromQuery.length > 0 ||
     selectedProfessorIds.length > 0 ||
@@ -727,6 +741,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const filteredSessions = sessions
     .filter((session) => {
       if (selectedLocationSet.size > 0 && !selectedLocationSet.has(session.location_id)) {
+        return false;
+      }
+      if (selectedActivitySet.size > 0 && !selectedActivitySet.has(session.course_type_id)) {
         return false;
       }
       if (selectedCourseType && session.course_type_id !== selectedCourseType) {
@@ -906,6 +923,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           <input type="hidden" name="status" value={selectedStatus} />
           <input type="hidden" name="client_status" value={selectedClientStatus} />
           <input type="hidden" name="agenda_date" value={agendaDate} />
+          {selectedActivityIds.map((activityId) => (
+            <input key={`quick-activity-${activityId}`} type="hidden" name="activity_ids" value={activityId} />
+          ))}
           {selectedLocationIdsFromQuery.map((locationId) => (
             <input key={`quick-location-${locationId}`} type="hidden" name="location_ids" value={locationId} />
           ))}
@@ -956,6 +976,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </form>
         <p className="muted">Les regles du planning sont visibles uniquement via le bouton Parametres.</p>
         <div className="row planning-active-filters">
+          {selectedActivityLabels.length > 0 ? (
+            <span className="badge">Activites: {compactList(selectedActivityLabels)}</span>
+          ) : null}
           {selectedCourseType ? (
             <span className="badge">Type: {courseTypeById.get(selectedCourseType)?.name ?? "Selection"}</span>
           ) : null}
@@ -1002,6 +1025,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   ))}
                 </select>
               </label>
+
+              <SearchMultiSelect
+                className="span-2"
+                label="Par activites"
+                name="activity_ids"
+                options={courseTypes.map((row) => ({ id: row.id, label: row.name }))}
+                selectedIds={selectedActivityIds}
+                placeholder="Rechercher une activite..."
+                emptySelectionLabel="Aucune activite selectionnee."
+              />
 
               <SearchMultiSelect
                 label="Par salles"
