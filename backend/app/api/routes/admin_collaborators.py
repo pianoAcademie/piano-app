@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.ops import AppSetting
-from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
+from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSalaryPayment, ProfessorSessionPayout
 from app.models.professor_access import ProfessorPermission
 from app.models.professor_contract import (
     ProfessorContractGrid,
@@ -41,6 +41,8 @@ from app.schemas.admin import (
     AdminProfessorRateRuleInput,
     AdminProfessorRateRuleOut,
     AdminProfessorRatesUpdateRequest,
+    AdminProfessorSalaryPaymentCreateRequest,
+    AdminProfessorSalaryPaymentOut,
     AdminProfessorUpdateRequest,
     AdminProfessorUpdateResult,
     ProfessorPermissionOut,
@@ -672,6 +674,30 @@ def _to_detail(
 def _session_duration_hours(session_obj: CourseSession) -> Decimal:
     return _quantize_money(
         Decimal((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds()) / Decimal(3600)
+    )
+
+
+def _serialize_salary_payment(
+    *,
+    payment: ProfessorSalaryPayment,
+    professor: Professor,
+) -> AdminProfessorSalaryPaymentOut:
+    return AdminProfessorSalaryPaymentOut(
+        id=payment.id,
+        professor_id=payment.professor_id,
+        professor_first_name=professor.first_name,
+        professor_last_name=professor.last_name,
+        professor_email=professor.email,
+        reference_date=payment.reference_date,
+        payment_date=payment.payment_date,
+        invoice_number=payment.invoice_number,
+        payment_method=payment.payment_method,
+        amount_excl_vat=_quantize_money(Decimal(payment.amount_excl_vat)),
+        amount_incl_vat=_quantize_money(Decimal(payment.amount_incl_vat)),
+        currency_code=payment.currency_code,
+        settled_payout_count=int(payment.settled_payout_count or 0),
+        actor_user_id=payment.actor_user_id,
+        created_at=payment.created_at,
     )
 
 
@@ -1408,6 +1434,87 @@ def get_collaborator_payout_ledger(
         total_due=_quantize_money(cumulative_due),
         rows=ledger_rows,
     )
+
+
+@router.get("/salary-payments", response_model=list[AdminProfessorSalaryPaymentOut])
+def list_salary_payments(
+    reference_date: date | None = None,
+    professor_id: UUID | None = None,
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminProfessorSalaryPaymentOut]:
+    stmt = (
+        select(ProfessorSalaryPayment, Professor)
+        .join(Professor, Professor.id == ProfessorSalaryPayment.professor_id)
+        .order_by(ProfessorSalaryPayment.payment_date.desc(), ProfessorSalaryPayment.created_at.desc())
+        .limit(limit)
+    )
+    if reference_date is not None:
+        stmt = stmt.where(ProfessorSalaryPayment.reference_date == reference_date)
+    if professor_id is not None:
+        stmt = stmt.where(ProfessorSalaryPayment.professor_id == professor_id)
+
+    rows = db.execute(stmt).all()
+    return [
+        _serialize_salary_payment(payment=payment, professor=professor)
+        for payment, professor in rows
+    ]
+
+
+@router.post("/{professor_id}/salary-payments", response_model=AdminProfessorSalaryPaymentOut, status_code=status.HTTP_201_CREATED)
+def create_salary_payment(
+    professor_id: UUID,
+    payload: AdminProfessorSalaryPaymentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProfessorSalaryPaymentOut:
+    professor = _load_professor_or_404(db, professor_id)
+    invoice_number = _normalize_required(payload.invoice_number, "invoice_number")
+    amount_excl_vat = _quantize_money(Decimal(payload.amount_excl_vat))
+    amount_incl_vat = _quantize_money(Decimal(payload.amount_incl_vat))
+    if amount_incl_vat < amount_excl_vat:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="amount_incl_vat must be greater than or equal to amount_excl_vat",
+        )
+
+    reference_exclusive = datetime.combine(payload.reference_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    payouts = db.scalars(
+        select(ProfessorSessionPayout)
+        .join(CourseSession, CourseSession.id == ProfessorSessionPayout.session_id)
+        .where(
+            ProfessorSessionPayout.professor_id == professor_id,
+            ProfessorSessionPayout.payout_status.in_((PayoutStatus.PENDING, PayoutStatus.APPROVED)),
+            CourseSession.start_at_utc < reference_exclusive,
+        )
+        .with_for_update()
+    ).all()
+
+    paid_at = datetime.combine(payload.payment_date, datetime.min.time(), tzinfo=timezone.utc)
+    for payout in payouts:
+        payout.payout_status = PayoutStatus.PAID
+        payout.paid_at = paid_at
+        db.add(payout)
+
+    currency_code = (professor.payout_currency or "EUR").strip().upper() or "EUR"
+    payment = ProfessorSalaryPayment(
+        professor_id=professor_id,
+        reference_date=payload.reference_date,
+        payment_date=payload.payment_date,
+        invoice_number=invoice_number,
+        payment_method=payload.payment_method,
+        amount_excl_vat=amount_excl_vat,
+        amount_incl_vat=amount_incl_vat,
+        currency_code=currency_code,
+        settled_payout_count=len(payouts),
+        actor_user_id=current_user.id,
+    )
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+
+    return _serialize_salary_payment(payment=payment, professor=professor)
 
 
 @router.get("/contract-grid/locations", response_model=list[AdminProfessorContractLocationOptionOut])

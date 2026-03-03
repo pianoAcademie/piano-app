@@ -26,7 +26,7 @@ from app.models.ops import (
     ProfessorSessionMessage,
     ReminderStatus,
 )
-from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
+from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSalaryPayment, ProfessorSessionPayout, SalaryPaymentMethod
 from app.models.professor_contract import (
     ProfessorContractGrid,
     ProfessorContractGridLine,
@@ -101,6 +101,7 @@ __all__ = [
     "ProfessorContractGridLineRule",
     "ProfessorContractLineMode",
     "ProfessorPermission",
+    "ProfessorSalaryPayment",
     "ProfessorSessionMessage",
     "ProfessorSessionPayout",
     "CatalogKit",
@@ -117,6 +118,7 @@ __all__ = [
     "MessageFormat",
     "ReminderStatus",
     "SessionStatus",
+    "SalaryPaymentMethod",
     "SubscriptionStatus",
     "User",
     "UserRole",

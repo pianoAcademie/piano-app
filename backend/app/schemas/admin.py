@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.models.catalog import DeliveryMode, SessionStatus
 from app.models.ops import ReminderStatus
-from app.models.payout import PayoutStatus
+from app.models.payout import PayoutStatus, SalaryPaymentMethod
 from app.models.plan import PlanCreditGrantsRelation, PlanKind, PlanPriceTaxMode, PlanRestrictionPeriod, SubscriptionStatus
 from app.models.professor_contract import ProfessorContractLineMode
 from app.models.user import ClientKind, ClientStatus, UserRole
@@ -1282,6 +1282,33 @@ class AdminProfessorPayoutLedgerOut(BaseModel):
     currency: str
     total_due: Decimal
     rows: list[AdminProfessorPayoutLedgerRowOut] = Field(default_factory=list)
+
+
+class AdminProfessorSalaryPaymentCreateRequest(BaseModel):
+    reference_date: date
+    payment_date: date
+    invoice_number: str = Field(min_length=1, max_length=120)
+    payment_method: SalaryPaymentMethod = SalaryPaymentMethod.BANK_TRANSFER
+    amount_excl_vat: Decimal = Field(ge=Decimal("0"))
+    amount_incl_vat: Decimal = Field(ge=Decimal("0"))
+
+
+class AdminProfessorSalaryPaymentOut(BaseModel):
+    id: UUID
+    professor_id: UUID
+    professor_first_name: str
+    professor_last_name: str
+    professor_email: str
+    reference_date: date
+    payment_date: date
+    invoice_number: str
+    payment_method: SalaryPaymentMethod
+    amount_excl_vat: Decimal
+    amount_incl_vat: Decimal
+    currency_code: str
+    settled_payout_count: int
+    actor_user_id: UUID | None
+    created_at: datetime
 
 
 class AdminProfessorContractLocationOptionOut(BaseModel):

@@ -694,6 +694,26 @@ export type AdminProfessorPayoutLedgerOut = {
   rows: AdminProfessorPayoutLedgerRowOut[];
 };
 
+export type SalaryPaymentMethod = "BANK_TRANSFER" | "CHEQUE" | "CASH";
+
+export type AdminProfessorSalaryPaymentOut = {
+  id: string;
+  professor_id: string;
+  professor_first_name: string;
+  professor_last_name: string;
+  professor_email: string;
+  reference_date: string;
+  payment_date: string;
+  invoice_number: string;
+  payment_method: SalaryPaymentMethod;
+  amount_excl_vat: string;
+  amount_incl_vat: string;
+  currency_code: string;
+  settled_payout_count: number;
+  actor_user_id: string | null;
+  created_at: string;
+};
+
 export type AdminProfessorContractLocationOptionOut = {
   code: string;
   label: string;

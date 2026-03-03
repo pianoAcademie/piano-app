@@ -31,6 +31,7 @@ import type {
   AdminProfessorContractGridOut,
   AdminProfessorContractOut,
   AdminProfessorRateOut,
+  AdminProfessorSalaryPaymentOut,
   AdminProfessorUpdateResult,
   AdminSubscriptionSettingsOut,
   AdminConfigAccountOut,
@@ -3984,6 +3985,63 @@ export async function sendAdminCollaboratorsMessageAction(formData: FormData): P
       `Message envoye: ${result.data.sent_count}/${result.data.requested_count} collaborateurs`,
     ),
   );
+}
+
+function parseMoneyInput(raw: string): string | null {
+  const normalized = raw.trim().replace(",", ".");
+  if (!normalized) {
+    return null;
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+export async function createAdminCollaboratorSalaryPaymentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminReturnPath(formData, "/admin/salary-payments");
+  const professorId = String(formData.get("professor_id") ?? "").trim();
+  const referenceDate = String(formData.get("reference_date") ?? "").trim();
+  const paymentDate = String(formData.get("payment_date") ?? "").trim();
+  const invoiceNumber = String(formData.get("invoice_number") ?? "").trim();
+  const paymentMethodRaw = String(formData.get("payment_method") ?? "BANK_TRANSFER").trim().toUpperCase();
+  const paymentMethod = paymentMethodRaw === "CHEQUE" || paymentMethodRaw === "CASH" ? paymentMethodRaw : "BANK_TRANSFER";
+  const amountExclVat = parseMoneyInput(String(formData.get("amount_excl_vat") ?? ""));
+  const amountInclVat = parseMoneyInput(String(formData.get("amount_incl_vat") ?? ""));
+
+  if (!professorId || !referenceDate || !paymentDate || !invoiceNumber || !amountExclVat || !amountInclVat) {
+    redirect(appendQueryMessage(returnTo, "error", "Numero facture, montants HT/TTC, dates et collaborateur obligatoires"));
+  }
+
+  const result = await backendRequest<AdminProfessorSalaryPaymentOut>(
+    `/api/v1/admin/collaborators/${professorId}/salary-payments`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        reference_date: referenceDate,
+        payment_date: paymentDate,
+        invoice_number: invoiceNumber,
+        payment_method: paymentMethod,
+        amount_excl_vat: amountExclVat,
+        amount_incl_vat: amountInclVat,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/professors");
+  revalidatePath("/admin/salary-payments");
+  redirect(appendQueryMessage(returnTo, "ok", "Paiement collaborateur enregistre"));
 }
 
 export async function updateAdminCollaboratorProfileAction(formData: FormData): Promise<void> {

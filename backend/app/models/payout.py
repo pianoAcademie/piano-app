@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Numeric, String, text
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -21,6 +21,12 @@ class PayoutStatus(str, enum.Enum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
     PAID = "PAID"
+
+
+class SalaryPaymentMethod(str, enum.Enum):
+    BANK_TRANSFER = "BANK_TRANSFER"
+    CHEQUE = "CHEQUE"
+    CASH = "CASH"
 
 
 class ProfessorHourlyRate(Base):
@@ -100,6 +106,51 @@ class ProfessorSessionPayout(Base):
         server_default=text("'PENDING'::payout_status"),
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
+class ProfessorSalaryPayment(Base):
+    __tablename__ = "professor_salary_payments"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    professor_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professors.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    reference_date: Mapped[date] = mapped_column(Date, nullable=False)
+    payment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    invoice_number: Mapped[str] = mapped_column(String(120), nullable=False)
+    payment_method: Mapped[SalaryPaymentMethod] = mapped_column(
+        Enum(
+            SalaryPaymentMethod,
+            name="salary_payment_method",
+            native_enum=True,
+            values_callable=_enum_values,
+            validate_strings=True,
+            create_type=False,
+        ),
+        nullable=False,
+        server_default=text("'BANK_TRANSFER'::salary_payment_method"),
+    )
+    amount_excl_vat: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    amount_incl_vat: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency_code: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
+    settled_payout_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
