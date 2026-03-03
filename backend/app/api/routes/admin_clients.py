@@ -1340,6 +1340,8 @@ def _recompute_reconciled_invoice_statuses_for_manual_payment_change(
 ) -> None:
     if not transaction_ids:
         return
+    # SessionLocal uses autoflush=False: force SQL sync so selects below read current DB state.
+    db.flush()
 
     touched_ids = {str(value) for value in transaction_ids}
     notes = db.scalars(
