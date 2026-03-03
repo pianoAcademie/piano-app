@@ -85,6 +85,8 @@ from app.services.payment_provider import (
     PAYMENT_WEBHOOK_SECRET_SETTING_KEY,
     PAYPLUG_LIVE_SECRET_SETTING_KEY,
     PAYPLUG_TEST_SECRET_SETTING_KEY,
+    STRIPE_LIVE_SECRET_SETTING_KEY,
+    STRIPE_TEST_SECRET_SETTING_KEY,
     PaymentMode,
     PaymentProvider,
     mask_secret as mask_payment_secret,
@@ -117,7 +119,7 @@ from app.services.invoice_documents import (
 router = APIRouter(prefix="/admin")
 
 PAYMENT_METHOD_CATALOG: list[tuple[str, str]] = [
-    ("CARD_ONLINE", "CB en ligne (Mollie / Payplug)"),
+    ("CARD_ONLINE", "CB en ligne (Mollie / Payplug / Stripe)"),
     ("CARD_TERMINAL", "CB sur place (TPE)"),
     ("CHECK", "Cheque"),
     ("CASH", "Especes"),
@@ -420,6 +422,7 @@ def _serialize_legal_entity(entity: LegalEntity) -> AdminLegalEntityOut:
         country_code=entity.country_code,
         invoice_prefix=entity.invoice_prefix,
         invoice_next_number=entity.invoice_next_number,
+        default_payment_provider=(entity.default_payment_provider or PaymentProvider.PAYPLUG.value),
         is_active=entity.is_active,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
@@ -601,7 +604,14 @@ def _serialize_default_professor_grid(db: Session) -> AdminProfessorDefaultGridO
 
 
 def _normalize_payment_provider(raw: str) -> PaymentProvider:
-    return parse_payment_provider(raw)
+    normalized = (raw or "").strip().upper()
+    allowed = {provider.value for provider in PaymentProvider}
+    if normalized not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Payment provider not supported: {raw}",
+        )
+    return parse_payment_provider(normalized)
 
 
 def _normalize_payment_mode(raw: str) -> PaymentMode:
@@ -628,6 +638,8 @@ def _validate_provider_keys(
     payplug_live_secret: str,
     mollie_test_api_key: str,
     mollie_live_api_key: str,
+    stripe_test_secret: str,
+    stripe_live_secret: str,
 ) -> None:
     if payplug_test_secret and not payplug_test_secret.startswith("sk_test_"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payplug test key must start with sk_test_")
@@ -637,6 +649,10 @@ def _validate_provider_keys(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Mollie test key must start with test_")
     if mollie_live_api_key and not mollie_live_api_key.startswith("live_"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Mollie live key must start with live_")
+    if stripe_test_secret and not stripe_test_secret.startswith("sk_test_"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stripe test key must start with sk_test_")
+    if stripe_live_secret and not stripe_live_secret.startswith("sk_live_"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stripe live key must start with sk_live_")
 
 
 def _normalize_currency_codes(codes: list[str]) -> list[str]:
@@ -1138,6 +1154,7 @@ def create_admin_legal_entity(
         country_code=_normalize_country_code(payload.country_code),
         invoice_prefix=invoice_prefix,
         invoice_next_number=int(payload.invoice_next_number),
+        default_payment_provider=_normalize_payment_provider(payload.default_payment_provider).value,
         is_active=bool(payload.is_active),
         updated_at=now,
     )
@@ -1208,6 +1225,10 @@ def update_admin_legal_entity(
                 detail="invoice_next_number must be >= 1",
             )
         entity.invoice_next_number = int(next_number)
+
+    if "default_payment_provider" in changes:
+        provider = _normalize_payment_provider(str(changes["default_payment_provider"] or ""))
+        entity.default_payment_provider = provider.value
 
     if "is_active" in changes:
         entity.is_active = bool(changes["is_active"])
@@ -1734,10 +1755,14 @@ def get_admin_payment_provider(
         payplug_live_secret_configured=bool(values["payplug_live_secret"]),
         mollie_test_api_key_configured=bool(values["mollie_test_api_key"]),
         mollie_live_api_key_configured=bool(values["mollie_live_api_key"]),
+        stripe_test_secret_configured=bool(values["stripe_test_secret"]),
+        stripe_live_secret_configured=bool(values["stripe_live_secret"]),
         payplug_test_secret_masked=mask_payment_secret(values["payplug_test_secret"]),
         payplug_live_secret_masked=mask_payment_secret(values["payplug_live_secret"]),
         mollie_test_api_key_masked=mask_payment_secret(values["mollie_test_api_key"]),
         mollie_live_api_key_masked=mask_payment_secret(values["mollie_live_api_key"]),
+        stripe_test_secret_masked=mask_payment_secret(values["stripe_test_secret"]),
+        stripe_live_secret_masked=mask_payment_secret(values["stripe_live_secret"]),
         webhook_secret_masked=mask_payment_secret(values["webhook_secret"]),
     )
 
@@ -1756,6 +1781,8 @@ def update_admin_payment_provider(
     payplug_live_secret = _normalized_secret(payload.payplug_live_secret) or current_values["payplug_live_secret"]
     mollie_test_api_key = _normalized_secret(payload.mollie_test_api_key) or current_values["mollie_test_api_key"]
     mollie_live_api_key = _normalized_secret(payload.mollie_live_api_key) or current_values["mollie_live_api_key"]
+    stripe_test_secret = _normalized_secret(payload.stripe_test_secret) or current_values["stripe_test_secret"]
+    stripe_live_secret = _normalized_secret(payload.stripe_live_secret) or current_values["stripe_live_secret"]
     webhook_secret = _normalized_secret(payload.webhook_secret) or current_values["webhook_secret"]
 
     _validate_provider_keys(
@@ -1763,13 +1790,16 @@ def update_admin_payment_provider(
         payplug_live_secret=payplug_live_secret,
         mollie_test_api_key=mollie_test_api_key,
         mollie_live_api_key=mollie_live_api_key,
+        stripe_test_secret=stripe_test_secret,
+        stripe_live_secret=stripe_live_secret,
     )
-
-    active_secret = payplug_live_secret if provider == PaymentProvider.PAYPLUG and mode == PaymentMode.LIVE else (
-        payplug_test_secret if provider == PaymentProvider.PAYPLUG else (
-            mollie_live_api_key if mode == PaymentMode.LIVE else mollie_test_api_key
-        )
-    )
+    active_secret = ""
+    if provider == PaymentProvider.PAYPLUG:
+        active_secret = payplug_live_secret if mode == PaymentMode.LIVE else payplug_test_secret
+    elif provider == PaymentProvider.MOLLIE:
+        active_secret = mollie_live_api_key if mode == PaymentMode.LIVE else mollie_test_api_key
+    else:
+        active_secret = stripe_live_secret if mode == PaymentMode.LIVE else stripe_test_secret
     if not active_secret:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1782,6 +1812,8 @@ def update_admin_payment_provider(
     set_payment_setting_value(db, PAYPLUG_LIVE_SECRET_SETTING_KEY, payplug_live_secret)
     set_payment_setting_value(db, MOLLIE_TEST_API_KEY_SETTING_KEY, mollie_test_api_key)
     set_payment_setting_value(db, MOLLIE_LIVE_API_KEY_SETTING_KEY, mollie_live_api_key)
+    set_payment_setting_value(db, STRIPE_TEST_SECRET_SETTING_KEY, stripe_test_secret)
+    set_payment_setting_value(db, STRIPE_LIVE_SECRET_SETTING_KEY, stripe_live_secret)
     set_payment_setting_value(db, PAYMENT_WEBHOOK_SECRET_SETTING_KEY, webhook_secret)
     db.commit()
     return get_admin_payment_provider(db=db)

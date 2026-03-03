@@ -4990,6 +4990,7 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
   const name = String(formData.get("name") ?? "").trim();
   const invoicePrefix = String(formData.get("invoice_prefix") ?? "").trim().toUpperCase();
   const countryCode = String(formData.get("country_code") ?? "FR").trim().toUpperCase();
+  const defaultPaymentProvider = String(formData.get("default_payment_provider") ?? "PAYPLUG").trim().toUpperCase();
   const invoiceNextNumberRaw = String(formData.get("invoice_next_number") ?? "1").trim();
   const invoiceNextNumber = parsePositiveInt(invoiceNextNumberRaw);
 
@@ -5005,6 +5006,9 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
   if (invoiceNextNumber === null || invoiceNextNumber < 1) {
     redirect("/admin/config?section=legal-entities&error=Compteur%20facture%20invalide");
   }
+  if (!defaultPaymentProvider) {
+    redirect("/admin/config?section=legal-entities&error=PSP%20par%20defaut%20invalide");
+  }
 
   const payload = {
     name,
@@ -5015,6 +5019,7 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
     country_code: countryCode,
     invoice_prefix: invoicePrefix,
     invoice_next_number: invoiceNextNumber,
+    default_payment_provider: defaultPaymentProvider,
     is_active: checkboxFieldWithDefault(formData, "is_active", true),
   };
 
@@ -5052,6 +5057,7 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
   const name = String(formData.get("name") ?? "").trim();
   const invoicePrefix = String(formData.get("invoice_prefix") ?? "").trim().toUpperCase();
   const countryCode = String(formData.get("country_code") ?? "FR").trim().toUpperCase();
+  const defaultPaymentProvider = String(formData.get("default_payment_provider") ?? "PAYPLUG").trim().toUpperCase();
   const invoiceNextNumberRaw = String(formData.get("invoice_next_number") ?? "1").trim();
   const invoiceNextNumber = parsePositiveInt(invoiceNextNumberRaw);
 
@@ -5071,6 +5077,11 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
       `/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Compteur%20facture%20invalide`,
     );
   }
+  if (!defaultPaymentProvider) {
+    redirect(
+      `/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=PSP%20par%20defaut%20invalide`,
+    );
+  }
 
   const payload = {
     name,
@@ -5081,6 +5092,7 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
     country_code: countryCode,
     invoice_prefix: invoicePrefix,
     invoice_next_number: invoiceNextNumber,
+    default_payment_provider: defaultPaymentProvider,
     is_active: checkboxFieldWithDefault(formData, "is_active", true),
   };
 
@@ -6089,6 +6101,8 @@ export async function updateAdminConfigPaymentProviderAction(formData: FormData)
     payplug_live_secret: optionalField(formData, "payplug_live_secret"),
     mollie_test_api_key: optionalField(formData, "mollie_test_api_key"),
     mollie_live_api_key: optionalField(formData, "mollie_live_api_key"),
+    stripe_test_secret: optionalField(formData, "stripe_test_secret"),
+    stripe_live_secret: optionalField(formData, "stripe_live_secret"),
     webhook_secret: optionalField(formData, "webhook_secret"),
   };
 

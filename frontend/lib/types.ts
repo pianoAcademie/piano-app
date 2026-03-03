@@ -1151,7 +1151,7 @@ export type ProfessorCatalogStudentOut = {
 };
 
 export type AdminPaymentProviderOut = {
-  provider: "PAYPLUG" | "MOLLIE" | string;
+  provider: "PAYPLUG" | "MOLLIE" | "STRIPE" | string;
   mode: "TEST" | "LIVE" | string;
   subscriptions_supported: boolean;
   subscriptions_managed_by_psp: boolean;
@@ -1160,10 +1160,14 @@ export type AdminPaymentProviderOut = {
   payplug_live_secret_configured: boolean;
   mollie_test_api_key_configured: boolean;
   mollie_live_api_key_configured: boolean;
+  stripe_test_secret_configured: boolean;
+  stripe_live_secret_configured: boolean;
   payplug_test_secret_masked: string;
   payplug_live_secret_masked: string;
   mollie_test_api_key_masked: string;
   mollie_live_api_key_masked: string;
+  stripe_test_secret_masked: string;
+  stripe_live_secret_masked: string;
   webhook_secret_masked: string;
 };
 
@@ -1318,6 +1322,7 @@ export type AdminLegalEntityOut = {
   country_code: string;
   invoice_prefix: string;
   invoice_next_number: number;
+  default_payment_provider: "PAYPLUG" | "MOLLIE" | "STRIPE" | string;
   is_active: boolean;
   created_at: string;
   updated_at: string;

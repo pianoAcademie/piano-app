@@ -991,6 +991,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <select name="provider" defaultValue={paymentProvider.provider}>
                         <option value="PAYPLUG">Payplug</option>
                         <option value="MOLLIE">Mollie</option>
+                        <option value="STRIPE">Stripe</option>
                       </select>
                     </label>
                     <label>
@@ -1030,6 +1031,22 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <input type="password" name="mollie_live_api_key" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
                       <small className="muted">
                         Actuelle: {paymentProvider.mollie_live_api_key_masked || "Non configuree"}
+                      </small>
+                    </label>
+
+                    <label className="span-2">
+                      Stripe - cle test (sk_test_...)
+                      <input type="password" name="stripe_test_secret" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
+                      <small className="muted">
+                        Actuelle: {paymentProvider.stripe_test_secret_masked || "Non configuree"}
+                      </small>
+                    </label>
+
+                    <label className="span-2">
+                      Stripe - cle live (sk_live_...)
+                      <input type="password" name="stripe_live_secret" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
+                      <small className="muted">
+                        Actuelle: {paymentProvider.stripe_live_secret_masked || "Non configuree"}
                       </small>
                     </label>
 
@@ -2874,6 +2891,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <tr>
                           <th>Entite</th>
                           <th>Identifiants</th>
+                          <th>PSP defaut</th>
                           <th>Numerotation</th>
                           <th>Statut</th>
                           <th>Actions</th>
@@ -2894,6 +2912,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 <small>SIRET: {entity.siret || "-"}</small>
                                 <small>TVA: {entity.vat_number || "-"}</small>
                               </div>
+                            </td>
+                            <td>
+                              <span className="badge">{entity.default_payment_provider || "PAYPLUG"}</span>
                             </td>
                             <td>
                               <div>
@@ -2953,6 +2974,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label>
                           Prochain numero
                           <input type="number" name="invoice_next_number" min={1} step="1" defaultValue={1} required />
+                        </label>
+                        <label>
+                          PSP par defaut
+                          <select name="default_payment_provider" defaultValue="PAYPLUG" required>
+                            <option value="PAYPLUG">Payplug</option>
+                            <option value="MOLLIE">Mollie</option>
+                            <option value="STRIPE">Stripe</option>
+                          </select>
                         </label>
 
                         <label>
@@ -3024,6 +3053,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             defaultValue={selectedLegalEntity.invoice_next_number}
                             required
                           />
+                        </label>
+                        <label>
+                          PSP par defaut
+                          <select
+                            name="default_payment_provider"
+                            defaultValue={selectedLegalEntity.default_payment_provider || "PAYPLUG"}
+                            required
+                          >
+                            <option value="PAYPLUG">Payplug</option>
+                            <option value="MOLLIE">Mollie</option>
+                            <option value="STRIPE">Stripe</option>
+                          </select>
                         </label>
 
                         <label>

@@ -123,10 +123,14 @@ class AdminPaymentProviderOut(BaseModel):
     payplug_live_secret_configured: bool
     mollie_test_api_key_configured: bool
     mollie_live_api_key_configured: bool
+    stripe_test_secret_configured: bool
+    stripe_live_secret_configured: bool
     payplug_test_secret_masked: str
     payplug_live_secret_masked: str
     mollie_test_api_key_masked: str
     mollie_live_api_key_masked: str
+    stripe_test_secret_masked: str
+    stripe_live_secret_masked: str
     webhook_secret_masked: str
 
 
@@ -137,6 +141,8 @@ class AdminPaymentProviderUpdateRequest(BaseModel):
     payplug_live_secret: str | None = Field(default=None, max_length=255)
     mollie_test_api_key: str | None = Field(default=None, max_length=255)
     mollie_live_api_key: str | None = Field(default=None, max_length=255)
+    stripe_test_secret: str | None = Field(default=None, max_length=255)
+    stripe_live_secret: str | None = Field(default=None, max_length=255)
     webhook_secret: str | None = Field(default=None, max_length=255)
 
 
@@ -521,6 +527,7 @@ class AdminLegalEntityOut(BaseModel):
     country_code: str
     invoice_prefix: str
     invoice_next_number: int
+    default_payment_provider: str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -535,6 +542,7 @@ class AdminLegalEntityCreateRequest(BaseModel):
     country_code: str = Field(default="FR", min_length=2, max_length=2)
     invoice_prefix: str = Field(min_length=1, max_length=20)
     invoice_next_number: int = Field(default=1, ge=1)
+    default_payment_provider: str = Field(default="PAYPLUG", min_length=1, max_length=30)
     is_active: bool = True
 
 
@@ -547,6 +555,7 @@ class AdminLegalEntityUpdateRequest(BaseModel):
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     invoice_prefix: str | None = Field(default=None, min_length=1, max_length=20)
     invoice_next_number: int | None = Field(default=None, ge=1)
+    default_payment_provider: str | None = Field(default=None, min_length=1, max_length=30)
     is_active: bool | None = None
 
 

@@ -113,6 +113,7 @@ class LegalEntity(Base):
     country_code: Mapped[str] = mapped_column(String(2), nullable=False, server_default=text("'FR'"))
     invoice_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
     invoice_next_number: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("1"))
+    default_payment_provider: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'PAYPLUG'"))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

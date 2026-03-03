@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from decimal import Decimal
+from uuid import UUID
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -61,6 +62,42 @@ def _request_json(
         method=method.upper(),
         headers=headers,
         data=json.dumps(body).encode("utf-8") if body is not None else None,
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            status_code = int(response.status)
+            raw = response.read().decode("utf-8")
+        parsed = json.loads(raw) if raw else None
+        return status_code, parsed, raw
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        try:
+            parsed = json.loads(raw) if raw else None
+        except Exception:
+            parsed = None
+        return int(exc.code), parsed, raw
+    except URLError as exc:
+        return 0, None, str(exc.reason)
+    except Exception as exc:  # pragma: no cover
+        return 0, None, str(exc)
+
+
+def _request_form(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: dict[str, str] | None = None,
+    timeout_seconds: int = 20,
+) -> tuple[int, dict[str, object] | None, str]:
+    encoded_body: bytes | None = None
+    if body is not None:
+        encoded_body = urlencode(body).encode("utf-8")
+    request = Request(
+        url,
+        method=method.upper(),
+        headers=headers,
+        data=encoded_body,
     )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
@@ -220,9 +257,76 @@ def _payplug_create_checkout(secret: str, payload: CheckoutCreateRequest) -> Che
     )
 
 
-def create_checkout_session(db: Session, payload: CheckoutCreateRequest) -> CheckoutCreateResult:
-    provider = resolve_provider(db)
-    secret = resolve_active_secret(db).strip()
+def _stripe_create_checkout(secret: str, payload: CheckoutCreateRequest) -> CheckoutCreateResult:
+    amount_cents = int((payload.amount.quantize(Decimal("0.01")) * Decimal("100")).to_integral_value())
+    body: dict[str, str] = {
+        "mode": "payment",
+        "success_url": payload.success_return_url,
+        "cancel_url": payload.cancel_return_url,
+        "customer_email": payload.customer_email,
+        "line_items[0][quantity]": "1",
+        "line_items[0][price_data][currency]": payload.currency.lower(),
+        "line_items[0][price_data][unit_amount]": str(max(amount_cents, 0)),
+        "line_items[0][price_data][product_data][name]": payload.description,
+    }
+    for key, value in payload.metadata.items():
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        body[f"metadata[{normalized_key}]"] = str(value or "")
+
+    status_code, parsed, message = _request_form(
+        method="POST",
+        url="https://api.stripe.com/v1/checkout/sessions",
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body=body,
+    )
+    if status_code == 0 or not isinstance(parsed, dict):
+        return CheckoutCreateResult(
+            success=False,
+            provider=PaymentProvider.STRIPE,
+            checkout_url=None,
+            provider_reference=None,
+            status="NETWORK_ERROR",
+            message=message,
+            retryable=True,
+        )
+
+    checkout_url = str(parsed.get("url") or "").strip()
+    provider_ref = str(parsed.get("id") or "").strip()
+    checkout_status = str(parsed.get("status") or "open")
+    if 200 <= status_code < 300 and checkout_url:
+        return CheckoutCreateResult(
+            success=True,
+            provider=PaymentProvider.STRIPE,
+            checkout_url=checkout_url,
+            provider_reference=provider_ref or None,
+            status=checkout_status,
+            message="Stripe checkout created",
+            retryable=False,
+        )
+    return CheckoutCreateResult(
+        success=False,
+        provider=PaymentProvider.STRIPE,
+        checkout_url=None,
+        provider_reference=provider_ref or None,
+        status=f"HTTP_{status_code}",
+        message=message or "Stripe checkout creation failed",
+        retryable=500 <= status_code < 600,
+    )
+
+
+def create_checkout_session(
+    db: Session,
+    payload: CheckoutCreateRequest,
+    *,
+    legal_entity_id: UUID | None = None,
+) -> CheckoutCreateResult:
+    provider = resolve_provider(db, legal_entity_id=legal_entity_id)
+    secret = resolve_active_secret(db, provider=provider).strip()
     if not secret:
         return CheckoutCreateResult(
             success=False,
@@ -235,6 +339,8 @@ def create_checkout_session(db: Session, payload: CheckoutCreateRequest) -> Chec
         )
     if provider == PaymentProvider.MOLLIE:
         return _mollie_create_checkout(secret, payload)
+    if provider == PaymentProvider.STRIPE:
+        return _stripe_create_checkout(secret, payload)
     return _payplug_create_checkout(secret, payload)
 
 
@@ -325,8 +431,54 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
     )
 
 
+def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookupResult:
+    status_code, parsed, message = _request_form(
+        method="GET",
+        url=f"https://api.stripe.com/v1/checkout/sessions/{payment_reference}",
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body=None,
+    )
+    if status_code == 0 or not isinstance(parsed, dict):
+        return PaymentLookupResult(
+            success=False,
+            provider=PaymentProvider.STRIPE,
+            provider_reference=payment_reference,
+            status="NETWORK_ERROR",
+            paid=False,
+            cancelled=False,
+            failed=True,
+            metadata={},
+            message=message,
+        )
+
+    checkout_status = str(parsed.get("status") or "").strip().lower()
+    payment_status = str(parsed.get("payment_status") or "").strip().lower()
+    paid = payment_status in {"paid", "no_payment_required"}
+    cancelled = checkout_status in {"expired"}
+    failed = (not paid) and cancelled
+    metadata = _normalize_metadata(parsed.get("metadata"))
+    customer_reference = str(parsed.get("customer") or "").strip()
+    if customer_reference:
+        metadata["customer_reference"] = customer_reference
+
+    return PaymentLookupResult(
+        success=200 <= status_code < 300,
+        provider=PaymentProvider.STRIPE,
+        provider_reference=str(parsed.get("id") or payment_reference),
+        status=payment_status or checkout_status or f"http_{status_code}",
+        paid=paid,
+        cancelled=cancelled,
+        failed=failed,
+        metadata=metadata,
+        message=message or "ok",
+    )
+
+
 def lookup_payment(db: Session, *, provider: PaymentProvider, payment_reference: str) -> PaymentLookupResult:
-    secret = resolve_active_secret(db).strip()
+    secret = resolve_active_secret(db, provider=provider).strip()
     if not secret:
         return PaymentLookupResult(
             success=False,
@@ -341,6 +493,8 @@ def lookup_payment(db: Session, *, provider: PaymentProvider, payment_reference:
         )
     if provider == PaymentProvider.MOLLIE:
         return _mollie_lookup_payment(secret, payment_reference)
+    if provider == PaymentProvider.STRIPE:
+        return _stripe_lookup_payment(secret, payment_reference)
     return _payplug_lookup_payment(secret, payment_reference)
 
 

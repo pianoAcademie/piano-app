@@ -31,6 +31,8 @@ class Settings:
     payplug_live_secret_key: str = os.getenv("PAYPLUG_LIVE_SECRET_KEY", "")
     mollie_test_api_key: str = os.getenv("MOLLIE_TEST_API_KEY", "")
     mollie_live_api_key: str = os.getenv("MOLLIE_LIVE_API_KEY", "")
+    stripe_test_secret_key: str = os.getenv("STRIPE_TEST_SECRET_KEY", "")
+    stripe_live_secret_key: str = os.getenv("STRIPE_LIVE_SECRET_KEY", "")
     payment_webhook_secret: str = os.getenv("PAYMENT_WEBHOOK_SECRET", "")
 
     # Outbound email delivery

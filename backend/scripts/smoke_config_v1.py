@@ -136,15 +136,28 @@ def main() -> None:
         "PUT",
         "/api/v1/admin/config/payment-provider",
         {
-            "provider": "PAYPLUG",
+            "provider": "STRIPE",
             "mode": "TEST",
-            "payplug_test_secret": "sk_test_smoke_config_key",
+            "stripe_test_secret": "sk_test_smoke_config_key",
             "webhook_secret": "whsec_smoke_config",
         },
         token,
     )
     ensure(status == 200 and isinstance(payment_provider_upd, dict), f"update payment provider failed: {status} {payment_provider_upd}")
-    ensure(payment_provider_upd.get("provider") == "PAYPLUG", "provider should be PAYPLUG")
+    ensure(payment_provider_upd.get("provider") == "STRIPE", "provider should be STRIPE")
+
+    status, legal_entities = api.call("GET", "/api/v1/admin/legal-entities?include_inactive=true", token=token)
+    ensure(status == 200 and isinstance(legal_entities, list) and len(legal_entities) > 0, f"get legal entities failed: {status} {legal_entities}")
+    legal_entity_id = str(legal_entities[0].get("id") or "")
+    ensure(legal_entity_id, "first legal entity id missing")
+    status, legal_entity_upd = api.call(
+        "PATCH",
+        f"/api/v1/admin/legal-entities/{legal_entity_id}",
+        {"default_payment_provider": "STRIPE"},
+        token=token,
+    )
+    ensure(status == 200 and isinstance(legal_entity_upd, dict), f"patch legal entity failed: {status} {legal_entity_upd}")
+    ensure(legal_entity_upd.get("default_payment_provider") == "STRIPE", "legal entity default PSP should be STRIPE")
 
     enabled_codes = [
         row["code"]
@@ -165,11 +178,10 @@ def main() -> None:
 
     formula_payload = {
         "name": f"Formule smoke config {ts}",
-        "kind": "PACK",
+        "kind": "SUBSCRIPTION",
         "active": True,
         "is_private": False,
         "description": "Smoke formula",
-        "credits_count": 10,
         "monthly_price_excl_vat": 199.0,
         "currency_code": "EUR",
         "signup_fee_excl_vat": 15.0,

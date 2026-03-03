@@ -9,6 +9,8 @@
 - Suppression du mapping hardcode Academie/Services dans le rendu facture.
 - Derivation `billing_entity` cote API via `seller_legal_entity_id -> legal_entities.name` (fallback texte legacy seulement si FK absente).
 - Validation minimale ajoutee pour les legal entities: `name` + `country_code` + `invoice_prefix` requis.
+- PSP ajoute: `STRIPE` (en plus de `PAYPLUG`, `MOLLIE`).
+- Chaque `legal_entity` porte desormais un `default_payment_provider` configure depuis le BO.
 
 ## Modifications principales
 - Migration Alembic:
@@ -18,7 +20,12 @@
   - backfill des FK depuis colonnes legacy
 - Modeles SQLAlchemy:
   - ajout `LegalEntity`
+  - ajout `LegalEntity.default_payment_provider`
   - ajout des colonnes `seller_legal_entity_id` / `snapshot_seller_legal_entity_id`
+- PSP:
+  - endpoint `/api/v1/admin/config/payment-provider` et UI BO etendus avec cles Stripe (`sk_test_` / `sk_live_`)
+  - support checkout/lookup Stripe dans `payment_checkout.py`
+  - resolution provider sur reference paiement (`cs_...` => Stripe) pour la confirmation/webhook
 - Pipeline facture:
   - snapshot FK sur session
   - persistance FK sur lignes de facture
@@ -54,6 +61,12 @@
   - `curl -H "Authorization: Bearer <ADMIN_JWT>" "http://localhost:8000/api/v1/admin/reports/sap/2026/csv" -o sap_services_2026.csv`
 - Smoke dedie:
   - `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python /app/scripts/smoke_sap_export_v1.py`
+
+7. Smoke config PSP + entites
+- `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python /app/scripts/smoke_config_v1.py`
+- Ce smoke verifie aussi:
+  - update provider global en `STRIPE`
+  - update d'une legal entity avec `default_payment_provider=STRIPE`
 
 ## Etat de verification actuel
 - `alembic upgrade head`: OK

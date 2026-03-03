@@ -44,7 +44,7 @@ from app.services.invoice_documents import (
     render_invoice_period_pdf,
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
-from app.services.payment_provider import resolve_provider
+from app.services.payment_provider import detect_provider_from_reference, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 
 router = APIRouter()
@@ -1350,7 +1350,7 @@ def confirm_client_payment(
             message="Reference PSP absente",
         )
 
-    provider = resolve_provider(db)
+    provider = detect_provider_from_reference(payment_reference) or resolve_provider(db)
     lookup = lookup_payment(db, provider=provider, payment_reference=payment_reference)
     status_text = (lookup.status or "").strip().upper() or "UNKNOWN"
 

@@ -16,7 +16,7 @@ from app.models.plan import ClientPlanSubscription, Plan, PlanKind, Subscription
 from app.models.user import User
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
 from app.services.payment_checkout import lookup_payment
-from app.services.payment_provider import resolve_provider
+from app.services.payment_provider import detect_provider_from_reference, resolve_provider
 
 router = APIRouter(prefix="/public/payments")
 logger = logging.getLogger(__name__)
@@ -37,6 +37,11 @@ def _extract_reference(request: Request, payload: object) -> str | None:
             value = data_node.get("id")
             if value:
                 return str(value).strip()
+            object_node = data_node.get("object")
+            if isinstance(object_node, dict):
+                object_id = object_node.get("id")
+                if object_id:
+                    return str(object_id).strip()
     if request.query_params.get("id"):
         return str(request.query_params.get("id")).strip()
     form_id = request.query_params.get("payment_id")
@@ -91,7 +96,7 @@ async def payment_webhook(
             db.commit()
             return {"ok": True, "processed": False, "reason": "missing_reference"}
 
-        provider = resolve_provider(db)
+        provider = detect_provider_from_reference(reference) or resolve_provider(db)
         lookup = lookup_payment(db, provider=provider, payment_reference=reference)
         status_text = (lookup.status or "").strip().upper() or "UNKNOWN"
         sub.last_payment_status = status_text
