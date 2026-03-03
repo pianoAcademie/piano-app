@@ -1223,6 +1223,39 @@ button.danger {
   gap: 8px;
 }
 
+.session-quick-actions {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.session-quick-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid #d2b184;
+  border-radius: 10px;
+  background: #fff2dd;
+  text-decoration: none;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.session-quick-action:hover {
+  background: #f2d6ab;
+}
+
+.session-quick-action.danger {
+  border-color: #ce8b8b;
+  background: #fbe5e5;
+}
+
+.session-quick-action.danger:hover {
+  background: #f2c9c9;
+}
+
 .danger-link {
   display: inline-flex;
   align-items: center;

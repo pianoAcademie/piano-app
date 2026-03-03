@@ -1521,7 +1521,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      {selectedSession ? (
+      {selectedSession && !editSessionOpen ? (
         <section className="modal-overlay">
           <article className="modal-panel">
             <a className="modal-close-x" href={baseHref} aria-label="Fermer">
@@ -1573,34 +1573,44 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               {recurrenceLabel(selectedSession)}
             </p>
 
-            <div className="row quick-actions-row">
+            <div className="row quick-actions-row session-quick-actions">
               {selectedSessionHasBookings ? (
-                <a className="mode-link" href={attendanceModalHref}>
-                  Prendre les presences
+                <a
+                  className="session-quick-action"
+                  href={attendanceModalHref}
+                  aria-label="Prendre les presences"
+                  title="Prendre les presences"
+                >
+                  ✅
                 </a>
               ) : null}
-              <a className="mode-link" href={groupNotesModalHref}>
-                Note de groupe
+              <a className="session-quick-action" href={groupNotesModalHref} aria-label="Note de groupe" title="Note de groupe">
+                📝
               </a>
-              <a className="mode-link" href={sessionEmailModalHref}>
-                Envoyer email
+              <a className="session-quick-action" href={sessionEmailModalHref} aria-label="Envoyer email" title="Envoyer email">
+                ✉️
               </a>
-              <a className="mode-link" href={sessionSmsModalHref}>
-                Envoyer SMS
+              <a className="session-quick-action" href={sessionSmsModalHref} aria-label="Envoyer SMS" title="Envoyer SMS">
+                💬
               </a>
-              <a className="mode-link" href={duplicateModalHref}>
-                Dupliquer
+              <a className="session-quick-action" href={duplicateModalHref} aria-label="Dupliquer" title="Dupliquer">
+                📄
               </a>
-              <a className="mode-link" href={editSessionHref}>
-                Modifier
+              <a className="session-quick-action" href={editSessionHref} aria-label="Modifier le creneau" title="Modifier le creneau">
+                ✏️
               </a>
               {selectedSession.status !== "CANCELLED" ? (
-                <a className="danger-link" href={cancelConfirmHref}>
-                  Annuler le creneau...
+                <a
+                  className="session-quick-action danger"
+                  href={cancelConfirmHref}
+                  aria-label="Annuler le creneau"
+                  title="Annuler le creneau"
+                >
+                  ⛔
                 </a>
               ) : null}
-              <a className="danger-link" href={deleteConfirmHref}>
-                Supprimer le creneau...
+              <a className="session-quick-action danger" href={deleteConfirmHref} aria-label="Supprimer le creneau" title="Supprimer le creneau">
+                🗑
               </a>
             </div>
 
@@ -1682,14 +1692,24 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   ))}
                 </div>
               )}
-              <div className="row session-primary-actions">
+              <div className="row session-primary-actions session-quick-actions">
                 {selectedSessionHasBookings ? (
-                  <a className="mode-link" href={attendanceModalHref}>
-                    Prendre les presences
+                  <a
+                    className="session-quick-action"
+                    href={attendanceModalHref}
+                    aria-label="Prendre les presences"
+                    title="Prendre les presences"
+                  >
+                    ✅
                   </a>
                 ) : null}
-                <a className="mode-link" href={groupNotesModalHref}>
-                  Ajouter des notes de groupe
+                <a
+                  className="session-quick-action"
+                  href={groupNotesModalHref}
+                  aria-label="Ajouter des notes de groupe"
+                  title="Ajouter des notes de groupe"
+                >
+                  📝
                 </a>
               </div>
               {selectedSession.group_note ? (
@@ -1732,223 +1752,236 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </form>
             </section>
 
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && editSessionOpen ? (
+        <section className="modal-overlay">
+          <article className="modal-panel">
+            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+              ×
+            </a>
+            <h2 className="modal-title">Modifier le creneau</h2>
+            <p className="muted">
+              {selectedSession.title} | {formatDate(selectedSession.start_at_utc)} | {sessionTimeRangeLabel(selectedSession)}
+            </p>
+
+            {okMessage ? <section className="flash-ok modal-flash">{okMessage}</section> : null}
+            {errorMessage ? <section className="flash-err modal-flash">{errorMessage}</section> : null}
+
             <section className="card modal-card">
-                  <details className="modal-details" open={editSessionOpen}>
-                    <summary>Modifier ce creneau</summary>
+              <form action={updateAdminSessionAction} className="grid session-edit-form" noValidate>
+                <input type="hidden" name="session_id" value={selectedSession.id} />
+                <input type="hidden" name="return_to" value={editSessionHref} />
 
-                    <form action={updateAdminSessionAction} className="grid session-edit-form" noValidate>
-                      <input type="hidden" name="session_id" value={selectedSession.id} />
-                      <input type="hidden" name="return_to" value={modalHref} />
+                <label>
+                  Titre
+                  <input type="text" name="title" defaultValue={selectedSession.title} required />
+                </label>
 
-                      <label>
-                        Titre
-                        <input type="text" name="title" defaultValue={selectedSession.title} required />
-                      </label>
+                <label>
+                  Type de cours
+                  <select name="course_type_id" defaultValue={selectedSession.course_type_id} required>
+                    {courseTypes.map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-                      <label>
-                        Type de cours
-                        <select name="course_type_id" defaultValue={selectedSession.course_type_id} required>
-                          {courseTypes.map((row) => (
-                            <option key={row.id} value={row.id}>
-                              {row.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                <label>
+                  Lieu
+                  <select name="location_id" defaultValue={selectedSession.location_id} required>
+                    {locations.map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-                      <label>
-                        Lieu
-                        <select name="location_id" defaultValue={selectedSession.location_id} required>
-                          {locations.map((row) => (
-                            <option key={row.id} value={row.id}>
-                              {row.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                <label>
+                  Coach
+                  <select name="professor_id" defaultValue={selectedSession.professor_id} required>
+                    {professors.map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {row.first_name} {row.last_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-                      <label>
-                        Coach
-                        <select name="professor_id" defaultValue={selectedSession.professor_id} required>
-                          {professors.map((row) => (
-                            <option key={row.id} value={row.id}>
-                              {row.first_name} {row.last_name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                <label>
+                  Fuseau horaire du creneau
+                  <select name="session_timezone" defaultValue={selectedSession.timezone} required>
+                    {sessionTimezoneOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-                      <label>
-                        Fuseau horaire du creneau
-                        <select name="session_timezone" defaultValue={selectedSession.timezone} required>
-                          {sessionTimezoneOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                <label>
+                  Jour debut
+                  <input
+                    type="date"
+                    name="start_date"
+                    defaultValue={toDateInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                    required
+                  />
+                </label>
 
-                      <label>
-                        Jour debut
-                        <input
-                          type="date"
-                          name="start_date"
-                          defaultValue={toDateInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
-                          required
-                        />
-                      </label>
+                <label className="checkline">
+                  <input type="checkbox" name="is_all_day" defaultChecked={selectedSession.is_all_day} />
+                  Creneau sur toute la journee
+                </label>
 
+                <SessionTimeFields
+                  labelClassName="session-time-field"
+                  defaultStartTime={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                  defaultEndTime={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                  defaultDurationMinutes={sessionDurationMinutes(selectedSession)}
+                  requiredStart
+                />
+
+                <label>
+                  Capacite max
+                  <input type="number" name="capacity_max" min={0} defaultValue={selectedSession.capacity_max} />
+                </label>
+
+                <label>
+                  Statut
+                  <select name="status" defaultValue={selectedSession.status}>
+                    <option value="SCHEDULED">SCHEDULED</option>
+                    <option value="COMPLETED">COMPLETED</option>
+                    <option value="CANCELLED">CANCELLED</option>
+                  </select>
+                </label>
+
+                <label>
+                  Lien Zoom
+                  <input type="url" name="zoom_link" defaultValue={selectedSession.zoom_link ?? ""} />
+                </label>
+
+                <label>
+                  Portee modification
+                  <select name="apply_scope" defaultValue={defaultApplyScope(selectedSession)}>
+                    <option value="ONE">Ce creneau</option>
+                    {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">Serie future</option> : null}
+                    {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">Toute la serie</option> : null}
+                  </select>
+                </label>
+
+                {!selectedSession.recurrence_group_id ? (
+                  <fieldset className="session-edit-span recurrence-panel">
+                    <legend>Recurrence</legend>
+                    <div className="recurrence-mode-row">
                       <label className="checkline">
-                        <input type="checkbox" name="is_all_day" defaultChecked={selectedSession.is_all_day} />
-                        Creneau sur toute la journee
+                        <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
+                        Garder ponctuel
                       </label>
-
-                      <SessionTimeFields
-                        labelClassName="session-time-field"
-                        defaultStartTime={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
-                        defaultEndTime={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
-                        defaultDurationMinutes={sessionDurationMinutes(selectedSession)}
-                        requiredStart
-                      />
-
-                      <label>
-                        Capacite max
-                        <input type="number" name="capacity_max" min={0} defaultValue={selectedSession.capacity_max} />
+                      <label className="checkline">
+                        <input type="radio" name="recurrence_mode" value="RECURRING" />
+                        Transformer en recurrent
                       </label>
+                    </div>
 
-                      <label>
-                        Statut
-                        <select name="status" defaultValue={selectedSession.status}>
-                          <option value="SCHEDULED">SCHEDULED</option>
-                          <option value="COMPLETED">COMPLETED</option>
-                          <option value="CANCELLED">CANCELLED</option>
-                        </select>
-                      </label>
+                    <div className="recurrence-settings">
+                      <div className="grid cols-3 recurrence-grid">
+                        <label>
+                          Frequence
+                          <select name="recurrence_frequency" defaultValue="WEEKLY">
+                            <option value="DAILY">Journaliere</option>
+                            <option value="WEEKLY">Hebdomadaire</option>
+                            <option value="MONTHLY">Mensuelle</option>
+                          </select>
+                        </label>
 
-                      <label>
-                        Lien Zoom
-                        <input type="url" name="zoom_link" defaultValue={selectedSession.zoom_link ?? ""} />
-                      </label>
+                        <label>
+                          Se repete chaque
+                          <input type="number" name="recurrence_interval" min={1} defaultValue={1} />
+                        </label>
 
-                      <label>
-                        Portee modification
-                        <select name="apply_scope" defaultValue={defaultApplyScope(selectedSession)}>
-                          <option value="ONE">Ce creneau</option>
-                          {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">Serie future</option> : null}
-                          {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">Toute la serie</option> : null}
-                        </select>
-                      </label>
-
-                      {!selectedSession.recurrence_group_id ? (
-                        <fieldset className="session-edit-span recurrence-panel">
-                          <legend>Recurrence</legend>
-                          <div className="recurrence-mode-row">
-                            <label className="checkline">
-                              <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
-                              Garder ponctuel
-                            </label>
-                            <label className="checkline">
-                              <input type="radio" name="recurrence_mode" value="RECURRING" />
-                              Transformer en recurrent
-                            </label>
-                          </div>
-
-                          <div className="recurrence-settings">
-                            <div className="grid cols-3 recurrence-grid">
-                              <label>
-                                Frequence
-                                <select name="recurrence_frequency" defaultValue="WEEKLY">
-                                  <option value="DAILY">Journaliere</option>
-                                  <option value="WEEKLY">Hebdomadaire</option>
-                                  <option value="MONTHLY">Mensuelle</option>
-                                </select>
-                              </label>
-
-                              <label>
-                                Se repete chaque
-                                <input type="number" name="recurrence_interval" min={1} defaultValue={1} />
-                              </label>
-
-                              <label>
-                                Repeter jusqu au
-                                <input type="date" name="recurrence_until_date" />
-                              </label>
-                            </div>
-                            <p className="muted">
-                              Le creneau actuel devient l ancre de la serie, puis les occurrences futures sont creees.
-                            </p>
-                          </div>
-                        </fieldset>
-                      ) : (
-                        <p className="session-edit-span muted">
-                          Ce creneau appartient deja a une serie recurrente. Utilisez la portee de modification pour ajuster la serie.
-                        </p>
-                      )}
-
-                      <SessionVisibilityFields
-                        initialIsPrivate={selectedSession.is_private}
-                        initialAllowOnlineBooking={selectedSession.allow_online_booking}
-                      />
-
-                      <label className="session-edit-span">
-                        Description publique (vue client)
-                        <textarea name="public_description" rows={3} defaultValue={selectedSession.public_description ?? ""} />
-                      </label>
-
-                      <label className="session-edit-span">
-                        Description privee (interne)
-                        <textarea name="private_description" rows={3} defaultValue={selectedSession.private_description ?? ""} />
-                      </label>
-
-                      <label className="session-edit-span">
-                        Note pour le professeur (envoyee 24h avant)
-                        <RichMessageEditor
-                          name="professor_reminder_note"
-                          formatName="professor_reminder_note_format"
-                          rows={6}
-                          maxLength={12000}
-                          defaultFormat="HTML"
-                          defaultValue={selectedSession.professor_reminder_note ?? ""}
-                          placeholder="Saisir la note a joindre au rappel professeur..."
-                        />
-                      </label>
-
-                      <div className="row">
-                        <button type="submit">Enregistrer</button>
+                        <label>
+                          Repeter jusqu au
+                          <input type="date" name="recurrence_until_date" />
+                        </label>
                       </div>
-                    </form>
+                      <p className="muted">
+                        Le creneau actuel devient l ancre de la serie, puis les occurrences futures sont creees.
+                      </p>
+                    </div>
+                  </fieldset>
+                ) : (
+                  <p className="session-edit-span muted">
+                    Ce creneau appartient deja a une serie recurrente. Utilisez la portee de modification pour ajuster la serie.
+                  </p>
+                )}
 
-                    <form action={shiftAdminSessionAction} className="row quick-shift-row">
-                      <input type="hidden" name="session_id" value={selectedSession.id} />
-                      <input type="hidden" name="return_to" value={modalHref} />
-                      <input type="hidden" name="current_start_at_utc" value={toDateTimeLocalUtcValue(selectedSession.start_at_utc)} />
-                      <input type="hidden" name="current_end_at_utc" value={toDateTimeLocalUtcValue(selectedSession.end_at_utc)} />
+                <SessionVisibilityFields
+                  initialIsPrivate={selectedSession.is_private}
+                  initialAllowOnlineBooking={selectedSession.allow_online_booking}
+                />
 
-                      <label className="scope-inline">
-                        Deplacer
-                        <select name="apply_scope" defaultValue={defaultApplyScope(selectedSession)}>
-                          <option value="ONE">Ce creneau</option>
-                          {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">Serie future</option> : null}
-                          {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">Toute la serie</option> : null}
-                        </select>
-                      </label>
-                      <button type="submit" name="minutes_delta" value="-15" className="ghost small-btn">
-                        -15m
-                      </button>
-                      <button type="submit" name="minutes_delta" value="15" className="ghost small-btn">
-                        +15m
-                      </button>
-                      <button type="submit" name="minutes_delta" value="60" className="ghost small-btn">
-                        +1h
-                      </button>
-                      <button type="submit" name="minutes_delta" value="1440" className="ghost small-btn">
-                        +1j
-                      </button>
-                    </form>
+                <label className="session-edit-span">
+                  Description publique (vue client)
+                  <textarea name="public_description" rows={3} defaultValue={selectedSession.public_description ?? ""} />
+                </label>
 
-                  </details>
-                </section>
+                <label className="session-edit-span">
+                  Description privee (interne)
+                  <textarea name="private_description" rows={3} defaultValue={selectedSession.private_description ?? ""} />
+                </label>
+
+                <label className="session-edit-span">
+                  Note pour le professeur (envoyee 24h avant)
+                  <RichMessageEditor
+                    name="professor_reminder_note"
+                    formatName="professor_reminder_note_format"
+                    rows={6}
+                    maxLength={12000}
+                    defaultFormat="HTML"
+                    defaultValue={selectedSession.professor_reminder_note ?? ""}
+                    placeholder="Saisir la note a joindre au rappel professeur..."
+                  />
+                </label>
+
+                <div className="row">
+                  <button type="submit">Enregistrer</button>
+                </div>
+              </form>
+
+              <form action={shiftAdminSessionAction} className="row quick-shift-row">
+                <input type="hidden" name="session_id" value={selectedSession.id} />
+                <input type="hidden" name="return_to" value={editSessionHref} />
+                <input type="hidden" name="current_start_at_utc" value={toDateTimeLocalUtcValue(selectedSession.start_at_utc)} />
+                <input type="hidden" name="current_end_at_utc" value={toDateTimeLocalUtcValue(selectedSession.end_at_utc)} />
+
+                <label className="scope-inline">
+                  Deplacer
+                  <select name="apply_scope" defaultValue={defaultApplyScope(selectedSession)}>
+                    <option value="ONE">Ce creneau</option>
+                    {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">Serie future</option> : null}
+                    {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">Toute la serie</option> : null}
+                  </select>
+                </label>
+                <button type="submit" name="minutes_delta" value="-15" className="ghost small-btn">
+                  -15m
+                </button>
+                <button type="submit" name="minutes_delta" value="15" className="ghost small-btn">
+                  +15m
+                </button>
+                <button type="submit" name="minutes_delta" value="60" className="ghost small-btn">
+                  +1h
+                </button>
+                <button type="submit" name="minutes_delta" value="1440" className="ghost small-btn">
+                  +1j
+                </button>
+              </form>
+            </section>
           </article>
         </section>
       ) : null}
