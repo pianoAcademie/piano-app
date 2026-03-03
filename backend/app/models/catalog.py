@@ -164,6 +164,22 @@ class CourseType(Base):
             "sms_reminder_hours_before_start IS NULL OR sms_reminder_hours_before_start >= 0",
             name="ck_course_types_sms_reminder_hours_non_negative",
         ),
+        CheckConstraint(
+            "min_booking_notice_hours_override IS NULL OR min_booking_notice_hours_override >= 0",
+            name="ck_course_types_min_notice_override_non_negative",
+        ),
+        CheckConstraint(
+            "cancellation_deadline_hours_override IS NULL OR cancellation_deadline_hours_override >= 0",
+            name="ck_course_types_cancel_deadline_override_non_negative",
+        ),
+        CheckConstraint(
+            "auto_cancel_if_booked_less_than_override IS NULL OR auto_cancel_if_booked_less_than_override >= 0",
+            name="ck_course_types_auto_cancel_count_override_non_negative",
+        ),
+        CheckConstraint(
+            "auto_cancel_hours_before_start_override IS NULL OR auto_cancel_hours_before_start_override >= 0",
+            name="ck_course_types_auto_cancel_hours_override_non_negative",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -199,6 +215,10 @@ class CourseType(Base):
     default_course_rate_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     email_reminder_hours_before_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sms_reminder_hours_before_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_booking_notice_hours_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cancellation_deadline_hours_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_cancel_if_booked_less_than_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_cancel_hours_before_start_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

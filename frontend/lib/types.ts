@@ -52,6 +52,10 @@ export type CourseTypeOut = {
   default_course_rate_ttc: string | null;
   email_reminder_hours_before_start: number | null;
   sms_reminder_hours_before_start: number | null;
+  min_booking_notice_hours_override: number | null;
+  cancellation_deadline_hours_override: number | null;
+  auto_cancel_if_booked_less_than_override: number | null;
+  auto_cancel_hours_before_start_override: number | null;
   active: boolean;
 };
 
@@ -1264,6 +1268,10 @@ export type AdminActivityOut = {
   default_course_rate_ttc: string | null;
   email_reminder_hours_before_start: number | null;
   sms_reminder_hours_before_start: number | null;
+  min_booking_notice_hours_override: number | null;
+  cancellation_deadline_hours_override: number | null;
+  auto_cancel_if_booked_less_than_override: number | null;
+  auto_cancel_hours_before_start_override: number | null;
   active: boolean;
 };
 

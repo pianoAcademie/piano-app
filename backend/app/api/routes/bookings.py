@@ -10,7 +10,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, PlanningConfig, SessionStatus
 from app.models.family import ClientFamilyLink
 from app.models.plan import (
     ClientForfaitActivityPricing,
@@ -30,9 +30,47 @@ from app.services.subscriptions import reconcile_subscription_status
 
 router = APIRouter()
 
+PLANNING_RULE_DEFAULTS = {
+    "min_booking_notice_hours": 1,
+    "cancellation_deadline_hours": 1,
+    "block_client_cancellation": False,
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _effective_session_booking_rules(
+    db: Session,
+    *,
+    session_obj: CourseSession,
+) -> tuple[int, int, bool]:
+    config = db.scalar(select(PlanningConfig).where(PlanningConfig.location_id == session_obj.location_id))
+    course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
+    if course_type is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
+
+    min_booking_notice_hours = int(
+        config.min_booking_notice_hours if config is not None else PLANNING_RULE_DEFAULTS["min_booking_notice_hours"]
+    )
+    cancellation_deadline_hours = int(
+        config.cancellation_deadline_hours if config is not None else PLANNING_RULE_DEFAULTS["cancellation_deadline_hours"]
+    )
+    block_client_cancellation = bool(
+        config.block_client_cancellation if config is not None else PLANNING_RULE_DEFAULTS["block_client_cancellation"]
+    )
+
+    if course_type.min_booking_notice_hours_override is not None:
+        min_booking_notice_hours = int(course_type.min_booking_notice_hours_override)
+    if course_type.cancellation_deadline_hours_override is not None:
+        cancellation_deadline_hours = int(course_type.cancellation_deadline_hours_override)
+
+    return (
+        max(0, min_booking_notice_hours),
+        max(0, cancellation_deadline_hours),
+        block_client_cancellation,
+    )
 
 
 def _count_booked(db: Session, session_id: UUID) -> int:
@@ -763,6 +801,12 @@ def book_session(
 
     if session_obj.start_at_utc <= now:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session already started")
+    min_booking_notice_hours, _, _ = _effective_session_booking_rules(db, session_obj=session_obj)
+    if session_obj.start_at_utc < now + timedelta(hours=min_booking_notice_hours):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Booking deadline reached for this activity",
+        )
 
     _promote_waitlist_if_possible(db, session_obj, now)
 
@@ -963,6 +1007,18 @@ def cancel_booking(
 
     now = _utcnow()
     previous_status = booking.status
+    _, cancellation_deadline_hours, block_client_cancellation = _effective_session_booking_rules(db, session_obj=session_obj)
+    if previous_status == BookingStatus.BOOKED:
+        if block_client_cancellation:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Client cancellation is disabled for this planning/activity",
+            )
+        if session_obj.start_at_utc < now + timedelta(hours=cancellation_deadline_hours):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cancellation deadline reached for this activity",
+            )
 
     if previous_status == BookingStatus.BOOKED and booking.client_plan_subscription_id is not None and session_obj.start_at_utc > now:
         sub_and_plan = _load_subscription_with_plan_for_update(

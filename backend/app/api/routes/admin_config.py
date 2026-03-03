@@ -255,6 +255,10 @@ def _serialize_activity(activity: CourseType, *, credit_type_by_id: dict[UUID, C
         default_course_rate_ttc=activity.default_course_rate_ttc,
         email_reminder_hours_before_start=activity.email_reminder_hours_before_start,
         sms_reminder_hours_before_start=activity.sms_reminder_hours_before_start,
+        min_booking_notice_hours_override=activity.min_booking_notice_hours_override,
+        cancellation_deadline_hours_override=activity.cancellation_deadline_hours_override,
+        auto_cancel_if_booked_less_than_override=activity.auto_cancel_if_booked_less_than_override,
+        auto_cancel_hours_before_start_override=activity.auto_cancel_hours_before_start_override,
         active=activity.active,
     )
 
@@ -1134,6 +1138,10 @@ def create_admin_activity(
         default_course_rate_ttc=payload.default_course_rate_ttc,
         email_reminder_hours_before_start=payload.email_reminder_hours_before_start,
         sms_reminder_hours_before_start=payload.sms_reminder_hours_before_start,
+        min_booking_notice_hours_override=payload.min_booking_notice_hours_override,
+        cancellation_deadline_hours_override=payload.cancellation_deadline_hours_override,
+        auto_cancel_if_booked_less_than_override=payload.auto_cancel_if_booked_less_than_override,
+        auto_cancel_hours_before_start_override=payload.auto_cancel_hours_before_start_override,
         active=bool(payload.active),
     )
     db.add(activity)
@@ -1208,6 +1216,18 @@ def update_admin_activity(
 
     if "sms_reminder_hours_before_start" in changes:
         activity.sms_reminder_hours_before_start = changes["sms_reminder_hours_before_start"]
+
+    if "min_booking_notice_hours_override" in changes:
+        activity.min_booking_notice_hours_override = changes["min_booking_notice_hours_override"]
+
+    if "cancellation_deadline_hours_override" in changes:
+        activity.cancellation_deadline_hours_override = changes["cancellation_deadline_hours_override"]
+
+    if "auto_cancel_if_booked_less_than_override" in changes:
+        activity.auto_cancel_if_booked_less_than_override = changes["auto_cancel_if_booked_less_than_override"]
+
+    if "auto_cancel_hours_before_start_override" in changes:
+        activity.auto_cancel_hours_before_start_override = changes["auto_cancel_hours_before_start_override"]
 
     if "active" in changes:
         activity.active = bool(changes["active"])

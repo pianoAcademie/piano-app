@@ -420,6 +420,10 @@ class AdminActivityOut(BaseModel):
     default_course_rate_ttc: Decimal | None
     email_reminder_hours_before_start: int | None
     sms_reminder_hours_before_start: int | None
+    min_booking_notice_hours_override: int | None
+    cancellation_deadline_hours_override: int | None
+    auto_cancel_if_booked_less_than_override: int | None
+    auto_cancel_hours_before_start_override: int | None
     active: bool
 
 
@@ -437,6 +441,10 @@ class AdminActivityUpsertRequest(BaseModel):
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
     email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
     sms_reminder_hours_before_start: int | None = Field(default=None, ge=0)
+    min_booking_notice_hours_override: int | None = Field(default=None, ge=0)
+    cancellation_deadline_hours_override: int | None = Field(default=None, ge=0)
+    auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=0)
+    auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
     active: bool = True
 
 
@@ -454,6 +462,10 @@ class AdminActivityUpdateRequest(BaseModel):
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
     email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
     sms_reminder_hours_before_start: int | None = Field(default=None, ge=0)
+    min_booking_notice_hours_override: int | None = Field(default=None, ge=0)
+    cancellation_deadline_hours_override: int | None = Field(default=None, ge=0)
+    auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=0)
+    auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
     active: bool | None = None
 
 

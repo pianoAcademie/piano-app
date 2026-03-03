@@ -252,6 +252,20 @@ function reminderOffsetLabel(hoursBeforeStart: number | null): string {
   return `${hoursBeforeStart}h`;
 }
 
+function planningRuleOverrideLabel(value: number | null): string {
+    if (value === null) {
+    return "Global";
+  }
+  return String(value);
+}
+
+function planningRuleHoursLabel(value: number | null): string {
+  if (value === null) {
+    return "Global";
+  }
+  return `${value}h`;
+}
+
 function contractModeLabel(mode: string): string {
   const normalized = mode.trim().toUpperCase();
   if (normalized === "PRESENTIEL") {
@@ -2259,6 +2273,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <span className="status-pill status-off">
                             Rappel SMS: {reminderOffsetLabel(activity.sms_reminder_hours_before_start)}
                           </span>
+                          <span className="status-pill status-off">
+                            Min resa: {planningRuleHoursLabel(activity.min_booking_notice_hours_override)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Delai annulation: {planningRuleHoursLabel(activity.cancellation_deadline_hours_override)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Auto if {"<"} {planningRuleOverrideLabel(activity.auto_cancel_if_booked_less_than_override)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Auto Xh: {planningRuleHoursLabel(activity.auto_cancel_hours_before_start_override)}
+                          </span>
                           <span className="status-pill status-warn">
                             {activity.default_course_rate_ttc
                               ? `${activity.default_course_rate_ttc} ${accountDefaultCurrency}/cours TTC`
@@ -2357,6 +2383,46 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </option>
                             ))}
                           </select>
+                        </label>
+                        <label>
+                          Delai minimum reservation (h)
+                          <input
+                            type="number"
+                            name="min_booking_notice_hours_override"
+                            min={0}
+                            step="1"
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Delai autorise pour annulation (h)
+                          <input
+                            type="number"
+                            name="cancellation_deadline_hours_override"
+                            min={0}
+                            step="1"
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Auto-annulation si inscrits {"<"}
+                          <input
+                            type="number"
+                            name="auto_cancel_if_booked_less_than_override"
+                            min={0}
+                            step="1"
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Auto-annulation X heures avant debut
+                          <input
+                            type="number"
+                            name="auto_cancel_hours_before_start_override"
+                            min={0}
+                            step="1"
+                            placeholder="vide = planning"
+                          />
                         </label>
                         <label>
                           Tarif horaire TTC
@@ -2526,6 +2592,50 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </option>
                             ))}
                           </select>
+                        </label>
+                        <label>
+                          Delai minimum reservation (h)
+                          <input
+                            type="number"
+                            name="min_booking_notice_hours_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedActivity.min_booking_notice_hours_override ?? ""}
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Delai autorise pour annulation (h)
+                          <input
+                            type="number"
+                            name="cancellation_deadline_hours_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedActivity.cancellation_deadline_hours_override ?? ""}
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Auto-annulation si inscrits {"<"}
+                          <input
+                            type="number"
+                            name="auto_cancel_if_booked_less_than_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedActivity.auto_cancel_if_booked_less_than_override ?? ""}
+                            placeholder="vide = planning"
+                          />
+                        </label>
+                        <label>
+                          Auto-annulation X heures avant debut
+                          <input
+                            type="number"
+                            name="auto_cancel_hours_before_start_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedActivity.auto_cancel_hours_before_start_override ?? ""}
+                            placeholder="vide = planning"
+                          />
                         </label>
                         <label>
                           Tarif horaire TTC

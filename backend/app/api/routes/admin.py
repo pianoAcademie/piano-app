@@ -534,11 +534,22 @@ def _resolve_auto_cancel_deadline(
     *,
     start_at_utc: datetime,
     auto_cancel_deadline_utc: datetime | None,
+    location_id: UUID,
+    course_type_id: UUID,
 ) -> datetime:
     if auto_cancel_deadline_utc is not None:
         return auto_cancel_deadline_utc
 
-    hours = _setting_int(db, "auto_cancel_hours_before_start")
+    config = db.scalar(select(PlanningConfig).where(PlanningConfig.location_id == location_id))
+    hours = int(
+        config.auto_cancel_hours_before_start
+        if config is not None
+        else PLANNING_DEFAULTS["auto_cancel_hours_before_start"]
+    )
+    course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
+    if course_type is not None and course_type.auto_cancel_hours_before_start_override is not None:
+        hours = int(course_type.auto_cancel_hours_before_start_override)
+    hours = max(0, hours)
     return start_at_utc - timedelta(hours=hours)
 
 
@@ -1160,6 +1171,8 @@ def create_session(
         db,
         start_at_utc=start_at_utc,
         auto_cancel_deadline_utc=payload.auto_cancel_deadline_utc,
+        location_id=payload.location_id,
+        course_type_id=payload.course_type_id,
     )
     if is_vacation:
         capacity_max = 0
@@ -1980,6 +1993,8 @@ def update_session(
                 db,
                 start_at_utc=anchor_start,
                 auto_cancel_deadline_utc=None,
+                location_id=location_id,
+                course_type_id=course_type_id,
             )
     else:
         if "end_at_utc" in updates:
@@ -1999,6 +2014,8 @@ def update_session(
                 db,
                 start_at_utc=anchor_start,
                 auto_cancel_deadline_utc=None,
+                location_id=location_id,
+                course_type_id=course_type_id,
             )
         else:
             anchor_deadline = original_anchor_deadline
@@ -2129,6 +2146,8 @@ def update_session(
                     db,
                     start_at_utc=resolved_start,
                     auto_cancel_deadline_utc=None,
+                    location_id=target.location_id,
+                    course_type_id=target.course_type_id,
                 )
 
         _validate_session_times(

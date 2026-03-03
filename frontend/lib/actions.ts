@@ -346,6 +346,18 @@ function parseReminderHoursOverride(raw: string): number | null | "INVALID" {
   return parsed;
 }
 
+function parseOptionalPlanningRuleOverride(raw: string): number | null | "INVALID" {
+  const value = raw.trim();
+  if (!value || value.toLowerCase() === "global") {
+    return null;
+  }
+  const parsed = parseNonNegativeInt(value);
+  if (parsed === null) {
+    return "INVALID";
+  }
+  return parsed;
+}
+
 function parseNonNegativeDecimal(raw: string): number | null {
   const value = raw.trim();
   if (!value) {
@@ -4441,6 +4453,16 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
   const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
   const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
+  const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
+  const cancellationDeadlineHoursOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("cancellation_deadline_hours_override") ?? ""),
+  );
+  const autoCancelIfBookedLessThanOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("auto_cancel_if_booked_less_than_override") ?? ""),
+  );
+  const autoCancelHoursBeforeStartOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("auto_cancel_hours_before_start_override") ?? ""),
+  );
 
   if (!name) {
     redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
@@ -4466,6 +4488,18 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (smsReminderHours === "INVALID") {
     redirect("/admin/config?section=activities&error=Rappel%20SMS%20invalide");
   }
+  if (minBookingNoticeHoursOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Delai%20minimum%20reservation%20invalide");
+  }
+  if (cancellationDeadlineHoursOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Delai%20annulation%20invalide");
+  }
+  if (autoCancelIfBookedLessThanOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20inscrits%20invalide");
+  }
+  if (autoCancelHoursBeforeStartOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20heures%20invalide");
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -4480,6 +4514,10 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     email_reminder_hours_before_start: emailReminderHours,
     sms_reminder_hours_before_start: smsReminderHours,
+    min_booking_notice_hours_override: minBookingNoticeHoursOverride,
+    cancellation_deadline_hours_override: cancellationDeadlineHoursOverride,
+    auto_cancel_if_booked_less_than_override: autoCancelIfBookedLessThanOverride,
+    auto_cancel_hours_before_start_override: autoCancelHoursBeforeStartOverride,
     active: checkboxField(formData, "active"),
   };
   if (code) {
@@ -4533,6 +4571,16 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
   const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
   const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
+  const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
+  const cancellationDeadlineHoursOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("cancellation_deadline_hours_override") ?? ""),
+  );
+  const autoCancelIfBookedLessThanOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("auto_cancel_if_booked_less_than_override") ?? ""),
+  );
+  const autoCancelHoursBeforeStartOverride = parseOptionalPlanningRuleOverride(
+    String(formData.get("auto_cancel_hours_before_start_override") ?? ""),
+  );
 
   if (!name) {
     redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
@@ -4558,6 +4606,18 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (smsReminderHours === "INVALID") {
     redirect("/admin/config?section=activities&error=Rappel%20SMS%20invalide");
   }
+  if (minBookingNoticeHoursOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Delai%20minimum%20reservation%20invalide");
+  }
+  if (cancellationDeadlineHoursOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Delai%20annulation%20invalide");
+  }
+  if (autoCancelIfBookedLessThanOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20inscrits%20invalide");
+  }
+  if (autoCancelHoursBeforeStartOverride === "INVALID") {
+    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20heures%20invalide");
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -4573,6 +4633,10 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     email_reminder_hours_before_start: emailReminderHours,
     sms_reminder_hours_before_start: smsReminderHours,
+    min_booking_notice_hours_override: minBookingNoticeHoursOverride,
+    cancellation_deadline_hours_override: cancellationDeadlineHoursOverride,
+    auto_cancel_if_booked_less_than_override: autoCancelIfBookedLessThanOverride,
+    auto_cancel_hours_before_start_override: autoCancelHoursBeforeStartOverride,
     active: checkboxField(formData, "active"),
   };
 
