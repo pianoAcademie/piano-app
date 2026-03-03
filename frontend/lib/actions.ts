@@ -3057,8 +3057,9 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const transactionType = String(formData.get("transaction_type") ?? "").trim().toUpperCase();
+  const isPaymentTransaction = transactionType === "PAYMENT";
   const amountRaw = String(formData.get("amount_incl_vat") ?? "").trim().replace(",", ".");
-  const vatRateRaw = String(formData.get("vat_rate") ?? "20").trim().replace(",", ".");
+  const vatRateRaw = String(formData.get("vat_rate") ?? (isPaymentTransaction ? "0" : "20")).trim().replace(",", ".");
   const occurredAtRaw = String(formData.get("occurred_at") ?? "").trim();
   const occurredAt = occurredAtRaw ? parseUtcStartOfDate(occurredAtRaw) : null;
   const amountInclVat = parseNonNegativeDecimal(amountRaw);
@@ -3093,7 +3094,10 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   if (amountInclVat === null || amountInclVat <= 0) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Montant%20invalide`);
   }
-  if (vatRate === null || vatRate < 0 || vatRate > 100) {
+  if (isPaymentTransaction && !paymentMethodCode) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Mode%20de%20paiement%20obligatoire`);
+  }
+  if (!isPaymentTransaction && (vatRate === null || vatRate < 0 || vatRate > 100)) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
   }
   if (occurredAtRaw && !occurredAt) {
@@ -3114,7 +3118,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         payment_method_code: paymentMethodCode,
         student_id: optionalField(formData, "student_id"),
         amount_incl_vat: amountInclVat,
-        vat_rate: vatRate,
+        vat_rate: isPaymentTransaction ? 0 : vatRate,
         currency: optionalField(formData, "currency"),
         reconciled_invoice_note_ids: reconciledInvoiceNoteIds,
         mark_reconciled_invoices_paid: markReconciledInvoicesPaid,
@@ -3141,8 +3145,10 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const transactionId = String(formData.get("transaction_id") ?? "").trim();
+  const transactionType = String(formData.get("transaction_type") ?? "").trim().toUpperCase();
+  const isPaymentTransaction = transactionType === "PAYMENT";
   const amountRaw = String(formData.get("amount_incl_vat") ?? "").trim().replace(",", ".");
-  const vatRateRaw = String(formData.get("vat_rate") ?? "").trim().replace(",", ".");
+  const vatRateRaw = String(formData.get("vat_rate") ?? (isPaymentTransaction ? "0" : "")).trim().replace(",", ".");
   const occurredAtRaw = String(formData.get("occurred_at") ?? "").trim();
   const occurredAt = occurredAtRaw ? parseUtcStartOfDate(occurredAtRaw) : null;
   const amountInclVat = parseNonNegativeDecimal(amountRaw);
@@ -3155,7 +3161,10 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
   if (amountInclVat === null || amountInclVat <= 0) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Montant%20invalide`);
   }
-  if (vatRateRaw && (vatRate === null || vatRate < 0 || vatRate > 100)) {
+  if (isPaymentTransaction && !paymentMethodCode) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Mode%20de%20paiement%20obligatoire`);
+  }
+  if (!isPaymentTransaction && vatRateRaw && (vatRate === null || vatRate < 0 || vatRate > 100)) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
   }
   if (occurredAtRaw && !occurredAt) {
@@ -3174,7 +3183,7 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
         reference: optionalField(formData, "reference"),
         student_id: optionalField(formData, "student_id"),
         amount_incl_vat: amountInclVat,
-        vat_rate: vatRate ?? undefined,
+        vat_rate: isPaymentTransaction ? 0 : (vatRate ?? undefined),
         currency: optionalField(formData, "currency"),
         payment_method_code: paymentMethodCode,
       }),

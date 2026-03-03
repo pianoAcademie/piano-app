@@ -4756,6 +4756,8 @@ def create_admin_client_manual_transaction(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Amount must be greater than zero")
 
     vat_rate = Decimal(payload.vat_rate).quantize(Decimal("0.001"))
+    if transaction_type == "PAYMENT":
+        vat_rate = Decimal("0.000")
     ratio = Decimal("1.000") + (vat_rate / Decimal("100"))
     if ratio <= Decimal("0.000"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid VAT rate")
@@ -4781,6 +4783,11 @@ def create_admin_client_manual_transaction(
         payment_method_code = _manual_payment_method_code(payload.reference)
     if payment_method_code is not None:
         payment_method_code = payment_method_code.upper()
+    if transaction_type == "PAYMENT" and payment_method_code is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le mode de paiement est obligatoire pour une transaction de paiement",
+        )
     if transaction_type != "PAYMENT":
         payment_method_code = None
     reference = _build_manual_reference(payment_method_code=payment_method_code, custom_reference=custom_reference)
@@ -5034,10 +5041,14 @@ def update_admin_client_manual_transaction(
     total_abs = _quantize_money(Decimal(update_values.get("amount_incl_vat", current_total_abs)))
     if total_abs <= Decimal("0.00"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Amount must be greater than zero")
-    vat_rate_value = Decimal(update_values.get("vat_rate", row.vat_rate)).quantize(Decimal("0.001"))
-    ratio = Decimal("1.000") + (vat_rate_value / Decimal("100"))
-    if ratio <= Decimal("0.000"):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid VAT rate")
+    if transaction_type == "PAYMENT":
+        vat_rate_value = Decimal("0.000")
+        ratio = Decimal("1.000")
+    else:
+        vat_rate_value = Decimal(update_values.get("vat_rate", row.vat_rate)).quantize(Decimal("0.001"))
+        ratio = Decimal("1.000") + (vat_rate_value / Decimal("100"))
+        if ratio <= Decimal("0.000"):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid VAT rate")
 
     amount_excl_abs = _quantize_money(total_abs / ratio)
     vat_amount_abs = _quantize_money(total_abs - amount_excl_abs)
@@ -5060,6 +5071,11 @@ def update_admin_client_manual_transaction(
         payment_method_code = current_payment_method_code
     if payment_method_code is not None:
         payment_method_code = payment_method_code.upper()
+    if transaction_type == "PAYMENT" and payment_method_code is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le mode de paiement est obligatoire pour une transaction de paiement",
+        )
     if transaction_type != "PAYMENT":
         payment_method_code = None
     custom_reference = reference_input if "reference" in update_values else current_custom_reference

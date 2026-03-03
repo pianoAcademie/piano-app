@@ -4002,9 +4002,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </label>
               {manualIsCashFlow ? (
                 <label>
-                  Mode de paiement (optionnel)
-                  <select name="payment_method_code" defaultValue="">
-                    <option value="">(Non precise)</option>
+                  {manualIsPayment ? "Mode de paiement *" : "Mode de paiement (optionnel)"}
+                  <select name="payment_method_code" defaultValue="" required={manualIsPayment}>
+                    {manualIsPayment ? <option value="" disabled>Selectionner...</option> : <option value="">(Non precise)</option>}
                     {enabledPaymentMethods.map((method) => (
                       <option key={method.code} value={method.code}>
                         {method.label}
@@ -4122,6 +4122,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="transaction_id" value={selectedManualTransactionForEdit.id} />
                 <input type="hidden" name="currency" value={selectedManualTransactionForEdit.currency || client.preferred_currency || "EUR"} />
+                <input type="hidden" name="transaction_type" value={editManualTransactionTypeCode} />
 
                 <label>
                   Etudiant (optionnel)
@@ -4143,15 +4144,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   Montant TTC
                   <input type="number" name="amount_incl_vat" step="0.01" min="0.01" defaultValue={editManualAmountAbs} required />
                 </label>
-                <label>
-                  TVA (%)
-                  <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={editManualVatDefault} required />
-                </label>
+                {!editManualIsPayment ? (
+                  <label>
+                    TVA (%)
+                    <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={editManualVatDefault} required />
+                  </label>
+                ) : (
+                  <input type="hidden" name="vat_rate" value="0" />
+                )}
                 {editManualIsPayment ? (
                   <label>
-                    Mode de paiement
-                    <select name="payment_method_code" defaultValue={selectedManualTransactionForEdit.payment_method_code ?? ""}>
-                      <option value="">(Non precise)</option>
+                    Mode de paiement *
+                    <select name="payment_method_code" defaultValue={selectedManualTransactionForEdit.payment_method_code ?? ""} required>
+                      <option value="" disabled>Selectionner...</option>
                       {enabledPaymentMethods.map((method) => (
                         <option key={method.code} value={method.code}>
                           {method.label}
