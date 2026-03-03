@@ -24,7 +24,7 @@ import type {
 } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type Tab = "profil" | "droits" | "tarifs" | "planning";
+type Tab = "profil" | "droits" | "tarifs" | "solde" | "planning";
 type AgendaView = "month" | "week" | "day";
 
 const COLLABORATOR_LANGUAGE_OPTIONS: string[] = [
@@ -60,7 +60,7 @@ function readParam(params: SearchParams, key: string): string {
 }
 
 function parseTab(value: string): Tab {
-  if (value === "droits" || value === "tarifs" || value === "planning") {
+  if (value === "droits" || value === "tarifs" || value === "solde" || value === "planning") {
     return value;
   }
   return "profil";
@@ -358,7 +358,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     ? backendRequest<AdminProfessorContractLocationOptionOut[]>("/api/v1/admin/collaborators/contract-grid/locations", {}, token)
     : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminProfessorContractLocationOptionOut[] });
   const payoutLedgerRequest =
-    currentTab === "tarifs"
+    currentTab === "solde"
       ? backendRequest<AdminProfessorPayoutLedgerOut>(`/api/v1/admin/collaborators/${params.professorId}/payout-ledger?${payoutLedgerQuery.toString()}`, {}, token)
       : Promise.resolve({ ok: true as const, status: 200, data: null as AdminProfessorPayoutLedgerOut | null });
 
@@ -463,7 +463,8 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "profil", label: "Fiche" },
     { id: "droits", label: "Droits" },
-    { id: "tarifs", label: "Tarifs" },
+    { id: "tarifs", label: "Configuration de la paie" },
+    { id: "solde", label: "Solde du professeur" },
     { id: "planning", label: "Planning" },
   ];
 
@@ -501,7 +502,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
       {!accountResult.ok ? <section className="flash-err">Erreur devises: {accountResult.message}</section> : null}
       {showLegacyContractGrid && !contractGridsResult.ok ? <section className="flash-err">Erreur grilles contractuelles: {contractGridsResult.message}</section> : null}
       {showLegacyContractGrid && !contractLocationsResult.ok ? <section className="flash-err">Erreur lieux contractuels: {contractLocationsResult.message}</section> : null}
-      {currentTab === "tarifs" && !payoutLedgerResult.ok ? <section className="flash-err">Erreur solde paie: {payoutLedgerResult.message}</section> : null}
+      {currentTab === "solde" && !payoutLedgerResult.ok ? <section className="flash-err">Erreur solde paie: {payoutLedgerResult.message}</section> : null}
 
       {currentTab === "profil" ? (
         <section className="grid cols-2">
@@ -872,69 +873,6 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             </form>
           </article>
 
-          <article className="card span-2">
-            <div className="row spread">
-              <h3>Solde du professeur</h3>
-              <span className="badge">
-                {payoutLedger?.total_due ?? "0.00"} {payoutLedger?.currency ?? professor.payout_currency}
-              </span>
-            </div>
-            <form method="get" className="row top-gap-sm">
-              <input type="hidden" name="tab" value="tarifs" />
-              <label style={{ minWidth: "220px" }}>
-                Date d arrete
-                <input type="date" name="payout_as_of" defaultValue={payoutAsOf} />
-              </label>
-              <button type="submit">Actualiser</button>
-            </form>
-            {payoutLedger && payoutLedger.rows.length > 0 ? (
-              <div className="table-wrap top-gap-sm">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Date & heure</th>
-                      <th>Description</th>
-                      <th>Revenu</th>
-                      <th>Paiement</th>
-                      <th>Solde cumule</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payoutLedger.rows.map((row) => (
-                      <tr key={`payout-ledger-${row.session_id}`}>
-                        <td>
-                          {formatDate(row.start_at_utc)}
-                          <br />
-                          <small className="muted">{row.duration_hours} h</small>
-                        </td>
-                        <td>
-                          {row.course_type_name}
-                          <br />
-                          <small className="muted">{row.location_name}</small>
-                        </td>
-                        <td>
-                          {row.amount !== null ? `${row.amount} ${row.currency ?? payoutLedger.currency}` : "-"}
-                          <br />
-                          <small className="muted">{row.hourly_rate !== null ? `${row.hourly_rate} / h` : "taux non defini"}</small>
-                        </td>
-                        <td>
-                          <span className={`status-pill ${payoutStatusToneClass(row.payout_status)}`}>
-                            {payoutStatusLabel(row.payout_status)}
-                          </span>
-                        </td>
-                        <td>
-                          {row.cumulative_due} {payoutLedger.currency}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="muted top-gap-sm">Aucun cours comptabilise jusqu a cette date.</p>
-            )}
-          </article>
-
           {showLegacyContractGrid ? (
             <>
               <article className="card">
@@ -1161,6 +1099,71 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 Afficher les grilles contractuelles (mode legacy)
               </Link>
             </article>
+          )}
+        </section>
+      ) : null}
+
+      {currentTab === "solde" ? (
+        <section className="card">
+          <div className="row spread">
+            <h3>Solde du professeur</h3>
+            <span className="badge">
+              {payoutLedger?.total_due ?? "0.00"} {payoutLedger?.currency ?? professor.payout_currency}
+            </span>
+          </div>
+          <form method="get" className="row top-gap-sm">
+            <input type="hidden" name="tab" value="solde" />
+            <label style={{ minWidth: "220px" }}>
+              Date d arrete
+              <input type="date" name="payout_as_of" defaultValue={payoutAsOf} />
+            </label>
+            <button type="submit">Actualiser</button>
+          </form>
+          {payoutLedger && payoutLedger.rows.length > 0 ? (
+            <div className="table-wrap top-gap-sm">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Date & heure</th>
+                    <th>Description</th>
+                    <th>Revenu</th>
+                    <th>Paiement</th>
+                    <th>Solde cumule</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payoutLedger.rows.map((row) => (
+                    <tr key={`payout-ledger-${row.session_id}`}>
+                      <td>
+                        {formatDate(row.start_at_utc)}
+                        <br />
+                        <small className="muted">{row.duration_hours} h</small>
+                      </td>
+                      <td>
+                        {row.course_type_name}
+                        <br />
+                        <small className="muted">{row.location_name}</small>
+                      </td>
+                      <td>
+                        {row.amount !== null ? `${row.amount} ${row.currency ?? payoutLedger.currency}` : "-"}
+                        <br />
+                        <small className="muted">{row.hourly_rate !== null ? `${row.hourly_rate} / h` : "taux non defini"}</small>
+                      </td>
+                      <td>
+                        <span className={`status-pill ${payoutStatusToneClass(row.payout_status)}`}>
+                          {payoutStatusLabel(row.payout_status)}
+                        </span>
+                      </td>
+                      <td>
+                        {row.cumulative_due} {payoutLedger.currency}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="muted top-gap-sm">Aucun cours comptabilise jusqu a cette date.</p>
           )}
         </section>
       ) : null}

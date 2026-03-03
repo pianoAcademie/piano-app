@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -77,7 +78,7 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
   const [collaboratorsResult, paymentsResult] = await Promise.all([
     backendRequest<AdminProfessorDetailOut[]>(`/api/v1/admin/collaborators?${collaboratorsQuery.toString()}`, {}, token),
     backendRequest<AdminProfessorSalaryPaymentOut[]>(
-      `/api/v1/admin/collaborators/salary-payments?reference_date=${encodeURIComponent(referenceDate)}&limit=300`,
+      `/api/v1/admin/collaborators/salary/payments?reference_date=${encodeURIComponent(referenceDate)}&limit=300`,
       {},
       token,
     ),
@@ -155,9 +156,11 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
                 return (
                   <tr key={professor.id}>
                     <td>
-                      <strong>
-                        {professor.first_name} {professor.last_name}
-                      </strong>
+                      <Link href={`/admin/professors/${professor.id}`} className="mode-link">
+                        <strong>
+                          {professor.first_name} {professor.last_name}
+                        </strong>
+                      </Link>
                     </td>
                     <td>{professor.email}</td>
                     <td>{money(due, currency)}</td>
