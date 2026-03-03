@@ -334,6 +334,18 @@ function parseNonNegativeInt(raw: string): number | null {
   return parsed;
 }
 
+function parseReminderHoursOverride(raw: string): number | null | "INVALID" {
+  const value = raw.trim();
+  if (!value || value.toLowerCase() === "global") {
+    return null;
+  }
+  const parsed = parseNonNegativeInt(value);
+  if (parsed === null) {
+    return "INVALID";
+  }
+  return parsed;
+}
+
 function parseNonNegativeDecimal(raw: string): number | null {
   const value = raw.trim();
   if (!value) {
@@ -2057,6 +2069,93 @@ export async function adminClientActionPlaceholder(formData: FormData): Promise<
   }
 
   redirect(`/admin/clients/${clientId}?ok=${encodeURIComponent(actionName + " en preparation")}`);
+}
+
+export async function sendAdminClientMessageAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const toRecipientsChecked = parseStringList(formData.getAll("to_emails"));
+  const toRecipientsFree = emailListField(formData, "to_emails_free") ?? [];
+  const ccRecipientsChecked = parseStringList(formData.getAll("cc_emails"));
+  const ccRecipientsFree = emailListField(formData, "cc_emails_free") ?? [];
+  const sendCopyToSelf = parseCheckboxFlag(formData, "send_copy_to_self", false);
+  const mergeUniqueEmails = (values: string[]): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of values) {
+      const value = String(raw || "").trim();
+      if (!value) {
+        continue;
+      }
+      const key = value.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(value);
+    }
+    return out;
+  };
+  const toRecipients = mergeUniqueEmails([...toRecipientsChecked, ...toRecipientsFree]);
+  const ccRecipients = mergeUniqueEmails([...ccRecipientsChecked, ...ccRecipientsFree]);
+  const subject = String(formData.get("subject") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  const bodyFormatRaw = String(formData.get("body_format") ?? "HTML").trim().toUpperCase();
+  const bodyFormat = bodyFormatRaw === "TEXT" ? "TEXT" : "HTML";
+  const source = optionalField(formData, "source");
+  const messagesMonthsRaw = String(formData.get("messages_months") ?? "").trim();
+  const messagesMonths = messagesMonthsRaw === "6" || messagesMonthsRaw === "12" ? messagesMonthsRaw : "3";
+  const messagesQuery = String(formData.get("messages_q") ?? "").trim();
+  const messageSearch = new URLSearchParams({
+    tab: "messages",
+    messages_months: messagesMonths,
+  });
+  if (messagesQuery) {
+    messageSearch.set("messages_q", messagesQuery);
+  }
+
+  if (!clientId) {
+    redirect("/admin/clients?error=Client%20invalide");
+  }
+
+  if (!subject || !body) {
+    messageSearch.set("message_modal", "compose");
+    messageSearch.set("error", "Objet et message obligatoires");
+    redirect(`/admin/clients/${clientId}?${messageSearch.toString()}`);
+  }
+
+  const result = await backendRequest<{ sent_at: string; to_recipients: string[]; cc_recipients: string[]; message_ids: string[] }>(
+    `/api/v1/admin/clients/${clientId}/messages/email`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        to_emails: toRecipients,
+        cc_emails: ccRecipients,
+        send_copy_to_self: sendCopyToSelf,
+        subject,
+        body,
+        body_format: bodyFormat,
+        source,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    messageSearch.set("message_modal", "compose");
+    messageSearch.set("error", result.message);
+    redirect(`/admin/clients/${clientId}?${messageSearch.toString()}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  messageSearch.set("ok", "Message envoye");
+  redirect(`/admin/clients/${clientId}?${messageSearch.toString()}`);
 }
 
 export async function sendAdminClientPasswordAction(formData: FormData): Promise<void> {
@@ -4340,6 +4439,8 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
+  const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
+  const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
 
   if (!name) {
     redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
@@ -4359,6 +4460,12 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (defaultCourseRateRaw && defaultCourseRate === null) {
     redirect("/admin/config?section=activities&error=Tarif%20par%20cours%20invalide");
   }
+  if (emailReminderHours === "INVALID") {
+    redirect("/admin/config?section=activities&error=Rappel%20email%20invalide");
+  }
+  if (smsReminderHours === "INVALID") {
+    redirect("/admin/config?section=activities&error=Rappel%20SMS%20invalide");
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -4371,6 +4478,8 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     default_capacity: defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
+    email_reminder_hours_before_start: emailReminderHours,
+    sms_reminder_hours_before_start: smsReminderHours,
     active: checkboxField(formData, "active"),
   };
   if (code) {
@@ -4422,6 +4531,8 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
+  const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
+  const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
 
   if (!name) {
     redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
@@ -4441,6 +4552,12 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (defaultCourseRateRaw && defaultCourseRate === null) {
     redirect("/admin/config?section=activities&error=Tarif%20par%20cours%20invalide");
   }
+  if (emailReminderHours === "INVALID") {
+    redirect("/admin/config?section=activities&error=Rappel%20email%20invalide");
+  }
+  if (smsReminderHours === "INVALID") {
+    redirect("/admin/config?section=activities&error=Rappel%20SMS%20invalide");
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -4454,6 +4571,8 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     default_capacity: defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
+    email_reminder_hours_before_start: emailReminderHours,
+    sms_reminder_hours_before_start: smsReminderHours,
     active: checkboxField(formData, "active"),
   };
 

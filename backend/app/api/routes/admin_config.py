@@ -253,6 +253,8 @@ def _serialize_activity(activity: CourseType, *, credit_type_by_id: dict[UUID, C
         default_capacity=activity.default_capacity,
         default_hourly_rate=activity.default_hourly_rate,
         default_course_rate_ttc=activity.default_course_rate_ttc,
+        email_reminder_hours_before_start=activity.email_reminder_hours_before_start,
+        sms_reminder_hours_before_start=activity.sms_reminder_hours_before_start,
         active=activity.active,
     )
 
@@ -1130,6 +1132,8 @@ def create_admin_activity(
         default_capacity=int(payload.default_capacity),
         default_hourly_rate=payload.default_hourly_rate,
         default_course_rate_ttc=payload.default_course_rate_ttc,
+        email_reminder_hours_before_start=payload.email_reminder_hours_before_start,
+        sms_reminder_hours_before_start=payload.sms_reminder_hours_before_start,
         active=bool(payload.active),
     )
     db.add(activity)
@@ -1198,6 +1202,12 @@ def update_admin_activity(
 
     if "default_course_rate_ttc" in changes:
         activity.default_course_rate_ttc = changes["default_course_rate_ttc"]
+
+    if "email_reminder_hours_before_start" in changes:
+        activity.email_reminder_hours_before_start = changes["email_reminder_hours_before_start"]
+
+    if "sms_reminder_hours_before_start" in changes:
+        activity.sms_reminder_hours_before_start = changes["sms_reminder_hours_before_start"]
 
     if "active" in changes:
         activity.active = bool(changes["active"])

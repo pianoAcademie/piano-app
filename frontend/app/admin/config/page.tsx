@@ -117,6 +117,16 @@ const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
   { key: "params-messaging", label: "Messagerie" },
 ];
 
+const REMINDER_OFFSET_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "global", label: "Parametrage global (defaut systeme)" },
+  { value: "0", label: "Aucun rappel" },
+  { value: "1", label: "1 heure avant" },
+  { value: "2", label: "2 heures avant" },
+  { value: "3", label: "3 heures avant" },
+  { value: "24", label: "1 jour avant" },
+  { value: "48", label: "2 jours avant" },
+];
+
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
   if (Array.isArray(value)) {
@@ -221,6 +231,25 @@ function activityModeLabel(mode: string): string {
     return "Presentiel";
   }
   return "Tous";
+}
+
+function reminderOffsetLabel(hoursBeforeStart: number | null): string {
+  if (hoursBeforeStart === null) {
+    return "Global";
+  }
+  if (hoursBeforeStart === 0) {
+    return "Aucun";
+  }
+  if (hoursBeforeStart === 1) {
+    return "1h";
+  }
+  if (hoursBeforeStart === 24) {
+    return "1j";
+  }
+  if (hoursBeforeStart % 24 === 0) {
+    return `${hoursBeforeStart / 24}j`;
+  }
+  return `${hoursBeforeStart}h`;
 }
 
 function contractModeLabel(mode: string): string {
@@ -2224,6 +2253,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <span className="status-pill status-off">{activity.credit_type_name ?? "Type credit non mappe"}</span>
                           <span className="status-pill status-warn">{activityModeLabel(activity.mode)}</span>
                           <span className="status-pill status-ok">{activity.duration_minutes} min</span>
+                          <span className="status-pill status-off">
+                            Rappel email: {reminderOffsetLabel(activity.email_reminder_hours_before_start)}
+                          </span>
+                          <span className="status-pill status-off">
+                            Rappel SMS: {reminderOffsetLabel(activity.sms_reminder_hours_before_start)}
+                          </span>
                           <span className="status-pill status-warn">
                             {activity.default_course_rate_ttc
                               ? `${activity.default_course_rate_ttc} ${accountDefaultCurrency}/cours TTC`
@@ -2302,6 +2337,26 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label>
                           Capacite maximum
                           <input type="number" name="default_capacity" min={1} max={500} defaultValue={8} required />
+                        </label>
+                        <label>
+                          Rappels par courriel
+                          <select name="email_reminder_hours_before_start" defaultValue="global">
+                            {REMINDER_OFFSET_OPTIONS.map((option) => (
+                              <option key={`activity-email-reminder-create-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Rappels SMS
+                          <select name="sms_reminder_hours_before_start" defaultValue="global">
+                            {REMINDER_OFFSET_OPTIONS.map((option) => (
+                              <option key={`activity-sms-reminder-create-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
                         </label>
                         <label>
                           Tarif horaire TTC
@@ -2421,6 +2476,56 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             defaultValue={selectedActivity.default_capacity}
                             required
                           />
+                        </label>
+                        <label>
+                          Rappels par courriel
+                          <select
+                            name="email_reminder_hours_before_start"
+                            defaultValue={
+                              selectedActivity.email_reminder_hours_before_start === null
+                                ? "global"
+                                : String(selectedActivity.email_reminder_hours_before_start)
+                            }
+                          >
+                            {selectedActivity.email_reminder_hours_before_start !== null &&
+                            !REMINDER_OFFSET_OPTIONS.some(
+                              (option) => option.value === String(selectedActivity.email_reminder_hours_before_start),
+                            ) ? (
+                              <option value={String(selectedActivity.email_reminder_hours_before_start)}>
+                                {selectedActivity.email_reminder_hours_before_start} heures avant (personnalise)
+                              </option>
+                            ) : null}
+                            {REMINDER_OFFSET_OPTIONS.map((option) => (
+                              <option key={`activity-email-reminder-update-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Rappels SMS
+                          <select
+                            name="sms_reminder_hours_before_start"
+                            defaultValue={
+                              selectedActivity.sms_reminder_hours_before_start === null
+                                ? "global"
+                                : String(selectedActivity.sms_reminder_hours_before_start)
+                            }
+                          >
+                            {selectedActivity.sms_reminder_hours_before_start !== null &&
+                            !REMINDER_OFFSET_OPTIONS.some(
+                              (option) => option.value === String(selectedActivity.sms_reminder_hours_before_start),
+                            ) ? (
+                              <option value={String(selectedActivity.sms_reminder_hours_before_start)}>
+                                {selectedActivity.sms_reminder_hours_before_start} heures avant (personnalise)
+                              </option>
+                            ) : null}
+                            {REMINDER_OFFSET_OPTIONS.map((option) => (
+                              <option key={`activity-sms-reminder-update-${option.value}`} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
                         </label>
                         <label>
                           Tarif horaire TTC

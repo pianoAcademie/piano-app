@@ -156,6 +156,14 @@ class CourseType(Base):
             "default_course_rate_ttc IS NULL OR default_course_rate_ttc >= 0",
             name="ck_course_types_default_course_rate_non_negative",
         ),
+        CheckConstraint(
+            "email_reminder_hours_before_start IS NULL OR email_reminder_hours_before_start >= 0",
+            name="ck_course_types_email_reminder_hours_non_negative",
+        ),
+        CheckConstraint(
+            "sms_reminder_hours_before_start IS NULL OR sms_reminder_hours_before_start >= 0",
+            name="ck_course_types_sms_reminder_hours_non_negative",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -189,6 +197,8 @@ class CourseType(Base):
     default_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     default_hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     default_course_rate_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    email_reminder_hours_before_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sms_reminder_hours_before_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

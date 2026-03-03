@@ -81,6 +81,7 @@ router = APIRouter()
 ALLOWED_SETTING_KEYS = {
     "auto_cancel_hours_before_start": 6,
     "reminder_hours_before_start": 24,
+    "sms_reminder_hours_before_start": 1,
 }
 
 PLANNING_DEFAULTS = {

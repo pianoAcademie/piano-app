@@ -50,6 +50,8 @@ export type CourseTypeOut = {
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;
+  email_reminder_hours_before_start: number | null;
+  sms_reminder_hours_before_start: number | null;
   active: boolean;
 };
 
@@ -276,12 +278,19 @@ export type AdminClientMessageOut = {
   booking_id: string | null;
   session_id: string | null;
   session_title: string | null;
+  channel: "EMAIL" | "SMS";
+  source: string | null;
+  recipient: string | null;
   scheduled_for_utc: string;
   sent_at: string | null;
   status: string;
   provider_message_id: string | null;
   error_message: string | null;
   subject_preview: string;
+  body_preview: string | null;
+  body_full: string | null;
+  body_format: "TEXT" | "HTML";
+  can_forward: boolean;
 };
 
 export type AdminClientPaymentOut = {
@@ -1253,6 +1262,8 @@ export type AdminActivityOut = {
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;
+  email_reminder_hours_before_start: number | null;
+  sms_reminder_hours_before_start: number | null;
   active: boolean;
 };
 

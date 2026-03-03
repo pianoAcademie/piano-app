@@ -418,6 +418,8 @@ class AdminActivityOut(BaseModel):
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None
+    email_reminder_hours_before_start: int | None
+    sms_reminder_hours_before_start: int | None
     active: bool
 
 
@@ -433,6 +435,8 @@ class AdminActivityUpsertRequest(BaseModel):
     default_capacity: int = Field(default=8, ge=1, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
+    email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
+    sms_reminder_hours_before_start: int | None = Field(default=None, ge=0)
     active: bool = True
 
 
@@ -448,6 +452,8 @@ class AdminActivityUpdateRequest(BaseModel):
     default_capacity: int | None = Field(default=None, ge=1, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
+    email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
+    sms_reminder_hours_before_start: int | None = Field(default=None, ge=0)
     active: bool | None = None
 
 
@@ -912,12 +918,37 @@ class AdminClientMessageOut(BaseModel):
     booking_id: UUID | None = None
     session_id: UUID | None = None
     session_title: str | None = None
+    channel: Literal["EMAIL", "SMS"] = "EMAIL"
+    source: str | None = None
+    recipient: str | None = None
     scheduled_for_utc: datetime
     sent_at: datetime | None
     status: str
     provider_message_id: str | None
     error_message: str | None
     subject_preview: str
+    body_preview: str | None = None
+    body_full: str | None = None
+    body_format: Literal["TEXT", "HTML"] = "TEXT"
+    can_forward: bool = False
+
+
+class AdminClientMessageEmailRequest(BaseModel):
+    to_emails: list[str] | None = None
+    cc_emails: list[str] | None = None
+    send_copy_to_self: bool = False
+    subject: str = Field(min_length=1, max_length=255)
+    body: str = Field(min_length=1, max_length=20000)
+    body_format: Literal["TEXT", "HTML"] = "HTML"
+    source: str | None = Field(default=None, max_length=120)
+
+
+class AdminClientMessageEmailOut(BaseModel):
+    client_id: UUID
+    sent_at: datetime
+    to_recipients: list[str] = Field(default_factory=list)
+    cc_recipients: list[str] = Field(default_factory=list)
+    message_ids: list[str] = Field(default_factory=list)
 
 
 class AdminClientPaymentOut(BaseModel):
