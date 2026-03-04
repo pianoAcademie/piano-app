@@ -1602,6 +1602,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         placeholder="Rechercher un eleve..."
                         emptySelectionLabel="Aucun eleve selectionne."
                         maxSelections={1}
+                        requiredSelection
                       />
 
                       <details className="session-enroll-advanced">

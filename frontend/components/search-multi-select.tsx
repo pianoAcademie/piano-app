@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Option = {
   id: string;
@@ -16,6 +16,7 @@ type Props = {
   className?: string;
   emptySelectionLabel?: string;
   maxSelections?: number;
+  requiredSelection?: boolean;
 };
 
 function normalize(value: string): string {
@@ -34,7 +35,9 @@ export default function SearchMultiSelect({
   className,
   emptySelectionLabel = "Aucune selection.",
   maxSelections,
+  requiredSelection = false,
 }: Props): JSX.Element {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
   const sortedOptions = useMemo(
     () => [...options].sort((a, b) => a.label.localeCompare(b.label, "fr")),
@@ -62,6 +65,36 @@ export default function SearchMultiSelect({
   const filteredOptions = matchingOptions.slice(0, 120);
   const hasHiddenOptions = matchingOptions.length > filteredOptions.length;
   const singleSelection = maxSelections === 1;
+  const [selectionError, setSelectionError] = useState("");
+
+  useEffect(() => {
+    if (!requiredSelection) {
+      setSelectionError("");
+      return;
+    }
+    const root = rootRef.current;
+    const form = root?.closest("form");
+    if (!form) {
+      return;
+    }
+    const onSubmit = (event: Event): void => {
+      if (selected.length > 0) {
+        setSelectionError("");
+        return;
+      }
+      event.preventDefault();
+      setSelectionError("Selectionnez un eleve dans la liste.");
+    };
+    form.addEventListener("submit", onSubmit);
+    return () => form.removeEventListener("submit", onSubmit);
+  }, [requiredSelection, selected]);
+
+  useEffect(() => {
+    if (selected.length > 0 && selectionError) {
+      setSelectionError("");
+    }
+  }, [selected, selectionError]);
+
   const addSelected = (id: string): void => {
     if (!optionById.has(id)) {
       return;
@@ -81,7 +114,7 @@ export default function SearchMultiSelect({
   };
 
   return (
-    <div className={`planning-multi-search ${className ?? ""}`.trim()}>
+    <div ref={rootRef} className={`planning-multi-search ${className ?? ""}`.trim()}>
       <div className="planning-multi-search-head">
         <strong>{label}</strong>
         <small className="muted">{selected.length > 0 ? `${selected.length} selection(s)` : "Selection vide"}</small>
@@ -147,6 +180,12 @@ export default function SearchMultiSelect({
         )}
         {hasHiddenOptions ? <small className="muted">Affichage limite a 120 resultats.</small> : null}
       </div>
+
+      {selectionError ? (
+        <small className="planning-multi-search-error" role="alert">
+          {selectionError}
+        </small>
+      ) : null}
 
       {singleSelection ? (
         <input type="hidden" name={name} value={selected[0] ?? ""} />
