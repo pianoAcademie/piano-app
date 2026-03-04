@@ -787,6 +787,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
 
   const members = [...memberMap.values()].sort((a, b) => a.display_name.localeCompare(b.display_name, "fr"));
+  const linkedMembers = members.filter((member) => member.id !== me.id);
   const validMemberIds = new Set(members.map((member) => member.id));
   const bookingOwnerId = validMemberIds.has(selectedBookingOwner) ? selectedBookingOwner : me.id;
 
@@ -2197,23 +2198,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </div>
                 </details>
 
-                <details className="client-account-accordion card">
-                  <summary>Membres</summary>
+                <details className="client-account-accordion card" open={linkedMembers.length > 0}>
+                  <summary>
+                    <span>Membres</span>
+                    <span className="badge">{linkedMembers.length}</span>
+                  </summary>
                   <div className="client-account-accordion-content">
-                    {members.length <= 1 ? (
+                    {linkedMembers.length === 0 ? (
                       <p className="muted">Aucun membre rattache.</p>
                     ) : (
                       <div className="list client-mobile-list">
-                        {members
-                          .filter((member) => member.id !== me.id)
-                          .map((member) => (
+                        {linkedMembers.map((member) => (
                             <ListRow
                               key={`mob-member-${member.id}`}
                               title={member.display_name}
                               subtitle={member.email}
                               right={<span className="badge">{member.kind === "CHILD" ? "Enfant" : "Adulte"}</span>}
                             />
-                          ))}
+                        ))}
                       </div>
                     )}
                   </div>
@@ -2279,21 +2281,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                 <Card>
                   <h2>Membres rattaches</h2>
-                  {members.length <= 1 ? (
+                  {linkedMembers.length === 0 ? (
                     <p className="muted">Aucun membre rattache.</p>
                   ) : (
                     <div className="list">
-                      {members
-                        .filter((member) => member.id !== me.id)
-                        .map((member) => (
+                      {linkedMembers.map((member) => (
                           <article key={member.id} className="item row spread">
                             <div>
                               <strong>{member.display_name}</strong>
                               <p className="muted">{member.email}</p>
                             </div>
                             <span className="badge">{member.kind === "CHILD" ? "Enfant" : "Adulte"}</span>
-                      </article>
-                        ))}
+                          </article>
+                      ))}
                     </div>
                   )}
                 </Card>

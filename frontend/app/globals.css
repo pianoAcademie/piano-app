@@ -4949,6 +4949,8 @@ button.danger {
   padding: 12px 14px;
   display: inline-flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   width: 100%;
   font-weight: 700;
   cursor: pointer;
@@ -4956,6 +4958,18 @@ button.danger {
 
 .client-account-accordion > summary::-webkit-details-marker {
   display: none;
+}
+
+.client-account-accordion > summary::after {
+  content: "▾";
+  font-size: 12px;
+  color: rgba(17, 24, 39, 0.72);
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.client-account-accordion[open] > summary::after {
+  transform: rotate(0deg);
 }
 
 .client-account-accordion-content {
