@@ -408,11 +408,11 @@ button.danger {
 .agenda-grid-month .month-day-card {
   min-height: 108px;
   max-height: 132px;
-  padding: 11px;
-  border: 1px solid #e0e6ef;
+  padding: 10px;
+  border: 1px solid #e6e8ee;
   border-radius: 12px;
   background: #ffffff;
-  box-shadow: 0 2px 8px rgba(26, 41, 63, 0.06);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -420,8 +420,8 @@ button.danger {
 }
 
 .agenda-grid-month .month-day-card.today {
-  border-color: #9ebae2;
-  background: #f7fbff;
+  border-color: #d4af37;
+  background: #fffcf3;
 }
 
 .month-day-card-header {
@@ -435,67 +435,91 @@ button.danger {
   margin: 0;
   font-size: 14px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.month-day-card-empty {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: #7a8492;
+.month-day-card-today-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #d4af37;
+  flex-shrink: 0;
+}
+
+.month-day-card-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
 }
 
 .month-day-card-events {
   display: grid;
   gap: 6px;
   min-height: 0;
+  flex: 1;
+  align-content: start;
+  overflow: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #c8ced9 transparent;
+}
+
+.agenda-grid-month .month-day-card:hover .month-day-card-events,
+.agenda-grid-month .month-day-card:focus-within .month-day-card-events {
+  overflow: auto;
 }
 
 .month-day-card-more {
-  min-height: 24px;
-  border: 1px solid #d7deea;
+  min-height: 20px;
+  border: 1px solid #d5dbe6;
   border-radius: 999px;
-  padding: 0 10px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   text-decoration: none;
-  font-size: 12px;
-  font-weight: 700;
-  color: #2f425b;
-  background: #f8fbff;
+  font-size: 11px;
+  font-weight: 600;
+  color: #425166;
+  background: #f9fafc;
   width: fit-content;
+  margin-top: auto;
 }
 
 .month-day-card-more:hover {
-  background: #eef5ff;
+  background: #f0f3f8;
 }
 
 .month-day-card-more:focus-visible {
-  outline: 2px solid #4f7fb7;
+  outline: 2px solid #d4af37;
   outline-offset: 2px;
 }
 
 .month-event-chip {
   display: grid;
-  gap: 3px;
-  border: 1px solid #e1e7f1;
-  border-radius: 10px;
+  gap: 2px;
+  border: 1px solid #e6e9f1;
+  border-radius: 9px;
   background: #ffffff;
-  padding: 6px 8px;
+  padding: 4px 6px;
   text-decoration: none;
   color: inherit;
   min-width: 0;
 }
 
 .month-event-chip:hover {
-  border-color: #c8d6e9;
-  background: #f8fbff;
+  border-color: #d2d9e6;
+  background: #fbfcff;
 }
 
 .month-event-chip:focus-visible {
-  outline: 2px solid #4f7fb7;
+  outline: 2px solid #d4af37;
   outline-offset: 1px;
 }
 
@@ -508,10 +532,10 @@ button.danger {
 }
 
 .month-event-chip-time {
-  font-family: "Menlo", "SF Mono", "Consolas", monospace;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
   font-size: 12px;
-  font-weight: 700;
-  color: #23344b;
+  font-weight: 600;
+  color: #1f2a37;
   white-space: nowrap;
 }
 
@@ -520,6 +544,9 @@ button.danger {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  white-space: nowrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .month-badge {
@@ -536,13 +563,8 @@ button.danger {
 }
 
 .month-badge-type {
-  background: #e8f2ff;
-  color: #1d4d7b;
-}
-
-.month-badge-status-planned {
-  background: #e6f4ea;
-  color: #1f6a2d;
+  background: #ebf2ff;
+  color: #1d4d7a;
 }
 
 .month-badge-status-completed {
@@ -553,6 +575,11 @@ button.danger {
 .month-badge-status-cancelled {
   background: #fde9e7;
   color: #7a1d17;
+}
+
+.month-badge-status-warning {
+  background: #fff0d6;
+  color: #8e5a10;
 }
 
 .month-event-chip-title,
@@ -566,7 +593,7 @@ button.danger {
 }
 
 .month-event-chip-title {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.1;
   font-weight: 600;
   color: #1f2a38;
@@ -579,7 +606,7 @@ button.danger {
   min-width: 0;
   font-size: 12px;
   line-height: 1.1;
-  color: #4a5a70;
+  color: #566377;
 }
 
 .month-event-chip-prof.missing {
@@ -624,6 +651,10 @@ button.danger {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .planning-quick-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .bulk-inline-field {
     min-width: 0;
     width: 100%;
@@ -644,6 +675,10 @@ button.danger {
     grid-template-columns: 1fr;
   }
 
+  .planning-quick-form {
+    grid-template-columns: 1fr;
+  }
+
   .agenda-event-hover-actions {
     max-height: 120px;
     opacity: 1;
@@ -656,15 +691,17 @@ button.danger {
   align-items: center;
   padding: 8px 12px;
   border-radius: 10px;
-  border: 1px solid var(--border);
-  background: #fffaf2;
+  border: 1px solid #d9e0ea;
+  background: #ffffff;
   text-decoration: none;
-  color: #4c3517;
+  color: #34465f;
   font-weight: 600;
 }
 
 .mode-link.mode-active {
-  background: #f0d7b2;
+  border-color: #d4af37;
+  background: #fffcf4;
+  color: #3d3118;
 }
 
 .icon-add-button {
@@ -673,15 +710,16 @@ button.danger {
   gap: 8px;
   padding: 8px 12px;
   border-radius: 10px;
-  border: 1px solid var(--border);
-  background: #fff8ec;
+  border: 1px solid #d4af37;
+  background: #d4af37;
   text-decoration: none;
-  color: #4c3517;
+  color: #1f2329;
   font-weight: 700;
 }
 
 .icon-add-button:hover {
-  background: #f2d9b2;
+  background: #c8a531;
+  border-color: #c8a531;
 }
 
 .icon-add-button-plus {
@@ -691,8 +729,8 @@ button.danger {
   width: 22px;
   height: 22px;
   border-radius: 999px;
-  background: #c9802f;
-  color: #fff;
+  background: rgba(17, 24, 39, 0.2);
+  color: #111827;
   font-size: 16px;
   line-height: 1;
 }
@@ -703,17 +741,14 @@ button.danger {
 }
 
 .planning-quick-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr)) auto;
   align-items: end;
   gap: 10px;
 }
 
-.planning-quick-form .row {
-  align-items: end;
-  gap: 8px;
-}
-
 .planning-active-filters {
-  margin-top: 8px;
+  margin-top: 6px;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -789,18 +824,18 @@ button.danger {
   min-height: 100vh;
   display: grid;
   grid-template-columns: auto 1fr;
-  background: #f4f7fb;
+  background: #f6f7f9;
 }
 
 .admin-sidebar {
   width: 240px;
-  background: #141a23;
-  color: #eef3fb;
+  background: #111827;
+  color: rgba(255, 255, 255, 0.82);
   padding: 14px 12px;
   display: grid;
   gap: 12px;
   align-content: start;
-  border-right: 1px solid #273242;
+  border-right: 1px solid #1f2937;
   transition: width 0.18s ease, padding 0.18s ease;
 }
 
@@ -828,13 +863,13 @@ button.danger {
   font-size: 18px;
   font-weight: 800;
   letter-spacing: 0.2px;
-  color: #f1bf71;
+  color: #f8fafc;
 }
 
 .admin-user-card {
-  border: 1px solid #2b394d;
+  border: 1px solid #233043;
   border-radius: 12px;
-  background: #1b2330;
+  background: #162033;
   padding: 10px;
   display: flex;
   align-items: center;
@@ -864,7 +899,7 @@ button.danger {
 .admin-user-name {
   margin: 0;
   font-weight: 700;
-  color: #f4f6f8;
+  color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -894,7 +929,7 @@ button.danger {
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #8c9cb2;
+  color: rgba(255, 255, 255, 0.55);
   font-weight: 700;
   padding: 4px 8px;
 }
@@ -911,7 +946,7 @@ button.danger {
   min-height: 40px;
   padding: 8px 10px;
   border-radius: 10px;
-  color: #d9e2ee;
+  color: rgba(255, 255, 255, 0.82);
   text-decoration: none;
   border: 1px solid transparent;
   position: relative;
@@ -924,6 +959,7 @@ button.danger {
   justify-content: center;
   font-size: 14px;
   flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .admin-nav-label {
@@ -935,34 +971,38 @@ button.danger {
 }
 
 .admin-nav-link:hover {
-  border-color: #324156;
-  background: #202a38;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .admin-nav-link.active {
-  border-color: #3e5775;
-  background: #202d3e;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.admin-nav-link.active .admin-nav-icon {
   color: #ffffff;
 }
 
 .admin-nav-link.active::before {
   content: "";
   position: absolute;
-  left: -10px;
+  left: -12px;
   top: 7px;
   bottom: 7px;
   width: 3px;
   border-radius: 2px;
-  background: #6ba9ff;
+  background: #d4af37;
 }
 
 .admin-sidebar-toggle {
   margin-top: auto;
   min-height: 36px;
   border-radius: 9px;
-  border: 1px solid #304054;
-  background: #1a2331;
-  color: #dce6f4;
+  border: 1px solid #2a3a53;
+  background: #162238;
+  color: rgba(255, 255, 255, 0.82);
   font-size: 12px;
   font-weight: 700;
   display: flex;
@@ -973,7 +1013,7 @@ button.danger {
 }
 
 .admin-sidebar-toggle:hover {
-  background: #212d40;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .admin-sidebar.collapsed {
@@ -1019,8 +1059,8 @@ button.danger {
 .admin-topbar {
   background: #ffffff;
   color: #1b2635;
-  border-bottom: 1px solid #dce4ef;
-  padding: 10px 16px;
+  border-bottom: 1px solid #e6e8ee;
+  padding: 8px 16px;
   display: flex;
   justify-content: space-between;
   gap: 10px;
@@ -1049,6 +1089,18 @@ button.danger {
   min-height: 34px;
   display: inline-flex;
   align-items: center;
+  border: 1px solid #d7dee8;
+  background: #ffffff;
+  color: #33465f;
+  border-radius: 9px;
+  padding: 0 10px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.topbar-btn:hover {
+  background: #f5f7fb;
 }
 
 .admin-topbar .muted {
@@ -1061,6 +1113,16 @@ button.danger {
   flex-direction: column;
   gap: 12px;
   align-items: stretch;
+}
+
+.admin-content .card {
+  background: #ffffff;
+  border: 1px solid #e6e8ee;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.admin-sidebar .muted {
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .admin-breadcrumb {
@@ -1128,6 +1190,58 @@ button.danger {
 .admin-page-grid {
   display: grid;
   gap: 14px;
+}
+
+.planning-header-card {
+  padding: 12px 14px;
+}
+
+.planning-header-row {
+  align-items: center;
+  gap: 12px;
+}
+
+.planning-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #5c6a7d;
+}
+
+.planning-header-actions {
+  gap: 8px;
+}
+
+.planning-filters-card {
+  padding: 10px 12px;
+  position: sticky;
+  top: 8px;
+  z-index: 3;
+}
+
+.planning-filters-card label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4d5d74;
+}
+
+.planning-filters-card input,
+.planning-filters-card select {
+  margin-top: 4px;
+  min-height: 34px;
+  border-color: #dce2ea;
+  background: #ffffff;
+}
+
+.planning-reset-link {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5a677a;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.planning-advanced-link {
+  min-height: 34px;
 }
 
 @media (max-width: 1100px) {

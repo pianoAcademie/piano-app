@@ -14,7 +14,7 @@ export default function MonthDayCard({
   dayLabel,
   events,
   isToday,
-  maxVisibleEvents = 3,
+  maxVisibleEvents = 5,
   dayDetailsHref,
   openSessionHref,
 }: MonthDayCardProps): JSX.Element {
@@ -24,24 +24,27 @@ export default function MonthDayCard({
   return (
     <article className={`agenda-day month-day-card ${isToday ? "today" : ""}`}>
       <div className="month-day-card-header">
-        <h3>{dayLabel}</h3>
+        <h3>
+          {dayLabel}
+          {isToday ? <span className="month-day-card-today-dot" aria-hidden="true" /> : null}
+        </h3>
         {events.length > 0 ? <span className="badge">{events.length}</span> : null}
       </div>
 
-      {events.length === 0 ? (
-        <p className="month-day-card-empty">0 cours</p>
-      ) : (
-        <div className="month-day-card-events">
-          {visibleEvents.map((event) => (
-            <MonthEventChip key={event.id} event={event} href={openSessionHref(event.id)} />
-          ))}
+      {events.length > 0 ? (
+        <div className="month-day-card-body">
+          <div className="month-day-card-events">
+            {visibleEvents.map((event) => (
+              <MonthEventChip key={event.id} event={event} href={openSessionHref(event.id)} />
+            ))}
+          </div>
           {remainingCount > 0 ? (
             <a className="month-day-card-more" href={dayDetailsHref}>
               +{remainingCount} autres
             </a>
           ) : null}
         </div>
-      )}
+      ) : null}
     </article>
   );
 }

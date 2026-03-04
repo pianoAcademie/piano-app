@@ -766,14 +766,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     selectedClientIds.length > 0 ||
     selectedStatus !== "ALL" ||
     selectedClientStatus !== "ALL";
-  const planningTitle =
+  const planningLocationLabel =
     selectedLocationLabels.length > 1
-      ? `Planning - Multi lieux (${selectedLocationLabels.length})`
+      ? `Multi lieux (${selectedLocationLabels.length})`
       : selectedLocationLabels[0]
-        ? `Planning - ${selectedLocationLabels[0]}`
+        ? selectedLocationLabels[0]
         : focusedLocation?.name
-          ? `Planning - ${focusedLocation.name}`
-          : "Planning - Tous les lieux";
+          ? focusedLocation.name
+          : "Tous les lieux";
+  const planningViewLabel = agendaView === "month" ? "Mois" : agendaView === "week" ? "Semaine" : "Jour";
+  const planningSubtitle = `${planningViewLabel} · ${planningLocationLabel} · ${timezone}`;
 
   const filteredSessions = sessions
     .filter((session) => {
@@ -814,7 +816,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     sessions: sessionsByDay.get(dayKey) ?? [],
   }));
   const selectedDayDetails = dayDetails ? agendaDays.find((day) => day.key === dayDetails) ?? null : null;
-  const monthVisibleEventsLimit = 3;
+  const monthVisibleEventsLimit = 5;
   const maxVisibleSessionsByDay = agendaView === "week" ? 6 : 24;
 
   let selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
@@ -942,15 +944,24 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {errors.length > 0 ? <section className="flash-err">Erreur backend: {errors.join(" | ")}</section> : null}
 
-      <section className="card">
-        <div className="row spread">
-          <h2>{planningTitle}</h2>
-          <div className="row">
+      <section className="card planning-header-card">
+        <div className="row spread planning-header-row">
+          <div className="stack-xs">
+            <h2>Planning</h2>
+            <p className="muted planning-subtitle">{planningSubtitle}</p>
+          </div>
+          <div className="row planning-header-actions">
             <a className={`mode-link ${!createOpen ? "mode-active" : ""}`} href={lectureHref}>
               Lecture
             </a>
             <a className={`mode-link ${createOpen ? "mode-active" : ""}`} href={createHref}>
-              Ajouter creneau
+              Edition
+            </a>
+            <a className="icon-add-button" href={createHref}>
+              <span className="icon-add-button-plus" aria-hidden="true">
+                +
+              </span>
+              Ajouter un creneau
             </a>
             {focusedLocationId ? (
               <Link className="mode-link" href={`/admin/plannings/${focusedLocationId}/settings`}>
@@ -959,17 +970,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             ) : null}
           </div>
         </div>
-        <p className="muted">Cliquez un creneau pour ouvrir la popup de consultation/modification.</p>
       </section>
 
-      <section className="card">
-        <div className="row spread planning-toolbar-top">
-          <h2>Pilotage planning</h2>
-          <a className="mode-link" href={filtersHref}>
-            Filtres
-          </a>
-        </div>
-        <form method="get" className="grid cols-4 planning-quick-form">
+      <section className="card planning-filters-card">
+        <form method="get" className="planning-quick-form">
           <input type="hidden" name="course_type_id" value={selectedCourseType} />
           <input type="hidden" name="status" value={selectedStatus} />
           <input type="hidden" name="client_status" value={selectedClientStatus} />
@@ -1020,12 +1024,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           </label>
 
           <div className="row">
-            <a className="reset-link" href={filtersResetHref}>
-              Reset filtres
+            <a className="planning-reset-link" href={filtersResetHref}>
+              Reinitialiser
+            </a>
+            <a className="mode-link planning-advanced-link" href={filtersHref}>
+              Filtres avances
             </a>
           </div>
         </form>
-        <p className="muted">Les regles du planning sont visibles uniquement via le bouton Parametres.</p>
         <div className="row planning-active-filters">
           {selectedActivityLabels.length > 0 ? (
             <span className="badge">Activites: {compactList(selectedActivityLabels)}</span>

@@ -5,6 +5,10 @@ type MonthEventChipProps = {
   href: string;
 };
 
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+const TEST_TITLE_RE = /\b(smoke|pa\s*day|test)\b/i;
+const LONG_ID_RE = /\b\d{6,}\b/;
+
 function formatEventTime(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -45,7 +49,52 @@ function statusBadgeClass(status: string): string {
   if (normalized === "COMPLETED") {
     return "month-badge-status-completed";
   }
-  return "month-badge-status-planned";
+  return "month-badge-status-warning";
+}
+
+function normalizedTypeLabel(value: string): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized.includes("priv")) {
+    return "Prive";
+  }
+  if (normalized.includes("online")) {
+    return "Online";
+  }
+  if (normalized.includes("domicile")) {
+    return "Domicile";
+  }
+  return "Collectif";
+}
+
+function defaultTitleFromType(typeLabel: string): string {
+  const normalized = normalizedTypeLabel(typeLabel);
+  if (normalized === "Prive") {
+    return "Cours prive";
+  }
+  if (normalized === "Online") {
+    return "Cours online";
+  }
+  if (normalized === "Domicile") {
+    return "Cours domicile";
+  }
+  return "Cours collectif";
+}
+
+function sanitizeTitle(value: string, typeLabel: string): string {
+  const trimmed = (value || "").trim();
+  if (!trimmed) {
+    return defaultTitleFromType(typeLabel);
+  }
+  const hasTestPattern = TEST_TITLE_RE.test(trimmed) || UUID_RE.test(trimmed) || LONG_ID_RE.test(trimmed);
+  if (hasTestPattern) {
+    return defaultTitleFromType(typeLabel) === "Cours collectif" ? "Creneau test" : defaultTitleFromType(typeLabel);
+  }
+  return trimmed;
+}
+
+function shouldShowStatusBadge(status: string): boolean {
+  const normalized = (status || "").toUpperCase();
+  return !(normalized === "SCHEDULED" || normalized === "PLANNED");
 }
 
 export default function MonthEventChip({ event, href }: MonthEventChipProps): JSX.Element {
@@ -53,20 +102,23 @@ export default function MonthEventChip({ event, href }: MonthEventChipProps): JS
   const teacherMissing = teacherFullName.length === 0;
   const teacherCompact = teacherMissing ? "(non renseigne)" : compactTeacherName(teacherFullName);
   const locationLabel = (event.location_label || "").trim() || "Lieu";
+  const typeLabel = normalizedTypeLabel(event.type_label);
+  const displayTitle = sanitizeTitle(event.title, typeLabel);
   const startTime = formatEventTime(event.start_at_utc);
   const endTime = formatEventTime(event.end_at_utc);
-  const tooltip = `${startTime}-${endTime}\n${event.title}\nProf: ${teacherMissing ? "(non renseigne)" : teacherFullName}\nLieu: ${locationLabel}\nStatut: ${event.status_label}`;
+  const tooltip = `${startTime}-${endTime}\n${event.title}\nProf: ${teacherMissing ? "(non renseigne)" : teacherFullName}\nLieu: ${locationLabel}\nType: ${typeLabel}\nStatut: ${event.status_label}`;
+  const showStatusBadge = shouldShowStatusBadge(event.status);
 
   return (
     <a className="month-event-chip" href={href} title={tooltip}>
       <div className="month-event-chip-meta">
         <span className="month-event-chip-time">{startTime}</span>
         <span className="month-event-chip-badges">
-          <span className="month-badge month-badge-type">{event.type_label}</span>
-          <span className={`month-badge ${statusBadgeClass(event.status)}`}>{event.status_label}</span>
+          <span className="month-badge month-badge-type">{typeLabel}</span>
+          {showStatusBadge ? <span className={`month-badge ${statusBadgeClass(event.status)}`}>{event.status_label}</span> : null}
         </span>
       </div>
-      <p className="month-event-chip-title">{event.title}</p>
+      <p className="month-event-chip-title">{displayTitle}</p>
       <p className="month-event-chip-sub">
         <span className={`month-event-chip-prof ${teacherMissing ? "missing" : ""}`}>Prof : {teacherCompact}</span>
         {teacherMissing ? <span className="month-event-chip-warn" aria-hidden="true">⚠</span> : null}

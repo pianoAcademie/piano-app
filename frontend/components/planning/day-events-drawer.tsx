@@ -26,8 +26,8 @@ export default function DayEventsDrawer({
         <a className="modal-close-x" href={closeHref} aria-label="Fermer">
           ×
         </a>
-        <h2 className="modal-title">Cours du {dayLabel}</h2>
-        <p className="muted">{events.length} cours sur cette journee.</p>
+        <h2 className="modal-title">Journee du {dayLabel}</h2>
+        <p className="muted">{events.length} cours.</p>
 
         {events.length === 0 ? (
           <p className="muted">0 cours</p>
