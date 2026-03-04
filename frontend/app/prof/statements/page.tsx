@@ -14,6 +14,21 @@ import type { TeacherInvoiceOut, TeacherStatementOut } from "../../../lib/types"
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+const MONTH_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 1, label: "Janvier" },
+  { value: 2, label: "Février" },
+  { value: 3, label: "Mars" },
+  { value: 4, label: "Avril" },
+  { value: 5, label: "Mai" },
+  { value: 6, label: "Juin" },
+  { value: 7, label: "Juillet" },
+  { value: 8, label: "Août" },
+  { value: 9, label: "Septembre" },
+  { value: 10, label: "Octobre" },
+  { value: 11, label: "Novembre" },
+  { value: 12, label: "Décembre" },
+];
+
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
   if (Array.isArray(value)) {
@@ -33,7 +48,8 @@ export default async function TeacherStatementsPage({
   }
   const now = new Date();
   const year = Number.parseInt(readParam(searchParams, "year"), 10) || now.getUTCFullYear();
-  const month = Number.parseInt(readParam(searchParams, "month"), 10) || now.getUTCMonth() + 1;
+  const parsedMonth = Number.parseInt(readParam(searchParams, "month"), 10);
+  const month = Number.isFinite(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : now.getUTCMonth() + 1;
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
@@ -62,8 +78,8 @@ export default async function TeacherStatementsPage({
       <article className="card">
         <div className="row spread">
           <h2>Releves mensuels professeur</h2>
-          <Link className="reset-link" href="/prof">
-            Retour portail prof
+          <Link className="mode-link" href="/prof">
+            Retour à l'accueil
           </Link>
         </div>
         <form method="get" className="row">
@@ -73,7 +89,13 @@ export default async function TeacherStatementsPage({
           </label>
           <label>
             Mois
-            <input type="number" name="month" min={1} max={12} defaultValue={month} />
+            <select name="month" defaultValue={month}>
+              {MONTH_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
           <button type="submit">Afficher</button>
         </form>
@@ -112,9 +134,7 @@ export default async function TeacherStatementsPage({
             <article key={`${statement.payor_legal_entity_id}-${statement.year}-${statement.month}`} className="card">
               <div className="row spread">
                 <strong>{statement.payor_legal_entity_name}</strong>
-                <span className={`status-pill ${statement.attendance_complete ? "status-ok" : "status-warn"}`}>
-                  {statement.status}
-                </span>
+                {statement.attendance_complete ? <span className="status-pill status-ok">{statement.status}</span> : null}
               </div>
               <p className="muted">
                 Total HT: {statement.totals_ht} {statement.currency} | TVA: {statement.totals_vat} {statement.currency} | TTC:{" "}
@@ -122,6 +142,7 @@ export default async function TeacherStatementsPage({
               </p>
               {!statement.attendance_complete ? (
                 <div className="list">
+                  <section className="flash-err">Présences à renseigner</section>
                   {statement.missing_sessions.map((missing) => (
                     <article key={missing.session_id} className="item">
                       {new Date(missing.start_at_utc).toLocaleString("fr-FR")} | {missing.title} | presences manquantes:{" "}
