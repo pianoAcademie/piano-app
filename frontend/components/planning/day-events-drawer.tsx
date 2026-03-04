@@ -1,10 +1,9 @@
-import type { AdminSessionOut } from "../../lib/types";
-import MonthEventChip from "./month-event-chip";
+import MonthEventChip, { type PlanningEventChipData } from "./month-event-chip";
 
 type DayEventsDrawerProps = {
   isOpen: boolean;
   dayLabel: string;
-  events: AdminSessionOut[];
+  events: PlanningEventChipData[];
   closeHref: string;
   openSessionHref: (sessionId: string) => string;
 };

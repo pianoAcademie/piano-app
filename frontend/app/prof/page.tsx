@@ -12,7 +12,10 @@ import {
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
 import AutoSubmitSelect from "../../components/auto-submit-select";
+import DayEventsDrawer from "../../components/planning/day-events-drawer";
+import MonthDayCard from "../../components/planning/month-day-card";
 import RichMessageEditor from "../../components/rich-message-editor";
+import type { PlanningEventChipData } from "../../components/planning/month-event-chip";
 import type {
   ProfessorAttendancePendingOut,
   ProfessorBalanceOut,
@@ -213,18 +216,47 @@ function statusBadgeClass(status: string): string {
 function statusLabel(status: string): string {
   const normalized = status.toUpperCase();
   if (normalized === "ATTENDANCE_PENDING") {
-    return "A SAISIR";
+    return "Presences a renseigner";
   }
   if (normalized === "SCHEDULED") {
-    return "PREVU";
+    return "Planifie";
   }
   if (normalized === "COMPLETED") {
-    return "TERMINE";
+    return "Termine";
   }
   if (normalized === "CANCELLED") {
-    return "ANNULE";
+    return "Annule";
   }
   return normalized;
+}
+
+function professorTypeLabel(session: ProfessorSessionOut): string {
+  const locationCode = (session.location.code || "").toUpperCase();
+  const locationName = (session.location.name || "").toLowerCase();
+  const courseName = (session.course_type.name || "").toLowerCase();
+  if (session.location.is_online || locationCode === "ONLINE") {
+    return "Online";
+  }
+  if (locationCode.includes("DOMICILE") || locationName.includes("domicile")) {
+    return "Domicile";
+  }
+  if (courseName.includes("prive") || courseName.includes("particulier")) {
+    return "Prive";
+  }
+  return "Collectif";
+}
+
+function shortLocationLabel(value: string): string {
+  const trimmed = (value || "").trim();
+  if (!trimmed) {
+    return "Lieu";
+  }
+  for (const separator of [" - ", ",", "|"]) {
+    if (trimmed.includes(separator)) {
+      return trimmed.split(separator, 1)[0].trim() || "Lieu";
+    }
+  }
+  return trimmed;
 }
 
 function attendanceLabel(status: string): string {
@@ -253,6 +285,7 @@ function buildProfHref(params: {
   agendaDate: string;
   sessionId?: string | null;
   messageId?: string | null;
+  dayDetails?: string | null;
 }): string {
   const query = new URLSearchParams();
   query.set("tab", params.tab);
@@ -263,6 +296,9 @@ function buildProfHref(params: {
   }
   if (params.messageId) {
     query.set("message_id", params.messageId);
+  }
+  if (params.dayDetails) {
+    query.set("day_details", params.dayDetails);
   }
   return `/prof?${query.toString()}`;
 }
@@ -319,30 +355,6 @@ function reservedStudentsCountFromRoster(session: ProfessorSessionOut): number {
       student.attendance_status === "EXCUSED_ABSENCE"
     );
   }).length;
-}
-
-function occupancyClass(booked: number, capacity: number): string {
-  if (capacity <= 0) {
-    return "occ-low";
-  }
-  if (booked >= capacity) {
-    return "occ-high";
-  }
-  if (booked >= Math.max(1, Math.ceil(capacity * 0.7))) {
-    return "occ-medium";
-  }
-  return "occ-low";
-}
-
-function agendaEventStateClass(status: string): string {
-  const normalized = status.toUpperCase();
-  if (normalized === "COMPLETED") {
-    return "agenda-event-completed";
-  }
-  if (normalized === "CANCELLED") {
-    return "agenda-event-cancelled";
-  }
-  return "";
 }
 
 function sessionDisplayStatus(session: ProfessorSessionOut): string {
@@ -468,6 +480,27 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     label: formatDayLabel(dayKey, agendaView),
     sessions: sessionsByDay.get(dayKey) ?? [],
   }));
+  const dayDetailsRaw = readParam(searchParams, "day_details");
+  const dayDetails = isDateKey(dayDetailsRaw) ? dayDetailsRaw : "";
+  const agendaCardDays = agendaDays.map((day) => ({
+    key: day.key,
+    label: day.label,
+    events: day.sessions.map((session) => {
+      const displayStatus = sessionDisplayStatus(session);
+      return {
+        id: session.id,
+        title: session.title,
+        start_at_utc: session.start_at_utc,
+        end_at_utc: session.end_at_utc,
+        teacher_display_name: fullName || profile.email,
+        location_label: shortLocationLabel(session.location.name),
+        type_label: professorTypeLabel(session),
+        status_label: statusLabel(displayStatus),
+        status: displayStatus,
+      } satisfies PlanningEventChipData;
+    }),
+  }));
+  const selectedDayDetails = dayDetails ? agendaCardDays.find((day) => day.key === dayDetails) ?? null : null;
 
   const selectedSessionId = readParam(searchParams, "session_id");
   const selectedSession = selectedSessionId ? sessions.find((session) => session.id === selectedSessionId) ?? null : null;
@@ -492,12 +525,12 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const todaySessions = sessionsByDay.get(todayKeyUtc()) ?? [];
   const canEditPlanning = profile.permissions.can_edit_planning;
   const canMessageStudents = profile.permissions.can_message_clients;
-  const maxVisibleSessionsByDay = 4;
+  const maxVisibleSessionsByDay = agendaView === "day" ? 24 : agendaView === "week" ? 8 : 5;
   const previousAgendaDate = shiftAgendaDate(agendaView, agendaDate, -1);
   const nextAgendaDate = shiftAgendaDate(agendaView, agendaDate, 1);
-  const previousAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: previousAgendaDate });
-  const nextAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: nextAgendaDate });
-  const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc() });
+  const previousAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: previousAgendaDate, dayDetails: "" });
+  const nextAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: nextAgendaDate, dayDetails: "" });
+  const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc(), dayDetails: "" });
   const archivedMessages = messagesResult.ok ? messagesResult.data : [];
   const selectedMessage = selectedMessageId ? archivedMessages.find((message) => message.id === selectedMessageId) ?? null : null;
 
@@ -660,110 +693,43 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           <p className="muted">La vue change immediatement a la selection. Navigation semaine par semaine disponible via les fleches.</p>
 
           <div className={`agenda-grid coach-agenda-grid agenda-grid-${agendaView === "agenda" ? "month" : agendaView}`}>
-            {agendaDays.map((day) => (
-              <article key={day.key} className="agenda-day coach-agenda-day">
-                <div className="row spread agenda-day-header">
-                  <h3>{day.label}</h3>
-                  <span className="badge">{day.sessions.length}</span>
-                </div>
-                {day.sessions.length === 0 ? (
-                  <p className="muted agenda-empty">Aucun cours.</p>
-                ) : (
-                  <div className="agenda-events coach-agenda-events">
-                    {day.sessions.slice(0, maxVisibleSessionsByDay).map((session) => {
-                      const displayStatus = sessionDisplayStatus(session);
-                      const pending = pendingAttendanceCount(session);
-                      const present = presentAttendanceCount(session);
-                      const reservedFromRoster = reservedStudentsCountFromRoster(session);
-                      const reservedCount = Math.max(session.booked_count, reservedFromRoster);
-                      const openHref = buildProfHref({
-                        tab: "planning",
-                        agendaView,
-                        agendaDate,
-                        sessionId: session.id,
-                      });
-                      const trialCount = session.students.filter((student) => student.is_trial_course).length;
-                      const firstCount = session.students.filter((student) => student.is_first_course).length;
-                      return (
-                        <Link key={session.id} className="agenda-event-link" href={openHref}>
-                          <article className={`agenda-event coach-agenda-event ${agendaEventStateClass(displayStatus)}`}>
-                            <div className="row spread">
-                              <p className="muted">
-                                {formatTime(session.start_at_utc)} - {formatTime(session.end_at_utc)}
-                              </p>
-                              <span className={`status-badge ${statusBadgeClass(displayStatus)}`}>{statusLabel(displayStatus)}</span>
-                            </div>
-                            <h3 className="event-title">{session.title}</h3>
-                            <small className="muted event-meta">
-                              <span className="meta-icon" aria-hidden="true">
-                                🎵
-                              </span>
-                              {session.course_type.name}
-                            </small>
-                            <small className="muted event-meta">
-                              <span className="meta-icon" aria-hidden="true">
-                                📍
-                              </span>
-                              {session.location.name}
-                            </small>
-                            <small className="muted event-meta">
-                              <span className="meta-icon" aria-hidden="true">
-                                👥
-                              </span>
-                              Places {reservedCount}/{session.capacity_max}
-                            </small>
-                            <div className="row">
-                              <span className={`occ-badge ${occupancyClass(reservedCount, session.capacity_max)}`}>
-                                {reservedCount}/{session.capacity_max}
-                              </span>
-                              <span className={`status-badge ${present > 0 ? "status-completed" : "status-scheduled"}`}>
-                                Présents: {present}
-                              </span>
-                              {pending > 0 ? <span className="status-badge status-waitlist">A saisir: {pending}</span> : null}
-                            </div>
-                            {(trialCount > 0 || firstCount > 0) && (
-                              <p className="muted event-meta">
-                                {trialCount > 0 ? `Essai: ${trialCount}` : ""}
-                                {trialCount > 0 && firstCount > 0 ? " | " : ""}
-                                {firstCount > 0 ? `Premier cours: ${firstCount}` : ""}
-                              </p>
-                            )}
-                          </article>
-                        </Link>
-                      );
-                    })}
-                    {day.sessions.length > maxVisibleSessionsByDay ? (
-                      <details className="agenda-more-block coach-agenda-more">
-                        <summary>{day.sessions.length - maxVisibleSessionsByDay} more</summary>
-                        <div className="agenda-events">
-                          {day.sessions.slice(maxVisibleSessionsByDay).map((session) => {
-                            const openHref = buildProfHref({
-                              tab: "planning",
-                              agendaView,
-                              agendaDate,
-                              sessionId: session.id,
-                            });
-                            return (
-                              <Link key={`${day.key}-${session.id}`} className="agenda-event-link" href={openHref}>
-                                <article className={`agenda-event coach-agenda-event ${agendaEventStateClass(session.status)}`}>
-                                  <p className="muted">
-                                    {formatTime(session.start_at_utc)} - {formatTime(session.end_at_utc)}
-                                  </p>
-                                  <h3 className="event-title">{session.title}</h3>
-                                  <small className="event-meta">🎵 {session.course_type.name}</small>
-                                  <small className="event-meta">📍 {session.location.name}</small>
-                                </article>
-                              </Link>
-                            );
-                          })}
-                        </div>
-                      </details>
-                    ) : null}
-                  </div>
-                )}
-              </article>
+            {agendaCardDays.map((day) => (
+              <MonthDayCard
+                key={day.key}
+                dayLabel={day.label}
+                events={day.events}
+                isToday={day.key === todayKeyUtc()}
+                maxVisibleEvents={maxVisibleSessionsByDay}
+                expanded={agendaView !== "agenda"}
+                dayDetailsHref={buildProfHref({ tab: "planning", agendaView, agendaDate, dayDetails: day.key })}
+                openSessionHref={(sessionId) =>
+                  buildProfHref({
+                    tab: "planning",
+                    agendaView,
+                    agendaDate,
+                    sessionId,
+                    dayDetails: "",
+                  })
+                }
+              />
             ))}
           </div>
+
+          <DayEventsDrawer
+            isOpen={Boolean(selectedDayDetails && !selectedSession)}
+            dayLabel={selectedDayDetails ? selectedDayDetails.label : ""}
+            events={selectedDayDetails ? selectedDayDetails.events : []}
+            closeHref={buildProfHref({ tab: "planning", agendaView, agendaDate, dayDetails: "" })}
+            openSessionHref={(sessionId) =>
+              buildProfHref({
+                tab: "planning",
+                agendaView,
+                agendaDate,
+                sessionId,
+                dayDetails: "",
+              })
+            }
+          />
         </section>
       ) : null}
 

@@ -1,8 +1,19 @@
-import type { AdminSessionOut } from "../../lib/types";
+export type PlanningEventChipData = {
+  id: string;
+  title: string;
+  start_at_utc: string;
+  end_at_utc: string;
+  teacher_display_name: string;
+  location_label: string;
+  type_label: string;
+  status_label: string;
+  status: string;
+};
 
 type MonthEventChipProps = {
-  event: AdminSessionOut;
+  event: PlanningEventChipData;
   href: string;
+  expanded?: boolean;
 };
 
 const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
@@ -97,7 +108,7 @@ function shouldShowStatusBadge(status: string): boolean {
   return !(normalized === "SCHEDULED" || normalized === "PLANNED");
 }
 
-export default function MonthEventChip({ event, href }: MonthEventChipProps): JSX.Element {
+export default function MonthEventChip({ event, href, expanded = false }: MonthEventChipProps): JSX.Element {
   const teacherFullName = (event.teacher_display_name || "").trim();
   const teacherMissing = teacherFullName.length === 0;
   const teacherCompact = teacherMissing ? "(non renseigne)" : compactTeacherName(teacherFullName);
@@ -110,7 +121,7 @@ export default function MonthEventChip({ event, href }: MonthEventChipProps): JS
   const showStatusBadge = shouldShowStatusBadge(event.status);
 
   return (
-    <a className="month-event-chip" href={href} title={tooltip}>
+    <a className={`month-event-chip ${expanded ? "expanded" : ""}`} href={href} title={tooltip}>
       <div className="month-event-chip-meta">
         <span className="month-event-chip-time">{startTime}</span>
         <span className="month-event-chip-badges">

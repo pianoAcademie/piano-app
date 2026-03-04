@@ -70,7 +70,6 @@ h3 {
 p,
 label,
 small,
-span,
 li {
   color: var(--ink);
 }
@@ -609,6 +608,22 @@ button.danger {
   color: #566377;
 }
 
+.month-day-card.expanded {
+  max-height: none;
+  min-height: 148px;
+}
+
+.month-day-card.expanded .month-day-card-events {
+  overflow: visible;
+}
+
+.month-event-chip.expanded .month-event-chip-title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 .month-event-chip-prof.missing {
   color: #7b8a9a;
 }
@@ -968,6 +983,7 @@ button.danger {
   text-overflow: ellipsis;
   font-size: 14px;
   line-height: 1;
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .admin-nav-link:hover {
@@ -982,6 +998,10 @@ button.danger {
 }
 
 .admin-nav-link.active .admin-nav-icon {
+  color: #ffffff;
+}
+
+.admin-nav-link.active .admin-nav-label {
   color: #ffffff;
 }
 
@@ -1119,6 +1139,12 @@ button.danger {
   background: #ffffff;
   border: 1px solid #e6e8ee;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.admin-sidebar h3,
+.admin-sidebar p,
+.admin-sidebar small {
+  color: inherit;
 }
 
 .admin-sidebar .muted {

@@ -1,13 +1,13 @@
-import type { AdminSessionOut } from "../../lib/types";
-import MonthEventChip from "./month-event-chip";
+import MonthEventChip, { type PlanningEventChipData } from "./month-event-chip";
 
 type MonthDayCardProps = {
   dayLabel: string;
-  events: AdminSessionOut[];
+  events: PlanningEventChipData[];
   isToday: boolean;
   maxVisibleEvents?: number;
   dayDetailsHref: string;
   openSessionHref: (sessionId: string) => string;
+  expanded?: boolean;
 };
 
 export default function MonthDayCard({
@@ -17,12 +17,13 @@ export default function MonthDayCard({
   maxVisibleEvents = 5,
   dayDetailsHref,
   openSessionHref,
+  expanded = false,
 }: MonthDayCardProps): JSX.Element {
   const visibleEvents = events.slice(0, maxVisibleEvents);
   const remainingCount = Math.max(events.length - visibleEvents.length, 0);
 
   return (
-    <article className={`agenda-day month-day-card ${isToday ? "today" : ""}`}>
+    <article className={`agenda-day month-day-card ${expanded ? "expanded" : ""} ${isToday ? "today" : ""}`}>
       <div className="month-day-card-header">
         <h3>
           {dayLabel}
@@ -35,7 +36,7 @@ export default function MonthDayCard({
         <div className="month-day-card-body">
           <div className="month-day-card-events">
             {visibleEvents.map((event) => (
-              <MonthEventChip key={event.id} event={event} href={openSessionHref(event.id)} />
+              <MonthEventChip key={event.id} event={event} href={openSessionHref(event.id)} expanded={expanded} />
             ))}
           </div>
           {remainingCount > 0 ? (

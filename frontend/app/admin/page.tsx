@@ -815,9 +815,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     label: agendaDayLabel(dayKey, agendaView),
     sessions: sessionsByDay.get(dayKey) ?? [],
   }));
-  const selectedDayDetails = dayDetails ? agendaDays.find((day) => day.key === dayDetails) ?? null : null;
-  const monthVisibleEventsLimit = 5;
-  const maxVisibleSessionsByDay = agendaView === "week" ? 6 : 24;
+  const agendaDayCards = agendaDays.map((day) => ({
+    key: day.key,
+    label: day.label,
+    events: day.sessions.map((session) => session),
+  }));
+  const selectedDayDetails = dayDetails ? agendaDayCards.find((day) => day.key === dayDetails) ?? null : null;
+  const visibleEventsByView = agendaView === "month" ? 5 : agendaView === "week" ? 8 : 24;
 
   let selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
   if (!selectedSession && selectedSessionId) {
@@ -1350,165 +1354,26 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </div>
         <p className="muted">{agendaNavigationHint(agendaView)}</p>
 
-        {agendaView === "month" ? (
-          <div className="agenda-grid agenda-grid-month">
-            {agendaDays.map((day) => (
-              <MonthDayCard
-                key={day.key}
-                dayLabel={day.label}
-                events={day.sessions}
-                isToday={day.key === todayAgendaKey}
-                maxVisibleEvents={monthVisibleEventsLimit}
-                dayDetailsHref={buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: day.key })}
-                openSessionHref={(sessionId) => withSessionInHref(sessionModalBaseHref, sessionId)}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className={`agenda-grid agenda-grid-${agendaView}`}>
-            {agendaDays.map((day) => (
-              <article key={day.key} className="agenda-day">
-                <div className="row spread agenda-day-header">
-                  <h3>{day.label}</h3>
-                  <span className="badge">{day.sessions.length}</span>
-                </div>
-
-                {day.sessions.length === 0 ? (
-                  <p className="muted agenda-empty">Aucun cours.</p>
-                ) : (
-                  <div className="agenda-events">
-                    {day.sessions.slice(0, maxVisibleSessionsByDay).map((session) => {
-                      const courseType = courseTypeById.get(session.course_type_id);
-                      const location = locationById.get(session.location_id);
-                      const occupancyText = `${session.booked_count}/${session.capacity_max}`;
-                      const openSessionHref = withSessionInHref(sessionModalBaseHref, session.id);
-                      const attendanceSessionHref = withQueryParam(openSessionHref, "attendance", "1");
-                      const groupNotesSessionHref = withQueryParam(openSessionHref, "notes", "group");
-                      const duplicateSessionHref = withQueryParam(openSessionHref, "duplicate", "1");
-                      const editSessionCardHref = withQueryParam(openSessionHref, "edit", "1");
-                      const sessionEmailHref = withQueryParam(openSessionHref, "message", "email");
-                      const sessionSmsHref = withQueryParam(openSessionHref, "message", "sms");
-                      const deleteSessionHref = withQueryParam(openSessionHref, "confirm_action", "delete");
-                      const hasBookedStudents = session.booked_count > 0;
-                      const activityColor = courseType?.color_hex ?? "#d8ccb9";
-                      const eventStateClass =
-                        session.status === "COMPLETED"
-                          ? "agenda-event-completed"
-                          : session.status === "CANCELLED"
-                            ? "agenda-event-cancelled"
-                            : "";
-
-                      return (
-                        <article key={session.id} className="agenda-event-shell">
-                          <a className="agenda-event-link" href={openSessionHref}>
-                            <section className={`agenda-event ${eventStateClass}`} style={{ borderLeft: `4px solid ${activityColor}` }}>
-                              <div className="row spread">
-                                <p className="muted">
-                                  {sessionTimeRangeLabel(session)}
-                                </p>
-                                <div className="row">
-                                  <span className={`occ-badge ${occupancyClass(session.booked_count, session.capacity_max)}`}>{occupancyText}</span>
-                                  <span className={`status-badge ${statusClass(session.status)}`}>{session.status_label}</span>
-                                  {session.is_private ? <span className="status-badge status-private">PRIVE</span> : null}
-                                </div>
-                              </div>
-
-                              <h3 className="event-title">{session.title}</h3>
-                              <small className="muted event-meta">
-                                <span className="meta-icon" aria-hidden="true">
-                                  🎵
-                                </span>
-                                {courseType?.name ?? "Type non defini"}
-                              </small>
-                              <small className="muted event-meta">
-                                <span className="meta-icon" aria-hidden="true">
-                                  👤
-                                </span>
-                                {session.teacher_display_name || "Prof : (non renseigne)"}
-                              </small>
-                              <small className="muted event-meta">
-                                <span className="meta-icon" aria-hidden="true">
-                                  📍
-                                </span>
-                                {location?.name ?? session.location_label}
-                              </small>
-                            </section>
-                          </a>
-
-                          <div className="agenda-event-hover-actions" aria-label="Actions creneau">
-                            {hasBookedStudents ? (
-                              <a
-                                className="agenda-event-action icon"
-                                href={attendanceSessionHref}
-                                aria-label="Prendre les presences"
-                                title="Prendre les presences"
-                              >
-                                ✅
-                              </a>
-                            ) : null}
-                            {hasBookedStudents ? (
-                              <a
-                                className="agenda-event-action icon"
-                                href={groupNotesSessionHref}
-                                aria-label="Ajouter une note de groupe"
-                                title="Ajouter une note de groupe"
-                              >
-                                📝
-                              </a>
-                            ) : null}
-                            {hasBookedStudents ? (
-                              <a
-                                className="agenda-event-action icon"
-                                href={sessionEmailHref}
-                                aria-label="Envoyer un email"
-                                title="Envoyer un email"
-                              >
-                                ✉️
-                              </a>
-                            ) : null}
-                            {hasBookedStudents ? (
-                              <a
-                                className="agenda-event-action icon"
-                                href={sessionSmsHref}
-                                aria-label="Envoyer un SMS"
-                                title="Envoyer un SMS"
-                              >
-                                💬
-                              </a>
-                            ) : null}
-                            <a className="agenda-event-action icon" href={duplicateSessionHref} aria-label="Dupliquer" title="Dupliquer">
-                              📄
-                            </a>
-                            <a className="agenda-event-action icon" href={editSessionCardHref} aria-label="Modifier" title="Modifier">
-                              ✏️
-                            </a>
-                            <a className="agenda-event-action danger icon" href={deleteSessionHref} aria-label="Supprimer" title="Supprimer">
-                              🗑
-                            </a>
-                          </div>
-                        </article>
-                      );
-                    })}
-                    {day.sessions.length > maxVisibleSessionsByDay ? (
-                      <a
-                        className="agenda-more-link"
-                        href={buildPlanningHref({ ...queryForLinks, showFilters: false, dayDetails: day.key })}
-                      >
-                        {day.sessions.length - maxVisibleSessionsByDay} autres
-                      </a>
-                    ) : null}
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
+        <div className={`agenda-grid agenda-grid-${agendaView}`}>
+          {agendaDayCards.map((day) => (
+            <MonthDayCard
+              key={day.key}
+              dayLabel={day.label}
+              events={day.events}
+              isToday={day.key === todayAgendaKey}
+              maxVisibleEvents={visibleEventsByView}
+              expanded={agendaView !== "month"}
+              dayDetailsHref={buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: day.key })}
+              openSessionHref={(sessionId) => withSessionInHref(sessionModalBaseHref, sessionId)}
+            />
+          ))}
+        </div>
       </section>
 
       <DayEventsDrawer
         isOpen={Boolean(selectedDayDetails && !selectedSession)}
         dayLabel={selectedDayDetails ? agendaDayLongLabel(selectedDayDetails.key) : ""}
-        events={selectedDayDetails ? selectedDayDetails.sessions : []}
+        events={selectedDayDetails ? selectedDayDetails.events : []}
         closeHref={dayDetailsCloseHref}
         openSessionHref={(sessionId) => withSessionInHref(sessionModalBaseHref, sessionId)}
       />
