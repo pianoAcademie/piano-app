@@ -45,6 +45,13 @@ from app.services.session_notifications import send_session_operation_email
 
 router = APIRouter()
 
+BOOKING_STATUSES_COUNTED_AS_RESERVED = (
+    BookingStatus.BOOKED,
+    BookingStatus.ATTENDED,
+    BookingStatus.NO_SHOW,
+    BookingStatus.EXCUSED_ABSENCE,
+)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -327,7 +334,7 @@ def list_my_professor_sessions(
             Booking.session_id.label("session_id"),
             func.count(Booking.id).label("booked_count"),
         )
-        .where(Booking.status == BookingStatus.BOOKED)
+        .where(Booking.status.in_(BOOKING_STATUSES_COUNTED_AS_RESERVED))
         .group_by(Booking.session_id)
         .subquery()
     )

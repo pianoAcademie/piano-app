@@ -198,6 +198,9 @@ function formatTime(value: string): string {
 
 function statusBadgeClass(status: string): string {
   const normalized = status.toUpperCase();
+  if (normalized === "ATTENDANCE_PENDING") {
+    return "status-waitlist";
+  }
   if (normalized === "COMPLETED") {
     return "status-completed";
   }
@@ -209,6 +212,9 @@ function statusBadgeClass(status: string): string {
 
 function statusLabel(status: string): string {
   const normalized = status.toUpperCase();
+  if (normalized === "ATTENDANCE_PENDING") {
+    return "A SAISIR";
+  }
   if (normalized === "SCHEDULED") {
     return "PREVU";
   }
@@ -300,6 +306,21 @@ function pendingAttendanceCount(session: ProfessorSessionOut): number {
   return session.students.filter((student) => student.attendance_status === "BOOKED").length;
 }
 
+function presentAttendanceCount(session: ProfessorSessionOut): number {
+  return session.students.filter((student) => student.attendance_status === "ATTENDED").length;
+}
+
+function reservedStudentsCountFromRoster(session: ProfessorSessionOut): number {
+  return session.students.filter((student) => {
+    return (
+      student.attendance_status === "BOOKED" ||
+      student.attendance_status === "ATTENDED" ||
+      student.attendance_status === "NO_SHOW" ||
+      student.attendance_status === "EXCUSED_ABSENCE"
+    );
+  }).length;
+}
+
 function occupancyClass(booked: number, capacity: number): string {
   if (capacity <= 0) {
     return "occ-low";
@@ -322,6 +343,18 @@ function agendaEventStateClass(status: string): string {
     return "agenda-event-cancelled";
   }
   return "";
+}
+
+function sessionDisplayStatus(session: ProfessorSessionOut): string {
+  const normalized = session.status.toUpperCase();
+  if (normalized !== "SCHEDULED") {
+    return normalized;
+  }
+  const sessionEnded = new Date(session.end_at_utc).getTime() <= Date.now();
+  if (!sessionEnded) {
+    return normalized;
+  }
+  return pendingAttendanceCount(session) > 0 ? "ATTENDANCE_PENDING" : "COMPLETED";
 }
 
 function productRequestStatusLabel(status: string): string {
@@ -438,6 +471,12 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const selectedSessionId = readParam(searchParams, "session_id");
   const selectedSession = selectedSessionId ? sessions.find((session) => session.id === selectedSessionId) ?? null : null;
+  const selectedSessionDisplayStatus = selectedSession ? sessionDisplayStatus(selectedSession) : null;
+  const selectedSessionReservedCount = selectedSession
+    ? Math.max(selectedSession.booked_count, reservedStudentsCountFromRoster(selectedSession))
+    : 0;
+  const selectedSessionPresentCount = selectedSession ? presentAttendanceCount(selectedSession) : 0;
+  const selectedSessionPendingCount = selectedSession ? pendingAttendanceCount(selectedSession) : 0;
   const selectedMessageId = readParam(searchParams, "message_id");
 
   const pendingRows = pendingResult.ok ? pendingResult.data : [];
@@ -632,7 +671,11 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 ) : (
                   <div className="agenda-events coach-agenda-events">
                     {day.sessions.slice(0, maxVisibleSessionsByDay).map((session) => {
+                      const displayStatus = sessionDisplayStatus(session);
                       const pending = pendingAttendanceCount(session);
+                      const present = presentAttendanceCount(session);
+                      const reservedFromRoster = reservedStudentsCountFromRoster(session);
+                      const reservedCount = Math.max(session.booked_count, reservedFromRoster);
                       const openHref = buildProfHref({
                         tab: "planning",
                         agendaView,
@@ -643,12 +686,12 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                       const firstCount = session.students.filter((student) => student.is_first_course).length;
                       return (
                         <Link key={session.id} className="agenda-event-link" href={openHref}>
-                          <article className={`agenda-event coach-agenda-event ${agendaEventStateClass(session.status)}`}>
+                          <article className={`agenda-event coach-agenda-event ${agendaEventStateClass(displayStatus)}`}>
                             <div className="row spread">
                               <p className="muted">
                                 {formatTime(session.start_at_utc)} - {formatTime(session.end_at_utc)}
                               </p>
-                              <span className={`status-badge ${statusBadgeClass(session.status)}`}>{statusLabel(session.status)}</span>
+                              <span className={`status-badge ${statusBadgeClass(displayStatus)}`}>{statusLabel(displayStatus)}</span>
                             </div>
                             <h3 className="event-title">{session.title}</h3>
                             <small className="muted event-meta">
@@ -667,15 +710,16 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                               <span className="meta-icon" aria-hidden="true">
                                 👥
                               </span>
-                              Places {session.booked_count}/{session.capacity_max}
+                              Places {reservedCount}/{session.capacity_max}
                             </small>
                             <div className="row">
-                              <span className={`occ-badge ${occupancyClass(session.booked_count, session.capacity_max)}`}>
-                                {session.booked_count}/{session.capacity_max}
+                              <span className={`occ-badge ${occupancyClass(reservedCount, session.capacity_max)}`}>
+                                {reservedCount}/{session.capacity_max}
                               </span>
-                              <span className={`status-badge ${pending > 0 ? "status-waitlist" : "status-scheduled"}`}>
-                                Presences: {pending}
+                              <span className={`status-badge ${present > 0 ? "status-completed" : "status-scheduled"}`}>
+                                Présents: {present}
                               </span>
+                              {pending > 0 ? <span className="status-badge status-waitlist">A saisir: {pending}</span> : null}
                             </div>
                             {(trialCount > 0 || firstCount > 0) && (
                               <p className="muted event-meta">
@@ -1108,13 +1152,21 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             <h3 className="modal-title">{selectedSession.title}</h3>
             <p className="muted">
               {formatDateTime(selectedSession.start_at_utc)} - {formatTime(selectedSession.end_at_utc)} | Statut:{" "}
-              {statusLabel(selectedSession.status)}
+              {statusLabel(selectedSessionDisplayStatus ?? selectedSession.status)}
             </p>
             <div className="row">
-              <span className={`occ-badge ${selectedSession.booked_count >= selectedSession.capacity_max ? "occ-high" : "occ-low"}`}>
-                {selectedSession.booked_count}/{selectedSession.capacity_max}
+              <span className={`occ-badge ${selectedSessionReservedCount >= selectedSession.capacity_max ? "occ-high" : "occ-low"}`}>
+                {selectedSessionReservedCount}/{selectedSession.capacity_max}
               </span>
-              <span className={`status-badge ${statusBadgeClass(selectedSession.status)}`}>{statusLabel(selectedSession.status)}</span>
+              <span className={`status-badge ${statusBadgeClass(selectedSessionDisplayStatus ?? selectedSession.status)}`}>
+                {statusLabel(selectedSessionDisplayStatus ?? selectedSession.status)}
+              </span>
+              <span className={`status-badge ${selectedSessionPresentCount > 0 ? "status-completed" : "status-scheduled"}`}>
+                Présents: {selectedSessionPresentCount}
+              </span>
+              {selectedSessionPendingCount > 0 ? (
+                <span className="status-badge status-waitlist">A saisir: {selectedSessionPendingCount}</span>
+              ) : null}
             </div>
             <p className="muted">
               {selectedSession.course_type.name} | {selectedSession.location.name}
