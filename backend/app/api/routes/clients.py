@@ -834,7 +834,7 @@ def list_client_visible_sessions(
         )
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
-        .join(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(Professor, Professor.id == CourseSession.professor_id)
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
         .where(
             CourseSession.status == SessionStatus.SCHEDULED,
@@ -889,10 +889,14 @@ def list_client_visible_sessions(
                     name=location.name,
                     is_online=location.is_online,
                 ),
-                professor=SessionProfessorOut(
-                    id=professor.id,
-                    first_name=professor.first_name,
-                    last_name=professor.last_name,
+                professor=(
+                    SessionProfessorOut(
+                        id=professor.id,
+                        first_name=professor.first_name,
+                        last_name=professor.last_name,
+                    )
+                    if professor is not None
+                    else None
                 ),
             )
         )

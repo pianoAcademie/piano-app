@@ -445,6 +445,7 @@ class AdminActivityOut(BaseModel):
     duration_minutes: int
     color_hex: str
     mode: DeliveryMode
+    requires_professor: bool
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None
@@ -468,6 +469,7 @@ class AdminActivityUpsertRequest(BaseModel):
     duration_minutes: int = Field(default=60, ge=5, le=600)
     color_hex: str = Field(default="#94C973", min_length=7, max_length=7)
     mode: DeliveryMode = DeliveryMode.ANY
+    requires_professor: bool = True
     default_capacity: int = Field(default=8, ge=1, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
@@ -491,6 +493,7 @@ class AdminActivityUpdateRequest(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=5, le=600)
     color_hex: str | None = Field(default=None, min_length=7, max_length=7)
     mode: DeliveryMode | None = None
+    requires_professor: bool | None = None
     default_capacity: int | None = Field(default=None, ge=1, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
@@ -1509,7 +1512,7 @@ class AdminSessionRecurrenceRequest(BaseModel):
 class AdminSessionCreateRequest(BaseModel):
     course_type_id: UUID
     location_id: UUID
-    professor_id: UUID
+    professor_id: UUID | None = None
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     public_description: str | None = None
@@ -1554,8 +1557,8 @@ class AdminSessionOut(BaseModel):
     id: UUID
     course_type_id: UUID
     location_id: UUID
-    professor_id: UUID
-    teacher_id: UUID
+    professor_id: UUID | None
+    teacher_id: UUID | None
     teacher_display_name: str
     location_label: str
     type_label: str

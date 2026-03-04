@@ -1263,7 +1263,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const parsed_capacity_max = parseNonNegativeInt(capacity_raw);
   const capacity_max = parsed_capacity_max ?? 1;
 
-  if (!course_type_id || !location_id || !professor_id || !title || !start_at_utc) {
+  if (!course_type_id || !location_id || !title || !start_at_utc) {
     redirect(appendQueryMessage(returnTo, "error", "Champs obligatoires manquants"));
   }
 
@@ -1314,7 +1314,6 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const payload: Record<string, unknown> = {
     course_type_id,
     location_id,
-    professor_id,
     title,
     start_at_utc,
     is_all_day,
@@ -1323,6 +1322,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     allow_online_booking,
     timezone: session_timezone,
   };
+  payload.professor_id = professor_id || null;
 
   if (public_description !== null) {
     payload.public_description = public_description;
@@ -1411,7 +1411,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const capacity_max = parseNonNegativeInt(capacity_raw);
 
-  if (!session_id || !title || !start_at_utc || !course_type_id || !location_id || !professor_id) {
+  if (!session_id || !title || !start_at_utc || !course_type_id || !location_id) {
     redirect(appendQueryMessage(returnTo, "error", "Champs de modification invalides"));
   }
   if (!is_all_day && !start_time.trim()) {
@@ -1468,13 +1468,13 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     professor_reminder_note,
     course_type_id,
     location_id,
-    professor_id,
     start_at_utc,
     is_all_day,
     is_private,
     allow_online_booking,
     timezone: session_timezone,
   };
+  payload.professor_id = professor_id || null;
 
   if (end_at_utc !== null) {
     payload.end_at_utc = end_at_utc;
@@ -4884,6 +4884,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
+  const requiresProfessor = checkboxField(formData, "requires_professor");
   const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
   const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
   const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
@@ -4947,6 +4948,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     duration_minutes: durationMinutes,
     color_hex: colorHex,
     mode,
+    requires_professor: requiresProfessor,
     default_capacity: defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
@@ -5009,6 +5011,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
+  const requiresProfessor = checkboxField(formData, "requires_professor");
   const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
   const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
   const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
@@ -5073,6 +5076,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     duration_minutes: durationMinutes,
     color_hex: colorHex,
     mode,
+    requires_professor: requiresProfessor,
     default_capacity: defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,

@@ -273,6 +273,7 @@ def _serialize_activity(
         duration_minutes=activity.duration_minutes,
         color_hex=activity.color_hex,
         mode=activity.mode,
+        requires_professor=bool(activity.requires_professor),
         default_capacity=activity.default_capacity,
         default_hourly_rate=activity.default_hourly_rate,
         default_course_rate_ttc=activity.default_course_rate_ttc,
@@ -1460,6 +1461,7 @@ def create_admin_activity(
         duration_minutes=int(payload.duration_minutes),
         color_hex=_normalize_color_hex(payload.color_hex),
         mode=DeliveryMode(payload.mode),
+        requires_professor=bool(payload.requires_professor),
         default_capacity=int(payload.default_capacity),
         default_hourly_rate=payload.default_hourly_rate,
         default_course_rate_ttc=payload.default_course_rate_ttc,
@@ -1562,6 +1564,9 @@ def update_admin_activity(
 
     if "mode" in changes:
         activity.mode = DeliveryMode(changes["mode"])
+
+    if "requires_professor" in changes:
+        activity.requires_professor = bool(changes["requires_professor"])
 
     if "default_capacity" in changes:
         activity.default_capacity = int(changes["default_capacity"])

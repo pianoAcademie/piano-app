@@ -829,7 +829,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       if (selectedCourseType && session.course_type_id !== selectedCourseType) {
         return false;
       }
-      if (selectedProfessorSet.size > 0 && !selectedProfessorSet.has(session.professor_id)) {
+      if (selectedProfessorSet.size > 0 && (!session.professor_id || !selectedProfessorSet.has(session.professor_id))) {
         return false;
       }
       if (selectedStatus !== "ALL" && session.status !== selectedStatus) {
@@ -960,7 +960,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       : null;
   const selectedCourseTypeName = selectedSession ? courseTypeById.get(selectedSession.course_type_id)?.name ?? "Type non defini" : "";
   const selectedLocationName = selectedSession ? locationById.get(selectedSession.location_id)?.name ?? "Lieu non defini" : "";
-  const selectedProfessorDetail = selectedSession ? professorById.get(selectedSession.professor_id) : null;
+  const selectedProfessorDetail =
+    selectedSession && selectedSession.professor_id ? professorById.get(selectedSession.professor_id) : null;
   const selectedProfessorName = selectedSession
     ? selectedProfessorDetail
       ? `${selectedProfessorDetail.first_name} ${selectedProfessorDetail.last_name}`.trim()
@@ -1239,8 +1240,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                   <label>
                     Coach
-                    <select name="professor_id" required>
-                      <option value="">Selectionner</option>
+                    <select name="professor_id">
+                      <option value="">Sans professeur</option>
                       {professors.map((row) => (
                         <option key={row.id} value={row.id}>
                           {row.first_name} {row.last_name}
@@ -1717,7 +1718,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                 <label>
                   Coach
-                  <select name="professor_id" defaultValue={selectedSession.professor_id} required>
+                  <select name="professor_id" defaultValue={selectedSession.professor_id ?? ""}>
+                    <option value="">Sans professeur</option>
                     {professors.map((row) => (
                       <option key={row.id} value={row.id}>
                         {row.first_name} {row.last_name}

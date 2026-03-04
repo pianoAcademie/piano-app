@@ -2442,6 +2442,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             {activity.duration_minutes} min
                           </small>
                           <small className="muted">
+                            Professeur: {activity.requires_professor ? "Requis" : "Optionnel"}
+                          </small>
+                          <small className="muted">
                             Entite: {activity.seller_legal_entity_name ?? "Non definie"}
                           </small>
                           <small className="muted">{activity.description || "Sans description"}</small>
@@ -2531,6 +2534,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <option value="ONSITE">Presentiel</option>
                             <option value="ONLINE">En ligne</option>
                           </select>
+                        </label>
+                        <label className="checkline">
+                          <input type="checkbox" name="requires_professor" defaultChecked />
+                          Professeur requis
                         </label>
                         <label>
                           Type de credit
@@ -2736,6 +2743,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <option value="ONSITE">Presentiel</option>
                             <option value="ONLINE">En ligne</option>
                           </select>
+                        </label>
+                        <label className="checkline">
+                          <input
+                            type="checkbox"
+                            name="requires_professor"
+                            defaultChecked={selectedActivity.requires_professor}
+                          />
+                          Professeur requis
                         </label>
 
                         <label>

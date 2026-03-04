@@ -375,12 +375,12 @@ def _load_admin_session_with_refs(
     *,
     session_id: UUID,
     for_update: bool = False,
-) -> tuple[CourseSession, CourseType, Location, Professor] | None:
+) -> tuple[CourseSession, CourseType, Location, Professor | None] | None:
     stmt = (
         select(CourseSession, CourseType, Location, Professor)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
-        .join(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(Professor, Professor.id == CourseSession.professor_id)
         .where(CourseSession.id == session_id)
     )
     if for_update:
@@ -434,9 +434,9 @@ def _validate_and_load_refs(
     *,
     course_type_id: UUID,
     location_id: UUID,
-    professor_id: UUID,
+    professor_id: UUID | None,
     enforce_planning_allowed: bool = True,
-) -> tuple[CourseType, Location, Professor]:
+) -> tuple[CourseType, Location, Professor | None]:
     course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
     if course_type is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
@@ -447,9 +447,16 @@ def _validate_and_load_refs(
     if location is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
 
-    professor = db.scalar(select(Professor).where(Professor.id == professor_id))
-    if professor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor not found")
+    professor: Professor | None = None
+    if professor_id is not None:
+        professor = db.scalar(select(Professor).where(Professor.id == professor_id))
+        if professor is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor not found")
+    elif bool(course_type.requires_professor):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Professor is required for this activity",
+        )
 
     if enforce_planning_allowed:
         _assert_course_type_allowed_for_location(
@@ -1471,7 +1478,7 @@ def list_admin_sessions(
         select(CourseSession, CourseType, Location, Professor)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
-        .join(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(Professor, Professor.id == CourseSession.professor_id)
     )
 
     location_filter_ids = list(dict.fromkeys(location_ids or []))

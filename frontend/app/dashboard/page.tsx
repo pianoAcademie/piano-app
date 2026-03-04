@@ -217,6 +217,14 @@ function normalizeStatus(value: string): string {
   return value.trim().toUpperCase();
 }
 
+function sessionProfessorName(session: SessionOut): string {
+  if (!session.professor) {
+    return "Sans professeur";
+  }
+  const fullName = `${session.professor.first_name} ${session.professor.last_name}`.trim();
+  return fullName || "Sans professeur";
+}
+
 function statusClass(value: string): string {
   const normalized = normalizeStatus(value);
   if (normalized === "BOOKED") {
@@ -898,7 +906,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const coachOptions = Array.from(
     sessions
       .reduce((acc, session) => {
-        const name = `${session.professor.first_name} ${session.professor.last_name}`.trim();
+        if (!session.professor) {
+          return acc;
+        }
+        const name = sessionProfessorName(session);
         acc.set(session.professor.id, { id: session.professor.id, name: name || session.professor.id });
         return acc;
       }, new Map<string, { id: string; name: string }>())
@@ -1259,7 +1270,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   });
 
   const filteredSessions = sessions.filter((session) => {
-    if (selectedCoachId && session.professor.id !== selectedCoachId) {
+    if (selectedCoachId && session.professor?.id !== selectedCoachId) {
       return false;
     }
     if (!matchesTimeBucket(session.start_at_utc, timezone, selectedTimeBucket)) {
@@ -2039,7 +2050,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       <span className="occ-badge">{session.booked_count}/{session.capacity_max}</span>
                                       <small className="event-meta">⏱ {durationMinutes} min</small>
                                     </div>
-                                    <small className="event-meta event-meta-secondary">👨‍🏫 {session.professor.first_name} {session.professor.last_name}</small>
+                                    <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small>
                                     <small className="event-meta event-meta-secondary">📍 {session.location.name}</small>
 
                                     <div className="row client-event-footer">
@@ -2133,7 +2144,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <article className="item">
                         <small className="muted">Coach</small>
                         <p>
-                          {selectedSession.professor.first_name} {selectedSession.professor.last_name}
+                          {sessionProfessorName(selectedSession)}
                         </p>
                       </article>
                       <article className="item">

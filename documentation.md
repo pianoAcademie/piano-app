@@ -177,3 +177,27 @@
 2. Verifier qu'un evenement affiche le professeur sans clic (`Prof : ...`) sur chaque chip.
 3. Verifier qu'un jour avec >3 cours affiche `+N autres` et ouvre le drawer de detail.
 4. Verifier que la topbar n'affiche plus la liste des modules, et que la sidebar est sectionnee (Operations/Finance/Communication/Administration) avec item actif visible.
+
+## Activites avec/sans professeur + paie prof a 0 eleve
+
+### Regles fonctionnelles
+- Une activite definit maintenant explicitement si un professeur est requis (`course_types.requires_professor`).
+- Si `requires_professor = false`, une seance peut etre creee/modifiee sans `professor_id`.
+- La paie/facturation professeur avec 0 eleve est autorisee si la grille de paie contient une regle `min_students = 0` (comportement conserve).
+
+### Impacts techniques
+- Migration Alembic:
+  - `course_types.requires_professor` (BOOLEAN, default true, not null)
+  - `course_sessions.professor_id` passe nullable
+- API admin:
+  - `POST/PATCH /api/v1/admin/activities` accepte `requires_professor`
+  - `POST/PATCH /api/v1/admin/sessions` accepte `professor_id = null` si activite sans professeur
+- Listing sessions (catalogue/client/admin):
+  - jointure professeur en `outer join` pour ne plus cacher les seances sans professeur.
+
+### Validation
+1. BO > Configuration > Activites: cocher/decocher `Professeur requis`.
+2. BO > Planning: creer un creneau sur une activite sans professeur avec `Coach = Sans professeur`.
+3. Verifier la visibilite du creneau dans les listes sessions.
+4. Verifier la paie prof sur une activite avec regle `min_students = 0`:
+   - generation releve/facture prof possible meme sans eleve.

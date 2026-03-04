@@ -47,6 +47,7 @@ export type CourseTypeOut = {
   duration_minutes: number;
   color_hex: string;
   mode: string;
+  requires_professor: boolean;
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;
@@ -102,7 +103,7 @@ export type SessionOut = {
     id: string;
     first_name: string;
     last_name: string;
-  };
+  } | null;
 };
 
 export type PlanOut = {
@@ -981,8 +982,8 @@ export type AdminSessionOut = {
   id: string;
   course_type_id: string;
   location_id: string;
-  professor_id: string;
-  teacher_id: string;
+  professor_id: string | null;
+  teacher_id: string | null;
   teacher_display_name: string;
   location_label: string;
   type_label: string;
@@ -1406,6 +1407,7 @@ export type AdminActivityOut = {
   duration_minutes: number;
   color_hex: string;
   mode: "ONLINE" | "ONSITE" | "ANY" | string;
+  requires_professor: boolean;
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;

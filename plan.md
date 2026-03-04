@@ -99,3 +99,23 @@
   - `docker compose exec -T backend python scripts/smoke_billing_entities_v1.py`
   - `docker compose exec -T backend python scripts/smoke_teacher_invoicing_v1.py`
   - `docker compose exec -T frontend npm run build`
+
+## PR7 - Activites avec/sans professeur
+- Ajouter le parametre activite `requires_professor`.
+- Autoriser la creation/modification de seances sans professeur quand l activite le permet.
+- Conserver la facturation prof a 0 eleve quand une regle de grille `min_students = 0` existe.
+- Impacts fichiers:
+  - `backend/alembic/versions/20260307_0059_activity_requires_professor.py`
+  - `backend/app/models/catalog.py`
+  - `backend/app/schemas/admin.py`
+  - `backend/app/schemas/catalog.py`
+  - `backend/app/api/routes/admin.py`
+  - `backend/app/api/routes/admin_config.py`
+  - `backend/app/api/routes/catalogue.py`
+  - `backend/app/api/routes/clients.py`
+  - `backend/app/services/payouts.py`
+  - `frontend/app/admin/config/page.tsx`
+  - `frontend/app/admin/page.tsx`
+  - `frontend/app/dashboard/page.tsx`
+  - `frontend/lib/actions.ts`
+  - `frontend/lib/types.ts`

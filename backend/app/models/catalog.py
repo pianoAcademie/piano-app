@@ -232,6 +232,7 @@ class CourseType(Base):
         ),
         nullable=False,
     )
+    requires_professor: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     default_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     default_hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     default_course_rate_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
@@ -283,10 +284,10 @@ class CourseSession(Base):
         ForeignKey("locations.id", ondelete="restrict"),
         nullable=False,
     )
-    professor_id: Mapped[UUID] = mapped_column(
+    professor_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("professors.id", ondelete="restrict"),
-        nullable=False,
+        nullable=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -124,6 +124,9 @@ def _resolve_hourly_rate(
     on_date: date,
     default_grid_lines: list[DefaultProfessorGridLine] | None = None,
 ) -> ResolvedHourlyRate | None:
+    if session_obj.professor_id is None:
+        return None
+
     course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
     location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
 
@@ -274,6 +277,7 @@ def run_calc_professor_payouts_job(
         .where(
             CourseSession.status != SessionStatus.CANCELLED,
             CourseSession.end_at_utc <= now,
+            CourseSession.professor_id.is_not(None),
         )
         .order_by(CourseSession.end_at_utc.asc())
         .limit(limit)

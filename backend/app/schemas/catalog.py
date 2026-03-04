@@ -21,6 +21,7 @@ class CourseTypeOut(BaseModel):
     duration_minutes: int
     color_hex: str
     mode: DeliveryMode
+    requires_professor: bool
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None
@@ -76,4 +77,4 @@ class SessionOut(BaseModel):
     zoom_link: str | None
     course_type: SessionCourseTypeOut
     location: SessionLocationOut
-    professor: SessionProfessorOut
+    professor: SessionProfessorOut | None

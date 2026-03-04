@@ -79,6 +79,7 @@ def list_course_types(
             duration_minutes=row.duration_minutes,
             color_hex=row.color_hex,
             mode=row.mode,
+            requires_professor=bool(row.requires_professor),
             default_capacity=row.default_capacity,
             default_hourly_rate=row.default_hourly_rate,
             default_course_rate_ttc=row.default_course_rate_ttc,
@@ -155,7 +156,7 @@ def list_sessions(
         )
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
-        .join(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(Professor, Professor.id == CourseSession.professor_id)
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
         .where(CourseSession.status == SessionStatus.SCHEDULED, CourseSession.is_private.is_(False))
     )
@@ -206,10 +207,14 @@ def list_sessions(
                     name=location.name,
                     is_online=location.is_online,
                 ),
-                professor=SessionProfessorOut(
-                    id=professor.id,
-                    first_name=professor.first_name,
-                    last_name=professor.last_name,
+                professor=(
+                    SessionProfessorOut(
+                        id=professor.id,
+                        first_name=professor.first_name,
+                        last_name=professor.last_name,
+                    )
+                    if professor is not None
+                    else None
                 ),
             )
         )
