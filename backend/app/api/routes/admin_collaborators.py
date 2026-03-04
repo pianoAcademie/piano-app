@@ -293,7 +293,8 @@ def _send_professor_password_reset_link(
         from_name=sender.from_name,
         reply_to=sender.reply_to,
         subject_prefix=sender.subject_prefix,
-        recipient_user_id=user.id,
+        # Avoid FK lock contention on users during locked collaborator updates.
+        recipient_user_id=None,
     )
     return message_id, expires_at
 
