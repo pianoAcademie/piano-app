@@ -72,6 +72,7 @@ from app.schemas.admin import (
     AdminClientOut,
     AdminClientPasswordEmailTemplateOut,
     AdminClientPasswordEmailTemplateUpdateRequest,
+    AdminClientPortalAccessOut,
     AdminClientPasswordResetOut,
     AdminClientPaymentOut,
     AdminClientManualTransactionCreateRequest,
@@ -132,7 +133,7 @@ from app.services.messaging_templates import (
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
-from app.services.security import hash_password
+from app.services.security import create_access_token, hash_password
 from app.services.subscriptions import (
     add_months_utc,
     apply_suspension,
@@ -3710,6 +3711,37 @@ def send_admin_client_password_email(
         email=client.email,
         message_id=message_id,
         sent_at=now,
+    )
+
+
+@router.post("/{client_id}/portal-access", response_model=AdminClientPortalAccessOut)
+def create_admin_client_portal_access(
+    client_id: UUID,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientPortalAccessOut:
+    client = _require_client(db, client_id)
+    if not client.is_active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client inactive")
+
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=f"Connexion portail client initiee par {_display_name(actor.first_name, actor.last_name, actor.email)}.",
+    )
+    db.commit()
+
+    expires_seconds = max(60, int(settings.access_token_expire_minutes * 60))
+    token = create_access_token(
+        subject=str(client.id),
+        role=client.role.value,
+    )
+    return AdminClientPortalAccessOut(
+        client_id=client.id,
+        access_token=token,
+        expires_in_seconds=expires_seconds,
     )
 
 

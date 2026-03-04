@@ -13,6 +13,7 @@ import {
   cancelAdminClientSubscriptionAction,
   linkExistingFamilyMembersAction,
   adminPurchasePlanForClientAction,
+  adminViewClientPortalAction,
   createAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
   updateAdminClientManualTransactionAction,
@@ -1523,6 +1524,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link className="mode-link" href="/admin/clients?new_client=1">
               Nouveau client
             </Link>
+            <form action={adminViewClientPortalAction}>
+              <input type="hidden" name="client_id" value={client.id} />
+              <button type="submit" className="mode-link">
+                Vue client
+              </button>
+            </form>
           </div>
           <small className="muted">Cree le {formatDate(client.created_at)} | Maj {formatDate(client.updated_at)}</small>
         </div>

@@ -294,9 +294,9 @@ function safeProfessorReturnPath(formData: FormData, fallback = "/prof"): string
   return fallback;
 }
 
-function safeClientReturnPath(formData: FormData, fallback = "/dashboard"): string {
+function safeClientReturnPath(formData: FormData, fallback = "/client"): string {
   const raw = String(formData.get("return_to") ?? "").trim();
-  if (raw.startsWith("/dashboard")) {
+  if (raw.startsWith("/dashboard") || raw.startsWith("/client")) {
     return raw;
   }
   return fallback;
@@ -660,7 +660,7 @@ export async function loginAction(formData: FormData): Promise<void> {
   }
 
   if (me.role === "client") {
-    redirect("/dashboard?ok=Connexion%20reussie");
+    redirect("/client?tab=home&ok=Connexion%20reussie");
   }
 
   redirect("/prof?ok=Connexion%20prof%20reussie");
@@ -706,7 +706,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   }
 
   setToken(loginResult.data.access_token);
-  redirect("/dashboard?ok=Compte%20cree");
+  redirect("/client?tab=home&ok=Compte%20cree");
 }
 
 export async function forgotPasswordAction(formData: FormData): Promise<void> {
@@ -770,7 +770,7 @@ export async function updateProfileAction(formData: FormData): Promise<void> {
   const timezone = String(formData.get("timezone") ?? "").trim();
 
   if (!residence_country || !preferred_currency || !timezone) {
-    redirect("/dashboard?tab=account&edit_profile=1&error=Pays%2C%20devise%20et%20timezone%20sont%20obligatoires");
+    redirect("/client?tab=account&edit_profile=1&error=Pays%2C%20devise%20et%20timezone%20sont%20obligatoires");
   }
 
   const payload = {
@@ -805,11 +805,12 @@ export async function updateProfileAction(formData: FormData): Promise<void> {
   );
 
   if (!result.ok) {
-    redirect(`/dashboard?tab=account&edit_profile=1&error=${encodeURIComponent(result.message)}`);
+    redirect(`/client?tab=account&edit_profile=1&error=${encodeURIComponent(result.message)}`);
   }
 
+  revalidatePath("/client");
   revalidatePath("/dashboard");
-  redirect("/dashboard?tab=account&ok=Profil%20mis%20a%20jour");
+  redirect("/client?tab=account&ok=Profil%20mis%20a%20jour");
 }
 
 export async function purchasePlanAction(formData: FormData): Promise<void> {
@@ -827,7 +828,7 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   }
   if (startDateRaw) {
     if (!parseUtcStartOfDate(startDateRaw)) {
-      redirect("/dashboard?tab=offers&error=Date%20de%20demarrage%20invalide");
+      redirect("/client?tab=offers&error=Date%20de%20demarrage%20invalide");
     }
     payload.start_date = startDateRaw;
   }
@@ -842,14 +843,15 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   );
 
   if (!result.ok) {
-    redirect(`/dashboard?tab=offers&error=${encodeURIComponent(result.message)}`);
+    redirect(`/client?tab=offers&error=${encodeURIComponent(result.message)}`);
   }
 
+  revalidatePath("/client");
   revalidatePath("/dashboard");
   if (result.data.checkout_url) {
     redirect(result.data.checkout_url);
   }
-  redirect("/dashboard?tab=offers&ok=Offre%20souscrite");
+  redirect("/client?tab=offers&ok=Offre%20souscrite");
 }
 
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
@@ -858,7 +860,7 @@ export async function openClientPaymentCheckoutAction(formData: FormData): Promi
     redirect("/login?error=Session%20expiree");
   }
 
-  const returnTo = safeClientReturnPath(formData, "/dashboard?tab=transactions");
+  const returnTo = safeClientReturnPath(formData, "/client?tab=finance&finance_view=transactions");
   const paymentRaw = String(formData.get("payment_id") ?? "").trim();
   const paymentId = paymentRaw.startsWith("plan:") ? paymentRaw.slice("plan:".length) : paymentRaw;
   if (!paymentId) {
@@ -876,6 +878,7 @@ export async function openClientPaymentCheckoutAction(formData: FormData): Promi
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
+  revalidatePath("/client");
   revalidatePath("/dashboard");
   redirect(result.data.checkout_url);
 }
@@ -885,7 +888,7 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  const returnTo = safeClientReturnPath(formData, "/dashboard?tab=planning");
+  const returnTo = safeClientReturnPath(formData, "/client?tab=planning");
   const inSessionContext = returnTo.includes("session_id=");
 
   const sessionId = String(formData.get("session_id") ?? "");
@@ -923,6 +926,7 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
     redirect(appendQueryMessage(failurePath, "error", userMessage));
   }
 
+  revalidatePath("/client");
   revalidatePath("/dashboard");
   let successPath = removeQueryParam(returnTo, "error");
   successPath = removeQueryParam(successPath, "session_error");
@@ -938,7 +942,7 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  const returnTo = safeClientReturnPath(formData, "/dashboard?tab=reservations");
+  const returnTo = safeClientReturnPath(formData, "/client?tab=reservations");
 
   const bookingId = String(formData.get("booking_id") ?? "");
   const result = await backendRequest<Record<string, never>>(
@@ -954,6 +958,7 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
     redirect(appendQueryMessage(failurePath, "error", result.message));
   }
 
+  revalidatePath("/client");
   revalidatePath("/dashboard");
   const successPath = removeQueryParam(returnTo, "error");
   redirect(appendQueryMessage(successPath, "ok", "Reservation annulee"));
@@ -2460,6 +2465,35 @@ export async function sendAdminClientPasswordAction(formData: FormData): Promise
       `Mot de passe genere et envoye (${result.data.message_id})`,
     )}`,
   );
+}
+
+export async function adminViewClientPortalAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  if (!clientId) {
+    redirect("/admin/clients?error=Client%20invalide");
+  }
+
+  const result = await backendRequest<{ access_token: string }>(
+    `/api/v1/admin/clients/${clientId}/portal-access`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=infos&error=${encodeURIComponent(result.message)}`);
+  }
+
+  setToken(result.data.access_token);
+  redirect("/client?tab=home&ok=Connexion%20client%20activee");
 }
 
 export async function adminPurchasePlanForClientAction(formData: FormData): Promise<void> {

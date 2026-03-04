@@ -738,6 +738,12 @@ class AdminClientPasswordResetOut(BaseModel):
     sent_at: datetime
 
 
+class AdminClientPortalAccessOut(BaseModel):
+    client_id: UUID
+    access_token: str
+    expires_in_seconds: int
+
+
 class AdminClientFamilyLinkOut(BaseModel):
     id: UUID
     adult: AdminFamilyMemberOut
