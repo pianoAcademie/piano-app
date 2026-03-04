@@ -5986,6 +5986,27 @@ button.danger {
   gap: 8px;
 }
 
+.client-home-calendar-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.client-home-calendar-group {
+  border: 1px solid var(--client-card-border);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.client-home-calendar-group h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 700;
+}
+
 .client-compact-invoice-row {
   min-height: 56px;
   border: 1px solid var(--client-card-border);

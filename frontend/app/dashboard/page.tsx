@@ -334,6 +334,14 @@ function matchesFinancePeriod(dateValue: string, period: FinancePeriodFilter, no
   return rowDate.getTime() >= minTime;
 }
 
+function matchesFinanceAsOf(dateValue: string, asOfUtcEnd: Date): boolean {
+  const rowDate = safeDate(dateValue);
+  if (!rowDate) {
+    return false;
+  }
+  return rowDate.getTime() <= asOfUtcEnd.getTime();
+}
+
 function financePeriodLabel(period: FinancePeriodFilter): string {
   if (period === "LAST_30_DAYS") {
     return "30j";
@@ -788,6 +796,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const financeSourceFilter = readParam(searchParams, "finance_source") || "ALL";
   const financeStatusFilter = parseFinanceStatusFilter(readParam(searchParams, "finance_status"));
   const financePeriodFilter = parseFinancePeriodFilter(readParam(searchParams, "finance_period"));
+  const financeAsOfInput = readParam(searchParams, "finance_as_of");
+  const financeAsOfDateKey = isDateKey(financeAsOfInput) ? financeAsOfInput : todayKeyInTimezone(timezone);
+  const financeAsOfUtcEnd = new Date(`${financeAsOfDateKey}T23:59:59.999Z`);
   const financeView = parseFinanceView(readParam(searchParams, "finance_view"));
   const financePageSize = parseFinancePageSize(readParam(searchParams, "finance_page_size"));
   const financePageRaw = parsePositiveInt(readParam(searchParams, "finance_page"), 1);
@@ -1094,14 +1105,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const paymentRows = basePaymentRows
     .filter((row) => financeSourceFilter === "ALL" || normalizeStatus(row.source) === normalizeStatus(financeSourceFilter))
     .filter((row) => statusMatchesFinanceFilter(row.status, financeStatusFilter))
-    .filter((row) => matchesFinancePeriod(row.occurred_at, financePeriodFilter, now));
+    .filter((row) => matchesFinancePeriod(row.occurred_at, financePeriodFilter, now))
+    .filter((row) => matchesFinanceAsOf(row.occurred_at, financeAsOfUtcEnd));
 
   const baseInvoiceRows = invoices
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
     .sort((a, b) => b.issued_at.localeCompare(a.issued_at));
   const invoiceRows = baseInvoiceRows
     .filter((row) => statusMatchesFinanceFilter(row.status, financeStatusFilter))
-    .filter((row) => matchesFinancePeriod(row.issued_at, financePeriodFilter, now));
+    .filter((row) => matchesFinancePeriod(row.issued_at, financePeriodFilter, now))
+    .filter((row) => matchesFinanceAsOf(row.issued_at, financeAsOfUtcEnd));
   const invoiceByPaymentId = new Map<string, ClientInvoiceOut>();
   for (const invoice of baseInvoiceRows) {
     const paymentId = invoice.id.startsWith("invoice:") ? invoice.id.slice("invoice:".length) : invoice.id;
@@ -1203,7 +1216,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .map((invoice) => paymentByInvoiceId.get(invoice.id))
     .filter((row): row is ClientPaymentOut => row != null && canPayNowForPayment(row));
   const homePrimaryPayableRow = homeInvoicePaymentRows[0] ?? null;
-  const newsRows = [...messageRows]
+  const reminderRowsSource = messageRows.filter((row) =>
+    `${row.subject_preview || ""} ${row.channel || ""}`.toLowerCase().includes("rappel"),
+  );
+  const newsRows = [...(reminderRowsSource.length > 0 ? reminderRowsSource : messageRows)]
     .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc))
     .slice(0, 2);
   const homeCalendarRows = [...upcomingBookings14].sort((a, b) => {
@@ -1214,6 +1230,27 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       }
     }
     return a.session.start_at_utc.localeCompare(b.session.start_at_utc);
+  });
+  const homeCalendarGroups =
+    homeCalendarView === "BY_MEMBER"
+      ? Array.from(
+          homeCalendarRows.reduce((acc, row) => {
+            const existing = acc.get(row.owner_display_name) ?? [];
+            existing.push(row);
+            acc.set(row.owner_display_name, existing);
+            return acc;
+          }, new Map<string, typeof homeCalendarRows>()),
+        )
+      : [];
+  const firstHomeBooking = homeCalendarRows[0] ?? upcomingBookings14[0] ?? null;
+  const homePlanningHref = withUpdatedQuery(rawParams, {
+    tab: "planning",
+    agenda_view: "day",
+    agenda_date: firstHomeBooking
+      ? dateKeyInTimezone(firstHomeBooking.session.start_at_utc, timezone)
+      : todayKeyInTimezone(timezone),
+    session_id: firstHomeBooking?.session.id ?? null,
+    booking_owner_id: firstHomeBooking?.owner_client_id ?? bookingOwnerId,
   });
 
   const filteredSessions = sessions.filter((session) => {
@@ -1305,17 +1342,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const paidTotal = paymentRows
     .filter((row) => normalizeStatus(row.status) === "PAID")
     .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
-  const pendingTotal = paymentRows
-    .filter((row) => normalizeStatus(row.status) !== "PAID")
+  const pendingTransactionsTotal = paymentRows
+    .filter((row) => FINANCE_PENDING_STATUSES.has(normalizeStatus(row.status)))
     .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
-  const payableRows = paymentRows.filter((row) => canPayNowForPayment(row));
-  const primaryPayableRow = payableRows[0] ?? null;
-  const financeSummaryTotals: Array<{ label: string; value: string; tone: "default" | "ok" | "warn" }> = [
-    { label: "A payer", value: toMoney(String(pendingTotal), me.preferred_currency), tone: pendingTotal > 0 ? "warn" : "default" },
-    { label: "Paye", value: toMoney(String(paidTotal), me.preferred_currency), tone: "ok" },
-    { label: "Solde", value: toMoney(String(Math.max(0, paidTotal - pendingTotal)), me.preferred_currency), tone: "default" },
-  ];
-
+  const financePendingInvoices = invoiceRows
+    .filter((invoice) => statusMatchesFinanceFilter(invoice.status, "TO_PAY"))
+    .filter((invoice) => parseMoneyValue(invoice.total_incl_vat) > 0);
+  const financeDueTotal = financePendingInvoices.reduce((sum, invoice) => sum + parseMoneyValue(invoice.total_incl_vat), 0);
+  const financeDuePaymentRows = financePendingInvoices
+    .map((invoice) => paymentByInvoiceId.get(invoice.id))
+    .filter((row): row is ClientPaymentOut => row != null && canPayNowForPayment(row));
+  const primaryDuePayableRow = financeDuePaymentRows[0] ?? null;
   const timezoneOptions = TIMEZONE_OPTIONS.some((item) => item.value === timezone)
     ? TIMEZONE_OPTIONS
     : [{ value: timezone, label: `${timezone} (personnalise)` }, ...TIMEZONE_OPTIONS];
@@ -1388,7 +1425,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       <section className="client-portal-main">
         <MobileHeader
           title={tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}
-          titleHref={withUpdatedQuery(rawParams, { tab: "home" })}
           subtitle={`${displayName} · ${timezone}`}
           menu={
             <div className="client-mobile-menu-items">
@@ -1412,11 +1448,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
         <header className="client-topbar">
           <div>
-            <h1>
-              <a className="client-home-link" href={withUpdatedQuery(rawParams, { tab: "home" })}>
-                {tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}
-              </a>
-            </h1>
+            <h1>{tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}</h1>
             <p className="muted">
               Réservations actives: {upcomingBookings.length} | Membres visibles: {members.length}
             </p>
@@ -1437,7 +1469,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <SectionCard
                 title="Accueil"
                 className="client-home-header-v2"
-                action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>Voir le planning</a>}
+                action={<a className="mode-link" href={homePlanningHref}>Voir le planning</a>}
               >
                 <p className="muted">Bonjour {me.first_name || displayName}</p>
                 <FilterChipsBar className="client-member-chips">
@@ -1510,7 +1542,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </UrgentPayCard>
                   ) : null}
 
-                  <SectionCard title="À venir (14 jours)" action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>Voir le planning</a>}>
+                  <SectionCard title="À venir (14 jours)" action={<a className="mode-link" href={homePlanningHref}>Voir le planning</a>}>
                     {upcomingBookings14.length === 0 ? (
                       <p className="muted">Aucun cours a venir sur 14 jours.</p>
                     ) : (
@@ -1521,7 +1553,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             timeLabel={formatTime(booking.session.start_at_utc)}
                             title={booking.session.title}
                             subtitle={`${formatDate(booking.session.start_at_utc)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
-                            action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", session_id: booking.session.id })}>Voir</a>}
+                            action={
+                              <a
+                                className="mode-link"
+                                href={withUpdatedQuery(rawParams, {
+                                  tab: "planning",
+                                  agenda_view: "day",
+                                  agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
+                                  session_id: booking.session.id,
+                                  booking_owner_id: booking.owner_client_id,
+                                })}
+                              >
+                                Voir
+                              </a>
+                            }
                           />
                         ))}
                       </div>
@@ -1614,6 +1659,38 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               >
                 {homeCalendarRows.length === 0 ? (
                   <p className="muted">Aucun cours a venir sur 14 jours.</p>
+                ) : homeCalendarView === "BY_MEMBER" ? (
+                  <div className="client-home-calendar-groups">
+                    {homeCalendarGroups.map(([memberName, rows]) => (
+                      <article key={`home-calendar-group-${memberName}`} className="client-home-calendar-group">
+                        <h3>{memberName}</h3>
+                        <div className="client-home-calendar-list">
+                          {rows.slice(0, 3).map((booking) => (
+                            <UpcomingLessonRow
+                              key={`home-booking-group-${booking.id}`}
+                              timeLabel={formatTime(booking.session.start_at_utc)}
+                              title={booking.session.title}
+                              subtitle={`${formatDate(booking.session.start_at_utc)} · ${statusLabel(booking.status)}`}
+                              action={
+                                <a
+                                  className="mode-link"
+                                  href={withUpdatedQuery(rawParams, {
+                                    tab: "planning",
+                                    agenda_view: "day",
+                                    agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
+                                    session_id: booking.session.id,
+                                    booking_owner_id: booking.owner_client_id,
+                                  })}
+                                >
+                                  Voir
+                                </a>
+                              }
+                            />
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
                 ) : (
                   <div className="client-home-calendar-list">
                     {homeCalendarRows.slice(0, 6).map((booking) => (
@@ -1622,16 +1699,29 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         timeLabel={formatTime(booking.session.start_at_utc)}
                         title={booking.session.title}
                         subtitle={`${formatDate(booking.session.start_at_utc)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
-                        action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", session_id: booking.session.id })}>Voir</a>}
+                        action={
+                          <a
+                            className="mode-link"
+                            href={withUpdatedQuery(rawParams, {
+                              tab: "planning",
+                              agenda_view: "day",
+                              agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
+                              session_id: booking.session.id,
+                              booking_owner_id: booking.owner_client_id,
+                            })}
+                          >
+                            Voir
+                          </a>
+                        }
                       />
                     ))}
                   </div>
                 )}
               </SectionCard>
 
-              <SectionCard title="Nouvelles récentes" action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Voir tout</a>}>
+              <SectionCard title="Derniers rappels" action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Voir tout</a>}>
                 {newsRows.length === 0 ? (
-                  <p className="muted">Aucune nouvelle recente.</p>
+                  <p className="muted">Aucun rappel récent.</p>
                 ) : (
                   <div className="list">
                     {newsRows.map((message) => (
@@ -2544,28 +2634,33 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 title="Finance"
                 className="client-finance-shell"
                 action={
-                  pendingTotal > 0 ? (
-                    primaryPayableRow ? (
+                  financeDueTotal > 0 ? (
+                    primaryDuePayableRow ? (
                       <form action={openClientPaymentCheckoutAction}>
-                        <input type="hidden" name="payment_id" value={primaryPayableRow.id} />
-                        <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })} />
+                        <input type="hidden" name="payment_id" value={primaryDuePayableRow.id} />
+                        <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })} />
                         <button type="submit" className="client-pay-cta">
-                          Payer {toMoney(primaryPayableRow.total_incl_vat, primaryPayableRow.currency)}
+                          Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
                         </button>
                       </form>
                     ) : (
-                      <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
-                        Payer {toMoney(String(pendingTotal), me.preferred_currency)}
+                      <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
+                        Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
                       </a>
                     )
                   ) : null
                 }
               >
                 <section className="client-kpi-grid">
-                  <KPIBlock label="A payer" value={toMoney(String(pendingTotal), me.preferred_currency)} helper="Montant en attente" />
-                  <KPIBlock label="Paye" value={toMoney(String(paidTotal), me.preferred_currency)} helper="Reglements confirms" />
-                  <KPIBlock label="Solde / credit" value={toMoney(String(Math.max(0, paidTotal - pendingTotal)), me.preferred_currency)} helper="Difference paye - a payer" />
+                  <KPIBlock label="A payer" value={toMoney(String(financeDueTotal), me.preferred_currency)} helper="Factures en attente" />
+                  <KPIBlock label="Paye" value={toMoney(String(paidTotal), me.preferred_currency)} helper="Reglements confirmes" />
+                  <KPIBlock
+                    label="Transactions en attente"
+                    value={toMoney(String(pendingTransactionsTotal), me.preferred_currency)}
+                    helper="Tous mouvements non soldes"
+                  />
                 </section>
+                <p className="muted">Comptes arrêtés au {formatDate(financeAsOfDateKey)}.</p>
 
                 <div className="client-finance-toolbar">
                   <div className="client-finance-tab-scroll">
@@ -2620,6 +2715,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         </select>
                       </label>
                       <label>
+                        Date d'arrete
+                        <input type="date" name="finance_as_of" defaultValue={financeAsOfDateKey} />
+                      </label>
+                      <label>
                         Lignes / page
                         <select name="finance_page_size" defaultValue={String(financePageSize)}>
                           {FINANCE_PAGE_SIZES.map((size) => (
@@ -2655,6 +2754,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             finance_source: "ALL",
                             finance_status: "ALL",
                             finance_period: "ALL",
+                            finance_as_of: todayKeyInTimezone(timezone),
                             finance_page: "1",
                             invoice_id: null,
                           })}
@@ -2684,6 +2784,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   ))}
                   {financeStatusFilter !== "ALL" ? <span className="badge">Statut: {visibleFinanceStatusOptions.find((item) => item.value === financeStatusFilter)?.label}</span> : null}
                   {financePeriodFilter !== "ALL" ? <span className="badge">Periode: {financePeriodLabel(financePeriodFilter)}</span> : null}
+                  <span className="badge">Arrêté: {formatDate(financeAsOfDateKey)}</span>
                   {financeView === "transactions" && financeSourceFilter !== "ALL" ? <span className="badge">Type: {sourceLabel(financeSourceFilter)}</span> : null}
                 </FilterChipsBar>
               </SectionCard>
@@ -2697,12 +2798,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       {pagedPaymentRows.map((row) => {
                         const linkedInvoice = invoiceByPaymentId.get(row.id);
                         const canPayNow = canPayNowForPayment(row);
+                        const isBilled = Boolean(linkedInvoice);
                         return (
                           <TransactionRow
                             key={`tx-${row.id}`}
-                            typeBadge={<span className="badge">{sourceLabel(row.source)}</span>}
+                            typeBadge={<span className={`status-pill ${isBilled ? "status-ok" : "status-off"}`}>{isBilled ? "Facturé" : "Non facturé"}</span>}
                             label={row.label}
-                            meta={`${formatDateTime(row.occurred_at)} · ${row.owner_display_name}`}
+                            meta={`${formatDateTime(row.occurred_at)} · ${row.owner_display_name} · ${sourceLabel(row.source)}`}
                             amount={toMoney(row.total_incl_vat, row.currency)}
                             statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status)}</span>}
                             actions={
@@ -2828,19 +2930,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </Card>
               ) : null}
 
-              {pendingTotal > 0 ? (
+              {financeDueTotal > 0 ? (
                 <div className="client-finance-sticky-pay">
-                  {primaryPayableRow ? (
+                  {primaryDuePayableRow ? (
                     <form action={openClientPaymentCheckoutAction}>
-                      <input type="hidden" name="payment_id" value={primaryPayableRow.id} />
-                      <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })} />
+                      <input type="hidden" name="payment_id" value={primaryDuePayableRow.id} />
+                      <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })} />
                       <button type="submit" className="client-pay-cta">
-                        Payer {toMoney(primaryPayableRow.total_incl_vat, primaryPayableRow.currency)}
+                        Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
                       </button>
                     </form>
                   ) : (
-                    <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
-                      Payer {toMoney(String(pendingTotal), me.preferred_currency)}
+                    <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
+                      Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
                     </a>
                   )}
                 </div>
