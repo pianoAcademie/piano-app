@@ -2271,7 +2271,6 @@ def update_session(
         if (
             "capacity_max" in updates
             and target.status == SessionStatus.SCHEDULED
-            and target.start_at_utc > now
             and target.capacity_max > 0
         ):
             _promote_waitlist_if_possible(db, target, now)
