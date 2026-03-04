@@ -269,10 +269,16 @@ def _forfait_period_bounds(plan: Plan) -> tuple[datetime, datetime]:
 
 
 @router.get("/plans", response_model=list[PlanOut])
-def list_plans(active: bool = True, db: Session = Depends(get_db)) -> list[PlanOut]:
+def list_plans(
+    active: bool = True,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT, UserRole.ADMIN)),
+) -> list[PlanOut]:
     stmt = select(Plan)
     if active:
         stmt = stmt.where(Plan.active.is_(True))
+    if current_user.role == UserRole.CLIENT:
+        stmt = stmt.where(Plan.is_private.is_(False))
     stmt = stmt.order_by(Plan.name.asc())
 
     plans = db.scalars(stmt).all()
@@ -304,7 +310,7 @@ def plan_price_preview(
     normalized_currency = currency.upper()
     today = date.today()
 
-    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True)))
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True), Plan.is_private.is_(False)))
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
@@ -362,7 +368,7 @@ def purchase_plan(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CLIENT)),
 ) -> ClientSubscriptionOut:
-    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True)))
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True), Plan.is_private.is_(False)))
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 

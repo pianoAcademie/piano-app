@@ -1312,6 +1312,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <h2>Reserver de nouveaux creneaux</h2>
                   <span className="badge">{agendaSessionCount}</span>
                 </div>
+                <p className="muted">Touchez un creneau pour ouvrir le detail puis confirmez avec "Reserver maintenant".</p>
                 <div className={`agenda-grid client-agenda-grid agenda-grid-${agendaView}`}>
                   {agendaDays.map((day) => {
                     const visibleSessions = agendaView === "day" ? day.sessions : day.sessions.slice(0, 4);
@@ -1763,6 +1764,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <h2>Souscrire une offre</h2>
                   <span className="badge">{plans.length}</span>
                 </div>
+                <p className="muted">Pour reserver un nouveau creneau, ouvrez l onglet Planning puis touchez un creneau disponible.</p>
+                <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>Aller au planning</a>
 
                 <form method="get" className="row">
                   <input type="hidden" name="tab" value="offers" />

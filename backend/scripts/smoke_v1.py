@@ -147,6 +147,16 @@ def get_subscription_plan_id() -> str:
         return str(row)
 
 
+def get_private_plan_id() -> str | None:
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(Plan.id)
+            .where(Plan.active.is_(True), Plan.is_private.is_(True))
+            .limit(1)
+        )
+        return str(row) if row is not None else None
+
+
 def get_online_location_and_professor() -> tuple[str, str, str]:
     with SessionLocal() as db:
         location = db.scalar(select(Location).where(Location.code == "ONLINE"))
@@ -292,6 +302,26 @@ def main() -> None:
         duplicate_monthly.status == 409,
         f"duplicate monthly purchase should fail: {duplicate_monthly.status} {duplicate_monthly.data}",
     )
+
+    private_plan_id = get_private_plan_id()
+    if private_plan_id is not None:
+        step("private plans hidden from clients")
+        plans_for_client = api.call("GET", "/api/v1/plans", token=client_token)
+        ensure(plans_for_client.status == 200, f"client list plans failed: {plans_for_client.status} {plans_for_client.data}")
+        ensure(isinstance(plans_for_client.data, list), f"client plans payload is not a list: {plans_for_client.data}")
+        visible_plan_ids = {row.get("id") for row in plans_for_client.data if isinstance(row, dict)}
+        ensure(private_plan_id not in visible_plan_ids, "private plan should be hidden from client list")
+
+        private_preview = api.call("GET", f"/api/v1/plans/{private_plan_id}/price-preview", token=client_token)
+        ensure(
+            private_preview.status == 404,
+            f"private plan preview should fail with 404: {private_preview.status} {private_preview.data}",
+        )
+        private_purchase = api.call("POST", f"/api/v1/plans/{private_plan_id}/purchase", token=client_token)
+        ensure(
+            private_purchase.status == 404,
+            f"private plan purchase should fail with 404: {private_purchase.status} {private_purchase.data}",
+        )
 
     booking_client = book_session(client_token, waitlist_session_id, sub_client)
     booking_wait = book_session(wait_token, waitlist_session_id, sub_wait)
