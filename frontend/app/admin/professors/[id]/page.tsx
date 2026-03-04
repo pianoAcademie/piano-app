@@ -12,6 +12,7 @@ import {
   updateAdminCollaboratorProfileAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import CollaboratorClientChunkAnchor from "./_client-chunk-anchor";
 import type {
   AdminConfigAccountOut,
   AdminProfessorContractGridOut,
@@ -41,7 +42,7 @@ const COLLABORATOR_LANGUAGE_OPTIONS: string[] = [
 ];
 
 type PageProps = {
-  params: { professorId: string };
+  params: { id: string };
   searchParams: SearchParams;
 };
 
@@ -347,21 +348,21 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const agendaRange = buildAgendaRange(agendaView, agendaDate);
 
   const sessionsQuery = new URLSearchParams();
-  sessionsQuery.set("professor_id", params.professorId);
+  sessionsQuery.set("professor_id", params.id);
   sessionsQuery.set("from", agendaRange.from.toISOString());
   sessionsQuery.set("to", agendaRange.to.toISOString());
   const payoutLedgerQuery = new URLSearchParams();
   payoutLedgerQuery.set("as_of", payoutAsOf);
 
   const contractGridsRequest = showLegacyContractGrid
-    ? backendRequest<AdminProfessorContractGridOut[]>(`/api/v1/admin/collaborators/${params.professorId}/contract-grids`, {}, token)
+    ? backendRequest<AdminProfessorContractGridOut[]>(`/api/v1/admin/collaborators/${params.id}/contract-grids`, {}, token)
     : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminProfessorContractGridOut[] });
   const contractLocationsRequest = showLegacyContractGrid
     ? backendRequest<AdminProfessorContractLocationOptionOut[]>("/api/v1/admin/collaborators/contract-grid/locations", {}, token)
     : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminProfessorContractLocationOptionOut[] });
   const payoutLedgerRequest =
     currentTab === "solde"
-      ? backendRequest<AdminProfessorPayoutLedgerOut>(`/api/v1/admin/collaborators/${params.professorId}/payout-ledger?${payoutLedgerQuery.toString()}`, {}, token)
+      ? backendRequest<AdminProfessorPayoutLedgerOut>(`/api/v1/admin/collaborators/${params.id}/payout-ledger?${payoutLedgerQuery.toString()}`, {}, token)
       : Promise.resolve({ ok: true as const, status: 200, data: null as AdminProfessorPayoutLedgerOut | null });
 
   const [
@@ -376,8 +377,8 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     payoutLedgerResult,
   ] =
     await Promise.all([
-    backendRequest<AdminProfessorDetailOut>(`/api/v1/admin/collaborators/${params.professorId}`, {}, token),
-    backendRequest<AdminProfessorRateOut[]>(`/api/v1/admin/collaborators/${params.professorId}/rates`, {}, token),
+    backendRequest<AdminProfessorDetailOut>(`/api/v1/admin/collaborators/${params.id}`, {}, token),
+    backendRequest<AdminProfessorRateOut[]>(`/api/v1/admin/collaborators/${params.id}/rates`, {}, token),
     backendRequest<CourseTypeOut[]>("/api/v1/course-types", {}, token),
     backendRequest<AdminSessionOut[]>(`/api/v1/admin/sessions?${sessionsQuery.toString()}`, {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
@@ -472,6 +473,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
   return (
     <section className="admin-page-grid">
+      <CollaboratorClientChunkAnchor />
       <section className="client-hero card">
         <div className="row spread">
           <Link className="reset-link" href="/admin/professors">

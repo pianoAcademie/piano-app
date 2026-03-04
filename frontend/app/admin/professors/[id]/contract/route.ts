@@ -5,7 +5,7 @@ import { backendUrl } from "../../../../../lib/backend";
 
 type Params = {
   params: {
-    professorId: string;
+    id: string;
   };
 };
 
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
     return NextResponse.redirect(loginUrl, 302);
   }
 
-  const professorId = params.professorId;
+  const professorId = params.id;
   const response = await fetch(`${backendUrl()}/api/v1/admin/collaborators/${professorId}/contract`, {
     method: "GET",
     headers: {
