@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
+  logoutAction,
   teacherApproveStatementsAction,
   teacherCancelInvoiceAction,
   teacherDisputeStatementsAction,
@@ -10,23 +11,30 @@ import {
   teacherUncancelInvoiceAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
+import ActionCard from "../../../components/teacher-ui/action-card";
+import AlertCard from "../../../components/teacher-ui/alert-card";
+import BottomTabs from "../../../components/teacher-ui/bottom-tabs";
+import ListRow from "../../../components/teacher-ui/list-row";
+import PageHeaderMobile from "../../../components/teacher-ui/page-header-mobile";
+import SectionAccordion from "../../../components/teacher-ui/section-accordion";
+import StatChip from "../../../components/teacher-ui/stat-chip";
 import type { TeacherInvoiceOut, TeacherStatementOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
 const MONTH_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 1, label: "Janvier" },
-  { value: 2, label: "Février" },
+  { value: 2, label: "Fevrier" },
   { value: 3, label: "Mars" },
   { value: 4, label: "Avril" },
   { value: 5, label: "Mai" },
   { value: 6, label: "Juin" },
   { value: 7, label: "Juillet" },
-  { value: 8, label: "Août" },
+  { value: 8, label: "Aout" },
   { value: 9, label: "Septembre" },
   { value: 10, label: "Octobre" },
   { value: 11, label: "Novembre" },
-  { value: 12, label: "Décembre" },
+  { value: 12, label: "Decembre" },
 ];
 
 function readParam(params: SearchParams, key: string): string {
@@ -35,6 +43,10 @@ function readParam(params: SearchParams, key: string): string {
     return value[0] ?? "";
   }
   return value ?? "";
+}
+
+function profTabHref(tab: string): string {
+  return `/prof?tab=${encodeURIComponent(tab)}`;
 }
 
 export default async function TeacherStatementsPage({
@@ -52,6 +64,7 @@ export default async function TeacherStatementsPage({
   const month = Number.isFinite(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12 ? parsedMonth : now.getUTCMonth() + 1;
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
+  const monthLabel = MONTH_OPTIONS.find((option) => option.value === month)?.label ?? String(month);
 
   const [statementsResult, invoicesResult] = await Promise.all([
     backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements?year=${year}&month=${month}`, {}, token),
@@ -74,15 +87,42 @@ export default async function TeacherStatementsPage({
   }
 
   return (
-    <section className="admin-page-grid">
-      <article className="card">
-        <div className="row spread">
-          <h2>Releves mensuels professeur</h2>
-          <Link className="mode-link" href="/prof">
-            Retour à l'accueil
+    <section className="page teacher-shell teacher-subpage">
+      <PageHeaderMobile
+        title="Releves mensuels"
+        subtitle={`${monthLabel} ${year}`}
+        trailing={
+          <Link className="mode-link teacher-header-link" href="/prof">
+            Retour accueil
           </Link>
-        </div>
-        <form method="get" className="row">
+        }
+        menu={
+          <div className="teacher-header-menu-items">
+            <Link className="teacher-header-menu-link" href="/prof">
+              Accueil
+            </Link>
+            <form action={logoutAction}>
+              <button className="ghost teacher-header-menu-btn" type="submit">
+                Se deconnecter
+              </button>
+            </form>
+          </div>
+        }
+      />
+
+      <BottomTabs
+        activeId="statements"
+        items={[
+          { id: "overview", label: "A traiter", icon: "📌", href: profTabHref("overview") },
+          { id: "planning", label: "Planning", icon: "📅", href: profTabHref("planning") },
+          { id: "statements", label: "Releves", icon: "🧾", href: "/prof/statements" },
+          { id: "messages", label: "Messages", icon: "✉️", href: profTabHref("messages") },
+          { id: "profile", label: "Profil", icon: "👤", href: profTabHref("profile") },
+        ]}
+      />
+
+      <article className="card teacher-filter-card">
+        <form method="get" className="grid teacher-filter-form">
           <label>
             Annee
             <input type="number" name="year" min={2000} max={2100} defaultValue={year} />
@@ -97,76 +137,90 @@ export default async function TeacherStatementsPage({
               ))}
             </select>
           </label>
-          <button type="submit">Afficher</button>
+          <div className="teacher-filter-submit">
+            <button type="submit">Afficher</button>
+          </div>
         </form>
       </article>
 
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
+      {ok ? <AlertCard tone="ok">{ok}</AlertCard> : null}
+      {error ? <AlertCard tone="error">{error}</AlertCard> : null}
 
-      <article className="card">
-        <div className="row">
+      <ActionCard title="Actions" subtitle="Validation ou litige pour la periode selectionnee.">
+        <div className="row teacher-actions-wrap">
           <form action={teacherApproveStatementsAction}>
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
             <input type="hidden" name="return_to" value={`/prof/statements?year=${year}&month=${month}`} />
-            <button type="submit">Approuver et generer les factures</button>
+            <button type="submit">Approuver et generer</button>
           </form>
-          <form action={teacherDisputeStatementsAction}>
+          <form action={teacherDisputeStatementsAction} className="teacher-dispute-form">
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
             <input type="hidden" name="return_to" value={`/prof/statements?year=${year}&month=${month}`} />
             <input type="text" name="message" placeholder="Motif de litige" required />
             <button type="submit" className="ghost">
-              Signaler un litige
+              Signaler litige
             </button>
           </form>
         </div>
-      </article>
+      </ActionCard>
 
       {statements.length === 0 ? (
-        <article className="card">
-          <p className="muted">Aucun releve trouve pour cette periode.</p>
-        </article>
+        <AlertCard tone="warn">Aucun releve trouve pour cette periode.</AlertCard>
       ) : (
-        <div className="grid">
+        <div className="grid teacher-entity-grid">
           {statements.map((statement) => (
             <article key={`${statement.payor_legal_entity_id}-${statement.year}-${statement.month}`} className="card">
               <div className="row spread">
                 <strong>{statement.payor_legal_entity_name}</strong>
-                {statement.attendance_complete ? <span className="status-pill status-ok">{statement.status}</span> : null}
+                <span className={`status-pill ${statement.attendance_complete ? "status-ok" : "status-warn"}`}>
+                  {statement.attendance_complete ? statement.status : "Presences a renseigner"}
+                </span>
               </div>
-              <p className="muted">
-                Total HT: {statement.totals_ht} {statement.currency} | TVA: {statement.totals_vat} {statement.currency} | TTC:{" "}
-                {statement.totals_ttc} {statement.currency}
-              </p>
+
+              <div className="teacher-chip-row">
+                <StatChip label="HT" value={`${statement.totals_ht} ${statement.currency}`} />
+                <StatChip label="TVA" value={`${statement.totals_vat} ${statement.currency}`} />
+                <StatChip label="TTC" value={`${statement.totals_ttc} ${statement.currency}`} tone="ok" />
+              </div>
+
               {!statement.attendance_complete ? (
-                <div className="list">
-                  <section className="flash-err">Présences à renseigner</section>
-                  {statement.missing_sessions.map((missing) => (
-                    <article key={missing.session_id} className="item">
-                      {new Date(missing.start_at_utc).toLocaleString("fr-FR")} | {missing.title} | presences manquantes:{" "}
-                      {missing.pending_students_count}/{missing.total_students_count}
-                    </article>
-                  ))}
-                </div>
+                <SectionAccordion
+                  title="Presences a renseigner"
+                  subtitle="Seances a completer avant approbation"
+                  badge={<span className="status-pill status-warn">{statement.missing_sessions.length}</span>}
+                >
+                  <div className="list teacher-list-compact">
+                    {statement.missing_sessions.map((missing) => (
+                      <ListRow
+                        key={missing.session_id}
+                        left={missing.title}
+                        subtitle={`${new Date(missing.start_at_utc).toLocaleString("fr-FR")} | ${missing.pending_students_count}/${missing.total_students_count}`}
+                      />
+                    ))}
+                  </div>
+                </SectionAccordion>
               ) : null}
-              <div className="row">
+
+              <div className="row top-gap-sm">
                 <Link className="mode-link" href={`/prof/statements/${year}/${month}`}>
                   Voir detail
                 </Link>
               </div>
 
-              {invoicesByPayor.get(statement.payor_legal_entity_id)?.map((invoice) => (
-                <article key={invoice.id} className="item">
+              {(invoicesByPayor.get(statement.payor_legal_entity_id) ?? []).map((invoice) => (
+                <article key={invoice.id} className="item teacher-invoice-card">
                   <div className="row spread">
                     <strong>{invoice.invoice_number}</strong>
-                    <span className={`status-pill ${invoice.status === "cancelled" ? "status-off" : "status-ok"}`}>{invoice.status}</span>
+                    <span className={`status-pill ${invoice.status === "cancelled" ? "status-off" : "status-ok"}`}>
+                      {invoice.status}
+                    </span>
                   </div>
                   <p className="muted">
-                    {invoice.totals_ttc} EUR | echeance: {invoice.due_date}
+                    {invoice.totals_ttc} EUR | echeance {invoice.due_date}
                   </p>
-                  <div className="row">
+                  <div className="row teacher-actions-wrap">
                     <Link className="reset-link" href={`/api/v1/teacher/invoices/${invoice.id}/pdf`}>
                       PDF
                     </Link>

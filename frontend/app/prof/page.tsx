@@ -15,6 +15,15 @@ import AutoSubmitSelect from "../../components/auto-submit-select";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
 import RichMessageEditor from "../../components/rich-message-editor";
+import ActionCard from "../../components/teacher-ui/action-card";
+import AlertCard from "../../components/teacher-ui/alert-card";
+import BottomTabs from "../../components/teacher-ui/bottom-tabs";
+import ListRow from "../../components/teacher-ui/list-row";
+import PageHeaderMobile from "../../components/teacher-ui/page-header-mobile";
+import SectionAccordion from "../../components/teacher-ui/section-accordion";
+import StatCard from "../../components/teacher-ui/stat-card";
+import StatChip from "../../components/teacher-ui/stat-chip";
+import StickyActionBar from "../../components/teacher-ui/sticky-action-bar";
 import type { PlanningEventChipData } from "../../components/planning/month-event-chip";
 import type {
   ProfessorAttendancePendingOut,
@@ -303,10 +312,6 @@ function buildProfHref(params: {
   return `/prof?${query.toString()}`;
 }
 
-function stripHtml(raw: string): string {
-  return raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-}
-
 function shiftAgendaDate(view: AgendaView, agendaDate: string, direction: -1 | 1): string {
   const focusDate = keyToUtcDate(agendaDate);
   if (view === "week") {
@@ -544,25 +549,34 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   ];
 
   return (
-    <main className="page prof-page">
-      <section className="card row header-row">
-        <div>
-          <h1>Espace professeur</h1>
-          <p className="muted">
-            {fullName || profile.email} | {profile.email}
-          </p>
-        </div>
-        <div className="row">
-          <span className={`status-pill ${profile.active ? "status-ok" : "status-off"}`}>{profile.active ? "Actif" : "Inactif"}</span>
-          <form action={logoutAction}>
-            <button className="ghost" type="submit">
-              Se deconnecter
-            </button>
-          </form>
-        </div>
-      </section>
+    <main className="page prof-page teacher-shell">
+      <PageHeaderMobile
+        title={fullName || "Professeur"}
+        subtitle={profile.email}
+        statusLabel={profile.active ? "Actif" : "Inactif"}
+        trailing={
+          <Link className="mode-link teacher-header-link" href="/prof/statements">
+            Releves
+          </Link>
+        }
+        menu={
+          <div className="teacher-header-menu-items">
+            <Link className="teacher-header-menu-link" href={buildProfHref({ tab: "catalog", agendaView, agendaDate })}>
+              Produits
+            </Link>
+            <Link className="teacher-header-menu-link" href={buildProfHref({ tab: "finance", agendaView, agendaDate })}>
+              Solde
+            </Link>
+            <form action={logoutAction}>
+              <button className="ghost teacher-header-menu-btn" type="submit">
+                Se deconnecter
+              </button>
+            </form>
+          </div>
+        }
+      />
 
-      <section className="card prof-nav">
+      <section className="card prof-nav teacher-desktop-nav">
         {navTabs.map((tab) => (
           <Link
             key={tab.id}
@@ -579,85 +593,82 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         </Link>
       </section>
 
-      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
-      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
-      {!sessionsResult.ok ? <section className="flash-err">Erreur planning: {sessionsResult.message}</section> : null}
-      {!pendingResult.ok ? <section className="flash-err">Erreur presences: {pendingResult.message}</section> : null}
-      {!balanceResult.ok ? <section className="flash-err">Erreur solde: {balanceResult.message}</section> : null}
-      {!messagesResult.ok ? <section className="flash-err">Erreur messages: {messagesResult.message}</section> : null}
-      {!contractGridsResult.ok ? <section className="flash-err">Erreur grille contractuelle: {contractGridsResult.message}</section> : null}
-      {!catalogStudentsResult.ok ? <section className="flash-err">Erreur eleves catalogue: {catalogStudentsResult.message}</section> : null}
-      {!catalogProductsResult.ok ? <section className="flash-err">Erreur produits catalogue: {catalogProductsResult.message}</section> : null}
-      {!catalogRequestsResult.ok ? <section className="flash-err">Erreur demandes produits: {catalogRequestsResult.message}</section> : null}
+      <BottomTabs
+        activeId={currentTab}
+        items={[
+          { id: "overview", label: "A traiter", icon: "📌", href: buildProfHref({ tab: "overview", agendaView, agendaDate }) },
+          { id: "planning", label: "Planning", icon: "📅", href: buildProfHref({ tab: "planning", agendaView, agendaDate }) },
+          { id: "statements", label: "Releves", icon: "🧾", href: "/prof/statements" },
+          { id: "messages", label: "Messages", icon: "✉️", href: buildProfHref({ tab: "messages", agendaView, agendaDate }) },
+          { id: "profile", label: "Profil", icon: "👤", href: buildProfHref({ tab: "profile", agendaView, agendaDate }) },
+        ]}
+      />
 
-      <section className="grid cols-3 prof-kpi-grid">
-        <article className="card">
-          <h3>Presences en attente</h3>
-          <p className="prof-kpi-value">{pendingCount}</p>
-          <small className="muted">{pendingRows.length} cours a completer</small>
-        </article>
-        <article className="card">
-          <h3>Cours du jour</h3>
-          <p className="prof-kpi-value">{todaySessions.length}</p>
-          <small className="muted">Planning de la journee</small>
-        </article>
-        <article className="card">
-          <h3>Mes droits</h3>
-          <p className="prof-kpi-value">{canEditPlanning ? "Edition" : "Lecture"}</p>
-          <small className="muted">{canMessageStudents ? "Messages eleves autorises" : "Messages eleves non autorises"}</small>
-        </article>
-      </section>
+      {okMessage ? <AlertCard tone="ok">{okMessage}</AlertCard> : null}
+      {errorMessage ? <AlertCard tone="error">{errorMessage}</AlertCard> : null}
+      {!sessionsResult.ok ? <AlertCard tone="error">Erreur planning: {sessionsResult.message}</AlertCard> : null}
+      {!pendingResult.ok ? <AlertCard tone="error">Erreur presences: {pendingResult.message}</AlertCard> : null}
+      {!balanceResult.ok ? <AlertCard tone="error">Erreur solde: {balanceResult.message}</AlertCard> : null}
+      {!messagesResult.ok ? <AlertCard tone="error">Erreur messages: {messagesResult.message}</AlertCard> : null}
+      {!contractGridsResult.ok ? <AlertCard tone="error">Erreur grille contractuelle: {contractGridsResult.message}</AlertCard> : null}
+      {!catalogStudentsResult.ok ? <AlertCard tone="error">Erreur eleves catalogue: {catalogStudentsResult.message}</AlertCard> : null}
+      {!catalogProductsResult.ok ? <AlertCard tone="error">Erreur produits catalogue: {catalogProductsResult.message}</AlertCard> : null}
+      {!catalogRequestsResult.ok ? <AlertCard tone="error">Erreur demandes produits: {catalogRequestsResult.message}</AlertCard> : null}
 
       {currentTab === "overview" ? (
-        <section className="card">
-          <div className="row spread">
-            <h2>Cours passes sans presence saisie</h2>
-            <Link className="mode-link" href={buildProfHref({ tab: "planning", agendaView: "day", agendaDate: todayKeyUtc() })}>
-              Voir planning
-            </Link>
-          </div>
-          {pendingRows.length === 0 ? (
-            <p className="muted">Aucune saisie en attente.</p>
-          ) : (
-            <div className="list">
-              {pendingRows.map((row) => {
-                const dayKey = row.start_at_utc.slice(0, 10);
-                const href = buildProfHref({
-                  tab: "planning",
-                  agendaView: "day",
-                  agendaDate: dayKey,
-                  sessionId: row.session_id,
-                });
-                return (
-                  <article key={row.session_id} className="item row spread">
-                    <div>
-                      <strong>{row.title}</strong>
-                      <p className="muted">
-                        {formatDateTime(row.start_at_utc)} - {formatTime(row.end_at_utc)} | {row.course_type_name} | {row.location_name}
-                      </p>
-                      <p className="muted">
-                        Eleves a saisir: {row.pending_students_count}/{row.total_students_count}
-                      </p>
-                    </div>
-                    <Link className="mode-link" href={href}>
-                      Saisir presences
-                    </Link>
-                  </article>
-                );
-              })}
-            </div>
-          )}
+        <section className="teacher-section-stack">
+          <ActionCard
+            title="Aujourd hui"
+            subtitle="Suivi de vos seances et presences a renseigner."
+            chips={
+              <>
+                <StatChip label="Presences" value={pendingCount} tone={pendingCount > 0 ? "warn" : "ok"} />
+                <StatChip label="Cours du jour" value={todaySessions.length} />
+                <StatChip label="Droits" value={canEditPlanning ? "Edition" : "Lecture"} />
+              </>
+            }
+            action={
+              <Link className="mode-link teacher-cta-full" href={buildProfHref({ tab: "planning", agendaView: "day", agendaDate: todayKeyUtc() })}>
+                Ouvrir le planning
+              </Link>
+            }
+          >
+            {pendingRows.length === 0 ? (
+              <p className="muted">Aucune saisie en attente.</p>
+            ) : (
+              <div className="list teacher-list-compact">
+                {pendingRows.map((row) => {
+                  const dayKey = row.start_at_utc.slice(0, 10);
+                  const href = buildProfHref({
+                    tab: "planning",
+                    agendaView: "day",
+                    agendaDate: dayKey,
+                    sessionId: row.session_id,
+                  });
+                  return (
+                    <ListRow
+                      key={row.session_id}
+                      href={href}
+                      left={row.title}
+                      subtitle={`${formatDateTime(row.start_at_utc)} - ${formatTime(row.end_at_utc)} | ${row.course_type_name} | ${row.location_name}`}
+                      right={<span className="status-pill status-warn">A saisir {row.pending_students_count}/{row.total_students_count}</span>}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </ActionCard>
         </section>
       ) : null}
 
       {currentTab === "planning" ? (
-        <section className="card">
-          <div className="row spread">
+        <section className="card teacher-planning-card">
+          <div className="row spread teacher-planning-head">
             <h2>Mes prochains cours</h2>
             <span className="badge">{agendaRange.title}</span>
           </div>
 
-          <form method="get" className="grid cols-4">
+          <form method="get" className="grid cols-4 teacher-planning-controls">
             <input type="hidden" name="tab" value="planning" />
             <label>
               Vue
@@ -675,13 +686,13 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               Date de reference (UTC)
               <input type="date" name="agenda_date" defaultValue={agendaDate} />
             </label>
-            <div className="row">
+            <div className="row teacher-planning-controls-actions">
               <button type="submit" className="ghost">Aller</button>
               <Link className="reset-link" href={todayAgendaHref}>
                 Aujourd hui
               </Link>
             </div>
-            <div className="row">
+            <div className="row teacher-planning-controls-arrows">
               <Link className="mode-link" href={previousAgendaHref}>
                 ←
               </Link>
@@ -734,13 +745,19 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       ) : null}
 
       {currentTab === "catalog" ? (
-        <section className="grid cols-2">
-          <article className="card">
-            <h2>Signaler un besoin produit</h2>
-            <p className="muted">
-              Créez une demande pour un eleve. Le statut initial sera “En cours de traitement” puis validé/refusé par l administration.
-            </p>
-            <form action={professorCreateCatalogRequestAction} className="grid">
+        <section className="grid cols-2 teacher-catalog-layout">
+          <ActionCard
+            title="Signaler un besoin produit"
+            subtitle="Demande pour un eleve. Validation par l administration."
+            action={
+              <StickyActionBar>
+                <button type="submit" form="teacher-catalog-request-form">
+                  Envoyer la demande
+                </button>
+              </StickyActionBar>
+            }
+          >
+            <form id="teacher-catalog-request-form" action={professorCreateCatalogRequestAction} className="grid teacher-form-stack">
               <input type="hidden" name="return_to" value={buildProfHref({ tab: "catalog", agendaView, agendaDate })} />
               <label>
                 Eleve
@@ -783,195 +800,206 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 Note (optionnel)
                 <textarea name="note" rows={3} maxLength={2000} />
               </label>
-              <div className="row">
-                <button type="submit">Envoyer la demande</button>
-              </div>
             </form>
-          </article>
+          </ActionCard>
 
-          <article className="card">
-            <h2>Produits a remettre</h2>
-            <p className="muted">Quand le produit est donne a l eleve, utilisez le bouton "Marquer remis".</p>
+          <ActionCard title="Produits a remettre" subtitle="Marquez les demandes remises a l eleve.">
             {catalogToDeliver.length === 0 ? (
               <p className="muted">Aucun produit en attente de remise.</p>
             ) : (
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Eleve</th>
-                      <th>Produit</th>
-                      <th>Lieu</th>
-                      <th>Qt</th>
-                      <th>Stock</th>
-                      <th>Statut</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {catalogToDeliver.map((row) => {
-                      const lowOrNegative = (row.stock_estimated_quantity ?? 0) < 0;
-                      return (
-                        <tr key={row.id} className={lowOrNegative ? "catalog-stock-negative" : ""}>
-                          <td>{formatDateTime(row.requested_at)}</td>
-                          <td>{row.student_name}</td>
-                          <td>{row.product_title}</td>
-                          <td>{row.location_name}</td>
-                          <td>{row.quantity}</td>
-                          <td>
-                            {row.stock_estimated_quantity ?? "-"}
-                            {lowOrNegative ? <div className="catalog-stock-alert">⚠ Stock negatif</div> : null}
-                          </td>
-                          <td>{productRequestStatusLabel(row.status)}</td>
-                          <td>
-                            <form action={professorDeliverCatalogRequestAction} className="grid">
-                              <input type="hidden" name="request_id" value={row.id} />
-                              <input
-                                type="hidden"
-                                name="return_to"
-                                value={buildProfHref({ tab: "catalog", agendaView, agendaDate })}
-                              />
-                              <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
-                              <button type="submit">Marquer remis</button>
-                            </form>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </article>
-
-          <article className="card span-2">
-            <h2>Historique des demandes produits</h2>
-            {catalogRequests.length === 0 ? (
-              <p className="muted">Aucune demande.</p>
-            ) : (
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Source</th>
-                      <th>Eleve</th>
-                      <th>Produit</th>
-                      <th>Lieu</th>
-                      <th>Qt</th>
-                      <th>Statut</th>
-                      <th>Facturation</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {catalogRequests.map((row) => (
-                      <tr key={`${row.id}-history`}>
-                        <td>{formatDateTime(row.requested_at)}</td>
-                        <td>{productRequestSourceLabel(row.request_source)}</td>
-                        <td>{row.student_name}</td>
-                        <td>{row.product_title}</td>
-                        <td>{row.location_name}</td>
-                        <td>{row.quantity}</td>
-                        <td>{productRequestStatusLabel(row.status)}</td>
-                        <td>{row.should_bill === null ? "-" : row.should_bill ? "Oui" : "Non"}</td>
+              <>
+                <div className="table-wrap teacher-desktop-table">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Eleve</th>
+                        <th>Produit</th>
+                        <th>Lieu</th>
+                        <th>Qt</th>
+                        <th>Stock</th>
+                        <th>Statut</th>
+                        <th>Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {catalogToDeliver.map((row) => {
+                        const lowOrNegative = (row.stock_estimated_quantity ?? 0) < 0;
+                        return (
+                          <tr key={row.id} className={lowOrNegative ? "catalog-stock-negative" : ""}>
+                            <td>{formatDateTime(row.requested_at)}</td>
+                            <td>{row.student_name}</td>
+                            <td>{row.product_title}</td>
+                            <td>{row.location_name}</td>
+                            <td>{row.quantity}</td>
+                            <td>
+                              {row.stock_estimated_quantity ?? "-"}
+                              {lowOrNegative ? <div className="catalog-stock-alert">Stock negatif</div> : null}
+                            </td>
+                            <td>{productRequestStatusLabel(row.status)}</td>
+                            <td>
+                              <form action={professorDeliverCatalogRequestAction} className="grid">
+                                <input type="hidden" name="request_id" value={row.id} />
+                                <input
+                                  type="hidden"
+                                  name="return_to"
+                                  value={buildProfHref({ tab: "catalog", agendaView, agendaDate })}
+                                />
+                                <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
+                                <button type="submit">Marquer remis</button>
+                              </form>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="teacher-mobile-card-list">
+                  {catalogToDeliver.map((row) => {
+                    const lowOrNegative = (row.stock_estimated_quantity ?? 0) < 0;
+                    return (
+                      <article key={`${row.id}-mobile`} className="item">
+                        <p className="muted">{formatDateTime(row.requested_at)}</p>
+                        <strong>{row.product_title}</strong>
+                        <p className="muted">
+                          {row.student_name} | {row.location_name} | Qt {row.quantity}
+                        </p>
+                        <p className="muted">
+                          Statut: {productRequestStatusLabel(row.status)} | Stock: {row.stock_estimated_quantity ?? "-"}
+                        </p>
+                        {lowOrNegative ? <p className="catalog-stock-alert">Stock negatif</p> : null}
+                        <form action={professorDeliverCatalogRequestAction} className="grid top-gap-sm">
+                          <input type="hidden" name="request_id" value={row.id} />
+                          <input type="hidden" name="return_to" value={buildProfHref({ tab: "catalog", agendaView, agendaDate })} />
+                          <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
+                          <button type="submit">Marquer remis</button>
+                        </form>
+                      </article>
+                    );
+                  })}
+                </div>
+              </>
             )}
-          </article>
+          </ActionCard>
+
+          <div className="span-2">
+            <ActionCard title="Historique des demandes produits" subtitle="Suivi chronologique des demandes.">
+              {catalogRequests.length === 0 ? (
+                <p className="muted">Aucune demande.</p>
+              ) : (
+                <>
+                  <div className="table-wrap teacher-desktop-table">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Source</th>
+                          <th>Eleve</th>
+                          <th>Produit</th>
+                          <th>Lieu</th>
+                          <th>Qt</th>
+                          <th>Statut</th>
+                          <th>Facturation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {catalogRequests.map((row) => (
+                          <tr key={`${row.id}-history`}>
+                            <td>{formatDateTime(row.requested_at)}</td>
+                            <td>{productRequestSourceLabel(row.request_source)}</td>
+                            <td>{row.student_name}</td>
+                            <td>{row.product_title}</td>
+                            <td>{row.location_name}</td>
+                            <td>{row.quantity}</td>
+                            <td>{productRequestStatusLabel(row.status)}</td>
+                            <td>{row.should_bill === null ? "-" : row.should_bill ? "Oui" : "Non"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="list teacher-mobile-card-list">
+                    {catalogRequests.map((row) => (
+                      <ListRow
+                        key={`${row.id}-list`}
+                        left={row.product_title}
+                        subtitle={`${formatDateTime(row.requested_at)} | ${row.student_name} | ${row.location_name}`}
+                        right={
+                          <span className="status-pill status-warn">
+                            {productRequestStatusLabel(row.status)}
+                          </span>
+                        }
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </ActionCard>
+          </div>
         </section>
       ) : null}
 
       {currentTab === "finance" ? (
-        <section className="grid cols-2">
-          <article className="card">
-            <h2>Mon solde</h2>
+        <section className="grid teacher-finance-layout">
+          <ActionCard title="Mon solde" subtitle="Synthese actuelle de votre remuneration.">
             {balanceResult.ok ? (
-              <div className="list">
-                <article className="item row spread">
-                  <span className="muted">Devise contrat</span>
-                  <strong>{balanceResult.data.currency}</strong>
-                </article>
-                <article className="item row spread">
-                  <span className="muted">En attente</span>
-                  <strong>
-                    {balanceResult.data.pending_amount} {balanceResult.data.currency} ({balanceResult.data.pending_sessions} cours)
-                  </strong>
-                </article>
-                <article className="item row spread">
-                  <span className="muted">Valide</span>
-                  <strong>
-                    {balanceResult.data.approved_amount} {balanceResult.data.currency} ({balanceResult.data.approved_sessions} cours)
-                  </strong>
-                </article>
-                <article className="item row spread">
-                  <span className="muted">Paye</span>
-                  <strong>
-                    {balanceResult.data.paid_amount} {balanceResult.data.currency} ({balanceResult.data.paid_sessions} cours)
-                  </strong>
-                </article>
-                <article className="item row spread">
-                  <span className="muted">Total</span>
-                  <strong>
-                    {balanceResult.data.total_amount} {balanceResult.data.currency}
-                  </strong>
-                </article>
-              </div>
+              <>
+                <div className="teacher-stat-grid">
+                  <StatCard
+                    label="En attente"
+                    value={`${balanceResult.data.pending_amount} ${balanceResult.data.currency}`}
+                    hint={`${balanceResult.data.pending_sessions} cours`}
+                  />
+                  <StatCard
+                    label="Valide"
+                    value={`${balanceResult.data.approved_amount} ${balanceResult.data.currency}`}
+                    hint={`${balanceResult.data.approved_sessions} cours`}
+                  />
+                  <StatCard
+                    label="Paye"
+                    value={`${balanceResult.data.paid_amount} ${balanceResult.data.currency}`}
+                    hint={`${balanceResult.data.paid_sessions} cours`}
+                  />
+                  <StatCard label="Total" value={`${balanceResult.data.total_amount} ${balanceResult.data.currency}`} hint={`Devise ${balanceResult.data.currency}`} />
+                </div>
+              </>
             ) : (
               <p className="muted">Solde indisponible.</p>
             )}
-          </article>
-          <article className="card">
-            <h2>Suivi des paiements</h2>
+          </ActionCard>
+
+          <ActionCard title="Suivi des paiements" subtitle="Derniers paiements et statuts.">
             {payoutsResult.ok && payoutsResult.data.length > 0 ? (
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Cours</th>
-                      <th>Montant</th>
-                      <th>Statut</th>
-                      <th>Paye le</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payoutsResult.data.map((row) => (
-                      <tr key={row.payout_id}>
-                        <td>
-                          {row.course_type_name} - {row.location_name}
-                          <br />
-                          <small className="muted">{formatDateTime(row.session_start_at_utc)}</small>
-                        </td>
-                        <td>
-                          {row.amount_snapshot} {row.currency_snapshot}
-                        </td>
-                        <td>{row.payout_status}</td>
-                        <td>{row.paid_at ? formatDateTime(row.paid_at) : "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="list teacher-list-compact">
+                {payoutsResult.data.map((row) => (
+                  <ListRow
+                    key={row.payout_id}
+                    left={`${row.amount_snapshot} ${row.currency_snapshot}`}
+                    subtitle={`${row.course_type_name} - ${row.location_name} | ${formatDateTime(row.session_start_at_utc)}`}
+                    right={
+                      <span className={`status-pill ${row.payout_status.toUpperCase() === "PAID" ? "status-ok" : "status-warn"}`}>
+                        {row.payout_status}
+                      </span>
+                    }
+                  />
+                ))}
               </div>
             ) : (
               <p className="muted">Aucun paiement enregistre.</p>
             )}
-          </article>
+          </ActionCard>
 
-          <article className="card span-2">
-            <h2>Ma grille contractuelle</h2>
+          <ActionCard title="Ma grille contractuelle" subtitle="Regles de remuneration par activite et effectif.">
             {contractGridsResult.ok && contractGridsResult.data.length > 0 ? (
               <div className="list">
                 {contractGridsResult.data.map((grid) => (
-                  <article key={grid.grid_id} className="item">
-                    <div className="row spread">
-                      <strong>{grid.location_label}</strong>
-                      <span className="badge">
-                        {grid.valid_from} - {grid.valid_to ?? "non definie"}
-                      </span>
-                    </div>
+                  <SectionAccordion
+                    key={grid.grid_id}
+                    title={grid.location_label}
+                    subtitle={`${grid.valid_from} - ${grid.valid_to ?? "non definie"}`}
+                    defaultOpen={false}
+                  >
                     <div className="table-wrap top-gap-sm">
                       <table className="data-table">
                         <thead>
@@ -1005,103 +1033,71 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                         </tbody>
                       </table>
                     </div>
-                  </article>
+                  </SectionAccordion>
                 ))}
               </div>
             ) : (
               <p className="muted">Aucune grille contractuelle active a cette date.</p>
             )}
-          </article>
+          </ActionCard>
         </section>
       ) : null}
 
       {currentTab === "messages" ? (
-        <section className="card">
-          <h2>Messages envoyes (groupe + eleve)</h2>
+        <section className="teacher-section-stack">
+          <ActionCard title="Messages" subtitle="Historique des envois groupes et individuels.">
           {messagesResult.ok && archivedMessages.length > 0 ? (
-            <div className="list">
+            <div className="list teacher-list-compact">
               {archivedMessages.map((message) => {
                 const parsedSubject = parseMessageSubject(message.subject);
                 return (
-                  <a
+                  <ListRow
                     key={message.id}
                     href={buildProfHref({ tab: "messages", agendaView, agendaDate, messageId: message.id })}
-                    className="item mode-link"
-                  >
-                    <div className="row spread">
-                      <strong>{parsedSubject.cleanedSubject}</strong>
+                    left={parsedSubject.cleanedSubject}
+                    subtitle={`Envoye le ${formatDateTime(message.sent_at)} | Format ${message.body_format}`}
+                    right={
                       <div className="row">
                         <span className="badge">
                           {parsedSubject.targetLabel ? `Eleve: ${parsedSubject.targetLabel}` : "Groupe"}
                         </span>
                         <span className="badge">{message.recipient_count} destinataire(s)</span>
                       </div>
-                    </div>
-                    <p className="muted">
-                      Envoye le {formatDateTime(message.sent_at)} | Format: {message.body_format}
-                    </p>
-                    <p>{message.body_format === "HTML" ? stripHtml(message.body) : message.body}</p>
-                  </a>
+                    }
+                  />
                 );
               })}
             </div>
           ) : (
             <p className="muted">Aucun message archive.</p>
           )}
+          </ActionCard>
         </section>
       ) : null}
 
       {currentTab === "profile" ? (
-        <section className="grid cols-2">
-          <article className="card">
-            <h2>Mon profil</h2>
-            <div className="list">
-              <article className="item row spread">
-                <span className="muted">Nom</span>
-                <strong>{fullName || "-"}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Email</span>
-                <strong>{profile.email}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Telephone</span>
-                <strong>{profile.phone ?? "Non renseigne"}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Lien Zoom</span>
-                <strong>{profile.zoom_link ?? "Non renseigne"}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Langues</span>
-                <strong>{profile.spoken_languages.length > 0 ? profile.spoken_languages.join(", ") : "Non renseigne"}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Devise contrat</span>
-                <strong>{profile.payout_currency}</strong>
-              </article>
+        <section className="teacher-section-stack">
+          <SectionAccordion title="Mon profil" subtitle="Informations principales" defaultOpen={true}>
+            <div className="list teacher-list-compact">
+              <ListRow left="Nom" right={fullName || "-"} />
+              <ListRow left="Email" right={profile.email} />
+              <ListRow left="Telephone" right={profile.phone ?? "Non renseigne"} />
+              <ListRow left="Lien Zoom" right={profile.zoom_link ?? "Non renseigne"} />
+              <ListRow left="Langues" right={profile.spoken_languages.length > 0 ? profile.spoken_languages.join(", ") : "Non renseigne"} />
+              <ListRow left="Devise contrat" right={profile.payout_currency} />
             </div>
-          </article>
-          <article className="card">
-            <h2>Email quotidien planning</h2>
-            <div className="list">
-              <article className="item row spread">
-                <span className="muted">Activation</span>
-                <strong>{profile.daily_schedule_email_enabled ? "Activee" : "Desactivee"}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Heure UTC</span>
-                <strong>{profile.daily_schedule_email_time}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Ignorer les jours sans cours</span>
-                <strong>{profile.daily_schedule_skip_if_no_course ? "Oui" : "Non"}</strong>
-              </article>
+          </SectionAccordion>
+
+          <SectionAccordion title="Email quotidien planning" subtitle="Reglage administration" defaultOpen={false}>
+            <div className="list teacher-list-compact">
+              <ListRow left="Activation" right={profile.daily_schedule_email_enabled ? "Activee" : "Desactivee"} />
+              <ListRow left="Heure UTC" right={profile.daily_schedule_email_time} />
+              <ListRow left="Ignorer les jours sans cours" right={profile.daily_schedule_skip_if_no_course ? "Oui" : "Non"} />
             </div>
             <p className="muted top-gap-sm">
               Reglage configure par l administration. Le digest recapitule vos cours du jour et la liste des eleves.
             </p>
-          </article>
+          </SectionAccordion>
         </section>
       ) : null}
 

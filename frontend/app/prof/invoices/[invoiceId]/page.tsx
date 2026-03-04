@@ -3,12 +3,24 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
+  logoutAction,
   teacherCancelInvoiceAction,
   teacherSendInvoiceToAccountingAction,
   teacherUncancelInvoiceAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import ActionCard from "../../../../components/teacher-ui/action-card";
+import AlertCard from "../../../../components/teacher-ui/alert-card";
+import BottomTabs from "../../../../components/teacher-ui/bottom-tabs";
+import ListRow from "../../../../components/teacher-ui/list-row";
+import PageHeaderMobile from "../../../../components/teacher-ui/page-header-mobile";
+import SectionAccordion from "../../../../components/teacher-ui/section-accordion";
+import StatChip from "../../../../components/teacher-ui/stat-chip";
 import type { TeacherInvoiceOut } from "../../../../lib/types";
+
+function profTabHref(tab: string): string {
+  return `/prof?tab=${encodeURIComponent(tab)}`;
+}
 
 export default async function TeacherInvoiceDetailPage({
   params,
@@ -32,23 +44,48 @@ export default async function TeacherInvoiceDetailPage({
   const invoice = result.data;
 
   return (
-    <section className="admin-page-grid">
-      <article className="card">
-        <div className="row spread">
-          <h2>Facture {invoice.invoice_number}</h2>
-          <Link className="reset-link" href={`/prof/statements?year=${invoice.invoice_date.slice(0, 4)}&month=${invoice.invoice_date.slice(5, 7)}`}>
+    <section className="page teacher-shell teacher-subpage">
+      <PageHeaderMobile
+        title={`Facture ${invoice.invoice_number}`}
+        subtitle={`${invoice.payor_legal_entity_name} | ${invoice.invoice_date}`}
+        trailing={
+          <Link
+            className="mode-link teacher-header-link"
+            href={`/prof/statements?year=${invoice.invoice_date.slice(0, 4)}&month=${invoice.invoice_date.slice(5, 7)}`}
+          >
             Retour releves
           </Link>
-        </div>
-        <p className="muted">
-          {invoice.payor_legal_entity_name} | Date: {invoice.invoice_date} | Echeance: {invoice.due_date}
-        </p>
-      </article>
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
+        }
+        menu={
+          <div className="teacher-header-menu-items">
+            <Link className="teacher-header-menu-link" href="/prof">
+              Accueil
+            </Link>
+            <form action={logoutAction}>
+              <button className="ghost teacher-header-menu-btn" type="submit">
+                Se deconnecter
+              </button>
+            </form>
+          </div>
+        }
+      />
 
-      <article className="card">
-        <div className="row">
+      <BottomTabs
+        activeId="statements"
+        items={[
+          { id: "overview", label: "A traiter", icon: "📌", href: profTabHref("overview") },
+          { id: "planning", label: "Planning", icon: "📅", href: profTabHref("planning") },
+          { id: "statements", label: "Releves", icon: "🧾", href: "/prof/statements" },
+          { id: "messages", label: "Messages", icon: "✉️", href: profTabHref("messages") },
+          { id: "profile", label: "Profil", icon: "👤", href: profTabHref("profile") },
+        ]}
+      />
+
+      {ok ? <AlertCard tone="ok">{ok}</AlertCard> : null}
+      {error ? <AlertCard tone="error">{error}</AlertCard> : null}
+
+      <ActionCard title="Actions facture" subtitle={`Echeance: ${invoice.due_date}`}>
+        <div className="row teacher-actions-wrap">
           <a className="mode-link" href={`/api/v1/teacher/invoices/${invoice.id}/pdf`}>
             Telecharger PDF
           </a>
@@ -73,64 +110,35 @@ export default async function TeacherInvoiceDetailPage({
             </form>
           )}
         </div>
-      </article>
+      </ActionCard>
 
-      <article className="card">
-        <div className="list">
-          <article className="item row spread">
-            <span className="muted">Statut</span>
-            <strong>{invoice.status}</strong>
-          </article>
-          <article className="item row spread">
-            <span className="muted">SIRET prof</span>
-            <strong>{invoice.teacher_siret_display}</strong>
-          </article>
-          <article className="item row spread">
-            <span className="muted">IBAN</span>
-            <strong>{invoice.teacher_iban}</strong>
-          </article>
-          <article className="item row spread">
-            <span className="muted">Total HT</span>
-            <strong>{invoice.totals_ht}</strong>
-          </article>
-          <article className="item row spread">
-            <span className="muted">Total TVA</span>
-            <strong>{invoice.totals_vat}</strong>
-          </article>
-          <article className="item row spread">
-            <span className="muted">Total TTC</span>
-            <strong>{invoice.totals_ttc}</strong>
-          </article>
+      <ActionCard title="Synthese facture" subtitle="Informations legales et montants.">
+        <div className="teacher-chip-row">
+          <StatChip label="Statut" value={invoice.status} tone={invoice.status === "cancelled" ? "warn" : "ok"} />
+          <StatChip label="HT" value={invoice.totals_ht} />
+          <StatChip label="TVA" value={invoice.totals_vat} />
+          <StatChip label="TTC" value={invoice.totals_ttc} tone="ok" />
         </div>
-      </article>
+        <div className="list teacher-list-compact">
+          <ListRow left="SIRET prof" right={invoice.teacher_siret_display} />
+          <ListRow left="IBAN" right={invoice.teacher_iban} />
+          <ListRow left="Date facture" right={invoice.invoice_date} />
+          <ListRow left="Date echeance" right={invoice.due_date} />
+        </div>
+      </ActionCard>
 
-      <article className="card">
-        <h3>Lignes facture</h3>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Prestation</th>
-                <th>Heures</th>
-                <th>Taux HT</th>
-                <th>Montant HT</th>
-                <th>Montant TTC</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoice.lines.map((line) => (
-                <tr key={line.id}>
-                  <td>{line.course_type_label}</td>
-                  <td>{line.hours}</td>
-                  <td>{line.unit_rate_ht}</td>
-                  <td>{line.amount_ht}</td>
-                  <td>{line.amount_ttc}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <SectionAccordion title="Lignes facture" defaultOpen={true}>
+        <div className="list teacher-list-compact">
+          {invoice.lines.map((line) => (
+            <ListRow
+              key={line.id}
+              left={line.course_type_label}
+              subtitle={`${line.hours} h | Taux HT ${line.unit_rate_ht} | HT ${line.amount_ht}`}
+              right={line.amount_ttc}
+            />
+          ))}
         </div>
-      </article>
+      </SectionAccordion>
     </section>
   );
 }
