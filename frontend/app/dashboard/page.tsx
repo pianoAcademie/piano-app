@@ -34,6 +34,13 @@ import type {
   SubscriptionOut,
   UserOut,
 } from "../../lib/types";
+import Card from "../../components/client-ui/card";
+import DrawerFilters from "../../components/client-ui/drawer-filters";
+import ListRow from "../../components/client-ui/list-row";
+import MobileHeader from "../../components/client-ui/mobile-header";
+import MobileTabs from "../../components/client-ui/mobile-tabs";
+import StatChip from "../../components/client-ui/stat-chip";
+import Toast from "../../components/client-ui/toast";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
@@ -1010,6 +1017,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     const currency = (row.currency || "EUR").toUpperCase();
     totalByCurrency.set(currency, (totalByCurrency.get(currency) ?? 0) + Number(row.total_incl_vat || "0"));
   }
+  const paidTotal = paymentRows
+    .filter((row) => normalizeStatus(row.status) === "PAID")
+    .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
+  const pendingTotal = paymentRows
+    .filter((row) => normalizeStatus(row.status) !== "PAID")
+    .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
 
   const timezoneOptions = TIMEZONE_OPTIONS.some((item) => item.value === timezone)
     ? TIMEZONE_OPTIONS
@@ -1022,6 +1035,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     { id: "transactions", label: "Finance", icon: "💳" },
     { id: "messages", label: "Messages", icon: "✉️" },
     { id: "account", label: "Compte", icon: "👤" },
+  ];
+  const mobileTabLinks = [
+    { id: "planning", label: "Planning", icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
+    { id: "reservations", label: "Reservations", icon: "✅", href: withUpdatedQuery(rawParams, { tab: "reservations" }) },
+    { id: "offers", label: "Offres", icon: "🛍️", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
+    { id: "transactions", label: "Finance", icon: "💳", href: withUpdatedQuery(rawParams, { tab: "transactions" }) },
+    { id: "account", label: "Compte", icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
 
   const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email });
@@ -1066,6 +1086,26 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       </aside>
 
       <section className="client-portal-main">
+        <MobileHeader
+          title={tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}
+          subtitle={`${displayName} · ${timezone}`}
+          menu={
+            <div className="client-mobile-menu-items">
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
+                Messages
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>
+                Compte
+              </a>
+              <form action={logoutAction}>
+                <button className="ghost client-mobile-menu-btn" type="submit">
+                  Se deconnecter
+                </button>
+              </form>
+            </div>
+          }
+        />
+
         <header className="client-topbar">
           <div>
             <h1>{tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}</h1>
@@ -1080,13 +1120,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         </header>
 
         <section className="client-content">
-          {globalOkMessage ? <section className="flash-ok">{globalOkMessage}</section> : null}
+          {globalOkMessage ? <Toast message={globalOkMessage} tone="ok" /> : null}
           {globalErrorMessage ? <section className="flash-err">{globalErrorMessage}</section> : null}
           {errors.length > 0 ? <section className="flash-err">Erreur backend: {errors.join(" | ")}</section> : null}
 
           {tab === "planning" ? (
             <>
-              <section className="card client-planning-shell">
+              <Card className="client-planning-shell">
                 <div className="row spread client-planning-heading">
                   <div>
                     <h2>Planning des creneaux</h2>
@@ -1142,8 +1182,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </div>
                   </div>
 
-                  <details className={`client-planning-advanced ${advancedFiltersOpen ? "has-active" : ""}`}>
-                    <summary>⚙ Filtres avances</summary>
+                  <DrawerFilters title="⚙ Filtres avances" className={`client-planning-advanced ${advancedFiltersOpen ? "has-active" : ""}`} defaultOpen={advancedFiltersOpen}>
                     <div className="client-planning-advanced-grid">
                       <label>
                         Activite
@@ -1210,7 +1249,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         </select>
                       </label>
                     </div>
-                  </details>
+                  </DrawerFilters>
                 </form>
 
                 <div className="client-planning-date-nav">
@@ -1266,9 +1305,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </a>
                   </div>
                 </div>
-              </section>
+              </Card>
 
-              <section className="card">
+              <Card>
                 <div className="row spread">
                   <h2>Reserver de nouveaux creneaux</h2>
                   <span className="badge">{agendaSessionCount}</span>
@@ -1292,6 +1331,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             const booking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
                             const bookingStatus = booking ? normalizeStatus(booking.status) : "";
                             const isReservedByMember = bookingStatus === "BOOKED";
+                            const eligibleByPlan = activeEntitlementsByOwner.get(bookingOwnerId)?.has(session.course_type.id) ?? false;
                             const compactAgendaCard = agendaView !== "day";
                             const accentColor = accentColorForId(session.course_type.id);
                             const durationMinutes = Math.max(
@@ -1307,6 +1347,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               session_error: null,
                             });
                             const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
+                            const canReserveNow =
+                              normalizeStatus(session.status) === "SCHEDULED" &&
+                              session.online_booking_enabled &&
+                              !sessionIsPastOrStarted &&
+                              !booking &&
+                              eligibleByPlan;
+                            const isFull = session.booked_count >= session.capacity_max;
+                            const sessionCtaLabel = canReserveNow
+                              ? "Reserver"
+                              : booking
+                                ? isReservedByMember
+                                  ? "Deja reserve"
+                                  : "En attente"
+                                : isFull
+                                  ? "Complet"
+                                  : "Voir details";
 
                             return (
                               <a
@@ -1342,8 +1398,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                                     <div className="row client-event-footer">
                                       <span className={`status-badge ${statusClass(session.status)}`}>{statusLabel(session.status)}</span>
-                                      {booking ? <span className={`status-badge ${statusClass(booking.status)}`}>{isReservedByMember ? "RÉSERVÉ" : statusLabel(booking.status)}</span> : null}
-                                      {sessionIsPastOrStarted ? <span className="status-badge status-completed">PASSE</span> : null}
+                                      {booking ? (
+                                        <span className={`status-badge ${statusClass(booking.status)}`}>
+                                          {isReservedByMember ? "Reserve" : statusLabel(booking.status)}
+                                        </span>
+                                      ) : null}
+                                      {!booking && sessionIsPastOrStarted ? <span className="status-badge status-completed">Passe</span> : null}
+                                      <span className={`client-session-cta ${canReserveNow ? "ready" : ""}`}>{sessionCtaLabel}</span>
                                     </div>
                                   </div>
                                 </article>
@@ -1353,7 +1414,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                           {hiddenSessions.length > 0 ? (
                             <details className="agenda-more-block client-more-block">
-                              <summary>{hiddenSessions.length} more</summary>
+                              <summary>+{hiddenSessions.length} autres</summary>
                               <div className="agenda-events">
                                 {hiddenSessions.map((session) => {
                                   const href = withUpdatedQuery(rawParams, {
@@ -1385,7 +1446,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     );
                   })}
                 </div>
-              </section>
+              </Card>
 
               {selectedSession ? (
                 <section className="modal-overlay">
@@ -1532,7 +1593,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </section>
               ) : null}
 
-              <section className="card">
+              <Card>
                 <div className="row spread">
                   <h2>Reservations en cours</h2>
                   <span className="badge">{upcomingBookings.length}</span>
@@ -1565,18 +1626,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </table>
                   </div>
                 )}
-              </section>
+              </Card>
             </>
           ) : null}
 
           {tab === "reservations" ? (
-            <section className="card">
+            <Card>
               <div className="row spread">
                 <h2>Mes reservations</h2>
                 <span className="badge">{reservationRows.length}</span>
               </div>
 
-              <form method="get" className="client-filter-grid">
+              <form method="get" className="client-filter-grid client-reservation-filters">
                 <input type="hidden" name="tab" value="reservations" />
                 <label>
                   Perimetre
@@ -1597,17 +1658,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ))}
                   </select>
                 </label>
-                <label>
-                  Statut
-                  <select name="reservation_status" defaultValue={reservationStatusFilter}>
-                    <option value="">Tous</option>
-                    {allBookingStatuses.map((status) => (
-                      <option key={status} value={status}>
-                        {statusLabel(status)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <DrawerFilters title="Filtres avancés" className="client-reservation-drawer">
+                  <label>
+                    Statut
+                    <select name="reservation_status" defaultValue={reservationStatusFilter}>
+                      <option value="">Tous</option>
+                      {allBookingStatuses.map((status) => (
+                        <option key={status} value={status}>
+                          {statusLabel(status)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </DrawerFilters>
                 <div className="row">
                   <button type="submit">🔎</button>
                   <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "reservations", reservation_scope: "CURRENT", member_id: null, reservation_status: null })}>
@@ -1619,7 +1682,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               {reservationRows.length === 0 ? (
                 <p className="muted">Aucune reservation sur ce filtre.</p>
               ) : (
-                <div className="table-wrap">
+                <>
+                <div className="table-wrap client-desktop-table">
                   <table className="data-table client-data-table">
                     <thead>
                       <tr>
@@ -1662,13 +1726,39 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </tbody>
                   </table>
                 </div>
+                <div className="list client-mobile-list">
+                  {reservationRows.map((booking) => {
+                    const canCancel = ["BOOKED", "WAITLISTED"].includes(normalizeStatus(booking.status));
+                    return (
+                      <article key={`${booking.id}-mobile`} className="item client-mobile-card">
+                        <div className="row spread">
+                          <strong>{booking.owner_display_name}</strong>
+                          <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
+                        </div>
+                        <p className="muted">{booking.session.title}</p>
+                        <p className="muted">{formatDateTime(booking.session.start_at_utc)}</p>
+                        <div className="row spread">
+                          <strong>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot)}</strong>
+                          {canCancel ? (
+                            <form action={cancelBookingAction}>
+                              <input type="hidden" name="booking_id" value={booking.id} />
+                              <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "reservations" })} />
+                              <button className="ghost" type="submit">Annuler</button>
+                            </form>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                </>
               )}
-            </section>
+            </Card>
           ) : null}
 
           {tab === "offers" ? (
             <>
-              <section className="card">
+              <Card className="client-offers-header">
                 <div className="row spread">
                   <h2>Souscrire une offre</h2>
                   <span className="badge">{plans.length}</span>
@@ -1690,12 +1780,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     Date de demarrage
                     <input type="date" name="purchase_start_date" defaultValue={selectedPurchaseStartDate} />
                   </label>
-                  <button type="submit">👤</button>
+                  <button type="submit">Afficher les offres</button>
                 </form>
-              </section>
+              </Card>
 
               <section className="grid cols-2">
-                <article className="card">
+                <Card>
                   <h3>Abonnements et credits</h3>
                   <div className="list">
                     {visibleSelectedOwnerSubscriptions.map((sub) => (
@@ -1719,9 +1809,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <p className="muted">Aucun credit positif sur les carnets de ce membre.</p>
                     ) : null}
                   </div>
-                </article>
+                </Card>
 
-                <article className="card">
+                <Card>
                   <h3>Credits cumules (positifs)</h3>
                   <div className="list">
                     {membersWithPositiveCredits.map((member) => (
@@ -1734,10 +1824,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <p className="muted">Aucun credit positif a afficher.</p>
                     ) : null}
                   </div>
-                </article>
+                </Card>
               </section>
 
-              <section className="card">
+              <Card>
                 <h3>Catalogue des offres</h3>
                 <div className="client-plan-grid">
                   {plans.map((plan) => (
@@ -1756,21 +1846,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <input type="hidden" name="plan_id" value={plan.id} />
                         <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
                         <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
-                        <button type="submit" title="Souscrire cette offre">
-                          ✅
-                        </button>
+                        <button type="submit" title="Souscrire cette offre">Choisir</button>
                       </form>
                     </article>
                   ))}
                   {plans.length === 0 ? <p className="muted">Aucune offre active.</p> : null}
                 </div>
-              </section>
+              </Card>
             </>
           ) : null}
 
           {tab === "transactions" ? (
             <>
-              <section className="card">
+              <Card>
                 <div className="row spread">
                   <h2>Transactions</h2>
                   <div className="row">
@@ -1780,6 +1868,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </span>
                     ))}
                   </div>
+                </div>
+                <div className="client-chip-row">
+                  <StatChip label="A payer" value={toMoney(String(pendingTotal), me.preferred_currency)} tone="warn" />
+                  <StatChip label="Paye" value={toMoney(String(paidTotal), me.preferred_currency)} tone="ok" />
                 </div>
 
                 <form method="get" className="client-filter-grid">
@@ -1817,7 +1909,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 {paymentRows.length === 0 ? (
                   <p className="muted">Aucune transaction sur cette selection.</p>
                 ) : (
-                  <div className="table-wrap">
+                  <>
+                  <div className="table-wrap client-desktop-table">
                     <table className="data-table client-data-table">
                       <thead>
                         <tr>
@@ -1870,10 +1963,45 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </tbody>
                     </table>
                   </div>
+                  <div className="list client-mobile-list">
+                    {paymentRows.map((row) => {
+                      const normalizedSource = normalizeStatus(row.source);
+                      const normalizedStatus = normalizeStatus(row.status);
+                      const canPayNow =
+                        normalizedSource === "PLAN_PURCHASE" &&
+                        (normalizedStatus === "PENDING" ||
+                          normalizedStatus === "OPEN" ||
+                          normalizedStatus === "CREATED" ||
+                          normalizedStatus === "PROCESSING" ||
+                          normalizedStatus === "WAITING_PAYMENT" ||
+                          normalizedStatus === "FAILED");
+                      return (
+                        <article key={`${row.id}-mobile`} className="item client-mobile-card">
+                          <div className="row spread">
+                            <strong>{toMoney(row.total_incl_vat, row.currency)}</strong>
+                            <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                          </div>
+                          <p className="muted">{row.label}</p>
+                          <p className="muted">
+                            {formatDateTime(row.occurred_at)} | {row.owner_display_name}
+                          </p>
+                          <p className="muted">Type: {row.source}</p>
+                          {canPayNow ? (
+                            <form action={openClientPaymentCheckoutAction}>
+                              <input type="hidden" name="payment_id" value={row.id} />
+                              <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "transactions" })} />
+                              <button type="submit">Payer maintenant</button>
+                            </form>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                  </div>
+                  </>
                 )}
-              </section>
+              </Card>
 
-              <section className="card">
+              <Card>
                 <div className="row spread">
                   <h2>Factures</h2>
                   <span className="badge">{invoiceRows.length}</span>
@@ -1881,7 +2009,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 {invoiceRows.length === 0 ? (
                   <p className="muted">Aucune facture.</p>
                 ) : (
-                  <div className="table-wrap">
+                  <>
+                  <div className="table-wrap client-desktop-table">
                     <table className="data-table client-data-table">
                       <thead>
                         <tr>
@@ -1919,13 +2048,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </tbody>
                     </table>
                   </div>
+                  <div className="list client-mobile-list">
+                    {invoiceRows.map((row) => (
+                      <article key={`${row.id}-mobile`} className="item client-mobile-card">
+                        <div className="row spread">
+                          <strong>{row.invoice_number}</strong>
+                          <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                        </div>
+                        <p className="muted">{row.label}</p>
+                        <p className="muted">
+                          {formatDateTime(row.issued_at)} | {row.owner_display_name}
+                        </p>
+                        <div className="row spread">
+                          <strong>{toMoney(row.total_incl_vat, row.currency)}</strong>
+                          {row.download_url ? (
+                            <a className="mode-link" href={row.download_url}>
+                              Telecharger
+                            </a>
+                          ) : null}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  </>
                 )}
-              </section>
+              </Card>
             </>
           ) : null}
 
           {tab === "messages" ? (
-            <section className="card">
+            <Card>
               <div className="row spread">
                 <h2>Messages envoyes</h2>
                 <span className="badge">{messageRows.length}</span>
@@ -1966,7 +2118,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               {messageRows.length === 0 ? (
                 <p className="muted">Aucun message sur ce filtre.</p>
               ) : (
-                <div className="table-wrap">
+                <>
+                <div className="table-wrap client-desktop-table client-messages-table-wrap">
                   <table className="data-table client-data-table">
                     <thead>
                       <tr>
@@ -1994,14 +2147,110 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </tbody>
                   </table>
                 </div>
+                <div className="list client-mobile-list client-inbox-list">
+                  {messageRows.map((msg) => (
+                    <ListRow
+                      key={`${msg.id}-mobile`}
+                      title={msg.subject_preview || "Message sans sujet"}
+                      subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} | ${msg.owner_display_name}`}
+                      right={
+                        <div className="stack-xs">
+                          <span className="badge">{msg.channel}</span>
+                          <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status)}</span>
+                        </div>
+                      }
+                    />
+                  ))}
+                </div>
+                </>
               )}
-            </section>
+            </Card>
           ) : null}
 
           {tab === "account" ? (
             <>
-              <section className="grid cols-2">
-                <article className="card">
+              <section className="client-account-mobile">
+                <details className="client-account-accordion card" open>
+                  <summary>Mon compte</summary>
+                  <div className="client-account-accordion-content">
+                    <div className="list client-mobile-list">
+                      <ListRow title="Prenom" right={me.first_name ?? "-"} />
+                      <ListRow title="Nom" right={me.last_name ?? "-"} />
+                      <ListRow title="Email" right={me.email} />
+                      <ListRow title="Tel mob 1" right={me.mobile_phone_1 ?? "-"} />
+                      <ListRow title="Tel mob 2" right={me.mobile_phone_2 ?? "-"} />
+                      <ListRow title="Tel domicile" right={me.home_phone ?? "-"} />
+                      <ListRow
+                        title="Adresse"
+                        subtitle={`${me.address_line ?? "-"}, ${me.postal_code ?? "-"} ${me.city ?? "-"}, ${labelFromOptions(COUNTRY_OPTIONS, me.address_country)}`}
+                      />
+                      <ListRow title="Pays residence" right={labelFromOptions(COUNTRY_OPTIONS, me.residence_country)} />
+                      <ListRow title="Devise" right={labelFromOptions(CURRENCY_OPTIONS, me.preferred_currency)} />
+                      <ListRow title="Fuseau" right={labelFromOptions(TIMEZONE_OPTIONS, me.timezone)} />
+                    </div>
+                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
+                      {editProfile ? "Fermer edition" : "Modifier mon compte"}
+                    </a>
+                  </div>
+                </details>
+
+                <details className="client-account-accordion card">
+                  <summary>Membres</summary>
+                  <div className="client-account-accordion-content">
+                    {members.length <= 1 ? (
+                      <p className="muted">Aucun membre rattache.</p>
+                    ) : (
+                      <div className="list client-mobile-list">
+                        {members
+                          .filter((member) => member.id !== me.id)
+                          .map((member) => (
+                            <ListRow
+                              key={`mob-member-${member.id}`}
+                              title={member.display_name}
+                              subtitle={member.email}
+                              right={<span className="badge">{member.kind === "CHILD" ? "Enfant" : "Adulte"}</span>}
+                            />
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                </details>
+
+                <details className="client-account-accordion card">
+                  <summary>Preferences</summary>
+                  <div className="client-account-accordion-content client-switch-list">
+                    <label className="client-switch-row"><span>Visible dans le portail</span><span className={`client-switch ${me.portal_contact_visible ? "on" : ""}`} /></label>
+                    <label className="client-switch-row"><span>Rappels email</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
+                    <label className="client-switch-row"><span>Rappels SMS</span><span className={`client-switch ${me.lesson_reminder_sms_opt_in ? "on" : ""}`} /></label>
+                    <label className="client-switch-row"><span>Emails communication</span><span className={`client-switch ${me.email_opt_in ? "on" : ""}`} /></label>
+                    <label className="client-switch-row"><span>SMS communication</span><span className={`client-switch ${me.sms_opt_in ? "on" : ""}`} /></label>
+                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Voir messages</a>
+                  </div>
+                </details>
+
+                <details className="client-account-accordion card">
+                  <summary>Credits</summary>
+                  <div className="client-account-accordion-content">
+                    {positivePackSubscriptions.length === 0 ? (
+                      <p className="muted">Aucun credit positif.</p>
+                    ) : (
+                      <div className="list client-mobile-list">
+                        {positivePackSubscriptions.map((sub) => (
+                          <ListRow
+                            key={`mob-credit-${sub.id}`}
+                            title={sub.plan.name}
+                            subtitle={`Debut: ${formatDate(sub.started_at)}${sub.ends_at ? ` | Fin: ${formatDate(sub.ends_at)}` : ""}`}
+                            right={`${sub.credits_remaining ?? 0}/${sub.credits_initial ?? sub.credits_remaining ?? 0}`}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </section>
+
+              <section className="grid cols-2 client-account-desktop">
+                <Card>
                   <div className="row spread">
                     <h2>Mon compte</h2>
                     <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
@@ -2023,9 +2272,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <p><strong>Devise:</strong> {labelFromOptions(CURRENCY_OPTIONS, me.preferred_currency)}</p>
                     <p><strong>Fuseau:</strong> {labelFromOptions(TIMEZONE_OPTIONS, me.timezone)}</p>
                   </div>
-                </article>
+                </Card>
 
-                <article className="card">
+                <Card>
                   <h2>Membres rattaches</h2>
                   {members.length <= 1 ? (
                     <p className="muted">Aucun membre rattache.</p>
@@ -2040,14 +2289,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <p className="muted">{member.email}</p>
                             </div>
                             <span className="badge">{member.kind === "CHILD" ? "Enfant" : "Adulte"}</span>
-                          </article>
+                      </article>
                         ))}
                     </div>
                   )}
-                </article>
+                </Card>
               </section>
 
-              <section className="card">
+              <Card className="client-account-desktop">
                 <h2>Preferences communication</h2>
                 <div className="client-preferences-list">
                   <p>{me.portal_contact_visible ? "✅" : "❌"} Afficher dans les contacts du portail</p>
@@ -2056,9 +2305,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <p>{me.email_opt_in ? "✅" : "❌"} Recevoir les communications email</p>
                   <p>{me.sms_opt_in ? "✅" : "❌"} Recevoir les communications SMS</p>
                 </div>
-              </section>
+              </Card>
 
-              <section className="card">
+              <Card className="client-account-desktop">
                 <h2>Credits disponibles</h2>
                 <p className="muted">Affichage des credits strictement positifs.</p>
                 {positivePackSubscriptions.length === 0 ? (
@@ -2082,10 +2331,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ))}
                   </div>
                 )}
-              </section>
+              </Card>
 
               {editProfile ? (
-                <section className="card">
+                <Card className="client-account-edit">
                   <h2>Modifier mes informations</h2>
                   <form action={updateProfileAction} className="client-filter-grid">
                     <label>
@@ -2171,23 +2420,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                     <label className="checkline">
                       <input type="checkbox" name="portal_contact_visible" defaultChecked={me.portal_contact_visible} />
-                      Afficher dans les contacts du portail etudiant
+                      <span className="client-switch-label">Afficher dans les contacts du portail etudiant</span>
                     </label>
                     <label className="checkline">
                       <input type="checkbox" name="email_opt_in" defaultChecked={me.email_opt_in} />
-                      Recevoir les emails de communication
+                      <span className="client-switch-label">Recevoir les emails de communication</span>
                     </label>
                     <label className="checkline">
                       <input type="checkbox" name="sms_opt_in" defaultChecked={me.sms_opt_in} />
-                      Recevoir les SMS de communication
+                      <span className="client-switch-label">Recevoir les SMS de communication</span>
                     </label>
                     <label className="checkline">
                       <input type="checkbox" name="lesson_reminder_email_opt_in" defaultChecked={me.lesson_reminder_email_opt_in} />
-                      Rappels de cours par email
+                      <span className="client-switch-label">Rappels de cours par email</span>
                     </label>
                     <label className="checkline">
                       <input type="checkbox" name="lesson_reminder_sms_opt_in" defaultChecked={me.lesson_reminder_sms_opt_in} />
-                      Rappels de cours par SMS
+                      <span className="client-switch-label">Rappels de cours par SMS</span>
                     </label>
 
                     <input type="hidden" name="phone" value={me.mobile_phone_1 ?? me.phone ?? ""} readOnly />
@@ -2199,21 +2448,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </a>
                     </div>
                   </form>
-                </section>
+                </Card>
               ) : null}
             </>
           ) : null}
         </section>
       </section>
 
-      <nav className="client-mobile-nav" aria-label="Navigation mobile client">
-        {tabLinks.map((item) => (
-          <a key={`m-${item.id}`} className={`client-mobile-link ${tab === item.id ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: item.id })}>
-            <span aria-hidden="true">{item.icon}</span>
-            <span>{item.label}</span>
-          </a>
-        ))}
-      </nav>
+      <MobileTabs items={mobileTabLinks} activeId={tab} />
     </main>
   );
 }
