@@ -60,7 +60,7 @@ services:
       context: ./frontend
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
-      BACKEND_TIMEOUT_MS: "10000"
+      BACKEND_TIMEOUT_MS: ${BACKEND_TIMEOUT_MS:-30000}
     ports:
       - "3000:3000"
     depends_on:

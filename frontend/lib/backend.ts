@@ -1,5 +1,5 @@
 const DEFAULT_BACKEND_URL = "http://localhost:8000";
-const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_TIMEOUT_MS = 30000;
 
 export function backendUrl(): string {
   return process.env.BACKEND_INTERNAL_URL ?? DEFAULT_BACKEND_URL;
