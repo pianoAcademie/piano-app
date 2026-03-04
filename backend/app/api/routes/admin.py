@@ -2268,6 +2268,13 @@ def update_session(
             target.recurrence_group_id = recurrence_group_id
             target.recurrence_rule = recurrence_rule
         target.updated_at = now
+        if (
+            "capacity_max" in updates
+            and target.status == SessionStatus.SCHEDULED
+            and target.start_at_utc > now
+            and target.capacity_max > 0
+        ):
+            _promote_waitlist_if_possible(db, target, now)
 
     if recurrence_group_id is not None and recurrence_rule is not None:
         anchor_duration = session_obj.end_at_utc - session_obj.start_at_utc

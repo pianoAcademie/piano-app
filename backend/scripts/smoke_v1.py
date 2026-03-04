@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -72,6 +72,23 @@ def ensure(condition: bool, message: str) -> None:
 
 def step(message: str) -> None:
     print(f"[SMOKE] {message}", flush=True)
+
+
+def wait_backend_ready(timeout_seconds: int = 45, interval_seconds: float = 1.5) -> None:
+    deadline = time.time() + timeout_seconds
+    last_error = "unknown"
+    while time.time() < deadline:
+        try:
+            health = api.call("GET", "/health")
+            if health.status == 200 and isinstance(health.data, dict) and health.data.get("ok") is True:
+                return
+            last_error = f"status={health.status} data={health.data}"
+        except URLError as exc:
+            last_error = str(exc)
+        except Exception as exc:  # pragma: no cover - defensive for smoke runtime
+            last_error = str(exc)
+        time.sleep(interval_seconds)
+    raise SmokeFailure(f"backend not ready after {timeout_seconds}s: {last_error}")
 
 
 def register_user(email: str, password: str, *, timezone: str = "Europe/Paris") -> None:
@@ -206,8 +223,7 @@ def main() -> None:
     now = datetime.now(UTC)
 
     step("health")
-    health = api.call("GET", "/health")
-    ensure(health.status == 200 and isinstance(health.data, dict) and health.data.get("ok") is True, "health check failed")
+    wait_backend_ready()
 
     client_email = f"smoke.client.{ts}@example.com"
     wait_email = f"smoke.wait.{ts}@example.com"
@@ -283,12 +299,22 @@ def main() -> None:
     ensure(booking_client.get("status") == "BOOKED", f"expected BOOKED, got {booking_client.get('status')}")
     ensure(booking_wait.get("status") == "WAITLISTED", f"expected WAITLISTED, got {booking_wait.get('status')}")
 
-    cancel_booking(client_token, booking_client["id"])
+    step("capacity increase promotes waitlist")
+    capacity_upgrade = api.call(
+        "PATCH",
+        f"/api/v1/admin/sessions/{waitlist_session_id}",
+        {"capacity_max": 5},
+        admin_token,
+    )
+    ensure(
+        capacity_upgrade.status == 200,
+        f"session capacity update failed: {capacity_upgrade.status} {capacity_upgrade.data}",
+    )
 
     with SessionLocal() as db:
         wait_booking = db.scalar(select(Booking).where(Booking.id == booking_wait["id"]))
-        ensure(wait_booking is not None, "waitlist booking missing after cancel")
-        ensure(wait_booking.status.value == "WAITLISTED", "waitlist booking should remain WAITLISTED after cancel")
+        ensure(wait_booking is not None, "waitlist booking missing after capacity update")
+        ensure(wait_booking.status.value == "BOOKED", "waitlist booking should be promoted to BOOKED after capacity increase")
 
     step("attendance scenario")
     attendance_session_id = create_session_as_admin(
