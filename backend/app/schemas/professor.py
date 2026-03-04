@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 import enum
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -219,3 +220,81 @@ class ProfessorContractGridOut(BaseModel):
     location_label: str
     notes: str | None
     lines: list[ProfessorContractGridLineOut] = Field(default_factory=list)
+
+
+class TeacherStatementMissingSessionOut(BaseModel):
+    session_id: UUID
+    title: str
+    start_at_utc: datetime
+    end_at_utc: datetime
+    pending_students_count: int
+    total_students_count: int
+
+
+class TeacherStatementLineOut(BaseModel):
+    course_type_id: UUID | None
+    course_type_label: str
+    hours: Decimal
+    unit_rate_ht: Decimal
+    amount_ht: Decimal
+    amount_ttc: Decimal
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class TeacherStatementOut(BaseModel):
+    statement_id: UUID | None
+    payor_legal_entity_id: UUID
+    payor_legal_entity_name: str
+    year: int
+    month: int
+    status: str
+    attendance_complete: bool
+    currency: str
+    totals_ht: Decimal
+    totals_vat: Decimal
+    totals_ttc: Decimal
+    dispute_message_last: str | None = None
+    lines: list[TeacherStatementLineOut] = Field(default_factory=list)
+    missing_sessions: list[TeacherStatementMissingSessionOut] = Field(default_factory=list)
+
+
+class TeacherStatementDisputeRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class TeacherInvoiceLineOut(BaseModel):
+    id: UUID
+    course_type_id: UUID | None
+    course_type_label: str
+    hours: Decimal
+    unit_rate_ht: Decimal
+    amount_ht: Decimal
+    amount_ttc: Decimal
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class TeacherInvoiceOut(BaseModel):
+    id: UUID
+    statement_id: UUID
+    payor_legal_entity_id: UUID
+    payor_legal_entity_name: str
+    invoice_number: str
+    invoice_date: date
+    due_date: date
+    is_vat_applicable: bool
+    vat_rate: Decimal | None
+    totals_ht: Decimal
+    totals_vat: Decimal
+    totals_ttc: Decimal
+    teacher_siret_display: str
+    teacher_iban: str
+    status: str
+    sent_to_accounting_at: datetime | None
+    cancelled_at: datetime | None
+    created_at: datetime
+    lines: list[TeacherInvoiceLineOut] = Field(default_factory=list)
+
+
+class TeacherApproveStatementsOut(BaseModel):
+    generated_invoices: list[TeacherInvoiceOut] = Field(default_factory=list)
+    blocked_missing_sessions: list[TeacherStatementMissingSessionOut] = Field(default_factory=list)

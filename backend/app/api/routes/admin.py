@@ -1314,6 +1314,7 @@ def create_session(
                 course_type_id=payload.course_type_id,
                 billing_entity_snapshot=normalize_billing_entity(course_type.billing_entity_code),
                 snapshot_seller_legal_entity_id=course_type.seller_legal_entity_id,
+                snapshot_payor_legal_entity_id=course_type.payor_legal_entity_id,
                 location_id=payload.location_id,
                 professor_id=payload.professor_id,
                 title=payload.title,
@@ -2158,6 +2159,7 @@ def update_session(
         target.course_type_id = course_type_id
         target.billing_entity_snapshot = normalize_billing_entity(course_type.billing_entity_code)
         target.snapshot_seller_legal_entity_id = course_type.seller_legal_entity_id
+        target.snapshot_payor_legal_entity_id = course_type.payor_legal_entity_id
         target.location_id = location_id
         target.professor_id = professor_id
 
@@ -2305,6 +2307,7 @@ def update_session(
                     course_type_id=session_obj.course_type_id,
                     billing_entity_snapshot=session_obj.billing_entity_snapshot,
                     snapshot_seller_legal_entity_id=session_obj.snapshot_seller_legal_entity_id,
+                    snapshot_payor_legal_entity_id=session_obj.snapshot_payor_legal_entity_id,
                     location_id=session_obj.location_id,
                     professor_id=session_obj.professor_id,
                     title=session_obj.title,
@@ -2416,6 +2419,7 @@ def duplicate_session_operation(
                 course_type_id=target.course_type_id,
                 billing_entity_snapshot=target.billing_entity_snapshot,
                 snapshot_seller_legal_entity_id=target.snapshot_seller_legal_entity_id,
+                snapshot_payor_legal_entity_id=target.snapshot_payor_legal_entity_id,
                 location_id=target.location_id,
                 professor_id=target.professor_id,
                 title=target.title,

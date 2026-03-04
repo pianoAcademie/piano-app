@@ -11,6 +11,7 @@ import type {
   AdminLegalEntityOut,
   AdminInvoiceNumberingOut,
   AdminInvoiceTemplateOut,
+  AdminTeacherInvoiceTemplateOut,
   AdminClientPasswordEmailTemplateOut,
   AdminRangeInvoiceEmailOut,
   AdminRangeInvoiceOut,
@@ -29,6 +30,7 @@ import type {
   AdminCatalogStockOut,
   AdminProductCategoriesOut,
   AdminProfessorContractDeleteOut,
+  AdminCollaboratorSendPasswordOut,
   AdminProfessorContractGridOut,
   AdminProfessorContractOut,
   AdminProfessorRateOut,
@@ -43,6 +45,9 @@ import type {
   ClientPaymentCheckoutOut,
   ProfessorPermissionOut,
   ProfessorCatalogStudentOut,
+  TeacherApproveStatementsOut,
+  TeacherInvoiceOut,
+  TeacherStatementOut,
   UserOut,
 } from "./types";
 
@@ -1068,6 +1073,137 @@ export async function professorMarkSessionAbsentAction(formData: FormData): Prom
 
   revalidatePath("/prof");
   redirect(appendQueryMessage(returnTo, "ok", `Creneau annule (notif: ${result.data.notified_students})`));
+}
+
+export async function teacherApproveStatementsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
+  const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    redirect(appendQueryMessage(returnTo, "error", "Periode invalide"));
+  }
+
+  const result = await backendRequest<TeacherApproveStatementsOut>(
+    `/api/v1/teacher/statements/${year}/${month}/approve`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/statements/${year}/${month}`);
+  revalidatePath("/prof");
+  redirect(appendQueryMessage(returnTo, "ok", `${result.data.generated_invoices.length} facture(s) generee(s)`));
+}
+
+export async function teacherDisputeStatementsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
+  const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
+  const message = String(formData.get("message") ?? "").trim();
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !message) {
+    redirect(appendQueryMessage(returnTo, "error", "Message de litige obligatoire"));
+  }
+  const result = await backendRequest<TeacherStatementOut[]>(
+    `/api/v1/teacher/statements/${year}/${month}/dispute`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/statements/${year}/${month}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Litige envoye a l administration"));
+}
+
+export async function teacherCancelInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const invoiceId = String(formData.get("invoice_id") ?? "").trim();
+  if (!invoiceId) {
+    redirect(appendQueryMessage(returnTo, "error", "Facture invalide"));
+  }
+  const result = await backendRequest<TeacherInvoiceOut>(
+    `/api/v1/teacher/invoices/${invoiceId}/cancel`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/invoices/${invoiceId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Facture annulee"));
+}
+
+export async function teacherUncancelInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const invoiceId = String(formData.get("invoice_id") ?? "").trim();
+  if (!invoiceId) {
+    redirect(appendQueryMessage(returnTo, "error", "Facture invalide"));
+  }
+  const result = await backendRequest<TeacherInvoiceOut>(
+    `/api/v1/teacher/invoices/${invoiceId}/uncancel`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/invoices/${invoiceId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Facture reactivee"));
+}
+
+export async function teacherSendInvoiceToAccountingAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const invoiceId = String(formData.get("invoice_id") ?? "").trim();
+  if (!invoiceId) {
+    redirect(appendQueryMessage(returnTo, "error", "Facture invalide"));
+  }
+  const result = await backendRequest<TeacherInvoiceOut>(
+    `/api/v1/teacher/invoices/${invoiceId}/send-to-accounting`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/invoices/${invoiceId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Facture envoyee a la comptabilite"));
 }
 
 export async function createAdminSessionAction(formData: FormData): Promise<void> {
@@ -3186,6 +3322,8 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   const amountInclVat = parseNonNegativeDecimal(amountRaw);
   const vatRate = parseNonNegativeDecimal(vatRateRaw);
   const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
+  const legalEntityIdRaw = String(formData.get("legal_entity_id") ?? "").trim();
+  const legalEntityId = legalEntityIdRaw ? parseUuid(legalEntityIdRaw) : null;
   const customReference = optionalField(formData, "reference");
   if (!clientId) {
     redirect("/admin/clients?error=Client%20invalide");
@@ -3218,6 +3356,9 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   if (isPaymentTransaction && !paymentMethodCode) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Mode%20de%20paiement%20obligatoire`);
   }
+  if (legalEntityIdRaw && !legalEntityId) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Entite%20juridique%20invalide`);
+  }
   if (!isPaymentTransaction && (vatRate === null || vatRate < 0 || vatRate > 100)) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
   }
@@ -3237,6 +3378,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         category: optionalField(formData, "category"),
         reference: customReference,
         payment_method_code: paymentMethodCode,
+        legal_entity_id: legalEntityId,
         student_id: optionalField(formData, "student_id"),
         amount_incl_vat: amountInclVat,
         vat_rate: isPaymentTransaction ? 0 : vatRate,
@@ -3275,6 +3417,8 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
   const amountInclVat = parseNonNegativeDecimal(amountRaw);
   const vatRate = vatRateRaw ? parseNonNegativeDecimal(vatRateRaw) : null;
   const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
+  const legalEntityIdRaw = String(formData.get("legal_entity_id") ?? "").trim();
+  const legalEntityId = legalEntityIdRaw ? parseUuid(legalEntityIdRaw) : null;
 
   if (!clientId || !transactionId) {
     redirect("/admin/clients?error=Transaction%20invalide");
@@ -3284,6 +3428,9 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
   }
   if (isPaymentTransaction && !paymentMethodCode) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Mode%20de%20paiement%20obligatoire`);
+  }
+  if (legalEntityIdRaw && !legalEntityId) {
+    redirect(`/admin/clients/${clientId}?tab=paiements&error=Entite%20juridique%20invalide`);
   }
   if (!isPaymentTransaction && vatRateRaw && (vatRate === null || vatRate < 0 || vatRate > 100)) {
     redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
@@ -3307,6 +3454,7 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
         vat_rate: isPaymentTransaction ? 0 : (vatRate ?? undefined),
         currency: optionalField(formData, "currency"),
         payment_method_code: paymentMethodCode,
+        legal_entity_id: legalEntityId,
       }),
     },
     token,
@@ -3940,6 +4088,8 @@ export async function createAdminCollaboratorAction(formData: FormData): Promise
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const first_name = String(formData.get("first_name") ?? "").trim();
   const last_name = String(formData.get("last_name") ?? "").trim();
+  const teacherIsVatApplicable = checkboxField(formData, "teacher_is_vat_applicable");
+  const teacherVatRate = optionalField(formData, "teacher_vat_rate");
   const payout_currency = String(formData.get("payout_currency") ?? "EUR").trim().toUpperCase();
 
   if (!email || !first_name || !last_name) {
@@ -3958,6 +4108,13 @@ export async function createAdminCollaboratorAction(formData: FormData): Promise
     siret: optionalField(formData, "siret"),
     iban: optionalField(formData, "iban"),
     address_line: optionalField(formData, "address_line"),
+    teacher_invoice_counter: Number.parseInt(String(formData.get("teacher_invoice_counter") ?? "1"), 10) || 1,
+    teacher_is_vat_applicable: teacherIsVatApplicable,
+    teacher_vat_rate: teacherIsVatApplicable ? teacherVatRate : null,
+    teacher_siret: optionalField(formData, "teacher_siret"),
+    teacher_iban: optionalField(formData, "teacher_iban"),
+    teacher_company_name: optionalField(formData, "teacher_company_name"),
+    teacher_company_address: optionalField(formData, "teacher_company_address"),
     zoom_link: optionalField(formData, "zoom_link"),
     spoken_languages: parseStringList(formData.getAll("spoken_languages")),
     payout_currency,
@@ -3985,7 +4142,7 @@ export async function createAdminCollaboratorAction(formData: FormData): Promise
   const created = result.data.professor;
   revalidatePath("/admin/professors");
   revalidatePath(`/admin/professors/${created.id}`);
-  redirect("/admin/professors?ok=Collaborateur%20cree%20et%20email%20identifiants%20envoye");
+  redirect("/admin/professors?ok=Collaborateur%20cree%20et%20email%20de%20creation%20acces%20envoye");
 }
 
 export async function uploadAdminCollaboratorContractAction(formData: FormData): Promise<void> {
@@ -4219,11 +4376,6 @@ export async function updateAdminCollaboratorProfileAction(formData: FormData): 
     payload.active = activeRaw === "true";
   }
 
-  const password = String(formData.get("password") ?? "");
-  if (password.trim()) {
-    payload.password = password;
-  }
-
   const result = await backendRequest<AdminProfessorUpdateResult>(
     `/api/v1/admin/collaborators/${professorId}`,
     {
@@ -4249,6 +4401,40 @@ export async function updateAdminCollaboratorProfileAction(formData: FormData): 
   }
 
   redirect(`/admin/professors/${professorId}?tab=${returnTab}&ok=Fiche%20collaborateur%20mise%20a%20jour`);
+}
+
+export async function sendAdminCollaboratorPasswordLinkAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const professorId = String(formData.get("professor_id") ?? "").trim();
+  const returnTab = String(formData.get("return_tab") ?? "profil").trim() || "profil";
+  if (!professorId) {
+    redirect("/admin/professors?error=Collaborateur%20invalide");
+  }
+
+  const result = await backendRequest<AdminCollaboratorSendPasswordOut>(
+    `/api/v1/admin/collaborators/${professorId}/send-password`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/professors/${professorId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/professors");
+  revalidatePath(`/admin/professors/${professorId}`);
+  redirect(
+    `/admin/professors/${professorId}?tab=${returnTab}&ok=${encodeURIComponent(
+      `Lien de reinitialisation envoye (expiration: ${new Date(result.data.expires_at).toLocaleString("fr-FR")})`,
+    )}`,
+  );
 }
 
 export async function updateAdminCollaboratorPermissionsAction(formData: FormData): Promise<void> {
@@ -4630,6 +4816,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const description = optionalField(formData, "description");
   const serviceCode = String(formData.get("service_code") ?? "ACTIVITY").trim().toUpperCase();
   const sellerLegalEntityId = String(formData.get("seller_legal_entity_id") ?? "").trim();
+  const payorLegalEntityId = String(formData.get("payor_legal_entity_id") ?? "").trim();
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? ""));
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
@@ -4698,6 +4885,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     description,
     service_code: serviceCode || "ACTIVITY",
     seller_legal_entity_id: sellerLegalEntityId,
+    payor_legal_entity_id: payorLegalEntityId || sellerLegalEntityId,
     credit_type_id: creditTypeId,
     duration_minutes: durationMinutes,
     color_hex: colorHex,
@@ -4753,6 +4941,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const description = optionalField(formData, "description");
   const serviceCode = String(formData.get("service_code") ?? "ACTIVITY").trim().toUpperCase();
   const sellerLegalEntityId = String(formData.get("seller_legal_entity_id") ?? "").trim();
+  const payorLegalEntityId = String(formData.get("payor_legal_entity_id") ?? "").trim();
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? ""));
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
@@ -4822,6 +5011,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     description,
     service_code: serviceCode || "ACTIVITY",
     seller_legal_entity_id: sellerLegalEntityId,
+    payor_legal_entity_id: payorLegalEntityId || sellerLegalEntityId,
     credit_type_id: creditTypeId,
     duration_minutes: durationMinutes,
     color_hex: colorHex,
@@ -5016,6 +5206,7 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
     siret: optionalField(formData, "siret"),
     vat_number: optionalField(formData, "vat_number"),
     address_text: optionalField(formData, "address_text"),
+    accounting_email: optionalField(formData, "accounting_email"),
     country_code: countryCode,
     invoice_prefix: invoicePrefix,
     invoice_next_number: invoiceNextNumber,
@@ -5089,6 +5280,7 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
     siret: optionalField(formData, "siret"),
     vat_number: optionalField(formData, "vat_number"),
     address_text: optionalField(formData, "address_text"),
+    accounting_email: optionalField(formData, "accounting_email"),
     country_code: countryCode,
     invoice_prefix: invoicePrefix,
     invoice_next_number: invoiceNextNumber,
@@ -5317,12 +5509,17 @@ export async function updateAdminConfigPaymentMethodsAction(formData: FormData):
 
   await ensureAdmin(token);
   const enabledCodes = parseStringList(formData.getAll("enabled_codes")).map((code) => code.toUpperCase());
+  const legalEntityByMethodCode: Record<string, string | null> = {};
+  for (const methodCode of ["BANK_TRANSFER", "CHECK", "CASH"]) {
+    const parsed = parseUuid(String(formData.get(`legal_entity_for_${methodCode}`) ?? ""));
+    legalEntityByMethodCode[methodCode] = parsed;
+  }
 
   const result = await backendRequest<AdminPaymentMethodsOut>(
     "/api/v1/admin/config/payment-methods",
     {
       method: "PUT",
-      body: JSON.stringify({ enabled_codes: enabledCodes }),
+      body: JSON.stringify({ enabled_codes: enabledCodes, legal_entity_by_method_code: legalEntityByMethodCode }),
     },
     token,
   );
@@ -6256,6 +6453,33 @@ export async function updateAdminConfigInvoiceNumberingAction(formData: FormData
   revalidatePath("/admin/config");
   revalidatePath("/admin/clients");
   redirect("/admin/config?section=params-messaging&ok=Numero%20de%20facture%20mis%20a%20jour");
+}
+
+export async function updateAdminTeacherInvoiceTemplateAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const htmlTemplate = String(formData.get("html_template") ?? "").trim();
+  if (!htmlTemplate) {
+    redirect("/admin/teacher-invoicing/template?error=Template%20HTML%20obligatoire");
+  }
+
+  const result = await backendRequest<AdminTeacherInvoiceTemplateOut>(
+    "/api/v1/admin/teacher-invoice-template",
+    {
+      method: "PUT",
+      body: JSON.stringify({ html_template: htmlTemplate }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/teacher-invoicing/template?error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath("/admin/teacher-invoicing/template");
+  redirect("/admin/teacher-invoicing/template?ok=Modele%20facture%20professeur%20mis%20a%20jour");
 }
 
 export async function saveAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {

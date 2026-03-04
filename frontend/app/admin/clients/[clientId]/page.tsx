@@ -43,6 +43,7 @@ import {
   labelFromOptions,
 } from "../../../../lib/reference-data";
 import ManualTransactionNonCashFlowFields from "../../../../components/manual-transaction-noncashflow-fields";
+import ManualTransactionLegalEntityFields from "../../../../components/manual-transaction-legal-entity-fields";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import type {
   AdminClientBookingOut,
@@ -53,6 +54,7 @@ import type {
   AdminClientNoteOut,
   AdminClientOut,
   AdminClientPaymentOut,
+  AdminLegalEntityOut,
   AdminRangeInvoiceEmailPreviewOut,
   AdminClientSubscriptionOut,
   AdminPaymentMethodsOut,
@@ -409,6 +411,8 @@ type RangeInvoiceNotePayload = {
   include_pending: boolean;
   include_cancelled: boolean;
   totals_by_currency: Record<string, string>;
+  seller_legal_entity_id?: string;
+  billing_entity?: string;
   invoice_status: "ISSUED" | "PAID" | "CANCELLED";
   emailed_at?: string;
   reminded_at?: string;
@@ -446,6 +450,8 @@ type InvoiceListRow =
       totalLabel: string;
       downloadHref: string;
       viewHref: string;
+      sellerLegalEntityId: string | null;
+      billingEntity: string | null;
     };
 
 type RangeInvoiceListRow = Extract<InvoiceListRow, { kind: "range" }>;
@@ -541,6 +547,8 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
       include_pending: Boolean(payload.include_pending),
       include_cancelled: Boolean(payload.include_cancelled),
       totals_by_currency: totals,
+      seller_legal_entity_id: typeof payload.seller_legal_entity_id === "string" ? payload.seller_legal_entity_id : undefined,
+      billing_entity: typeof payload.billing_entity === "string" ? payload.billing_entity : undefined,
       invoice_status:
         payload.invoice_status === "PAID" || payload.invoice_status === "CANCELLED" || payload.invoice_status === "ISSUED"
           ? payload.invoice_status
@@ -637,7 +645,12 @@ function messagesHref(clientId: string, params: Record<string, string>): string 
 const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount"] as const;
 type ManualTransactionModalType = (typeof MANUAL_TRANSACTION_MODAL_TYPES)[number];
 
-const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{ code: string; label: string }> = [
+const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{
+  code: string;
+  label: string;
+  default_legal_entity_id: string | null;
+  default_legal_entity_name: string | null;
+}> = [
   { code: "CARD_ONLINE", label: "CB en ligne (Mollie / Payplug)" },
   { code: "CARD_TERMINAL", label: "CB sur place (TPE)" },
   { code: "CHECK", label: "Cheque" },
@@ -646,7 +659,7 @@ const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{ code: string; label: string }> = [
   { code: "SEPA_DEBIT", label: "Prelevement SEPA" },
   { code: "BANK_TRANSFER", label: "Virement bancaire" },
   { code: "FACTURATION_AUTO", label: "Paiement sur facture" },
-];
+].map((row) => ({ ...row, default_legal_entity_id: null, default_legal_entity_name: null }));
 
 function statusClass(status: string): string {
   const normalized = status.toUpperCase();
@@ -861,6 +874,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     productCategoriesResult,
     catalogProductsResult,
     paymentMethodsResult,
+    legalEntitiesResult,
     familyResult,
     allClientsResult,
     groupsResult,
@@ -876,6 +890,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
+    backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token),
     backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${params.clientId}/family`, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
     backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=false", {}, token),
@@ -970,6 +985,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : (() => {
         errors.push(`payment_methods: ${paymentMethodsResult.message}`);
         return DEFAULT_PAYMENT_METHOD_OPTIONS.map((item) => ({ ...item, enabled: true }));
+      })();
+  const legalEntities = legalEntitiesResult.ok
+    ? legalEntitiesResult.data.filter((row) => row.is_active)
+    : (() => {
+        errors.push(`legal_entities: ${legalEntitiesResult.message}`);
+        return [] as AdminLegalEntityOut[];
       })();
 
   const family = familyResult.ok
@@ -1342,6 +1363,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       totalLabel: rangeInvoiceTotalLabel(payload.totals_by_currency),
       downloadHref: rangeInvoicePdfHref(client.id, note.id, false),
       viewHref: rangeInvoicePdfHref(client.id, note.id, true),
+      sellerLegalEntityId: payload.seller_legal_entity_id ?? null,
+      billingEntity: payload.billing_entity ?? null,
     });
     return acc;
   }, []);
@@ -1350,6 +1373,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
   );
   const reconcilableRangeInvoices = generatedRangeInvoices.filter((row) => (row.status || "").trim().toUpperCase() === "ISSUED");
+  const manualTransactionLegalEntities = legalEntities.map((row) => ({ id: row.id, name: row.name }));
+  const manualTransactionPaymentMethods = enabledPaymentMethods.map((row) => ({
+    code: row.code,
+    label: row.label,
+    defaultLegalEntityId: row.default_legal_entity_id,
+    defaultLegalEntityName: row.default_legal_entity_name,
+  }));
+  const manualReconcilableInvoices = reconcilableRangeInvoices.map((row) => ({
+    noteId: row.noteId,
+    occurredAtLabel: formatDateOnlyNumeric(row.occurredAt),
+    totalLabel: row.totalLabel,
+    invoiceNumber: row.invoiceNumber,
+    sellerLegalEntityId: row.sellerLegalEntityId,
+    sellerLegalEntityName:
+      manualTransactionLegalEntities.find((entity) => entity.id === row.sellerLegalEntityId)?.name ?? row.billingEntity ?? null,
+  }));
   const selectedRangeInvoiceForModal =
     paymentModalAction === "invoice_email" && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
@@ -4002,19 +4041,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </label>
               {manualIsCashFlow ? (
                 <label>
-                  {manualIsPayment ? "Mode de paiement *" : "Mode de paiement (optionnel)"}
-                  <select name="payment_method_code" defaultValue="" required={manualIsPayment}>
-                    {manualIsPayment ? <option value="" disabled>Selectionner...</option> : <option value="">(Non precise)</option>}
-                    {enabledPaymentMethods.map((method) => (
-                      <option key={method.code} value={method.code}>
-                        {method.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              {manualIsCashFlow ? (
-                <label>
                   Montant TTC
                   <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
                 </label>
@@ -4027,6 +4053,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   products={manualChargeProductOptions}
                 />
               ) : null}
+              {manualIsPayment ? (
+                <ManualTransactionLegalEntityFields
+                  legalEntities={manualTransactionLegalEntities}
+                  paymentMethods={manualTransactionPaymentMethods}
+                  paymentMethodRequired
+                  reconcilableInvoices={manualReconcilableInvoices}
+                  showReconciliation
+                />
+              ) : (
+                <ManualTransactionLegalEntityFields legalEntities={manualTransactionLegalEntities} />
+              )}
               <label>
                 Libelle (optionnel)
                 <input type="text" name="label" maxLength={255} defaultValue={manualTransactionDefaultLabel} placeholder="Ex: Frais de dossier" />
@@ -4039,48 +4076,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 Description (optionnel)
                 <textarea name="description" rows={3} maxLength={2000} placeholder="Ce texte apparaitra dans la facture." />
               </label>
-              {manualIsPayment ? (
-                <fieldset className="config-payment-fieldset span-2">
-                  <legend>Rapprochement facture (optionnel)</legend>
-                  {reconcilableRangeInvoices.length > 0 ? (
-                    <div className="table-wrap">
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th aria-label="Selection">Sel.</th>
-                            <th>Date facture</th>
-                            <th>Montant</th>
-                            <th>Numero facture</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {reconcilableRangeInvoices.map((row) => (
-                            <tr key={`manual-reconcile-${row.noteId}`}>
-                              <td>
-                                <input type="checkbox" name="reconciled_invoice_note_ids" value={row.noteId} />
-                              </td>
-                              <td>{formatDateOnlyNumeric(row.occurredAt)}</td>
-                              <td>{row.totalLabel}</td>
-                              <td>{row.invoiceNumber}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="muted">Aucune facture emise en attente de paiement a rapprocher.</p>
-                  )}
-                  <input type="hidden" name="mark_reconciled_invoices_paid" value="off" />
-                  <label className="checkline">
-                    <input type="checkbox" name="mark_reconciled_invoices_paid" value="on" />
-                    Marquer manuellement les factures selectionnees comme payees (si montant regle suffisant)
-                  </label>
-                  <p className="muted">
-                    Si montant paiement &lt; total facture(s), elles restent a payer. Si montant paiement &gt;= total facture(s), vous pouvez les
-                    valider comme payees.
-                  </p>
-                </fieldset>
-              ) : null}
               {manualIsPayment ? (
                 <>
                   <input type="hidden" name="send_receipt_email" value="off" />
@@ -4153,18 +4148,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="vat_rate" value="0" />
                 )}
                 {editManualIsPayment ? (
-                  <label>
-                    Mode de paiement *
-                    <select name="payment_method_code" defaultValue={selectedManualTransactionForEdit.payment_method_code ?? ""} required>
-                      <option value="" disabled>Selectionner...</option>
-                      {enabledPaymentMethods.map((method) => (
-                        <option key={method.code} value={method.code}>
-                          {method.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
+                  <ManualTransactionLegalEntityFields
+                    legalEntities={manualTransactionLegalEntities}
+                    paymentMethods={manualTransactionPaymentMethods}
+                    paymentMethodRequired
+                    initialPaymentMethodCode={selectedManualTransactionForEdit.payment_method_code ?? ""}
+                    initialLegalEntityId={selectedManualTransactionForEdit.seller_legal_entity_id}
+                  />
+                ) : (
+                  <ManualTransactionLegalEntityFields
+                    legalEntities={manualTransactionLegalEntities}
+                    initialLegalEntityId={selectedManualTransactionForEdit.seller_legal_entity_id}
+                  />
+                )}
                 <label>
                   Libelle (optionnel)
                   <input type="text" name="label" maxLength={255} defaultValue={selectedManualTransactionForEdit.label} />

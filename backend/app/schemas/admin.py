@@ -94,6 +94,8 @@ class AdminPaymentMethodOptionOut(BaseModel):
     code: str
     label: str
     enabled: bool
+    default_legal_entity_id: UUID | None = None
+    default_legal_entity_name: str | None = None
 
 
 class AdminPaymentMethodsOut(BaseModel):
@@ -102,6 +104,7 @@ class AdminPaymentMethodsOut(BaseModel):
 
 class AdminPaymentMethodsUpdateRequest(BaseModel):
     enabled_codes: list[str] = Field(default_factory=list)
+    legal_entity_by_method_code: dict[str, UUID | None] | None = None
 
 
 class AdminProductCategoriesOut(BaseModel):
@@ -229,6 +232,22 @@ class AdminInvoiceTemplateOut(BaseModel):
 
 class AdminInvoiceTemplateUpdateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=20000)
+
+
+class AdminTeacherInvoiceTemplateOut(BaseModel):
+    key: str
+    html_template: str
+    version: int
+    updated_at: datetime | None = None
+    variables: list[str] = Field(default_factory=list)
+
+
+class AdminTeacherInvoiceTemplateUpdateRequest(BaseModel):
+    html_template: str = Field(min_length=1, max_length=100000)
+
+
+class AdminTeacherInvoiceTemplatePreviewRequest(BaseModel):
+    html_template: str | None = Field(default=None, min_length=1, max_length=100000)
 
 
 class AdminInvoiceNumberingOut(BaseModel):
@@ -418,6 +437,8 @@ class AdminActivityOut(BaseModel):
     service_code: str
     seller_legal_entity_id: UUID | None
     seller_legal_entity_name: str | None
+    payor_legal_entity_id: UUID | None
+    payor_legal_entity_name: str | None
     credit_type_id: UUID | None
     credit_type_code: str | None
     credit_type_name: str | None
@@ -442,6 +463,7 @@ class AdminActivityUpsertRequest(BaseModel):
     description: str | None = None
     service_code: str = Field(default="ACTIVITY", min_length=1, max_length=80)
     seller_legal_entity_id: UUID
+    payor_legal_entity_id: UUID | None = None
     credit_type_id: UUID
     duration_minutes: int = Field(default=60, ge=5, le=600)
     color_hex: str = Field(default="#94C973", min_length=7, max_length=7)
@@ -464,6 +486,7 @@ class AdminActivityUpdateRequest(BaseModel):
     description: str | None = None
     service_code: str | None = Field(default=None, min_length=1, max_length=80)
     seller_legal_entity_id: UUID | None = None
+    payor_legal_entity_id: UUID | None = None
     credit_type_id: UUID | None = None
     duration_minutes: int | None = Field(default=None, ge=5, le=600)
     color_hex: str | None = Field(default=None, min_length=7, max_length=7)
@@ -524,6 +547,7 @@ class AdminLegalEntityOut(BaseModel):
     siret: str | None
     vat_number: str | None
     address_text: str | None
+    accounting_email: str | None
     country_code: str
     invoice_prefix: str
     invoice_next_number: int
@@ -539,6 +563,7 @@ class AdminLegalEntityCreateRequest(BaseModel):
     siret: str | None = Field(default=None, max_length=64)
     vat_number: str | None = Field(default=None, max_length=64)
     address_text: str | None = Field(default=None, max_length=2000)
+    accounting_email: str | None = Field(default=None, max_length=320)
     country_code: str = Field(default="FR", min_length=2, max_length=2)
     invoice_prefix: str = Field(min_length=1, max_length=20)
     invoice_next_number: int = Field(default=1, ge=1)
@@ -552,6 +577,7 @@ class AdminLegalEntityUpdateRequest(BaseModel):
     siret: str | None = Field(default=None, max_length=64)
     vat_number: str | None = Field(default=None, max_length=64)
     address_text: str | None = Field(default=None, max_length=2000)
+    accounting_email: str | None = Field(default=None, max_length=320)
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     invoice_prefix: str | None = Field(default=None, min_length=1, max_length=20)
     invoice_next_number: int | None = Field(default=None, ge=1)
@@ -1075,6 +1101,7 @@ class AdminClientManualTransactionCreateRequest(BaseModel):
     vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     payment_method_code: str | None = Field(default=None, max_length=40)
+    legal_entity_id: UUID | None = None
     reconciled_invoice_note_ids: list[UUID] = Field(default_factory=list)
     mark_reconciled_invoices_paid: bool = False
     send_receipt_email: bool = False
@@ -1091,6 +1118,7 @@ class AdminClientManualTransactionUpdateRequest(BaseModel):
     vat_rate: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     payment_method_code: str | None = Field(default=None, max_length=40)
+    legal_entity_id: UUID | None = None
 
 
 class AdminClientPaymentRefundRequest(BaseModel):
@@ -1226,6 +1254,13 @@ class AdminProfessorDetailOut(BaseModel):
     siret: str | None
     iban: str | None
     address_line: str | None
+    teacher_invoice_counter: int
+    teacher_is_vat_applicable: bool
+    teacher_vat_rate: Decimal | None
+    teacher_siret: str | None
+    teacher_iban: str | None
+    teacher_company_name: str | None
+    teacher_company_address: str | None
     zoom_link: str | None
     spoken_languages: list[str]
     payout_currency: str
@@ -1254,6 +1289,13 @@ class AdminProfessorCreateRequest(BaseModel):
     siret: str | None = Field(default=None, max_length=30)
     iban: str | None = Field(default=None, max_length=34)
     address_line: str | None = Field(default=None, max_length=255)
+    teacher_invoice_counter: int = Field(default=1, ge=1)
+    teacher_is_vat_applicable: bool = False
+    teacher_vat_rate: Decimal | None = Field(default=None, ge=0, le=99.99)
+    teacher_siret: str | None = Field(default=None, max_length=64)
+    teacher_iban: str | None = Field(default=None, max_length=64)
+    teacher_company_name: str | None = Field(default=None, max_length=255)
+    teacher_company_address: str | None = Field(default=None, max_length=2000)
     zoom_link: str | None = Field(default=None, max_length=500)
     spoken_languages: list[str] = Field(default_factory=list)
     payout_currency: str = Field(default="EUR", min_length=3, max_length=3)
@@ -1267,13 +1309,19 @@ class AdminProfessorCreateRequest(BaseModel):
 
 class AdminProfessorUpdateRequest(BaseModel):
     email: str | None = Field(default=None, min_length=3, max_length=255)
-    password: str | None = Field(default=None, min_length=8, max_length=128)
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     phone: str | None = Field(default=None, min_length=3, max_length=30)
     siret: str | None = Field(default=None, max_length=30)
     iban: str | None = Field(default=None, max_length=34)
     address_line: str | None = Field(default=None, max_length=255)
+    teacher_invoice_counter: int | None = Field(default=None, ge=1)
+    teacher_is_vat_applicable: bool | None = None
+    teacher_vat_rate: Decimal | None = Field(default=None, ge=0, le=99.99)
+    teacher_siret: str | None = Field(default=None, max_length=64)
+    teacher_iban: str | None = Field(default=None, max_length=64)
+    teacher_company_name: str | None = Field(default=None, max_length=255)
+    teacher_company_address: str | None = Field(default=None, max_length=2000)
     zoom_link: str | None = Field(default=None, max_length=500)
     spoken_languages: list[str] | None = None
     payout_currency: str | None = Field(default=None, min_length=3, max_length=3)
@@ -1289,6 +1337,12 @@ class AdminProfessorUpdateResult(BaseModel):
     professor: AdminProfessorDetailOut
     activation_email_sent: bool
     activation_email_message_id: str | None
+
+
+class AdminCollaboratorSendPasswordOut(BaseModel):
+    ok: bool
+    message_id: str | None
+    expires_at: datetime
 
 
 class AdminProfessorRateOut(BaseModel):

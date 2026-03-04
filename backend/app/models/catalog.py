@@ -67,6 +67,13 @@ class Professor(Base):
     siret: Mapped[str | None] = mapped_column(String(30), nullable=True)
     iban: Mapped[str | None] = mapped_column(String(34), nullable=True)
     address_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    teacher_invoice_counter: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    teacher_is_vat_applicable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    teacher_vat_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    teacher_siret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teacher_iban: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teacher_company_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teacher_company_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     contract_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     contract_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     contract_file_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
@@ -202,6 +209,11 @@ class CourseType(Base):
         ForeignKey("legal_entities.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    payor_legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     credit_type_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("credit_types.id", ondelete="SET NULL"),
@@ -257,6 +269,11 @@ class CourseSession(Base):
         server_default=text("'PIANO_ACADEMIE'"),
     )
     snapshot_seller_legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    snapshot_payor_legal_entity_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("legal_entities.id", ondelete="RESTRICT"),
         nullable=True,

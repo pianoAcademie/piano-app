@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import re
@@ -164,7 +165,9 @@ SUBSCRIPTION_SETTING_DEFAULTS = {
 }
 
 PAYMENT_METHODS_SETTING_KEY = "config_payment_methods_enabled"
+PAYMENT_METHODS_LEGAL_ENTITY_MAP_SETTING_KEY = "config_payment_methods_legal_entity_map_v1"
 PRODUCT_CATEGORIES_SETTING_KEY = "config_products_categories_v1"
+MANUAL_PAYMENT_METHOD_CODES_WITH_DEFAULT_ENTITY = {"BANK_TRANSFER", "CHECK", "CASH"}
 
 
 def _utcnow() -> datetime:
@@ -251,6 +254,9 @@ def _serialize_activity(
     legal_entity = (
         legal_entity_by_id.get(activity.seller_legal_entity_id) if activity.seller_legal_entity_id is not None else None
     )
+    payor_legal_entity = (
+        legal_entity_by_id.get(activity.payor_legal_entity_id) if activity.payor_legal_entity_id is not None else None
+    )
     return AdminActivityOut(
         id=activity.id,
         code=activity.code,
@@ -259,6 +265,8 @@ def _serialize_activity(
         service_code=activity.service_code,
         seller_legal_entity_id=activity.seller_legal_entity_id,
         seller_legal_entity_name=legal_entity.name if legal_entity is not None else None,
+        payor_legal_entity_id=activity.payor_legal_entity_id,
+        payor_legal_entity_name=payor_legal_entity.name if payor_legal_entity is not None else None,
         credit_type_id=credit_type.id if credit_type is not None else None,
         credit_type_code=credit_type.code if credit_type is not None else None,
         credit_type_name=credit_type.name if credit_type is not None else None,
@@ -419,6 +427,7 @@ def _serialize_legal_entity(entity: LegalEntity) -> AdminLegalEntityOut:
         siret=entity.siret,
         vat_number=entity.vat_number,
         address_text=entity.address_text,
+        accounting_email=entity.accounting_email,
         country_code=entity.country_code,
         invoice_prefix=entity.invoice_prefix,
         invoice_next_number=entity.invoice_next_number,
@@ -488,6 +497,31 @@ def _normalize_methods(codes: list[str]) -> list[str]:
         seen.add(code)
         unique.append(code)
     return unique
+
+
+def _load_payment_method_legal_entity_map(db: Session) -> dict[str, UUID]:
+    raw = _get_setting_value(db, PAYMENT_METHODS_LEGAL_ENTITY_MAP_SETTING_KEY, "")
+    if not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[str, UUID] = {}
+    for raw_code, raw_entity_id in parsed.items():
+        code = str(raw_code or "").strip().upper()
+        if code not in MANUAL_PAYMENT_METHOD_CODES_WITH_DEFAULT_ENTITY:
+            continue
+        entity_id_text = str(raw_entity_id or "").strip()
+        if not entity_id_text:
+            continue
+        try:
+            out[code] = UUID(entity_id_text)
+        except ValueError:
+            continue
+    return out
 
 
 def _validate_default_grid_rules(line: AdminProfessorDefaultGridLineInput, *, line_index: int) -> None:
@@ -1151,6 +1185,7 @@ def create_admin_legal_entity(
         siret=_normalize_legal_entity_text(payload.siret, max_length=64),
         vat_number=_normalize_legal_entity_text(payload.vat_number, max_length=64),
         address_text=_normalize_legal_entity_text(payload.address_text, max_length=2000),
+        accounting_email=_normalize_legal_entity_text(payload.accounting_email, max_length=320),
         country_code=_normalize_country_code(payload.country_code),
         invoice_prefix=invoice_prefix,
         invoice_next_number=int(payload.invoice_next_number),
@@ -1201,6 +1236,8 @@ def update_admin_legal_entity(
         entity.vat_number = _normalize_legal_entity_text(changes["vat_number"], max_length=64)
     if "address_text" in changes:
         entity.address_text = _normalize_legal_entity_text(changes["address_text"], max_length=2000)
+    if "accounting_email" in changes:
+        entity.accounting_email = _normalize_legal_entity_text(changes["accounting_email"], max_length=320)
 
     if "country_code" in changes:
         entity.country_code = _normalize_country_code(changes["country_code"])
@@ -1396,6 +1433,11 @@ def create_admin_activity(
 
     credit_type = _resolve_credit_type(db, credit_type_id=payload.credit_type_id)
     seller_legal_entity = _resolve_legal_entity(db, legal_entity_id=payload.seller_legal_entity_id)
+    payor_legal_entity = (
+        _resolve_legal_entity(db, legal_entity_id=payload.payor_legal_entity_id)
+        if payload.payor_legal_entity_id is not None
+        else seller_legal_entity
+    )
 
     requested_code = _normalize_activity_code(payload.code, fallback_name=name)
     if payload.code and db.scalar(select(CourseType.id).where(CourseType.code == requested_code)) is not None:
@@ -1413,6 +1455,7 @@ def create_admin_activity(
         service_code=payload.service_code.strip().upper(),
         billing_entity_code=_legacy_billing_entity_code_from_legal_entity(seller_legal_entity),
         seller_legal_entity_id=seller_legal_entity.id,
+        payor_legal_entity_id=payor_legal_entity.id,
         credit_type_id=credit_type.id,
         duration_minutes=int(payload.duration_minutes),
         color_hex=_normalize_color_hex(payload.color_hex),
@@ -1489,6 +1532,21 @@ def update_admin_activity(
         seller_legal_entity = _resolve_legal_entity(db, legal_entity_id=seller_legal_entity_id)
         activity.seller_legal_entity_id = seller_legal_entity.id
         activity.billing_entity_code = _legacy_billing_entity_code_from_legal_entity(seller_legal_entity)
+        if "payor_legal_entity_id" not in changes and activity.payor_legal_entity_id is None:
+            activity.payor_legal_entity_id = seller_legal_entity.id
+
+    if "payor_legal_entity_id" in changes:
+        payor_legal_entity_id = changes["payor_legal_entity_id"]
+        if payor_legal_entity_id is None:
+            if activity.seller_legal_entity_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="payor_legal_entity_id is required",
+                )
+            activity.payor_legal_entity_id = activity.seller_legal_entity_id
+        else:
+            payor_legal_entity = _resolve_legal_entity(db, legal_entity_id=payor_legal_entity_id)
+            activity.payor_legal_entity_id = payor_legal_entity.id
 
     if "credit_type_id" in changes:
         credit_type_id = changes["credit_type_id"]
@@ -1656,9 +1714,29 @@ def get_admin_payment_methods(
         enabled_codes = [code for code, _ in PAYMENT_METHOD_CATALOG]
 
     enabled_set = set(enabled_codes)
+    configured_entity_by_method = _load_payment_method_legal_entity_map(db)
+    legal_entities = db.scalars(select(LegalEntity)).all()
+    legal_entity_name_by_id = {
+        row.id: row.name
+        for row in legal_entities
+    }
     return AdminPaymentMethodsOut(
         methods=[
-            AdminPaymentMethodOptionOut(code=code, label=label, enabled=code in enabled_set)
+            AdminPaymentMethodOptionOut(
+                code=code,
+                label=label,
+                enabled=code in enabled_set,
+                default_legal_entity_id=(
+                    configured_entity_by_method.get(code)
+                    if code in MANUAL_PAYMENT_METHOD_CODES_WITH_DEFAULT_ENTITY
+                    else None
+                ),
+                default_legal_entity_name=(
+                    legal_entity_name_by_id.get(configured_entity_by_method.get(code))
+                    if code in MANUAL_PAYMENT_METHOD_CODES_WITH_DEFAULT_ENTITY and configured_entity_by_method.get(code) is not None
+                    else None
+                ),
+            )
             for code, label in PAYMENT_METHOD_CATALOG
         ]
     )
@@ -1672,6 +1750,31 @@ def update_admin_payment_methods(
 ) -> AdminPaymentMethodsOut:
     enabled_codes = _normalize_methods(payload.enabled_codes)
     _set_setting(db, PAYMENT_METHODS_SETTING_KEY, ",".join(enabled_codes))
+    if payload.legal_entity_by_method_code is not None:
+        active_entities = db.scalars(select(LegalEntity).where(LegalEntity.is_active.is_(True))).all()
+        active_entity_ids = {row.id for row in active_entities}
+        normalized_map: dict[str, str] = {}
+        for raw_code, raw_legal_entity_id in payload.legal_entity_by_method_code.items():
+            code = (raw_code or "").strip().upper()
+            if code not in MANUAL_PAYMENT_METHOD_CODES_WITH_DEFAULT_ENTITY:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unsupported payment method for legal entity binding: {code}",
+                )
+            if raw_legal_entity_id is None:
+                continue
+            legal_entity_id = UUID(str(raw_legal_entity_id))
+            if legal_entity_id not in active_entity_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unknown or inactive legal entity id for {code}",
+                )
+            normalized_map[code] = str(legal_entity_id)
+        _set_setting(
+            db,
+            PAYMENT_METHODS_LEGAL_ENTITY_MAP_SETTING_KEY,
+            json.dumps(normalized_map, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+        )
     db.commit()
     return get_admin_payment_methods(db=db)
 

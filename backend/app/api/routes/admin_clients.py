@@ -161,6 +161,8 @@ CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
 ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
 PRODUCT_CATEGORIES_SETTING_KEY = "config_products_categories_v1"
+PAYMENT_METHODS_LEGAL_ENTITY_MAP_SETTING_KEY = "config_payment_methods_legal_entity_map_v1"
+MANUAL_PAYMENT_METHOD_CODES_WITH_DEFAULT_ENTITY = {"BANK_TRANSFER", "CHECK", "CASH"}
 MANUAL_TRANSACTION_SIGN_BY_TYPE = {
     "PAYMENT": Decimal("-1"),
     "DISCOUNT": Decimal("-1"),
@@ -1850,6 +1852,43 @@ def _configured_product_categories(db: Session) -> list[str]:
     if setting is None:
         return []
     return _parse_product_categories(setting.value or "")
+
+
+def _payment_method_legal_entity_defaults(db: Session) -> dict[str, UUID]:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == PAYMENT_METHODS_LEGAL_ENTITY_MAP_SETTING_KEY))
+    if setting is None or not (setting.value or "").strip():
+        return {}
+    try:
+        parsed = json.loads(setting.value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[str, UUID] = {}
+    for raw_code, raw_legal_entity_id in parsed.items():
+        code = str(raw_code or "").strip().upper()
+        if code not in MANUAL_PAYMENT_METHOD_CODES_WITH_DEFAULT_ENTITY:
+            continue
+        entity_id_text = str(raw_legal_entity_id or "").strip()
+        if not entity_id_text:
+            continue
+        try:
+            out[code] = UUID(entity_id_text)
+        except ValueError:
+            continue
+    return out
+
+
+def _require_active_legal_entity(db: Session, *, legal_entity_id: UUID) -> LegalEntity:
+    entity = db.scalar(
+        select(LegalEntity).where(
+            LegalEntity.id == legal_entity_id,
+            LegalEntity.is_active.is_(True),
+        )
+    )
+    if entity is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Legal entity not found or inactive")
+    return entity
 
 
 def _payment_source_label(source: str) -> str:
@@ -4984,6 +5023,12 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         manual_reference = _manual_custom_reference(row.reference) or (row.reference if _manual_payment_method_code(row.reference) is None else None)
         reference = manual_reference or None
         payment_method_code = _manual_payment_method_code(row.reference)
+        seller_legal_entity_id = row.legal_entity_id
+        billing_entity = _billing_entity_from_seller_id(
+            legal_entities_by_id=legal_entities_by_id,
+            seller_legal_entity_id=seller_legal_entity_id,
+            fallback_text=None,
+        )
 
         items.append(
             AdminClientPaymentOut(
@@ -5004,8 +5049,8 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 student_user_id=row.student_user_id,
                 description=_normalize_optional(row.description),
                 category=_normalize_optional(row.category),
-                seller_legal_entity_id=None,
-                billing_entity=None,
+                seller_legal_entity_id=seller_legal_entity_id,
+                billing_entity=billing_entity,
                 can_edit=(row.status or "").strip().upper() != "REFUNDED",
                 can_cancel=(row.status or "").strip().upper() != "REFUNDED",
             )
@@ -5146,6 +5191,7 @@ def create_admin_client_manual_transaction(
 
     reconciled_invoices: list[tuple[ClientNoteEntry, dict[str, object], Decimal, str]] = []
     reconciled_total = Decimal("0.00")
+    reconciled_seller_legal_entity_ids: set[UUID] = set()
     for note_id in reconciled_note_ids:
         note, metadata = _load_range_invoice_note(db, client_id=client.id, note_id=note_id, for_update=True)
         invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
@@ -5156,8 +5202,68 @@ def create_admin_client_manual_transaction(
             )
         invoice_total = _invoice_range_total_in_currency(metadata, currency=currency)
         invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note.id)
+        _, _, reconciled_seller_legal_entity_id = _frozen_invoice_selection_for_note(
+            db,
+            note_id=note.id,
+            metadata=metadata,
+        )
+        if reconciled_seller_legal_entity_id is None:
+            reconciled_seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+        if reconciled_seller_legal_entity_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Impossible de determiner l'entite juridique de la facture selectionnee",
+            )
+        reconciled_seller_legal_entity_ids.add(reconciled_seller_legal_entity_id)
         reconciled_total = _quantize_money(reconciled_total + invoice_total)
         reconciled_invoices.append((note, metadata, invoice_total, invoice_number))
+
+    if len(reconciled_seller_legal_entity_ids) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Créer un paiement par entité",
+        )
+
+    requested_legal_entity_id = payload.legal_entity_id
+    reconciled_seller_legal_entity_id = (
+        next(iter(reconciled_seller_legal_entity_ids))
+        if len(reconciled_seller_legal_entity_ids) == 1
+        else None
+    )
+    payment_method_legal_entity_id = None
+    if payment_method_code is not None:
+        payment_method_legal_entity_id = _payment_method_legal_entity_defaults(db).get(payment_method_code)
+
+    if (
+        requested_legal_entity_id is not None
+        and reconciled_seller_legal_entity_id is not None
+        and requested_legal_entity_id != reconciled_seller_legal_entity_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="L'entite juridique saisie ne correspond pas aux factures selectionnees",
+        )
+    if (
+        payment_method_legal_entity_id is not None
+        and reconciled_seller_legal_entity_id is not None
+        and payment_method_legal_entity_id != reconciled_seller_legal_entity_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le mode de paiement selectionne est associe a une autre entite juridique",
+        )
+
+    resolved_legal_entity_id = (
+        reconciled_seller_legal_entity_id
+        or requested_legal_entity_id
+        or payment_method_legal_entity_id
+    )
+    if resolved_legal_entity_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="L'entite juridique est obligatoire pour une transaction manuelle",
+        )
+    _require_active_legal_entity(db, legal_entity_id=resolved_legal_entity_id)
 
     row = ClientManualTransaction(
         user_id=client.id,
@@ -5175,6 +5281,7 @@ def create_admin_client_manual_transaction(
         total_incl_vat=_quantize_money(total_abs * sign),
         currency=currency,
         reference=reference,
+        legal_entity_id=resolved_legal_entity_id,
     )
     db.add(row)
     db.flush()
@@ -5421,6 +5528,32 @@ def update_admin_client_manual_transaction(
         payment_method_code = None
     custom_reference = reference_input if "reference" in update_values else current_custom_reference
     row.reference = _build_manual_reference(payment_method_code=payment_method_code, custom_reference=custom_reference)
+
+    requested_legal_entity_id = update_values.get("legal_entity_id") if "legal_entity_id" in update_values else None
+    payment_method_legal_entity_id = None
+    if payment_method_code is not None:
+        payment_method_legal_entity_id = _payment_method_legal_entity_defaults(db).get(payment_method_code)
+    if payment_method_legal_entity_id is not None:
+        if requested_legal_entity_id is not None and requested_legal_entity_id != payment_method_legal_entity_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="L'entite juridique est imposee par le mode de paiement selectionne",
+            )
+        resolved_legal_entity_id = payment_method_legal_entity_id
+    elif "legal_entity_id" in update_values:
+        resolved_legal_entity_id = requested_legal_entity_id
+    else:
+        resolved_legal_entity_id = row.legal_entity_id
+
+    if resolved_legal_entity_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="L'entite juridique est obligatoire pour une transaction manuelle",
+        )
+    if row.legal_entity_id != resolved_legal_entity_id:
+        _require_active_legal_entity(db, legal_entity_id=resolved_legal_entity_id)
+    row.legal_entity_id = resolved_legal_entity_id
+
     row.actor_user_id = actor.id
 
     db.add(row)

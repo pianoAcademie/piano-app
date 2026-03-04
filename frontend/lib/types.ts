@@ -309,6 +309,8 @@ export type AdminClientPaymentOut = {
   total_incl_vat: string;
   currency: string;
   reference: string | null;
+  seller_legal_entity_id: string | null;
+  billing_entity: string | null;
   invoice_number: string | null;
   invoice_status: string | null;
   invoice_note_id: string | null;
@@ -640,6 +642,13 @@ export type AdminProfessorDetailOut = {
   siret: string | null;
   iban: string | null;
   address_line: string | null;
+  teacher_invoice_counter: number;
+  teacher_is_vat_applicable: boolean;
+  teacher_vat_rate: string | null;
+  teacher_siret: string | null;
+  teacher_iban: string | null;
+  teacher_company_name: string | null;
+  teacher_company_address: string | null;
   zoom_link: string | null;
   spoken_languages: string[];
   payout_currency: string;
@@ -664,6 +673,12 @@ export type AdminProfessorUpdateResult = {
   professor: AdminProfessorDetailOut;
   activation_email_sent: boolean;
   activation_email_message_id: string | null;
+};
+
+export type AdminCollaboratorSendPasswordOut = {
+  ok: boolean;
+  message_id: string | null;
+  expires_at: string;
 };
 
 export type AdminProfessorRateOut = {
@@ -888,6 +903,80 @@ export type ProfessorContractGridOut = {
   lines: ProfessorContractGridLineOut[];
 };
 
+export type TeacherStatementMissingSessionOut = {
+  session_id: string;
+  title: string;
+  start_at_utc: string;
+  end_at_utc: string;
+  pending_students_count: number;
+  total_students_count: number;
+};
+
+export type TeacherStatementLineOut = {
+  course_type_id: string | null;
+  course_type_label: string;
+  hours: string;
+  unit_rate_ht: string;
+  amount_ht: string;
+  amount_ttc: string;
+  meta: Record<string, unknown>;
+};
+
+export type TeacherStatementOut = {
+  statement_id: string | null;
+  payor_legal_entity_id: string;
+  payor_legal_entity_name: string;
+  year: number;
+  month: number;
+  status: string;
+  attendance_complete: boolean;
+  currency: string;
+  totals_ht: string;
+  totals_vat: string;
+  totals_ttc: string;
+  dispute_message_last: string | null;
+  lines: TeacherStatementLineOut[];
+  missing_sessions: TeacherStatementMissingSessionOut[];
+};
+
+export type TeacherInvoiceLineOut = {
+  id: string;
+  course_type_id: string | null;
+  course_type_label: string;
+  hours: string;
+  unit_rate_ht: string;
+  amount_ht: string;
+  amount_ttc: string;
+  meta: Record<string, unknown>;
+};
+
+export type TeacherInvoiceOut = {
+  id: string;
+  statement_id: string;
+  payor_legal_entity_id: string;
+  payor_legal_entity_name: string;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string;
+  is_vat_applicable: boolean;
+  vat_rate: string | null;
+  totals_ht: string;
+  totals_vat: string;
+  totals_ttc: string;
+  teacher_siret_display: string;
+  teacher_iban: string;
+  status: string;
+  sent_to_accounting_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  lines: TeacherInvoiceLineOut[];
+};
+
+export type TeacherApproveStatementsOut = {
+  generated_invoices: TeacherInvoiceOut[];
+  blocked_missing_sessions: TeacherStatementMissingSessionOut[];
+};
+
 export type AdminSessionOut = {
   id: string;
   course_type_id: string;
@@ -984,6 +1073,8 @@ export type AdminPaymentMethodOptionOut = {
   code: string;
   label: string;
   enabled: boolean;
+  default_legal_entity_id: string | null;
+  default_legal_entity_name: string | null;
 };
 
 export type AdminPaymentMethodsOut = {
@@ -1207,6 +1298,14 @@ export type AdminInvoiceTemplateOut = {
   updated_at: string | null;
 };
 
+export type AdminTeacherInvoiceTemplateOut = {
+  key: string;
+  html_template: string;
+  version: number;
+  updated_at: string | null;
+  variables: string[];
+};
+
 export type AdminInvoiceNumberingOut = {
   format_pattern: string;
   next_number: number;
@@ -1294,6 +1393,8 @@ export type AdminActivityOut = {
   service_code: string;
   seller_legal_entity_id: string | null;
   seller_legal_entity_name: string | null;
+  payor_legal_entity_id: string | null;
+  payor_legal_entity_name: string | null;
   credit_type_id: string | null;
   credit_type_code: string | null;
   credit_type_name: string | null;
@@ -1319,6 +1420,7 @@ export type AdminLegalEntityOut = {
   siret: string | null;
   vat_number: string | null;
   address_text: string | null;
+  accounting_email: string | null;
   country_code: string;
   invoice_prefix: string;
   invoice_next_number: number;

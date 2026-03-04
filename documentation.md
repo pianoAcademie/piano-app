@@ -30,6 +30,12 @@
   - snapshot FK sur session
   - persistance FK sur lignes de facture
   - rendu PDF base sur `legal_entity_id`
+- Transactions manuelles:
+  - ajout `client_manual_transactions.legal_entity_id` (FK `legal_entities`)
+  - derivation de l'entite depuis factures rapprochees si selectionnees
+  - fallback sur mode de paiement (virement/cheque/especes) via mapping BO
+  - entite obligatoire pour nouvelles transactions quand non derivable
+  - blocage explicite si rapprochement inter-entites: `Créer un paiement par entité`
 - Endpoints admin/client:
   - sortie `seller_legal_entity_id`
   - `billing_entity` derive de l'entite legale DB
@@ -68,9 +74,60 @@
   - update provider global en `STRIPE`
   - update d'une legal entity avec `default_payment_provider=STRIPE`
 
+8. Smoke transactions multi-entites (paiements/avoirs/rabais)
+- `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python scripts/smoke_transactions_legal_entities_v1.py`
+- Verifie:
+  - paiement manuel sans facture: entite obligatoire
+  - rapprochement sur 2 factures meme entite: OK
+  - rapprochement sur factures entites differentes: erreur `Créer un paiement par entité`
+
 ## Etat de verification actuel
 - `alembic upgrade head`: OK
 - `smoke_v1.py`: OK
 - `npm run build`: OK
 - `npm run lint` frontend: script absent dans ce projet (non executable)
 - `pytest` backend: non disponible dans l'image (`No module named pytest`)
+
+## Workflow professeurs/collaborateurs multi-entites (PR1 -> PR6)
+
+### Endpoints backend ajoutes
+- BO collaborateurs:
+  - `PATCH /api/v1/admin/collaborators/{id}`
+  - `POST /api/v1/admin/collaborators/{id}/send-password`
+- Modele facture professeur:
+  - `GET /api/v1/admin/teacher-invoice-template`
+  - `PUT /api/v1/admin/teacher-invoice-template`
+  - `POST /api/v1/admin/teacher-invoice-template/preview`
+- Portail professeur:
+  - `GET /api/v1/teacher/statements?year=&month=`
+  - `GET /api/v1/teacher/statements/{year}/{month}`
+  - `POST /api/v1/teacher/statements/{year}/{month}/approve`
+  - `POST /api/v1/teacher/statements/{year}/{month}/dispute`
+  - `GET /api/v1/teacher/invoices?year=&month=`
+  - `GET /api/v1/teacher/invoices/{invoice_id}`
+  - `GET /api/v1/teacher/invoices/{invoice_id}/pdf`
+  - `POST /api/v1/teacher/invoices/{invoice_id}/cancel`
+  - `POST /api/v1/teacher/invoices/{invoice_id}/uncancel`
+  - `POST /api/v1/teacher/invoices/{invoice_id}/send-to-accounting`
+
+### Notes securite reset password
+- Aucun mot de passe n'est stocke ni envoye en clair.
+- `POST /api/v1/admin/collaborators/{id}/send-password` genere un token one-time hashé avec expiration 24h.
+- Le lien de reset passe par `POST /api/v1/auth/reset-password`:
+  - token compare par hash,
+  - token marque `used_at`,
+  - les autres tokens actifs du meme user sont invalidés.
+
+### Multi-entites cote prof
+- Le payeur est `course_types.payor_legal_entity_id` (FK `legal_entities`), editable en BO.
+- Snapshot de payeur sur seance: `course_sessions.snapshot_payor_legal_entity_id`.
+- Releve/approbation groupe par `(teacher_id, payor_legal_entity_id, year, month)`.
+- Generation: 1 facture professeur par statement payeur.
+- Compteur facture professeur global `professors.teacher_invoice_counter` avec lock transactionnel.
+
+### Commandes de validation executees
+- `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend alembic upgrade head`
+- `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python scripts/smoke_v1.py`
+- `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python scripts/smoke_billing_entities_v1.py`
+- `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python scripts/smoke_teacher_invoicing_v1.py`
+- `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T frontend npm run build`

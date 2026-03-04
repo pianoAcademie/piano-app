@@ -51,6 +51,14 @@ from app.models.plan import (
 )
 from app.models.pricing import CourseTypePrice, PlanPrice, VatRule
 from app.models.professor_access import ProfessorPermission
+from app.models.teacher_invoicing import (
+    DocumentTemplate,
+    TeacherInvoice,
+    TeacherInvoiceAuditEvent,
+    TeacherInvoiceLine,
+    TeacherMonthlyStatement,
+    TeacherStatementMessage,
+)
 from app.models.product_catalog import (
     CatalogKit,
     CatalogKitItem,
@@ -91,6 +99,7 @@ __all__ = [
     "CourseType",
     "CourseTypePrice",
     "DeliveryMode",
+    "DocumentTemplate",
     "EmailReminder",
     "Location",
     "LegalEntity",
@@ -129,6 +138,11 @@ __all__ = [
     "SessionStatus",
     "SalaryPaymentMethod",
     "SubscriptionStatus",
+    "TeacherInvoice",
+    "TeacherInvoiceAuditEvent",
+    "TeacherInvoiceLine",
+    "TeacherMonthlyStatement",
+    "TeacherStatementMessage",
     "User",
     "UserRole",
     "VatRule",

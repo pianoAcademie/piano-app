@@ -12,6 +12,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admin/salary-payments", label: "Paiement des salaires" },
   { href: "/admin/communications", label: "Communications" },
   { href: "/admin/products", label: "Produits" },
+  { href: "/admin/teacher-invoicing/template", label: "Facturation professeurs" },
   { href: "/admin/config", label: "Configuration" },
   { href: "/admin/reporting", label: "Reporting" },
 ];

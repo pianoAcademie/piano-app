@@ -110,6 +110,7 @@ class LegalEntity(Base):
     siret: Mapped[str | None] = mapped_column(Text, nullable=True)
     vat_number: Mapped[str | None] = mapped_column(Text, nullable=True)
     address_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    accounting_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     country_code: Mapped[str] = mapped_column(String(2), nullable=False, server_default=text("'FR'"))
     invoice_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
     invoice_next_number: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("1"))

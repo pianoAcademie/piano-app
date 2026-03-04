@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import {
   deleteAdminCollaboratorContractAction,
+  sendAdminCollaboratorPasswordLinkAction,
   upsertAdminCollaboratorContractGridAction,
   uploadAdminCollaboratorContractAction,
   updateAdminCollaboratorRatesAction,
@@ -335,6 +336,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   }
 
   const currentTab = parseTab(readParam(searchParams, "tab"));
+  const isEditProfileOpen = readParam(searchParams, "edit_profile") === "1";
   const editGridId = readParam(searchParams, "edit_grid_id");
   const showLegacyContractGrid = readParam(searchParams, "legacy_contract") === "1";
   const agendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
@@ -530,6 +532,34 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 <strong>{professor.address_line ?? "Non renseignee"}</strong>
               </article>
               <article className="item row spread">
+                <span className="muted">Compteur facture prof</span>
+                <strong>{professor.teacher_invoice_counter}</strong>
+              </article>
+              <article className="item row spread">
+                <span className="muted">TVA applicable</span>
+                <strong>{professor.teacher_is_vat_applicable ? "Oui" : "Non"}</strong>
+              </article>
+              <article className="item row spread">
+                <span className="muted">Taux TVA prof</span>
+                <strong>{professor.teacher_vat_rate ?? "-"}</strong>
+              </article>
+              <article className="item row spread">
+                <span className="muted">SIRET facturation prof</span>
+                <strong>{professor.teacher_siret ?? "Non renseigne"}</strong>
+              </article>
+              <article className="item row spread">
+                <span className="muted">IBAN facturation prof</span>
+                <strong>{professor.teacher_iban ?? "Non renseigne"}</strong>
+              </article>
+              <article className="item row spread">
+                <span className="muted">Societe prof</span>
+                <strong>{professor.teacher_company_name ?? "Non renseignee"}</strong>
+              </article>
+              <article className="item row spread">
+                <span className="muted">Adresse societe prof</span>
+                <strong>{professor.teacher_company_address ?? "Non renseignee"}</strong>
+              </article>
+              <article className="item row spread">
                 <span className="muted">Lien Zoom</span>
                 <strong>{professor.zoom_link ?? "Non renseigne"}</strong>
               </article>
@@ -554,11 +584,28 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 <strong>{professor.last_activation_email_sent_at ? formatDate(professor.last_activation_email_sent_at) : "Jamais"}</strong>
               </article>
             </div>
+            <div className="row top-gap-sm">
+              <Link className="mode-link" href={`/admin/professors/${professor.id}?tab=profil&edit_profile=1`}>
+                Modifier la fiche
+              </Link>
+              <form action={sendAdminCollaboratorPasswordLinkAction}>
+                <input type="hidden" name="professor_id" value={professor.id} />
+                <input type="hidden" name="return_tab" value="profil" />
+                <button type="submit">Generer acces et envoyer email</button>
+              </form>
+            </div>
           </article>
 
-          <article className="card">
-            <h3>Modifier la fiche</h3>
-            <form action={updateAdminCollaboratorProfileAction} className="grid cols-2">
+          {isEditProfileOpen ? (
+            <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Modifier collaborateur">
+              <section className="modal-card">
+                <div className="row spread">
+                  <h3>Modifier la fiche</h3>
+                  <Link className="close-link" href={`/admin/professors/${professor.id}?tab=profil`}>
+                    ×
+                  </Link>
+                </div>
+                <form action={updateAdminCollaboratorProfileAction} className="grid cols-2">
               <input type="hidden" name="professor_id" value={professor.id} />
               <input type="hidden" name="return_tab" value="profil" />
 
@@ -621,6 +668,41 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 <input type="text" name="address_line" defaultValue={professor.address_line ?? ""} maxLength={255} />
               </label>
 
+              <label>
+                Compteur facture prof
+                <input type="number" name="teacher_invoice_counter" min={1} step={1} defaultValue={professor.teacher_invoice_counter} required />
+              </label>
+
+              <label className="checkline">
+                <input type="checkbox" name="teacher_is_vat_applicable" defaultChecked={professor.teacher_is_vat_applicable} />
+                TVA applicable
+              </label>
+
+              <label>
+                Taux TVA (%)
+                <input type="number" name="teacher_vat_rate" min="0" max="99.99" step="0.01" defaultValue={professor.teacher_vat_rate ?? ""} />
+              </label>
+
+              <label>
+                SIRET facturation prof
+                <input type="text" name="teacher_siret" defaultValue={professor.teacher_siret ?? ""} maxLength={64} />
+              </label>
+
+              <label>
+                IBAN facturation prof
+                <input type="text" name="teacher_iban" defaultValue={professor.teacher_iban ?? ""} maxLength={64} />
+              </label>
+
+              <label className="span-2">
+                Societe prof
+                <input type="text" name="teacher_company_name" defaultValue={professor.teacher_company_name ?? ""} maxLength={255} />
+              </label>
+
+              <label className="span-2">
+                Adresse societe prof
+                <textarea name="teacher_company_address" rows={3} defaultValue={professor.teacher_company_address ?? ""} maxLength={2000} />
+              </label>
+
               <label className="span-2">
                 Langues (selection multiple)
                 <select name="spoken_languages" multiple size={6} defaultValue={professor.spoken_languages}>
@@ -657,16 +739,16 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 Ne pas envoyer si aucun cours
               </label>
 
-              <label className="span-2">
-                Nouveau mot de passe (optionnel)
-                <input type="password" name="password" minLength={8} />
-              </label>
-
               <div className="row span-2">
                 <button type="submit">Enregistrer</button>
+                <Link className="reset-link" href={`/admin/professors/${professor.id}?tab=profil`}>
+                  Annuler
+                </Link>
               </div>
-            </form>
-          </article>
+                </form>
+              </section>
+            </section>
+          ) : null}
 
           <article className="card span-2">
             <div className="row spread">

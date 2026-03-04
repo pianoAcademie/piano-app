@@ -501,6 +501,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             {tab.label}
           </Link>
         ))}
+        <Link className="prof-nav-link" href="/prof/statements">
+          <span aria-hidden>🧾</span>
+          Releves
+        </Link>
       </section>
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}

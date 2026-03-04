@@ -152,6 +152,11 @@ class ClientManualTransaction(Base):
     total_incl_vat: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

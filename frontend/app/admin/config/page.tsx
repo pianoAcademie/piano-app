@@ -1082,13 +1082,28 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 ) : (
                   <form action={updateAdminConfigPaymentMethodsAction} className="grid config-payment-grid">
                     {paymentMethods.map((method) => (
-                      <label key={method.code} className="checkline config-payment-line">
-                        <input type="checkbox" name="enabled_codes" value={method.code} defaultChecked={method.enabled} />
-                        <span>
-                          <strong>{method.label}</strong>
-                          <small className="muted"> ({method.code})</small>
-                        </span>
-                      </label>
+                      <div key={method.code} className="config-payment-line">
+                        <label className="checkline">
+                          <input type="checkbox" name="enabled_codes" value={method.code} defaultChecked={method.enabled} />
+                          <span>
+                            <strong>{method.label}</strong>
+                            <small className="muted"> ({method.code})</small>
+                          </span>
+                        </label>
+                        {method.code === "BANK_TRANSFER" || method.code === "CHECK" || method.code === "CASH" ? (
+                          <label>
+                            Entite legale par defaut
+                            <select name={`legal_entity_for_${method.code}`} defaultValue={method.default_legal_entity_id ?? ""}>
+                              <option value="">(Aucune)</option>
+                              {activeLegalEntities.map((entity) => (
+                                <option key={`${method.code}-${entity.id}`} value={entity.id}>
+                                  {entity.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : null}
+                      </div>
                     ))}
 
                     <div className="row">
@@ -2495,6 +2510,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             ))}
                           </select>
                         </label>
+                        <label className="span-2">
+                          Entite legale payeuse prof
+                          <select name="payor_legal_entity_id" defaultValue={activeLegalEntities[0]?.id ?? ""} required>
+                            <option value="" disabled>
+                              Selectionner
+                            </option>
+                            {activeLegalEntities.map((entity) => (
+                              <option key={`create-payor-entity-${entity.id}`} value={entity.id}>
+                                {entity.name} ({entity.invoice_prefix})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
 
                         <label>
                           Mode
@@ -2674,6 +2702,28 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             </option>
                             {activeLegalEntities.map((entity) => (
                               <option key={entity.id} value={entity.id}>
+                                {entity.name} ({entity.invoice_prefix})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="span-2">
+                          Entite legale payeuse prof
+                          <select
+                            name="payor_legal_entity_id"
+                            defaultValue={
+                              selectedActivity.payor_legal_entity_id ??
+                              selectedActivity.seller_legal_entity_id ??
+                              activeLegalEntities[0]?.id ??
+                              ""
+                            }
+                            required
+                          >
+                            <option value="" disabled>
+                              Selectionner
+                            </option>
+                            {activeLegalEntities.map((entity) => (
+                              <option key={`edit-payor-entity-${entity.id}`} value={entity.id}>
                                 {entity.name} ({entity.invoice_prefix})
                               </option>
                             ))}
@@ -2915,6 +2965,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             </td>
                             <td>
                               <span className="badge">{entity.default_payment_provider || "PAYPLUG"}</span>
+                              <small>Compta: {entity.accounting_email || "-"}</small>
                             </td>
                             <td>
                               <div>
@@ -2995,6 +3046,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label>
                           Numero TVA
                           <input type="text" name="vat_number" maxLength={64} />
+                        </label>
+                        <label>
+                          Email comptabilite
+                          <input type="email" name="accounting_email" maxLength={320} />
                         </label>
                         <label>
                           Code pays (ISO2)
@@ -3078,6 +3133,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label>
                           Numero TVA
                           <input type="text" name="vat_number" defaultValue={selectedLegalEntity.vat_number ?? ""} maxLength={64} />
+                        </label>
+                        <label>
+                          Email comptabilite
+                          <input
+                            type="email"
+                            name="accounting_email"
+                            defaultValue={selectedLegalEntity.accounting_email ?? ""}
+                            maxLength={320}
+                          />
                         </label>
                         <label>
                           Code pays (ISO2)

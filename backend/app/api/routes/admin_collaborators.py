@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import hashlib
+import re
+import secrets
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CourseSession, CourseType, Location, Professor, SessionStatus
-from app.models.ops import AppSetting
+from app.models.ops import AppSetting, PasswordResetToken
 from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSalaryPayment, ProfessorSessionPayout
 from app.models.professor_access import ProfessorPermission
 from app.models.professor_contract import (
@@ -31,6 +34,7 @@ from app.schemas.admin import (
     AdminProfessorContractLocationOptionOut,
     AdminCollaboratorMessageOut,
     AdminCollaboratorMessageRequest,
+    AdminCollaboratorSendPasswordOut,
     AdminProfessorContractDeleteOut,
     AdminProfessorContractOut,
     AdminProfessorCreateRequest,
@@ -49,10 +53,7 @@ from app.schemas.admin import (
     ProfessorPermissionUpdateRequest,
 )
 from app.services.professor_activation import (
-    DEFAULT_PROFESSOR_ACTIVATION_BODY,
-    DEFAULT_PROFESSOR_ACTIVATION_SUBJECT,
     generate_temporary_password,
-    send_professor_activation_email,
 )
 from app.services.professor_contracts import (
     CONTRACT_LOCATION_OPTIONS,
@@ -62,10 +63,11 @@ from app.services.professor_contracts import (
 )
 from app.services.professor_default_grid import load_default_professor_grid
 from app.services.messaging_templates import (
-    PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD,
+    PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
     resolve_predefined_template,
     resolve_sender_profile,
 )
+from app.services.email_delivery import send_email
 from app.services.professor_permissions import (
     DEFAULT_PROFESSOR_PERMISSIONS,
     PERMISSION_FIELDS,
@@ -82,6 +84,15 @@ ACCOUNT_ALLOWED_CURRENCIES_KEY = "config_account_allowed_currencies"
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
 MAX_CONTRACT_FILE_BYTES = 10 * 1024 * 1024
 ALLOWED_CONTRACT_MIME_TYPES = {"application/pdf", "application/x-pdf"}
+MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+DEFAULT_RESET_SUBJECT = "Activation de votre acces collaborateur Piano Academie"
+DEFAULT_RESET_BODY = (
+    "Bonjour {full_name},\n\n"
+    "Votre acces collaborateur est pret.\n"
+    "Pour definir votre mot de passe, utilisez ce lien (valable 24h):\n"
+    "{reset_url}\n\n"
+    "Piano Academie"
+)
 
 
 def _utcnow() -> datetime:
@@ -179,29 +190,87 @@ def _activation_login_url(db: Session) -> str:
     return f"https://{website.rstrip('/')}/login"
 
 
-def _send_professor_activation(db: Session, *, to_email: str, first_name: str, last_name: str, temporary_password: str) -> str:
+class _SafeTemplateContext(dict[str, str]):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _hash_reset_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def _render_template(template: str, context: dict[str, str]) -> str:
+    normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template)
     try:
-        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD)
-    except KeyError:
-        template = {
-            "subject": DEFAULT_PROFESSOR_ACTIVATION_SUBJECT,
-            "body": DEFAULT_PROFESSOR_ACTIVATION_BODY,
-        }
+        return normalized.format_map(_SafeTemplateContext(context)).strip()
+    except Exception:
+        return normalized.strip()
+
+
+def _send_professor_password_reset_link(
+    db: Session,
+    *,
+    user: User,
+    first_name: str,
+    last_name: str,
+) -> tuple[str, datetime]:
+    now = _utcnow()
+    db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now,
+        )
+        .values(used_at=now)
+    )
+
+    raw_token = secrets.token_urlsafe(48)
+    expires_at = now + timedelta(hours=24)
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=_hash_reset_token(raw_token),
+            expires_at=expires_at,
+        )
+    )
+
+    login_url = _activation_login_url(db)
+    reset_url = f"{login_url}?reset_token={raw_token}"
+    full_name = f"{first_name} {last_name}".strip() or user.email
+    context = {
+        "first_name": first_name or user.email,
+        "last_name": last_name,
+        "full_name": full_name,
+        "email": user.email,
+        "reset_url": reset_url,
+        "login_url": login_url,
+    }
+
+    try:
+        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET)
+        subject_template = str(template.get("subject") or "").strip() or DEFAULT_RESET_SUBJECT
+        body_template = str(template.get("body") or "").strip() or DEFAULT_RESET_BODY
+        body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
+    except Exception:
+        subject_template = DEFAULT_RESET_SUBJECT
+        body_template = DEFAULT_RESET_BODY
+        body_format = "TEXT"
 
     sender = resolve_sender_profile(db, sender_kind="TEACHER")
-    return send_professor_activation_email(
-        to_email=to_email,
-        full_name=f"{first_name} {last_name}".strip(),
-        temporary_password=temporary_password,
-        login_url=_activation_login_url(db),
-        subject_template=str(template.get("subject") or DEFAULT_PROFESSOR_ACTIVATION_SUBJECT),
-        body_template=str(template.get("body") or DEFAULT_PROFESSOR_ACTIVATION_BODY),
-        body_format="HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT",
+    message_id = send_email(
+        to_email=user.email,
+        subject=_render_template(subject_template, context),
+        body=_render_template(body_template, context),
+        body_format=body_format,
+        context="PROFESSOR_PASSWORD_RESET",
         from_email=sender.from_email,
         from_name=sender.from_name,
         reply_to=sender.reply_to,
         subject_prefix=sender.subject_prefix,
+        recipient_user_id=user.id,
     )
+    return message_id, expires_at
 
 
 def _validate_currency(code: str, *, allowed_codes: list[str]) -> str:
@@ -650,6 +719,13 @@ def _to_detail(
         siret=professor.siret,
         iban=professor.iban,
         address_line=professor.address_line,
+        teacher_invoice_counter=max(1, int(professor.teacher_invoice_counter or 1)),
+        teacher_is_vat_applicable=bool(professor.teacher_is_vat_applicable),
+        teacher_vat_rate=professor.teacher_vat_rate,
+        teacher_siret=professor.teacher_siret,
+        teacher_iban=professor.teacher_iban,
+        teacher_company_name=professor.teacher_company_name,
+        teacher_company_address=professor.teacher_company_address,
         zoom_link=professor.zoom_link,
         spoken_languages=_deserialize_languages(professor.spoken_languages),
         payout_currency=professor.payout_currency,
@@ -946,9 +1022,14 @@ def create_collaborator(
 
     now = _utcnow()
     spoken_languages = _normalize_languages(payload.spoken_languages)
-    temporary_password = generate_temporary_password()
+    bootstrap_password = generate_temporary_password()
+    teacher_is_vat_applicable = bool(payload.teacher_is_vat_applicable)
+    teacher_vat_rate = payload.teacher_vat_rate
+    if teacher_is_vat_applicable and teacher_vat_rate is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="teacher_vat_rate is required when VAT applies")
+    if (not teacher_is_vat_applicable) and teacher_vat_rate is not None:
+        teacher_vat_rate = None
 
-    # V1 rule: account is provisioned immediately and credentials are sent automatically.
     professor = Professor(
         first_name=first_name,
         last_name=last_name,
@@ -957,6 +1038,13 @@ def create_collaborator(
         siret=_normalize_optional(payload.siret),
         iban=_normalize_optional(payload.iban),
         address_line=_normalize_optional(payload.address_line),
+        teacher_invoice_counter=max(1, int(payload.teacher_invoice_counter or 1)),
+        teacher_is_vat_applicable=teacher_is_vat_applicable,
+        teacher_vat_rate=teacher_vat_rate,
+        teacher_siret=_normalize_optional(payload.teacher_siret) or _normalize_optional(payload.siret),
+        teacher_iban=_normalize_optional(payload.teacher_iban) or _normalize_optional(payload.iban),
+        teacher_company_name=_normalize_optional(payload.teacher_company_name) or f"{first_name} {last_name}".strip(),
+        teacher_company_address=_normalize_optional(payload.teacher_company_address) or _normalize_optional(payload.address_line),
         zoom_link=_normalize_optional(payload.zoom_link),
         spoken_languages=_serialize_languages(spoken_languages),
         payout_currency=_validate_currency(payload.payout_currency or default_currency, allowed_codes=allowed_currencies),
@@ -973,7 +1061,7 @@ def create_collaborator(
 
     linked_user = User(
         email=email,
-        hashed_password=hash_password(temporary_password),
+        hashed_password=hash_password(bootstrap_password),
         role=UserRole.ADMIN if payload.is_admin else UserRole.PROF,
         first_name=first_name,
         last_name=last_name,
@@ -982,6 +1070,7 @@ def create_collaborator(
         updated_at=now,
     )
     db.add(linked_user)
+    db.flush()
 
     seed_permissions = payload.permissions.model_dump() if payload.permissions is not None else DEFAULT_PROFESSOR_PERMISSIONS
     # Business rule: a collaborator must always be able to record student attendance.
@@ -989,12 +1078,11 @@ def create_collaborator(
     seed_permissions["can_edit_planning"] = True
     permission_row = ensure_permissions_row(db, professor_id=professor.id, defaults=seed_permissions)
 
-    activation_email_message_id = _send_professor_activation(
+    activation_email_message_id, _ = _send_professor_password_reset_link(
         db,
-        to_email=professor.email,
+        user=linked_user,
         first_name=professor.first_name,
         last_name=professor.last_name,
-        temporary_password=temporary_password,
     )
 
     db.commit()
@@ -1018,6 +1106,49 @@ def get_collaborator(
     linked_user = _find_user_by_email(db, professor.email)
     permission_row = db.scalar(select(ProfessorPermission).where(ProfessorPermission.professor_id == professor_id))
     return _to_detail(professor, linked_user=linked_user, permission_row=permission_row, legacy_permissions_if_missing=True)
+
+
+@router.post("/{professor_id}/send-password", response_model=AdminCollaboratorSendPasswordOut)
+def send_collaborator_password_reset(
+    professor_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCollaboratorSendPasswordOut:
+    professor = _load_professor_or_404(db, professor_id, lock=True)
+    now = _utcnow()
+    linked_user = _find_user_by_email(db, professor.email, lock=True)
+    if linked_user is None:
+        linked_user = User(
+            email=professor.email,
+            hashed_password=hash_password(generate_temporary_password()),
+            role=UserRole.PROF,
+            first_name=professor.first_name,
+            last_name=professor.last_name,
+            phone=professor.phone,
+            is_active=bool(professor.active),
+            updated_at=now,
+        )
+        db.add(linked_user)
+        db.flush()
+    else:
+        linked_user.first_name = professor.first_name
+        linked_user.last_name = professor.last_name
+        linked_user.phone = professor.phone
+        linked_user.is_active = bool(professor.active)
+        linked_user.updated_at = now
+        db.add(linked_user)
+
+    message_id, expires_at = _send_professor_password_reset_link(
+        db,
+        user=linked_user,
+        first_name=professor.first_name,
+        last_name=professor.last_name,
+    )
+    professor.last_activation_email_sent_at = now
+    professor.updated_at = now
+    db.add(professor)
+    db.commit()
+    return AdminCollaboratorSendPasswordOut(ok=True, message_id=message_id, expires_at=expires_at)
 
 
 @router.post("/{professor_id}/contract", response_model=AdminProfessorContractOut)
@@ -1158,6 +1289,27 @@ def patch_collaborator(
     if "address_line" in changes:
         professor.address_line = _normalize_optional(changes["address_line"])
 
+    if "teacher_invoice_counter" in changes and changes["teacher_invoice_counter"] is not None:
+        professor.teacher_invoice_counter = max(1, int(changes["teacher_invoice_counter"]))
+
+    if "teacher_is_vat_applicable" in changes:
+        professor.teacher_is_vat_applicable = bool(changes["teacher_is_vat_applicable"])
+
+    if "teacher_vat_rate" in changes:
+        professor.teacher_vat_rate = changes["teacher_vat_rate"]
+
+    if "teacher_siret" in changes:
+        professor.teacher_siret = _normalize_optional(changes["teacher_siret"])
+
+    if "teacher_iban" in changes:
+        professor.teacher_iban = _normalize_optional(changes["teacher_iban"])
+
+    if "teacher_company_name" in changes:
+        professor.teacher_company_name = _normalize_optional(changes["teacher_company_name"])
+
+    if "teacher_company_address" in changes:
+        professor.teacher_company_address = _normalize_optional(changes["teacher_company_address"])
+
     if "zoom_link" in changes:
         professor.zoom_link = _normalize_optional(changes["zoom_link"])
 
@@ -1183,8 +1335,13 @@ def patch_collaborator(
     if "daily_schedule_skip_if_no_course" in changes:
         professor.daily_schedule_skip_if_no_course = bool(changes["daily_schedule_skip_if_no_course"])
 
+    if bool(professor.teacher_is_vat_applicable) and professor.teacher_vat_rate is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="teacher_vat_rate is required when VAT applies")
+    if (not bool(professor.teacher_is_vat_applicable)) and professor.teacher_vat_rate is not None:
+        professor.teacher_vat_rate = None
+
     if linked_user is None:
-        bootstrap_password = changes.get("password") or generate_temporary_password()
+        bootstrap_password = generate_temporary_password()
         linked_user = User(
             email=professor.email,
             hashed_password=hash_password(str(bootstrap_password)),
@@ -1196,14 +1353,12 @@ def patch_collaborator(
             updated_at=now,
         )
         db.add(linked_user)
+        db.flush()
     else:
         linked_user.email = professor.email
 
     if "is_admin" in changes:
         linked_user.role = UserRole.ADMIN if bool(changes["is_admin"]) else UserRole.PROF
-
-    if "password" in changes:
-        linked_user.hashed_password = hash_password(changes["password"])
 
     linked_user.first_name = professor.first_name
     linked_user.last_name = professor.last_name
@@ -1217,16 +1372,13 @@ def patch_collaborator(
         professor.active = target_active
 
         if target_active and not previous_active:
-            activation_password = changes.get("password") or generate_temporary_password()
-            linked_user.hashed_password = hash_password(str(activation_password))
             linked_user.is_active = True
             professor.last_activation_email_sent_at = now
-            activation_email_message_id = _send_professor_activation(
+            activation_email_message_id, _ = _send_professor_password_reset_link(
                 db,
-                to_email=professor.email,
+                user=linked_user,
                 first_name=professor.first_name,
                 last_name=professor.last_name,
-                temporary_password=str(activation_password),
             )
             activation_email_sent = True
         elif not target_active:
