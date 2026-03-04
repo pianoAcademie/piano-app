@@ -3199,6 +3199,15 @@ button.danger {
   color: #cad2df;
 }
 
+.client-home-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.client-home-link:hover {
+  text-decoration: underline;
+}
+
 .client-content {
   padding: 16px;
   display: grid;
@@ -4711,6 +4720,11 @@ button.danger {
   display: none;
 }
 
+.client-mobile-header-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
 .client-mobile-menu {
   position: relative;
 }
@@ -4825,6 +4839,62 @@ button.danger {
 .client-forfait-preview-card {
   display: grid;
   gap: 8px;
+}
+
+.client-home-urgent-card {
+  border: 1px solid #d4af37 !important;
+  background: linear-gradient(180deg, #fffdf6 0%, #fffaf0 100%);
+}
+
+.client-home-urgent-card h3 {
+  margin: 0;
+}
+
+.client-home-urgent-total {
+  margin: 4px 0 0;
+  font-size: 30px;
+  line-height: 1.1;
+  font-weight: 800;
+  color: #3e2f0e;
+}
+
+.client-home-due-list,
+.client-home-coming-list {
+  display: grid;
+  gap: 8px;
+}
+
+.client-home-due-item,
+.client-home-coming-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.client-home-due-item strong,
+.client-home-coming-item strong {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.client-home-due-actions {
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.client-home-urgent-actions {
+  margin-top: 6px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.client-home-sticky-pay {
+  display: none;
 }
 
 .client-progress {
@@ -5507,6 +5577,44 @@ button.danger {
 
   .client-account-edit {
     display: grid;
+  }
+
+  .client-home-urgent-total {
+    font-size: 26px;
+  }
+
+  .client-home-due-item,
+  .client-home-coming-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .client-home-due-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .client-home-urgent-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .client-home-urgent-actions .client-pay-cta,
+  .client-home-urgent-actions .mode-link {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .client-home-sticky-pay {
+    position: sticky;
+    bottom: calc(76px + env(safe-area-inset-bottom) + 8px);
+    z-index: 30;
+    display: block;
+  }
+
+  .client-home-sticky-pay .client-pay-cta {
+    width: 100%;
+    min-height: 44px;
   }
 }
 

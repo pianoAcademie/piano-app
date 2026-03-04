@@ -4,13 +4,14 @@ type MobileHeaderProps = {
   title: string;
   subtitle?: string;
   menu?: ReactNode;
+  titleHref?: string;
 };
 
-export default function MobileHeader({ title, subtitle, menu }: MobileHeaderProps): JSX.Element {
+export default function MobileHeader({ title, subtitle, menu, titleHref }: MobileHeaderProps): JSX.Element {
   return (
     <header className="client-mobile-header card">
       <div className="client-mobile-header-main">
-        <h1>{title}</h1>
+        <h1>{titleHref ? <a className="client-mobile-header-title-link" href={titleHref}>{title}</a> : title}</h1>
         {subtitle ? <p className="muted">{subtitle}</p> : null}
       </div>
       <div className="client-mobile-header-actions">

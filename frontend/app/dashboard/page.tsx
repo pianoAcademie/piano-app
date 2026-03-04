@@ -40,7 +40,6 @@ import ListRow from "../../components/client-ui/list-row";
 import MobileHeader from "../../components/client-ui/mobile-header";
 import MobileTabs from "../../components/client-ui/mobile-tabs";
 import CopyIdButton from "../../components/client-ui/copy-id-button";
-import StatCard from "../../components/client-ui/stat-card";
 import StatChip from "../../components/client-ui/stat-chip";
 import Toast from "../../components/client-ui/toast";
 
@@ -342,6 +341,11 @@ function financePeriodLabel(period: FinancePeriodFilter): string {
 
 function canPayNowForPayment(row: ClientPaymentOut): boolean {
   return normalizeStatus(row.source) === "PLAN_PURCHASE" && FINANCE_PENDING_STATUSES.has(normalizeStatus(row.status));
+}
+
+function parseMoneyValue(raw: string | null | undefined): number {
+  const parsed = Number(raw ?? "0");
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function sourceLabel(value: string): string {
@@ -786,6 +790,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const editProfile = readParam(searchParams, "edit_profile") === "1";
   const homeCalendarView = readParam(searchParams, "home_calendar_view") === "BY_MEMBER" ? "BY_MEMBER" : "FAMILY";
   const preFetchErrors: string[] = [];
+  let paymentResultMessage = "";
+  let paymentResultError = "";
 
   const sessionQuery = new URLSearchParams();
   sessionQuery.set("timezone", timezone);
@@ -798,7 +804,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     sessionQuery.set("location_id", selectedLocation);
   }
 
-  if (tab === "finance" && paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "success") {
+  if (paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "success") {
     const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
     const confirm = await backendRequest<ClientPaymentConfirmOut>(
       `/api/v1/clients/me/payments/${normalizedPaymentId}/confirm`,
@@ -807,10 +813,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     );
     if (!confirm.ok) {
       preFetchErrors.push(`confirm-payment: ${confirm.message}`);
+      paymentResultError = "Le paiement est en attente de confirmation.";
     } else if (!confirm.data.paid) {
       const reason = confirm.data.message ? ` (${confirm.data.message})` : "";
       preFetchErrors.push(`confirm-payment: paiement non confirme${reason}`);
+      paymentResultError = "Le paiement n'a pas encore ete confirme.";
+    } else {
+      paymentResultMessage = "Paiement effectue.";
     }
+  } else if (paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "cancel") {
+    paymentResultError = "Paiement annule.";
   }
 
   const [
@@ -919,7 +931,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         return [] as ClientInvoiceOut[];
       })();
 
-  if (tab === "finance" && paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && !paymentReturnParam) {
+  if (paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && !paymentReturnParam) {
     const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
     const paymentRow = payments.find(
       (row) =>
@@ -1173,8 +1185,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
     return start.getTime() <= now.getTime() + 14 * 24 * 60 * 60 * 1000;
   });
-  const nextBooking = upcomingBookings14[0] ?? null;
-  const latestInvoice = invoiceRows[0] ?? null;
+  const homeDueInvoices = baseInvoiceRows
+    .filter((invoice) => statusMatchesFinanceFilter(invoice.status, "TO_PAY"))
+    .filter((invoice) => parseMoneyValue(invoice.total_incl_vat) > 0)
+    .sort((a, b) => b.issued_at.localeCompare(a.issued_at));
+  const homeDueInvoicePreview = homeDueInvoices.slice(0, 3);
+  const homeDueTotal = homeDueInvoices.reduce((sum, invoice) => sum + parseMoneyValue(invoice.total_incl_vat), 0);
+  const homeInvoicePaymentRows = homeDueInvoices
+    .map((invoice) => paymentByInvoiceId.get(invoice.id))
+    .filter((row): row is ClientPaymentOut => row != null && canPayNowForPayment(row));
+  const homePrimaryPayableRow = homeInvoicePaymentRows[0] ?? null;
   const newsRows = [...messageRows]
     .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc))
     .slice(0, 2);
@@ -1302,21 +1322,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     { id: "account", label: "Compte", icon: "👤" },
   ];
   const mobileTabLinks = [
+    { id: "home", label: "Accueil", icon: "🏠", href: withUpdatedQuery(rawParams, { tab: "home" }) },
     { id: "planning", label: "Planning", icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
     { id: "reservations", label: "Reservations", icon: "✅", href: withUpdatedQuery(rawParams, { tab: "reservations" }) },
-    { id: "offers", label: "Offres", icon: "🛍️", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
     { id: "finance", label: "Finance", icon: "💳", href: withUpdatedQuery(rawParams, { tab: "finance" }) },
     { id: "account", label: "Compte", icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
-  const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab) ? tab : "planning";
+  const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab) ? tab : "home";
 
   const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email });
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
   const sessionOkMessage = selectedSession ? readParam(searchParams, "session_ok") : "";
   const sessionErrorMessage = selectedSession ? readParam(searchParams, "session_error") : "";
-  const globalOkMessage = sessionOkMessage ? "" : okMessage;
-  const globalErrorMessage = sessionErrorMessage ? "" : errorMessage;
+  const globalOkMessage = sessionOkMessage ? "" : (okMessage || paymentResultMessage);
+  const globalErrorMessage = sessionErrorMessage ? "" : (errorMessage || paymentResultError);
   const hasPhoneNumber = Boolean(me.mobile_phone_1 || me.mobile_phone_2 || me.home_phone || me.phone);
   const communicationSummary = `Rappels: Email ${me.lesson_reminder_email_opt_in ? "ON" : "OFF"} / SMS ${
     me.lesson_reminder_sms_opt_in ? "ON" : "OFF"
@@ -1360,6 +1380,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       <section className="client-portal-main">
         <MobileHeader
           title={tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}
+          titleHref={withUpdatedQuery(rawParams, { tab: "home" })}
           subtitle={`${displayName} · ${timezone}`}
           menu={
             <div className="client-mobile-menu-items">
@@ -1383,7 +1404,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
         <header className="client-topbar">
           <div>
-            <h1>{tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}</h1>
+            <h1>
+              <a className="client-home-link" href={withUpdatedQuery(rawParams, { tab: "home" })}>
+                {tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}
+              </a>
+            </h1>
             <p className="muted">
               Reservations actives: {upcomingBookings.length} | Membres visibles: {members.length}
             </p>
@@ -1407,9 +1432,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <h2>Accueil</h2>
                     <p className="muted">Bonjour {me.first_name || displayName}</p>
                   </div>
-                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>
-                    Ouvrir planning
-                  </a>
+                  <span className="badge">14 jours</span>
                 </div>
                 <div className="client-chip-row client-member-chips">
                   <a className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", member_id: "ALL" })}>
@@ -1427,36 +1450,91 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
               </Card>
 
-              <section className="client-stats-grid">
-                <StatCard
-                  title="Prochains cours (14j)"
-                  value={String(upcomingBookings14.length)}
-                  subtitle={nextBooking ? `${formatDateTime(nextBooking.session.start_at_utc)} · ${nextBooking.owner_display_name}` : "Aucun creneau"}
-                />
-                <StatCard
-                  title="Credits / rattrapages"
-                  value={String(membersWithPositiveCredits.reduce((sum, member) => sum + (totalCreditsByMember.get(member.id) ?? 0), 0))}
-                  subtitle={membersWithPositiveCredits.length > 0 ? `${membersWithPositiveCredits.length} membre(s) avec credits` : "Aucun credit positif"}
-                />
-                <StatCard
-                  title="A payer"
-                  value={toMoney(String(pendingTotal), me.preferred_currency)}
-                  subtitle={pendingTotal > 0 ? "Paiement en attente" : "Aucun paiement urgent"}
-                  action={pendingTotal > 0 ? <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })}>Payer</a> : null}
-                />
-                <StatCard
-                  title="Derniere facture"
-                  value={latestInvoice ? latestInvoice.invoice_number : "Aucune"}
-                  subtitle={latestInvoice ? `${statusLabel(latestInvoice.status)} · ${toMoney(latestInvoice.total_incl_vat, latestInvoice.currency)}` : "Aucune facture"}
-                  action={
-                    latestInvoice ? (
-                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: latestInvoice.id })}>
-                        Ouvrir
+              {homeDueTotal > 0 ? (
+                <Card className="client-home-urgent-card">
+                  <div className="row spread">
+                    <div>
+                      <h3>Urgent · A regler</h3>
+                      <p className="client-home-urgent-total">{toMoney(String(homeDueTotal), me.preferred_currency)}</p>
+                    </div>
+                    <span className="badge">{homeDueInvoices.length} facture(s)</span>
+                  </div>
+                  {homeDueInvoicePreview.length > 0 ? (
+                    <div className="list client-home-due-list">
+                      {homeDueInvoicePreview.map((invoice) => {
+                        const linkedPayment = paymentByInvoiceId.get(invoice.id);
+                        const canPayInvoice = linkedPayment ? canPayNowForPayment(linkedPayment) : false;
+                        return (
+                          <article key={`home-due-${invoice.id}`} className="item client-home-due-item">
+                            <div>
+                              <strong title={invoice.invoice_number}>{compactId(invoice.invoice_number)}</strong>
+                              <p className="muted">
+                                {toMoney(invoice.total_incl_vat, invoice.currency)} · {formatDate(invoice.issued_at)}
+                              </p>
+                            </div>
+                            <div className="row client-home-due-actions">
+                              {canPayInvoice && linkedPayment ? (
+                                <form action={openClientPaymentCheckoutAction}>
+                                  <input type="hidden" name="payment_id" value={linkedPayment.id} />
+                                  <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
+                                  <button type="submit" className="client-card-primary-action">Payer</button>
+                                </form>
+                              ) : null}
+                              <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}>
+                                Ouvrir
+                              </a>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <div className="row client-home-urgent-actions">
+                    {homePrimaryPayableRow ? (
+                      <form action={openClientPaymentCheckoutAction}>
+                        <input type="hidden" name="payment_id" value={homePrimaryPayableRow.id} />
+                        <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
+                        <button type="submit" className="client-pay-cta">
+                          Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
+                        </button>
+                      </form>
+                    ) : (
+                      <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
+                        Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
                       </a>
-                    ) : null
-                  }
-                />
-              </section>
+                    )}
+                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
+                      Voir toutes les factures
+                    </a>
+                  </div>
+                </Card>
+              ) : null}
+
+              <Card>
+                <div className="row spread">
+                  <h3>A venir (14 jours)</h3>
+                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>
+                    Voir le planning
+                  </a>
+                </div>
+                {upcomingBookings14.length === 0 ? (
+                  <p className="muted">Aucun cours a venir sur 14 jours.</p>
+                ) : (
+                  <div className="list client-home-coming-list">
+                    {upcomingBookings14.slice(0, 3).map((booking) => (
+                      <article key={`home-upcoming-${booking.id}`} className="item client-home-coming-item">
+                        <div>
+                          <strong>{formatTime(booking.session.start_at_utc)} · {booking.session.title}</strong>
+                          <p className="muted">{formatDate(booking.session.start_at_utc)} · {booking.owner_display_name}</p>
+                        </div>
+                        <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", session_id: booking.session.id })}>
+                          Voir
+                        </a>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </Card>
 
               <Card>
                 <div className="row spread">
@@ -1488,16 +1566,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <div className="client-progress-bar" style={{ width: `${ratio}%` }} />
                               </div>
                               <p className="muted">Credits restants: {remainingCredits}/{initialCredits || "?"}</p>
+                              <p className="muted">{sub.ends_at ? `Expiration: ${formatDate(sub.ends_at)}` : "Sans date de fin"}</p>
                             </>
                           ) : (
-                            <p className="muted">
-                              {toMoney(sub.plan.kind === "FORFAIT" ? "0" : plans.find((plan) => plan.id === sub.plan.id)?.monthly_price_excl_vat, me.preferred_currency)}
-                              {" "}/ periode · {paymentMethodLabel(sub.billing_method_code)}
-                            </p>
+                            <>
+                              <p className="muted">
+                                {toMoney(sub.plan.kind === "FORFAIT" ? "0" : plans.find((plan) => plan.id === sub.plan.id)?.monthly_price_excl_vat, me.preferred_currency)}
+                                {" "}/ periode · {paymentMethodLabel(sub.billing_method_code)}
+                              </p>
+                              <p className="muted">
+                                {sub.next_payment_at ? `Prochain prelevement: ${formatDate(sub.next_payment_at)}` : "Reconduction en cours"}
+                              </p>
+                            </>
                           )}
-                          <p className="muted">
-                            {sub.ends_at ? `Expiration: ${formatDate(sub.ends_at)}` : sub.next_payment_at ? `Prochain prelevement: ${formatDate(sub.next_payment_at)}` : "Sans date de fin"}
-                          </p>
                         </article>
                       );
                     })}
@@ -1521,7 +1602,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <p className="muted">Aucun cours a venir sur 14 jours.</p>
                 ) : (
                   <div className="list client-home-calendar-list">
-                    {homeCalendarRows.map((booking) => (
+                    {homeCalendarRows.slice(0, 6).map((booking) => (
                       <article key={`home-booking-${booking.id}`} className="item client-home-calendar-item">
                         <div>
                           <strong>{formatTime(booking.session.start_at_utc)} · {booking.session.title}</strong>
@@ -1556,6 +1637,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </div>
                 )}
               </Card>
+
+              {homeDueTotal > 0 ? (
+                <div className="client-home-sticky-pay">
+                  {homePrimaryPayableRow ? (
+                    <form action={openClientPaymentCheckoutAction}>
+                      <input type="hidden" name="payment_id" value={homePrimaryPayableRow.id} />
+                      <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
+                      <button type="submit" className="client-pay-cta">
+                        Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
+                      </button>
+                    </form>
+                  ) : (
+                    <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
+                      Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
+                    </a>
+                  )}
+                </div>
+              ) : null}
             </>
           ) : null}
 
