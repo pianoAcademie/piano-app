@@ -1549,6 +1549,11 @@ class AdminSessionOut(BaseModel):
     course_type_id: UUID
     location_id: UUID
     professor_id: UUID
+    teacher_id: UUID
+    teacher_display_name: str
+    location_label: str
+    type_label: str
+    status_label: str
     title: str
     description: str | None
     public_description: str | None

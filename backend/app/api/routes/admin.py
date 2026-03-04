@@ -29,6 +29,7 @@ from app.models.catalog import (
     BookingStatus,
     CourseSession,
     CourseType,
+    DeliveryMode,
     Location,
     PlanningConfig,
     PlanningCourseType,
@@ -128,12 +129,71 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _to_admin_session_out(session_obj: CourseSession, *, booked_count: int) -> AdminSessionOut:
+def _session_status_label(status: SessionStatus) -> str:
+    if status == SessionStatus.CANCELLED:
+        return "Annule"
+    if status == SessionStatus.COMPLETED:
+        return "Termine"
+    return "Planifie"
+
+
+def _session_teacher_display_name(professor: Professor | None) -> str:
+    if professor is None:
+        return ""
+    full_name = f"{(professor.first_name or '').strip()} {(professor.last_name or '').strip()}".strip()
+    return full_name
+
+
+def _session_location_label(location: Location | None) -> str:
+    if location is None:
+        return "Lieu"
+    name = (location.name or "").strip()
+    if not name:
+        return "Lieu"
+    for separator in (" - ", ",", "|"):
+        if separator in name:
+            name = name.split(separator, 1)[0].strip()
+            break
+    return name or "Lieu"
+
+
+def _session_type_label(session_obj: CourseSession, *, course_type: CourseType | None, location: Location | None) -> str:
+    if session_obj.is_private:
+        return "Prive"
+    location_code = (location.code if location is not None else "").upper()
+    location_name = (location.name if location is not None else "").lower()
+    if location is not None and (location.is_online or location_code == "ONLINE"):
+        return "Online"
+    if "DOMICILE" in location_code or "domicile" in location_name:
+        return "Domicile"
+    if course_type is not None and course_type.mode == DeliveryMode.ONLINE:
+        return "Online"
+    return "Collectif"
+
+
+def _to_admin_session_out(
+    session_obj: CourseSession,
+    *,
+    booked_count: int,
+    course_type: CourseType | None = None,
+    location: Location | None = None,
+    professor: Professor | None = None,
+) -> AdminSessionOut:
+    teacher_display_name = _session_teacher_display_name(professor)
+    location_label = _session_location_label(location)
+    type_label = _session_type_label(session_obj, course_type=course_type, location=location)
+    status_label = _session_status_label(session_obj.status)
+
     return AdminSessionOut(
         id=session_obj.id,
         course_type_id=session_obj.course_type_id,
         location_id=session_obj.location_id,
         professor_id=session_obj.professor_id,
+        teacher_id=professor.id if professor is not None else session_obj.professor_id,
+        teacher_display_name=teacher_display_name,
+        location_label=location_label,
+        type_label=type_label,
+        status_label=status_label,
         title=session_obj.title,
         description=session_obj.description,
         public_description=session_obj.description,
@@ -308,6 +368,27 @@ def _booked_counts_map(db: Session, session_ids: list[UUID]) -> dict[UUID, int]:
     ).all()
 
     return {session_id: int(count or 0) for session_id, count in rows}
+
+
+def _load_admin_session_with_refs(
+    db: Session,
+    *,
+    session_id: UUID,
+    for_update: bool = False,
+) -> tuple[CourseSession, CourseType, Location, Professor] | None:
+    stmt = (
+        select(CourseSession, CourseType, Location, Professor)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .join(Professor, Professor.id == CourseSession.professor_id)
+        .where(CourseSession.id == session_id)
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    row = db.execute(stmt).first()
+    if row is None:
+        return None
+    return row[0], row[1], row[2], row[3]
 
 
 def _require_client(db: Session, client_id: UUID) -> User:
@@ -1359,8 +1440,18 @@ def create_session(
 
     db.commit()
     db.refresh(sessions_to_create[0])
+    created_with_refs = _load_admin_session_with_refs(db, session_id=sessions_to_create[0].id)
+    if created_with_refs is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    created_session, created_course_type, created_location, created_professor = created_with_refs
 
-    return _to_admin_session_out(sessions_to_create[0], booked_count=0)
+    return _to_admin_session_out(
+        created_session,
+        booked_count=0,
+        course_type=created_course_type,
+        location=created_location,
+        professor=created_professor,
+    )
 
 
 @router.get("/sessions", response_model=list[AdminSessionOut])
@@ -1376,7 +1467,12 @@ def list_admin_sessions(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminSessionOut]:
-    stmt = select(CourseSession)
+    stmt = (
+        select(CourseSession, CourseType, Location, Professor)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .join(Professor, Professor.id == CourseSession.professor_id)
+    )
 
     location_filter_ids = list(dict.fromkeys(location_ids or []))
     if not location_filter_ids and location_id is not None:
@@ -1409,15 +1505,19 @@ def list_admin_sessions(
             stmt = stmt.where(User.id.in_(client_filter_ids))
         stmt = stmt.distinct()
 
-    sessions = db.scalars(stmt.order_by(CourseSession.start_at_utc.desc())).all()
-    counts = _booked_counts_map(db, [session_obj.id for session_obj in sessions])
+    rows = db.execute(stmt.order_by(CourseSession.start_at_utc.desc())).all()
+    session_ids = [session_obj.id for session_obj, _, _, _ in rows]
+    counts = _booked_counts_map(db, session_ids)
 
     return [
         _to_admin_session_out(
             session_obj,
             booked_count=counts.get(session_obj.id, 0),
+            course_type=course_type,
+            location=location,
+            professor=professor,
         )
-        for session_obj in sessions
+        for session_obj, course_type, location, professor in rows
     ]
 
 
@@ -1427,12 +1527,19 @@ def get_admin_session(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminSessionOut:
-    session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id))
-    if session_obj is None:
+    session_with_refs = _load_admin_session_with_refs(db, session_id=session_id)
+    if session_with_refs is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_obj, course_type, location, professor = session_with_refs
 
     booked_count = _booked_count_by_session(db, session_id)
-    return _to_admin_session_out(session_obj, booked_count=booked_count)
+    return _to_admin_session_out(
+        session_obj,
+        booked_count=booked_count,
+        course_type=course_type,
+        location=location,
+        professor=professor,
+    )
 
 
 @router.get("/sessions/{session_id}/bookings", response_model=list[AdminSessionBookingOut])
@@ -1563,7 +1670,17 @@ def update_admin_session_group_note(
     db.refresh(session_obj)
 
     booked_count = _booked_count_by_session(db, session_obj.id)
-    return _to_admin_session_out(session_obj, booked_count=booked_count)
+    session_with_refs = _load_admin_session_with_refs(db, session_id=session_obj.id)
+    if session_with_refs is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_ref, course_type, location, professor = session_with_refs
+    return _to_admin_session_out(
+        session_ref,
+        booked_count=booked_count,
+        course_type=course_type,
+        location=location,
+        professor=professor,
+    )
 
 
 @router.post("/sessions/{session_id}/broadcast", response_model=AdminSessionBroadcastOut)
@@ -2349,7 +2466,17 @@ def update_session(
     db.refresh(session_obj)
 
     booked_count = _booked_count_by_session(db, session_id)
-    return _to_admin_session_out(session_obj, booked_count=booked_count)
+    session_with_refs = _load_admin_session_with_refs(db, session_id=session_id)
+    if session_with_refs is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_ref, course_type, location, professor = session_with_refs
+    return _to_admin_session_out(
+        session_ref,
+        booked_count=booked_count,
+        course_type=course_type,
+        location=location,
+        professor=professor,
+    )
 
 
 @router.post("/sessions/{session_id}/duplicate", response_model=AdminSessionDuplicateOperationOut)

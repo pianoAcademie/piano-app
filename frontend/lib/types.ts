@@ -982,6 +982,11 @@ export type AdminSessionOut = {
   course_type_id: string;
   location_id: string;
   professor_id: string;
+  teacher_id: string;
+  teacher_display_name: string;
+  location_label: string;
+  type_label: string;
+  status_label: string;
   title: string;
   description: string | null;
   public_description: string | null;

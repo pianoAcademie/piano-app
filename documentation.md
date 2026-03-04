@@ -154,3 +154,26 @@
   - pagination avec 25/50/100 (defaut 50),
   - filtre periode (defaut jour),
   - colonne `Canal` (Email/SMS).
+
+## Planning mois + navigation admin (UI premium)
+
+### Payload planning enrichi (backend)
+- Endpoint: `GET /api/v1/admin/sessions`
+- Champs ajoutes par evenement:
+  - `teacher_id`
+  - `teacher_display_name`
+  - `location_label`
+  - `type_label`
+  - `status_label`
+- Requete backend en `JOIN` (`course_sessions` + `course_types` + `locations` + `professors`) pour eviter le N+1.
+
+### Composants frontend
+- `frontend/components/planning/month-day-card.tsx`
+- `frontend/components/planning/month-event-chip.tsx`
+- `frontend/components/planning/day-events-drawer.tsx`
+
+### Mini smoke UI manuel
+1. Ouvrir `/admin` en vue planning mois.
+2. Verifier qu'un evenement affiche le professeur sans clic (`Prof : ...`) sur chaque chip.
+3. Verifier qu'un jour avec >3 cours affiche `+N autres` et ouvre le drawer de detail.
+4. Verifier que la topbar n'affiche plus la liste des modules, et que la sidebar est sectionnee (Operations/Finance/Communication/Administration) avec item actif visible.

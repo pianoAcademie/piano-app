@@ -91,7 +91,11 @@ function hrefForSegment(segments: string[], index: number): string {
   return `/${segments.slice(0, index + 1).join("/")}`;
 }
 
-export default function AdminBreadcrumb(): JSX.Element | null {
+type AdminBreadcrumbProps = {
+  compact?: boolean;
+};
+
+export default function AdminBreadcrumb({ compact = false }: AdminBreadcrumbProps): JSX.Element | null {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   if (!pathname) {
@@ -134,13 +138,39 @@ export default function AdminBreadcrumb(): JSX.Element | null {
     return null;
   }
 
+  const compactCrumbs = crumbs.length > 1 ? crumbs.slice(1) : crumbs;
+  const crumbsToRender = compact ? compactCrumbs : crumbs;
+
+  if (compact) {
+    return (
+      <nav className="admin-breadcrumb admin-breadcrumb-inline" aria-label="Fil d'Ariane">
+        {crumbsToRender.map((crumb, index) => {
+          const key = `${crumb.label}-${index}`;
+          const isLast = index === crumbsToRender.length - 1;
+          return (
+            <span className="admin-breadcrumb-item" key={key}>
+              {crumb.href && !isLast ? (
+                <Link href={crumb.href} className="admin-breadcrumb-link">
+                  {crumb.label}
+                </Link>
+              ) : (
+                <span className="admin-breadcrumb-current">{crumb.label}</span>
+              )}
+              {!isLast ? <span className="admin-breadcrumb-sep">/</span> : null}
+            </span>
+          );
+        })}
+      </nav>
+    );
+  }
+
   return (
     <section className="admin-breadcrumb-wrap" aria-label="Fil d'Ariane">
       <small className="admin-breadcrumb-title">Fil d'Ariane</small>
       <nav className="admin-breadcrumb">
-        {crumbs.map((crumb, index) => {
+        {crumbsToRender.map((crumb, index) => {
           const key = `${crumb.label}-${index}`;
-          const isLast = index === crumbs.length - 1;
+          const isLast = index === crumbsToRender.length - 1;
           return (
             <span className="admin-breadcrumb-item" key={key}>
               {crumb.href && !isLast ? (
