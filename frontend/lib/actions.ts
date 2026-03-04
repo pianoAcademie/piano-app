@@ -3969,6 +3969,9 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
 
   const returnTo = safeAdminReturnPath(formData, "/admin/clients");
   const action = String(formData.get("bulk_action") ?? "").trim().toUpperCase();
+  const isMessageAction =
+    action === "EMAIL_CLIENTS" || action === "EMAIL_PARENTS" || action === "SMS_CLIENTS" || action === "SMS_PARENTS";
+  const isEmailAction = action === "EMAIL_CLIENTS" || action === "EMAIL_PARENTS";
   const selectionScopeRaw = String(formData.get("selection_scope") ?? "PAGE").trim().toUpperCase();
   const selectionScope = selectionScopeRaw === "FILTERED" ? "FILTERED" : "PAGE";
   const clientIds = parseStringList(formData.getAll("client_ids"));
@@ -3981,6 +3984,10 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
   const filterGroupId = String(formData.get("filter_group_id") ?? "").trim();
   const filterIncludeArchived = String(formData.get("filter_include_archived") ?? "").trim().toLowerCase() === "true";
   const filterActiveOnly = String(formData.get("filter_active_only") ?? "").trim().toLowerCase() === "true";
+  const messageSubject = optionalField(formData, "message_subject");
+  const messageBody = optionalField(formData, "message_body");
+  const messageBodyFormatRaw = String(formData.get("message_body_format") ?? "TEXT").trim().toUpperCase();
+  const messageBodyFormat = messageBodyFormatRaw === "HTML" ? "HTML" : "TEXT";
 
   if (selectionScope === "PAGE" && clientIds.length === 0) {
     redirect(appendQueryMessage(returnTo, "error", "Aucun adherent selectionne"));
@@ -4021,6 +4028,18 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
       redirect(appendQueryMessage(returnTo, "error", "Groupe obligatoire"));
     }
     payload.group_id = groupId;
+  }
+
+  if (isMessageAction) {
+    if (!messageBody) {
+      redirect(appendQueryMessage(returnTo, "error", isEmailAction ? "Sujet et message obligatoires" : "Message SMS obligatoire"));
+    }
+    if (isEmailAction && !messageSubject) {
+      redirect(appendQueryMessage(returnTo, "error", "Sujet et message obligatoires"));
+    }
+    payload.message_subject = messageSubject;
+    payload.message_body = messageBody;
+    payload.message_body_format = messageBodyFormat;
   }
 
   const result = await backendRequest<{ processed_count: number; skipped_count: number; message: string }>(
@@ -4234,24 +4253,28 @@ export async function sendAdminCollaboratorsMessageAction(formData: FormData): P
 
   const returnTo = safeAdminReturnPath(formData, "/admin/professors");
   const collaboratorIds = parseStringList(formData.getAll("collaborator_ids"));
-  const subject = String(formData.get("subject") ?? "").trim();
+  const channelRaw = String(formData.get("channel") ?? "EMAIL").trim().toUpperCase();
+  const channel = channelRaw === "SMS" ? "SMS" : "EMAIL";
+  const subjectRaw = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormatRaw = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase();
   const bodyFormat = bodyFormatRaw === "HTML" ? "HTML" : "TEXT";
+  const subject = channel === "SMS" ? subjectRaw || "SMS collaborateurs" : subjectRaw;
 
   if (collaboratorIds.length === 0) {
     redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un collaborateur"));
   }
-  if (!subject || !body) {
+  if (!body || (channel === "EMAIL" && !subject)) {
     redirect(appendQueryMessage(returnTo, "error", "Sujet et message obligatoires"));
   }
 
-  const result = await backendRequest<{ requested_count: number; sent_count: number; skipped_count: number }>(
+  const result = await backendRequest<{ channel: "EMAIL" | "SMS"; requested_count: number; sent_count: number; skipped_count: number }>(
     "/api/v1/admin/collaborators/messages",
     {
       method: "POST",
       body: JSON.stringify({
         collaborator_ids: collaboratorIds,
+        channel,
         subject,
         body,
         body_format: bodyFormat,
@@ -4269,7 +4292,7 @@ export async function sendAdminCollaboratorsMessageAction(formData: FormData): P
     appendQueryMessage(
       returnTo,
       "ok",
-      `Message envoye: ${result.data.sent_count}/${result.data.requested_count} collaborateurs`,
+      `${result.data.channel === "SMS" ? "SMS journalise" : "Message envoye"}: ${result.data.sent_count}/${result.data.requested_count} collaborateurs`,
     ),
   );
 }

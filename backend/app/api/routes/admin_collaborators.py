@@ -14,7 +14,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CourseSession, CourseType, Location, Professor, SessionStatus
-from app.models.ops import AppSetting, PasswordResetToken
+from app.models.ops import (
+    AppSetting,
+    CommunicationChannel,
+    CommunicationDeliveryStatus,
+    CommunicationSenderCategory,
+    MessageFormat,
+    PasswordResetToken,
+)
 from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSalaryPayment, ProfessorSessionPayout
 from app.models.professor_access import ProfessorPermission
 from app.models.professor_contract import (
@@ -75,6 +82,7 @@ from app.services.professor_permissions import (
     permissions_dict,
 )
 from app.services.payouts import resolve_hourly_rate_for_session
+from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.session_notifications import send_session_operation_email
 from app.services.security import hash_password
 
@@ -85,6 +93,7 @@ ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
 MAX_CONTRACT_FILE_BYTES = 10 * 1024 * 1024
 ALLOWED_CONTRACT_MIME_TYPES = {"application/pdf", "application/x-pdf"}
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 DEFAULT_RESET_SUBJECT = "Activation de votre acces collaborateur Piano Academie"
 DEFAULT_RESET_BODY = (
     "Bonjour {full_name},\n\n"
@@ -113,6 +122,22 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _normalize_phone_recipient(value: str | None) -> str | None:
+    candidate = PHONE_CLEAN_RE.sub("", (value or "").strip())
+    if candidate.startswith("00"):
+        candidate = f"+{candidate[2:]}"
+    if not candidate:
+        return None
+    if candidate.startswith("+"):
+        digits = candidate[1:]
+        if (not digits.isdigit()) or len(digits) < 8:
+            return None
+        return f"+{digits}"
+    if (not candidate.isdigit()) or len(candidate) < 8:
+        return None
+    return candidate
 
 
 def _normalize_languages(values: list[str] | None) -> list[str]:
@@ -945,7 +970,7 @@ def list_collaborators(
 def send_collaborators_message(
     payload: AdminCollaboratorMessageRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCollaboratorMessageOut:
     requested_ids: list[UUID] = []
     seen: set[UUID] = set()
@@ -958,17 +983,29 @@ def send_collaborators_message(
     if not requested_ids:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No collaborator selected")
 
+    channel = payload.channel.value
     subject = payload.subject.strip()
     body = payload.body.strip()
-    if not subject or not body:
+    if not body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Subject and body are required")
+    if channel == "EMAIL" and not subject:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Subject and body are required")
 
     professors = db.scalars(select(Professor).where(Professor.id.in_(requested_ids))).all()
     professor_by_id = {prof.id: prof for prof in professors}
+    sender_label = f"{(actor.first_name or '').strip()} {(actor.last_name or '').strip()}".strip() or actor.email
 
     sent_count = 0
     skipped_count = 0
     details: list[str] = []
+
+    if channel == "SMS":
+        sms_body = body
+        if payload.body_format.value == "HTML":
+            sms_body = re.sub(r"<[^>]+>", " ", sms_body)
+        sms_body = re.sub(r"\s{2,}", " ", sms_body).strip()
+        if not sms_body:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SMS vide apres normalisation")
 
     for collaborator_id in requested_ids:
         professor = professor_by_id.get(collaborator_id)
@@ -977,23 +1014,53 @@ def send_collaborators_message(
             details.append(f"{collaborator_id}: collaborator not found")
             continue
 
-        email = (professor.email or "").strip().lower()
-        if not email:
-            skipped_count += 1
-            details.append(f"{collaborator_id}: missing email")
-            continue
+        if channel == "EMAIL":
+            email = (professor.email or "").strip().lower()
+            if not email:
+                skipped_count += 1
+                details.append(f"{collaborator_id}: missing email")
+                continue
 
-        send_session_operation_email(
-            to_email=email,
-            subject=subject,
-            body=body,
-            body_format=payload.body_format.value,
-            operation="ADMIN_COLLABORATORS_MESSAGE",
-            session_title="COLLABORATORS",
-        )
+            send_session_operation_email(
+                to_email=email,
+                subject=subject,
+                body=body,
+                body_format=payload.body_format.value,
+                operation="ADMIN_COLLABORATORS_MESSAGE",
+                session_title="COLLABORATORS",
+                sender_user_id=actor.id,
+                sender_label=sender_label,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                professor_id=professor.id,
+            )
+        else:
+            phone = _normalize_phone_recipient(professor.phone)
+            if not phone:
+                skipped_count += 1
+                details.append(f"{collaborator_id}: missing phone")
+                continue
+            log_communication(
+                db=db,
+                channel=CommunicationChannel.SMS,
+                source="ADMIN_COLLABORATORS_MESSAGE_SMS",
+                communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                sender_user_id=actor.id,
+                sender_label=sender_label,
+                recipient=phone,
+                subject=subject or "SMS collaborateurs",
+                content=sms_body,
+                content_format=MessageFormat.TEXT,
+                delivery_status=CommunicationDeliveryStatus.UNKNOWN,
+                professor_id=professor.id,
+            )
         sent_count += 1
 
+    if channel == "SMS":
+        db.commit()
+
     return AdminCollaboratorMessageOut(
+        channel=payload.channel,
         requested_count=len(requested_ids),
         sent_count=sent_count,
         skipped_count=skipped_count,

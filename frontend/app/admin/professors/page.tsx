@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { createAdminCollaboratorAction, sendAdminCollaboratorsMessageAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
+import CollaboratorSelectionControls from "../../../components/collaborator-selection-controls";
 import RichMessageEditor from "../../../components/rich-message-editor";
 import type { AdminProfessorDetailOut } from "../../../lib/types";
 
@@ -154,8 +155,9 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
       <section className="card">
         <h2>Liste des collaborateurs</h2>
         {collaboratorsResult.ok ? (
-          <form action={sendAdminCollaboratorsMessageAction} className="stack-sm">
+          <form id="collaborators-message-form" action={sendAdminCollaboratorsMessageAction} className="stack-sm">
             <input type="hidden" name="return_to" value={closeCreateHref} />
+            <CollaboratorSelectionControls formId="collaborators-message-form" />
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
@@ -200,10 +202,10 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
             </div>
 
             <details>
-              <summary>Message groupé (collaborateurs sélectionnés)</summary>
+              <summary>Messagerie (collaborateurs selectionnes)</summary>
               <div className="grid cols-2" style={{ marginTop: "0.75rem" }}>
                 <label className="span-2">
-                  Sujet
+                  Sujet (obligatoire pour email, optionnel pour SMS)
                   <input type="text" name="subject" maxLength={255} placeholder="Objet du message" />
                 </label>
                 <label className="span-2">
@@ -217,7 +219,12 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                   />
                 </label>
                 <div className="row">
-                  <button type="submit">Envoyer le message</button>
+                  <button type="submit" name="channel" value="EMAIL">
+                    Nouveau courriel
+                  </button>
+                  <button type="submit" className="ghost" name="channel" value="SMS">
+                    Envoyer SMS
+                  </button>
                 </div>
               </div>
             </details>

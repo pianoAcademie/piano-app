@@ -64,6 +64,9 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
 
   const canPickGroup = useMemo(() => action === "ASSIGN_GROUP", [action]);
   const canPickStatus = useMemo(() => action === "UPDATE_STATUS", [action]);
+  const isEmailMessageAction = useMemo(() => action === "EMAIL_CLIENTS" || action === "EMAIL_PARENTS", [action]);
+  const isSmsMessageAction = useMemo(() => action === "SMS_CLIENTS" || action === "SMS_PARENTS", [action]);
+  const isMessageAction = useMemo(() => isEmailMessageAction || isSmsMessageAction, [isEmailMessageAction, isSmsMessageAction]);
 
   useEffect(() => {
     const form = getForm();
@@ -110,8 +113,10 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
             <option value="UPDATE_STATUS">Mettre a jour les statuts</option>
             <option value="ASSIGN_GROUP">Affecter a un groupe</option>
             <option value="ARCHIVE">Archiver</option>
-            <option value="EMAIL_CLIENTS">Envoyer email clients</option>
-            <option value="EMAIL_PARENTS">Envoyer email parents</option>
+            <option value="EMAIL_CLIENTS">Nouveau courriel (clients selectionnes)</option>
+            <option value="EMAIL_PARENTS">Nouveau courriel (parents selectionnes)</option>
+            <option value="SMS_CLIENTS">Envoyer SMS (clients selectionnes)</option>
+            <option value="SMS_PARENTS">Envoyer SMS (parents selectionnes)</option>
             <option value="EXPORT">Telecharger Excel (CSV)</option>
             <option value="DELETE">Supprimer</option>
           </select>
@@ -140,6 +145,26 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
           </select>
         </label>
       </div>
+
+      {isMessageAction ? (
+        <div className="grid cols-2">
+          <label className="span-2">
+            Sujet {isEmailMessageAction ? "(obligatoire)" : "(optionnel pour SMS)"}
+            <input type="text" name="message_subject" maxLength={255} placeholder="Objet du message" />
+          </label>
+          <label>
+            Format
+            <select name="message_body_format" defaultValue="TEXT" disabled={isSmsMessageAction}>
+              <option value="TEXT">Texte</option>
+              <option value="HTML">HTML</option>
+            </select>
+          </label>
+          <label className="span-2">
+            Message
+            <textarea name="message_body" rows={5} maxLength={12000} placeholder="Contenu du message..." />
+          </label>
+        </div>
+      ) : null}
 
       <div className="row bulk-selection-row">
         <button
@@ -226,6 +251,23 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
               if (!groupField || !groupField.value) {
                 event.preventDefault();
                 window.alert("Selectionnez un groupe.");
+                return;
+              }
+            }
+
+            if (isMessageAction) {
+              const subjectField = form.elements.namedItem("message_subject") as HTMLInputElement | null;
+              const bodyField = form.elements.namedItem("message_body") as HTMLTextAreaElement | null;
+              const subject = (subjectField?.value || "").trim();
+              const body = (bodyField?.value || "").trim();
+              if (!body) {
+                event.preventDefault();
+                window.alert(isEmailMessageAction ? "Sujet et message obligatoires." : "Message SMS obligatoire.");
+                return;
+              }
+              if (isEmailMessageAction && !subject) {
+                event.preventDefault();
+                window.alert("Sujet et message obligatoires.");
                 return;
               }
             }

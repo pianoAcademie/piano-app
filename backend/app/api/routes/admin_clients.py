@@ -195,6 +195,7 @@ INVOICE_RANGE_GENERATION_MODES = {"MANUAL", "AUTO"}
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 SIMPLE_PLACEHOLDER_RE = re.compile(r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}")
 EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 INVOICE_RANGE_PUBLIC_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
 WEEKDAY_LABELS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
@@ -945,6 +946,22 @@ def _normalize_email_recipients(raw_values: list[str] | None) -> list[str]:
         seen.add(normalized_key)
         recipients.append(candidate)
     return recipients
+
+
+def _normalize_phone_recipient(raw_value: str | None) -> str | None:
+    candidate = PHONE_CLEAN_RE.sub("", (raw_value or "").strip())
+    if candidate.startswith("00"):
+        candidate = f"+{candidate[2:]}"
+    if not candidate:
+        return None
+    if candidate.startswith("+"):
+        digits = candidate[1:]
+        if (not digits.isdigit()) or len(digits) < 8:
+            return None
+        return f"+{digits}"
+    if (not candidate.isdigit()) or len(candidate) < 8:
+        return None
+    return candidate
 
 
 def _build_range_invoice_email_defaults(
@@ -2891,7 +2908,7 @@ def patch_admin_client_group(
 def bulk_admin_clients(
     payload: AdminClientBulkRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientBulkOut:
     unique_ids: list[UUID] = []
     if payload.selection_scope == AdminClientSelectionScope.FILTERED:
@@ -3009,43 +3026,194 @@ def bulk_admin_clients(
         db.commit()
         return AdminClientBulkOut(processed_count=len(clients), skipped_count=0, message="Clients supprimes")
 
-    if action == AdminClientBulkAction.EMAIL_CLIENTS:
-        recipients = sorted({client.email for client in clients if client.email and client.email_opt_in})
+    message_actions = {
+        AdminClientBulkAction.EMAIL_CLIENTS,
+        AdminClientBulkAction.EMAIL_PARENTS,
+        AdminClientBulkAction.SMS_CLIENTS,
+        AdminClientBulkAction.SMS_PARENTS,
+    }
+    if action in message_actions:
+        is_email = action in {AdminClientBulkAction.EMAIL_CLIENTS, AdminClientBulkAction.EMAIL_PARENTS}
+        message_subject = _normalize_optional(payload.message_subject) or ""
+        message_body = _normalize_optional(payload.message_body) or ""
+        if is_email and (not message_subject or not message_body):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Sujet et message obligatoires")
+        if (not is_email) and (not message_body):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Message SMS obligatoire")
+
+        email_recipients: dict[str, UUID | None] = {}
+        sms_recipients: dict[str, UUID | None] = {}
+
+        def add_email(email_raw: str | None, recipient_user_id: UUID | None) -> None:
+            normalized_email = _normalize_optional(email_raw)
+            if not normalized_email:
+                return
+            normalized_email = normalized_email.lower()
+            if EMAIL_RECIPIENT_RE.match(normalized_email) is None:
+                return
+            email_recipients.setdefault(normalized_email, recipient_user_id)
+
+        def add_sms(
+            mobile_phone_1: str | None,
+            mobile_phone_2: str | None,
+            phone: str | None,
+            home_phone: str | None,
+            recipient_user_id: UUID | None,
+        ) -> None:
+            resolved_phone = None
+            for raw in (mobile_phone_1, mobile_phone_2, phone, home_phone):
+                normalized = _normalize_phone_recipient(raw)
+                if normalized:
+                    resolved_phone = normalized
+                    break
+            if not resolved_phone:
+                return
+            sms_recipients.setdefault(resolved_phone, recipient_user_id)
+
+        target_clients_direct = action in {AdminClientBulkAction.EMAIL_CLIENTS, AdminClientBulkAction.SMS_CLIENTS}
+        if target_clients_direct:
+            for client in clients:
+                if is_email:
+                    if not client.email_opt_in:
+                        continue
+                    add_email(client.email, client.id)
+                else:
+                    if not client.sms_opt_in:
+                        continue
+                    add_sms(
+                        client.mobile_phone_1,
+                        client.mobile_phone_2,
+                        client.phone,
+                        client.home_phone,
+                        client.id,
+                    )
+        else:
+            child_ids = [client.id for client in clients if client.client_kind == ClientKind.CHILD]
+            parent_rows = db.execute(
+                select(
+                    ClientFamilyLink.child_user_id,
+                    User.id,
+                    User.email,
+                    User.email_opt_in,
+                    User.sms_opt_in,
+                    User.mobile_phone_1,
+                    User.mobile_phone_2,
+                    User.phone,
+                    User.home_phone,
+                )
+                .join(User, User.id == ClientFamilyLink.adult_user_id)
+                .where(ClientFamilyLink.child_user_id.in_(child_ids))
+                .order_by(ClientFamilyLink.created_at.asc())
+            ).all() if child_ids else []
+
+            parent_emails_by_child: dict[UUID, list[tuple[str, UUID]]] = {}
+            parent_sms_by_child: dict[UUID, list[tuple[str | None, str | None, str | None, str | None, UUID]]] = {}
+            for (
+                child_user_id,
+                parent_id,
+                parent_email,
+                parent_email_opt_in,
+                parent_sms_opt_in,
+                parent_mobile_phone_1,
+                parent_mobile_phone_2,
+                parent_phone,
+                parent_home_phone,
+            ) in parent_rows:
+                if bool(parent_email_opt_in):
+                    normalized_parent_email = _normalize_optional(parent_email)
+                    if normalized_parent_email:
+                        parent_emails_by_child.setdefault(child_user_id, []).append((normalized_parent_email, parent_id))
+                if bool(parent_sms_opt_in):
+                    parent_sms_by_child.setdefault(child_user_id, []).append(
+                        (parent_mobile_phone_1, parent_mobile_phone_2, parent_phone, parent_home_phone, parent_id)
+                    )
+
+            for client in clients:
+                if client.client_kind == ClientKind.ADULT:
+                    if is_email:
+                        if client.email_opt_in:
+                            add_email(client.email, client.id)
+                    elif client.sms_opt_in:
+                        add_sms(
+                            client.mobile_phone_1,
+                            client.mobile_phone_2,
+                            client.phone,
+                            client.home_phone,
+                            client.id,
+                        )
+                    continue
+
+                if is_email:
+                    for parent_email, parent_id in parent_emails_by_child.get(client.id, []):
+                        add_email(parent_email, parent_id)
+                else:
+                    for parent_mobile_phone_1, parent_mobile_phone_2, parent_phone, parent_home_phone, parent_id in parent_sms_by_child.get(client.id, []):
+                        add_sms(
+                            parent_mobile_phone_1,
+                            parent_mobile_phone_2,
+                            parent_phone,
+                            parent_home_phone,
+                            parent_id,
+                        )
+
+        if is_email:
+            sender = resolve_sender_profile(db, sender_kind="STUDIO")
+            actor_label = _display_name(actor.first_name, actor.last_name, actor.email)
+            body_format = "HTML" if str(payload.message_body_format).strip().upper() == "HTML" else "TEXT"
+            for recipient_email, recipient_user_id in sorted(email_recipients.items()):
+                send_email(
+                    to_email=recipient_email,
+                    subject=message_subject,
+                    body=message_body,
+                    body_format=body_format,
+                    context="ADMIN_CLIENT_BULK_MESSAGE",
+                    from_email=sender.from_email,
+                    from_name=sender.from_name,
+                    reply_to=sender.reply_to,
+                    subject_prefix=sender.subject_prefix,
+                    sender_user_id=actor.id,
+                    sender_label=actor_label,
+                    sender_category=CommunicationSenderCategory.OTHER_USER,
+                    recipient_user_id=recipient_user_id,
+                    communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+                )
+            db.commit()
+            sent_count = len(email_recipients)
+            return AdminClientBulkOut(
+                processed_count=sent_count,
+                skipped_count=max(len(clients) - sent_count, 0),
+                message=f"Email envoye a {sent_count} destinataire(s)",
+            )
+
+        sms_body = message_body
+        if str(payload.message_body_format).strip().upper() == "HTML":
+            sms_body = re.sub(r"<[^>]+>", " ", sms_body)
+        sms_body = re.sub(r"\s{2,}", " ", sms_body).strip()
+        if not sms_body:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SMS vide apres normalisation")
+        actor_label = _display_name(actor.first_name, actor.last_name, actor.email)
+        for recipient_phone, recipient_user_id in sorted(sms_recipients.items()):
+            log_communication(
+                db=db,
+                channel=CommunicationChannel.SMS,
+                source="ADMIN_CLIENT_BULK_MESSAGE_SMS",
+                communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                sender_user_id=actor.id,
+                sender_label=actor_label,
+                recipient_user_id=recipient_user_id,
+                recipient=recipient_phone,
+                subject=message_subject or "SMS clients",
+                content=sms_body,
+                content_format=MessageFormat.TEXT,
+                delivery_status=CommunicationDeliveryStatus.UNKNOWN,
+            )
         db.commit()
+        sent_count = len(sms_recipients)
         return AdminClientBulkOut(
-            processed_count=len(recipients),
-            skipped_count=max(len(clients) - len(recipients), 0),
-            message=f"Email prepare pour {len(recipients)} client(s) opt-in",
-        )
-
-    if action == AdminClientBulkAction.EMAIL_PARENTS:
-        child_ids = [client.id for client in clients if client.client_kind == ClientKind.CHILD]
-        parent_rows = db.execute(
-            select(ClientFamilyLink.child_user_id, User.email, User.email_opt_in)
-            .join(User, User.id == ClientFamilyLink.adult_user_id)
-            .where(ClientFamilyLink.child_user_id.in_(child_ids))
-            .order_by(ClientFamilyLink.created_at.asc())
-        ).all() if child_ids else []
-
-        parent_by_child: dict[UUID, set[str]] = {}
-        for child_id, email, email_opt_in in parent_rows:
-            if not email_opt_in:
-                continue
-            parent_by_child.setdefault(child_id, set()).add(email)
-
-        recipients: set[str] = set()
-        for client in clients:
-            if client.client_kind == ClientKind.ADULT:
-                if client.email_opt_in:
-                    recipients.add(client.email)
-            else:
-                recipients.update(parent_by_child.get(client.id, set()))
-
-        db.commit()
-        return AdminClientBulkOut(
-            processed_count=len(recipients),
-            skipped_count=max(len(clients) - len(recipients), 0),
-            message=f"Email parents prepare pour {len(recipients)} destinataire(s) opt-in",
+            processed_count=sent_count,
+            skipped_count=max(len(clients) - sent_count, 0),
+            message=f"SMS journalise pour {sent_count} destinataire(s)",
         )
 
     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported bulk action")

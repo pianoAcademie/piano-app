@@ -672,6 +672,8 @@ class AdminClientBulkAction(str, enum.Enum):
     DELETE = "DELETE"
     EMAIL_CLIENTS = "EMAIL_CLIENTS"
     EMAIL_PARENTS = "EMAIL_PARENTS"
+    SMS_CLIENTS = "SMS_CLIENTS"
+    SMS_PARENTS = "SMS_PARENTS"
 
 
 class AdminClientSelectionScope(str, enum.Enum):
@@ -690,6 +692,9 @@ class AdminClientBulkRequest(BaseModel):
     filter_group_id: UUID | None = None
     filter_include_archived: bool = False
     filter_active_only: bool = False
+    message_subject: str | None = Field(default=None, max_length=255)
+    message_body: str | None = Field(default=None, max_length=12000)
+    message_body_format: AdminMessageBodyFormat = "TEXT"
 
 
 class AdminClientBulkOut(BaseModel):
@@ -1661,12 +1666,14 @@ class AdminSessionBroadcastOut(BaseModel):
 
 class AdminCollaboratorMessageRequest(BaseModel):
     collaborator_ids: list[UUID] = Field(default_factory=list)
+    channel: AdminSessionBroadcastChannel = AdminSessionBroadcastChannel.EMAIL
     subject: str = Field(min_length=1, max_length=255)
     body: str = Field(min_length=1)
     body_format: AdminSessionMessageFormat = AdminSessionMessageFormat.TEXT
 
 
 class AdminCollaboratorMessageOut(BaseModel):
+    channel: AdminSessionBroadcastChannel
     requested_count: int
     sent_count: int
     skipped_count: int
