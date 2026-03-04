@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import json
 import logging
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
+import jwt
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionStatus
+from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
 from app.models.ops import EmailReminder, LegalEntity
@@ -67,6 +70,8 @@ PENDING_PAYMENT_STATUSES = {
 }
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
 ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
+INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
+INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_PAY"
 COUNTRY_NAME_BY_CODE = {
     "FR": "France",
     "BE": "Belgique",
@@ -94,9 +99,9 @@ def _frontend_url(*, path: str) -> str:
 
 
 def _checkout_urls(*, owner_id: UUID, subscription_id: UUID) -> tuple[str, str, str]:
-    query = f"tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}"
-    success_url = _frontend_url(path=f"/dashboard?{query}&payment_return=success")
-    cancel_url = _frontend_url(path=f"/dashboard?{query}&payment_return=cancel")
+    query = f"tab=finance&finance_view=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}"
+    success_url = _frontend_url(path=f"/client?{query}&payment_return=success")
+    cancel_url = _frontend_url(path=f"/client?{query}&payment_return=cancel")
     webhook_url = _frontend_url(path=f"/api/v1/public/payments/webhook?client_id={owner_id}&subscription_id={subscription_id}")
     return success_url, cancel_url, webhook_url
 
@@ -261,6 +266,122 @@ def _payment_source_label(source: str) -> str:
     if normalized == "BOOKING":
         return "Reservation"
     return normalized or "Paiement"
+
+
+def _invoice_status_from_payment_status(status_value: str) -> str:
+    normalized = (status_value or "").strip().upper()
+    if normalized in PAID_PAYMENT_STATUSES:
+        return "PAID"
+    if normalized in CANCELLED_PAYMENT_STATUSES or normalized in {"NOT_BILLABLE", "REFUNDED"}:
+        return "CANCELLED"
+    return "PENDING"
+
+
+def _parse_invoice_range_note_entry(note: ClientNoteEntry) -> dict[str, object] | None:
+    message = (note.message or "").strip()
+    prefix_index = message.find(INVOICE_RANGE_NOTE_PREFIX)
+    if prefix_index < 0:
+        return None
+    raw_payload = message[prefix_index + len(INVOICE_RANGE_NOTE_PREFIX) :].strip()
+    if not raw_payload:
+        return None
+    try:
+        parsed = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+def _parse_optional_uuid(raw_value: object) -> UUID | None:
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
+def _first_currency_total(metadata: dict[str, object]) -> tuple[Decimal, str]:
+    for key in ("total_to_pay_by_currency", "totals_by_currency"):
+        totals = metadata.get(key)
+        if not isinstance(totals, dict) or not totals:
+            continue
+        first_currency = next(iter(sorted(totals.keys())))
+        currency_code = str(first_currency).strip().upper() or "EUR"
+        raw_amount = totals.get(first_currency)
+        try:
+            amount = Decimal(str(raw_amount)).quantize(Decimal("0.01"))
+        except Exception:
+            continue
+        return amount, currency_code
+    return Decimal("0.00"), "EUR"
+
+
+def _invoice_range_status_for_client(raw_status: object) -> str:
+    normalized = str(raw_status or "ISSUED").strip().upper()
+    if normalized == "PAID":
+        return "PAID"
+    if normalized == "CANCELLED":
+        return "CANCELLED"
+    return "PENDING"
+
+
+def _invoice_range_type_label(metadata: dict[str, object]) -> str:
+    generation_mode = str(metadata.get("generation_mode") or "MANUAL").strip().upper()
+    return "Facture periode auto" if generation_mode == "AUTO" else "Facture periode"
+
+
+def _invoice_range_label(metadata: dict[str, object]) -> str:
+    start_date = str(metadata.get("start_date") or "").strip()
+    end_date = str(metadata.get("end_date") or "").strip()
+    if start_date and end_date:
+        return f"{start_date} - {end_date}"
+    if start_date:
+        return start_date
+    if end_date:
+        return end_date
+    return "Facture"
+
+
+def _create_invoice_range_public_payment_token(
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    metadata: dict[str, object],
+) -> str:
+    payload = {
+        "scope": INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE,
+        "client_id": str(client_id),
+        "note_id": str(note_id),
+        "invoice_number": str(metadata.get("invoice_number") or ""),
+        "exp": int((_utcnow() + timedelta(days=365)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def _invoice_range_public_payment_url(*, client_id: UUID, note_id: UUID, metadata: dict[str, object]) -> str:
+    token = _create_invoice_range_public_payment_token(client_id=client_id, note_id=note_id, metadata=metadata)
+    return (
+        f"{_frontend_url(path='')}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay"
+        f"?token={token}"
+    )
+
+
+def _invoice_period_line_from_invoice_line(line: ClientInvoiceLine) -> InvoicePeriodLine:
+    return InvoicePeriodLine(
+        date_label=line.occurred_at.strftime("%d/%m/%Y"),
+        type_label=_payment_source_label(line.source),
+        label=line.label,
+        quantity=1,
+        amount_excl_vat=Decimal(line.amount_excl_vat).quantize(Decimal("0.01")),
+        vat_rate=Decimal(line.vat_rate).quantize(Decimal("0.01")),
+        vat_amount=Decimal(line.vat_amount).quantize(Decimal("0.01")),
+        total_incl_vat=Decimal(line.total_incl_vat).quantize(Decimal("0.01")),
+        currency=(line.currency or "EUR").upper(),
+    )
 
 
 def _booking_uuid_from_payment_id(payment_id: str) -> UUID | None:
@@ -1171,7 +1292,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 reference=plan.code,
                 seller_legal_entity_id=None,
                 billing_entity=None,
-                payment_url=_frontend_url(path=f"/dashboard?tab=transactions&source=PLAN_PURCHASE&payment_id={sub.id}"),
+                payment_url=_frontend_url(path=f"/client?tab=finance&finance_view=transactions&source=PLAN_PURCHASE&payment_id={sub.id}"),
             )
         )
 
@@ -1460,6 +1581,14 @@ def list_client_invoices(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CLIENT)),
 ) -> list[ClientInvoiceOut]:
+    managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
+    users_by_id = {
+        row.id: row
+        for row in db.scalars(
+            select(User).where(User.id.in_(managed_client_ids), User.role == UserRole.CLIENT)
+        ).all()
+    }
+
     payments = _build_client_payments(db, current_user)
     booking_payment_ids = [
         booking_id
@@ -1470,19 +1599,52 @@ def list_client_invoices(
     forfait_bookings = _forfait_booking_ids(db, booking_payment_ids)
     invoices: list[ClientInvoiceOut] = []
 
+    range_notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.user_id.in_(managed_client_ids))
+        .order_by(ClientNoteEntry.created_at.desc())
+    ).all()
+    for note in range_notes:
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            continue
+        invoice_number = str(metadata.get("invoice_number") or "").strip()
+        if not invoice_number:
+            continue
+        issued_date_text = str(metadata.get("issued_date") or "").strip()
+        try:
+            issued_date = date.fromisoformat(issued_date_text)
+        except ValueError:
+            continue
+        total_amount, currency_code = _first_currency_total(metadata)
+        owner = users_by_id.get(note.user_id)
+        owner_display_name = _display_name(owner) if owner is not None else str(note.user_id)
+        invoices.append(
+            ClientInvoiceOut(
+                id=f"invoice-range:{note.id}",
+                owner_client_id=note.user_id,
+                owner_display_name=owner_display_name,
+                invoice_number=invoice_number,
+                issued_at=datetime.combine(issued_date, datetime.min.time(), tzinfo=timezone.utc),
+                source="INVOICE_RANGE",
+                status=_invoice_range_status_for_client(metadata.get("invoice_status")),
+                label=_invoice_range_label(metadata),
+                total_incl_vat=total_amount,
+                currency=currency_code,
+                reference=str(note.id),
+                download_url=f"/client/invoices/invoice-range:{note.id}/download",
+            )
+        )
+
     for payment in payments:
         if (payment.source or "").strip().upper() == "BOOKING":
             booking_id = _booking_uuid_from_payment_id(payment.id)
             if booking_id is not None and booking_id in forfait_bookings:
                 continue
 
-        normalized_status = (payment.status or "").upper()
-        if normalized_status in PAID_PAYMENT_STATUSES:
-            invoice_status = "PAID"
-        elif normalized_status in CANCELLED_PAYMENT_STATUSES:
-            invoice_status = "CANCELLED"
-        else:
-            invoice_status = "PENDING"
+        invoice_status = _invoice_status_from_payment_status(payment.status)
+        if invoice_status not in {"PAID", "CANCELLED"}:
+            continue
 
         raw_id = payment.id.split(":", maxsplit=1)[-1]
         compact = raw_id.replace("-", "").upper()
@@ -1502,10 +1664,11 @@ def list_client_invoices(
                 total_incl_vat=payment.total_incl_vat,
                 currency=payment.currency,
                 reference=payment.reference,
-                download_url=f"/dashboard/invoices/{payment.id}/download",
+                download_url=f"/client/invoices/{payment.id}/download",
             )
         )
 
+    invoices.sort(key=lambda row: row.issued_at, reverse=True)
     return invoices
 
 
@@ -1522,6 +1685,139 @@ def download_client_invoice(
     invoice_ref = invoice_ref.strip()
     if not invoice_ref:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    if invoice_ref.startswith("invoice-range:"):
+        note_id_raw = invoice_ref[len("invoice-range:") :].strip()
+        try:
+            note_id = UUID(note_id_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found") from exc
+
+        note = db.scalar(
+            select(ClientNoteEntry).where(
+                ClientNoteEntry.id == note_id,
+                ClientNoteEntry.user_id.in_(managed_client_ids),
+            )
+        )
+        if note is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+        owner = db.scalar(select(User).where(User.id == note.user_id, User.role == UserRole.CLIENT))
+        if owner is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+        billing_profile = resolve_billing_profile(db, owner)
+
+        invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or f"INV-{note.id}"
+        issued_date_text = str(metadata.get("issued_date") or "").strip()
+        due_date_text = str(metadata.get("due_date") or "").strip()
+        try:
+            issued_date = date.fromisoformat(issued_date_text)
+        except ValueError:
+            issued_date = note.created_at.date()
+        try:
+            due_date_value = date.fromisoformat(due_date_text) if due_date_text else issued_date
+        except ValueError:
+            due_date_value = issued_date
+        issued_at = datetime.combine(issued_date, datetime.min.time(), tzinfo=timezone.utc)
+
+        invoice_lines_rows = db.scalars(
+            select(ClientInvoiceLine)
+            .where(ClientInvoiceLine.note_id == note.id)
+            .order_by(ClientInvoiceLine.occurred_at.asc(), ClientInvoiceLine.id.asc())
+        ).all()
+        invoice_lines = [_invoice_period_line_from_invoice_line(row) for row in invoice_lines_rows]
+
+        totals_by_currency: dict[str, dict[str, Decimal]] = {}
+        raw_totals = metadata.get("totals_by_currency")
+        if isinstance(raw_totals, dict):
+            for currency_code, total_text in raw_totals.items():
+                currency = str(currency_code).strip().upper() or "EUR"
+                try:
+                    total = Decimal(str(total_text)).quantize(Decimal("0.01"))
+                except Exception:
+                    continue
+                totals_by_currency[currency] = {
+                    "amount_excl_vat": total,
+                    "vat_amount": Decimal("0.00"),
+                    "total_incl_vat": total,
+                }
+        if not totals_by_currency and invoice_lines:
+            for row in invoice_lines:
+                currency = (row.currency or "EUR").upper()
+                current = totals_by_currency.setdefault(
+                    currency,
+                    {"amount_excl_vat": Decimal("0.00"), "vat_amount": Decimal("0.00"), "total_incl_vat": Decimal("0.00")},
+                )
+                current["amount_excl_vat"] = (current["amount_excl_vat"] + Decimal(row.amount_excl_vat)).quantize(Decimal("0.01"))
+                current["vat_amount"] = (current["vat_amount"] + Decimal(row.vat_amount)).quantize(Decimal("0.01"))
+                current["total_incl_vat"] = (current["total_incl_vat"] + Decimal(row.total_incl_vat)).quantize(Decimal("0.01"))
+        if not totals_by_currency:
+            amount, currency_code = _first_currency_total(metadata)
+            totals_by_currency[currency_code] = {
+                "amount_excl_vat": amount,
+                "vat_amount": Decimal("0.00"),
+                "total_incl_vat": amount,
+            }
+
+        opening_balance_by_currency: dict[str, Decimal] = {}
+        raw_opening = metadata.get("opening_balance_by_currency")
+        if isinstance(raw_opening, dict):
+            for currency_code, value in raw_opening.items():
+                try:
+                    opening_balance_by_currency[str(currency_code).strip().upper() or "EUR"] = Decimal(str(value)).quantize(Decimal("0.01"))
+                except Exception:
+                    continue
+        total_to_pay_by_currency: dict[str, Decimal] = {}
+        raw_total_to_pay = metadata.get("total_to_pay_by_currency")
+        if isinstance(raw_total_to_pay, dict):
+            for currency_code, value in raw_total_to_pay.items():
+                try:
+                    total_to_pay_by_currency[str(currency_code).strip().upper() or "EUR"] = Decimal(str(value)).quantize(Decimal("0.01"))
+                except Exception:
+                    continue
+
+        public_note = _normalize_optional(str(metadata.get("public_note") or ""))
+        legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+        billing_entity = _billing_entity_text(str(metadata.get("billing_entity") or "")) if metadata.get("billing_entity") else None
+        payment_link_url = _invoice_range_public_payment_url(
+            client_id=note.user_id,
+            note_id=note.id,
+            metadata=metadata,
+        )
+        invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+
+        content = render_invoice_period_pdf(
+            db,
+            invoice_number=invoice_number,
+            issued_at=issued_at,
+            client_id=str(note.user_id),
+            client_name=_display_name(billing_profile),
+            period_label=_invoice_range_label(metadata),
+            lines=invoice_lines,
+            totals_by_currency=totals_by_currency,
+            note=public_note,
+            client_billing_address=_billing_address_label(billing_profile),
+            due_date=due_date_value,
+            opening_balance_by_currency=opening_balance_by_currency,
+            total_to_pay_by_currency=total_to_pay_by_currency,
+            payment_link_url=payment_link_url,
+            watermark=("PAYE" if invoice_status == "PAID" else None),
+            legal_entity_id=legal_entity_id,
+            billing_entity=billing_entity,
+        )
+
+        file_name = f"{invoice_number}.pdf".replace('"', "")
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{file_name}"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     payments = _build_client_payments(db, current_user)
     payment = next((row for row in payments if row.id == invoice_ref), None)

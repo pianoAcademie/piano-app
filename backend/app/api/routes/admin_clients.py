@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 import jwt
 from jwt import PyJWTError
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -131,7 +131,8 @@ from app.services.messaging_templates import (
     resolve_sender_profile,
     upsert_predefined_template,
 )
-from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
+from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
+from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.security import create_access_token, hash_password
 from app.services.subscriptions import (
@@ -198,6 +199,7 @@ SIMPLE_PLACEHOLDER_RE = re.compile(r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}")
 EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 INVOICE_RANGE_PUBLIC_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
+INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_PAY"
 WEEKDAY_LABELS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
 COUNTRY_NAME_BY_CODE = {
@@ -906,25 +908,242 @@ def _assert_invoice_range_public_download_token(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de facture invalide")
 
 
-def _invoice_range_payment_url(*, metadata: dict[str, object]) -> str:
-    totals = metadata.get("totals_by_currency")
-    amount = "0.00"
-    currency = "EUR"
-    if isinstance(totals, dict) and totals:
+def _create_invoice_range_public_payment_token(
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    metadata: dict[str, object],
+) -> str:
+    payload = {
+        "scope": INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE,
+        "client_id": str(client_id),
+        "note_id": str(note_id),
+        "invoice_number": str(metadata.get("invoice_number") or ""),
+        "exp": int((_utcnow() + timedelta(days=365)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def _assert_invoice_range_public_payment_token(
+    *,
+    token: str,
+    client_id: UUID,
+    note_id: UUID,
+    metadata: dict[str, object],
+) -> None:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except PyJWTError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de paiement invalide ou expire") from exc
+
+    if str(payload.get("scope") or "") != INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de paiement invalide")
+    if str(payload.get("client_id") or "") != str(client_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de paiement invalide")
+    if str(payload.get("note_id") or "") != str(note_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de paiement invalide")
+
+    expected_invoice_number = str(metadata.get("invoice_number") or "")
+    if expected_invoice_number and str(payload.get("invoice_number") or "") != expected_invoice_number:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de paiement invalide")
+
+
+def _invoice_range_primary_total(metadata: dict[str, object]) -> tuple[Decimal, str]:
+    for key in ("total_to_pay_by_currency", "totals_by_currency"):
+        totals = metadata.get(key)
+        if not isinstance(totals, dict) or not totals:
+            continue
         first_currency = next(iter(sorted(totals.keys())))
-        first_amount = totals.get(first_currency)
-        if isinstance(first_amount, str) and first_amount.strip():
-            amount = first_amount.strip()
-        currency = str(first_currency).upper() or "EUR"
+        currency_code = _normalize_currency(str(first_currency), fallback="EUR")
+        raw_amount = totals.get(first_currency)
+        try:
+            amount = _quantize_money(abs(Decimal(str(raw_amount))))
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+        return amount, currency_code
+    return Decimal("0.00"), "EUR"
+
+
+def _invoice_range_payment_url(
+    *,
+    client_id: UUID | None,
+    note_id: UUID | None,
+    metadata: dict[str, object],
+) -> str:
+    if client_id is not None and note_id is not None:
+        token = _create_invoice_range_public_payment_token(
+            client_id=client_id,
+            note_id=note_id,
+            metadata=metadata,
+        )
+        query = urlencode({"token": token})
+        return f"{_frontend_base_url()}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay?{query}"
+
+    amount, currency = _invoice_range_primary_total(metadata)
     params = urlencode(
         {
-            "tab": "paiements",
+            "tab": "finance",
+            "finance_view": "transactions",
             "invoice_number": str(metadata.get("invoice_number") or ""),
-            "amount": amount,
+            "amount": f"{amount:.2f}",
             "currency": currency,
         }
     )
-    return f"{_frontend_base_url()}/dashboard?{params}"
+    return f"{_frontend_base_url()}/client?{params}"
+
+
+def _invoice_range_reconciled_manual_payment_ids(metadata: dict[str, object]) -> list[UUID]:
+    raw_values = metadata.get("reconciled_manual_payment_ids")
+    if not isinstance(raw_values, list):
+        return []
+    out: list[UUID] = []
+    seen: set[UUID] = set()
+    for raw in raw_values:
+        candidate = _normalize_optional(str(raw))
+        if not candidate:
+            continue
+        try:
+            value = UUID(candidate)
+        except ValueError:
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _append_public_payment_reference_to_note(public_note: str | None, provider_reference: str) -> str:
+    base = _normalize_optional(public_note) or ""
+    marker = f"Transaction paiement en ligne: {provider_reference}"
+    if marker in base:
+        return base
+    if not base:
+        return marker
+    return f"{base}\n{marker}"
+
+
+def _record_invoice_range_public_payment(
+    db: Session,
+    *,
+    client_id: UUID,
+    note: ClientNoteEntry,
+    metadata: dict[str, object],
+    provider_reference: str,
+    seller_legal_entity_id: UUID | None,
+) -> tuple[UUID, datetime]:
+    now = _utcnow()
+    invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note.id)
+    amount_due, currency_code = _invoice_range_primary_total(metadata)
+    if amount_due <= Decimal("0.00"):
+        amount_due = Decimal("0.00")
+
+    existing_ids = _invoice_range_reconciled_manual_payment_ids(metadata)
+    existing_rows = {
+        row.id: row
+        for row in db.scalars(
+            select(ClientManualTransaction).where(ClientManualTransaction.id.in_(existing_ids))
+        ).all()
+    } if existing_ids else {}
+    existing_transaction: ClientManualTransaction | None = None
+    for existing_id in existing_ids:
+        candidate = existing_rows.get(existing_id)
+        if candidate is None:
+            continue
+        reference_text = (candidate.reference or "").strip()
+        if provider_reference and provider_reference in reference_text:
+            existing_transaction = candidate
+            break
+        if (candidate.category or "").strip().upper() == "INVOICE_RANGE_PUBLIC_PAYMENT":
+            existing_transaction = candidate
+            break
+
+    if existing_transaction is None:
+        signed_total = _quantize_money(Decimal("0.00") - amount_due)
+        transaction = ClientManualTransaction(
+            user_id=client_id,
+            student_user_id=client_id,
+            actor_user_id=None,
+            transaction_type="PAYMENT",
+            status="COMPLETED",
+            label=f"Paiement en ligne facture {invoice_number}",
+            description=f"Transaction PSP {provider_reference}",
+            category="INVOICE_RANGE_PUBLIC_PAYMENT",
+            occurred_at=now,
+            amount_excl_vat=signed_total,
+            vat_rate=Decimal("0.00"),
+            vat_amount=Decimal("0.00"),
+            total_incl_vat=signed_total,
+            currency=currency_code,
+            reference=_build_manual_reference(
+                payment_method_code="CARD_ONLINE",
+                custom_reference=f"PSP:{provider_reference}",
+            ),
+            legal_entity_id=seller_legal_entity_id,
+        )
+        db.add(transaction)
+        db.flush()
+        transaction_id = transaction.id
+    else:
+        transaction_id = existing_transaction.id
+
+    updated_reconciled_ids = [str(value) for value in existing_ids if value in existing_rows]
+    transaction_id_str = str(transaction_id)
+    if transaction_id_str not in updated_reconciled_ids:
+        updated_reconciled_ids.append(transaction_id_str)
+
+    metadata["invoice_status"] = "PAID"
+    metadata["paid_at"] = now.isoformat()
+    metadata["payment_provider_reference"] = provider_reference
+    metadata["payment_transaction_id"] = transaction_id_str
+    metadata["reconciled_manual_payment_ids"] = updated_reconciled_ids
+    metadata["public_note"] = _append_public_payment_reference_to_note(
+        _normalize_optional(str(metadata.get("public_note") or "")),
+        provider_reference=provider_reference,
+    )
+    note.message = _build_invoice_range_note_message(metadata)
+    db.add(note)
+    db.commit()
+    return transaction_id, now
+
+
+def _public_payment_result_html(
+    *,
+    title: str,
+    subtitle: str,
+    invoice_number: str,
+    transaction_reference: str | None = None,
+) -> HTMLResponse:
+    details = f"<p><strong>Facture:</strong> {invoice_number}</p>"
+    if transaction_reference:
+        details += f"<p><strong>Transaction:</strong> {transaction_reference}</p>"
+    html = f"""<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <style>
+      body {{ font-family: Arial, sans-serif; background: #f6f7f9; color: #111827; margin: 0; padding: 24px; }}
+      .card {{ max-width: 680px; margin: 0 auto; background: #fff; border: 1px solid #e6e8ee; border-radius: 14px; padding: 20px; }}
+      h1 {{ margin: 0 0 10px; font-size: 22px; }}
+      p {{ margin: 6px 0; line-height: 1.45; }}
+      .muted {{ color: #4b5563; }}
+    </style>
+  </head>
+  <body>
+    <section class="card">
+      <h1>{title}</h1>
+      <p class="muted">{subtitle}</p>
+      {details}
+    </section>
+  </body>
+</html>"""
+    return HTMLResponse(content=html, status_code=status.HTTP_200_OK)
 
 
 def _normalize_email_recipients(raw_values: list[str] | None) -> list[str]:
@@ -993,7 +1212,11 @@ def _build_range_invoice_email_defaults(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
 
     invoice_url = _invoice_range_download_url(client_id=client.id, note_id=note_id, metadata=metadata, inline=True)
-    payment_url = _invoice_range_payment_url(metadata=metadata)
+    payment_url = _invoice_range_payment_url(
+        client_id=client.id,
+        note_id=note_id,
+        metadata=metadata,
+    )
     totals_by_currency = dict(metadata.get("totals_by_currency") or {})
     first_currency = next(iter(sorted(totals_by_currency.keys())), "EUR")
     amount_due = str(totals_by_currency.get(first_currency) or "0.00")
@@ -6208,6 +6431,7 @@ def preview_admin_client_range_invoice_email(
 @router.get("/{client_id}/payments/invoice-range")
 def download_admin_client_range_invoice(
     client_id: UUID,
+    note_id: UUID | None = Query(default=None),
     start_date: date = Query(...),
     end_date: date = Query(...),
     issued_date: date = Query(...),
@@ -6554,6 +6778,7 @@ def download_admin_client_range_invoice(
     billing_profile = resolve_billing_profile(db, client)
     client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
     client_billing_address = _billing_address_label(billing_profile)
+    persisted_note_id = note_id
 
     if persist_note:
         totals_payload = {
@@ -6616,6 +6841,14 @@ def download_admin_client_range_invoice(
             message=_build_invoice_range_note_message(metadata),
         )
         db.flush()
+        persisted_note_id = created_note.id
+        metadata["payment_url"] = _invoice_range_payment_url(
+            client_id=client_id,
+            note_id=created_note.id,
+            metadata=metadata,
+        )
+        created_note.message = _build_invoice_range_note_message(metadata)
+        db.add(created_note)
         _persist_invoice_lines_for_note(
             db,
             note_id=created_note.id,
@@ -6627,9 +6860,11 @@ def download_admin_client_range_invoice(
         db.commit()
 
     payment_link_url = _invoice_range_payment_url(
+        client_id=(client_id if persisted_note_id is not None else None),
+        note_id=persisted_note_id,
         metadata={
             "invoice_number": resolved_invoice_number,
-            "totals_by_currency": {
+            "total_to_pay_by_currency": {
                 currency: f"{_quantize_money(amount):.2f}"
                 for currency, amount in sorted(total_to_pay_by_currency.items())
             },
@@ -6687,6 +6922,7 @@ def download_admin_client_range_invoice_from_note(
     )
     return download_admin_client_range_invoice(
         client_id=client_id,
+        note_id=note_id,
         start_date=_parse_invoice_range_metadata_date(metadata, "start_date"),
         end_date=_parse_invoice_range_metadata_date(metadata, "end_date"),
         issued_date=_parse_invoice_range_metadata_date(metadata, "issued_date"),
@@ -6774,6 +7010,7 @@ def download_admin_client_range_invoice_public(
     )
     return download_admin_client_range_invoice(
         client_id=client_id,
+        note_id=note_id,
         start_date=_parse_invoice_range_metadata_date(metadata, "start_date"),
         end_date=_parse_invoice_range_metadata_date(metadata, "end_date"),
         issued_date=_parse_invoice_range_metadata_date(metadata, "issued_date"),
@@ -6835,6 +7072,233 @@ def download_admin_client_range_invoice_public(
         inline=inline,
         db=db,
         actor=client,
+    )
+
+
+@router.get("/{client_id}/invoices/range/{note_id}/public-pay")
+def start_admin_client_range_invoice_public_payment(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    client = _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    _assert_invoice_range_public_payment_token(
+        token=token,
+        client_id=client_id,
+        note_id=note_id,
+        metadata=metadata,
+    )
+
+    invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+    if invoice_status == "CANCELLED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture annulee")
+
+    amount_due, currency_code = _invoice_range_primary_total(metadata)
+    if amount_due <= Decimal("0.00"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun montant a regler")
+
+    _, _, seller_legal_entity_id = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    if seller_legal_entity_id is None:
+        seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+
+    invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
+    base_url = _frontend_base_url()
+    success_return_url = (
+        f"{base_url}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay/return"
+        f"?token={urlencode({'token': token}).split('=', 1)[1]}&state=success"
+    )
+    cancel_return_url = (
+        f"{base_url}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay/return"
+        f"?token={urlencode({'token': token}).split('=', 1)[1]}&state=cancel"
+    )
+    webhook_url = with_webhook_secret(
+        f"{base_url}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay/webhook?token={urlencode({'token': token}).split('=', 1)[1]}",
+        settings.payment_webhook_secret,
+    )
+
+    checkout = create_checkout_session(
+        db,
+        CheckoutCreateRequest(
+            amount=amount_due,
+            currency=currency_code,
+            description=f"Facture {invoice_number} ({client.email})",
+            customer_email=client.email,
+            success_return_url=success_return_url,
+            cancel_return_url=cancel_return_url,
+            webhook_url=webhook_url,
+            metadata={
+                "client_id": str(client_id),
+                "note_id": str(note_id),
+                "invoice_number": invoice_number,
+            },
+        ),
+        legal_entity_id=seller_legal_entity_id,
+    )
+    if not checkout.success or not checkout.checkout_url:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Impossible de creer la session de paiement ({checkout.message})",
+        )
+
+    provider_reference = (checkout.provider_reference or "").strip()
+    if not provider_reference:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Reference de transaction PSP absente")
+    metadata["payment_provider"] = checkout.provider.value
+    metadata["payment_provider_reference"] = provider_reference
+    metadata["payment_checkout_status"] = (checkout.status or "").strip().upper() or "CREATED"
+    metadata["payment_last_attempt_at"] = _utcnow().isoformat()
+    note.message = _build_invoice_range_note_message(metadata)
+    db.add(note)
+    db.commit()
+
+    return RedirectResponse(url=checkout.checkout_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.post("/{client_id}/invoices/range/{note_id}/public-pay/webhook")
+def handle_admin_client_range_invoice_public_payment_webhook(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    secret: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if settings.payment_webhook_secret and secret != settings.payment_webhook_secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret")
+
+    _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    _assert_invoice_range_public_payment_token(
+        token=token,
+        client_id=client_id,
+        note_id=note_id,
+        metadata=metadata,
+    )
+
+    provider_reference = _normalize_optional(str(metadata.get("payment_provider_reference") or ""))
+    if not provider_reference:
+        return {"ok": True, "processed": False, "reason": "missing_provider_reference"}
+
+    provider = detect_provider_from_reference(provider_reference)
+    if provider is None:
+        provider = parse_provider(str(metadata.get("payment_provider") or ""))
+    if provider is None:
+        provider = resolve_provider(db)
+
+    lookup = lookup_payment(db, provider=provider, payment_reference=provider_reference)
+    metadata["payment_lookup_status"] = (lookup.status or "").strip().upper() or "UNKNOWN"
+    metadata["payment_last_lookup_at"] = _utcnow().isoformat()
+    if lookup.paid:
+        _, _, seller_legal_entity_id = _frozen_invoice_selection_for_note(
+            db,
+            note_id=note_id,
+            metadata=metadata,
+        )
+        if seller_legal_entity_id is None:
+            seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+        transaction_id, paid_at = _record_invoice_range_public_payment(
+            db,
+            client_id=client_id,
+            note=note,
+            metadata=metadata,
+            provider_reference=lookup.provider_reference,
+            seller_legal_entity_id=seller_legal_entity_id,
+        )
+        return {
+            "ok": True,
+            "processed": True,
+            "paid": True,
+            "invoice_number": str(metadata.get("invoice_number") or ""),
+            "transaction_id": str(transaction_id),
+            "paid_at": paid_at.isoformat(),
+        }
+
+    note.message = _build_invoice_range_note_message(metadata)
+    db.add(note)
+    db.commit()
+    return {"ok": True, "processed": True, "paid": False, "status": lookup.status}
+
+
+@router.get("/{client_id}/invoices/range/{note_id}/public-pay/return")
+def return_admin_client_range_invoice_public_payment(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    state: str = Query(default="success"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    _assert_invoice_range_public_payment_token(
+        token=token,
+        client_id=client_id,
+        note_id=note_id,
+        metadata=metadata,
+    )
+
+    invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
+    normalized_state = (state or "").strip().lower()
+    if normalized_state == "cancel":
+        return _public_payment_result_html(
+            title="Paiement annule",
+            subtitle="Aucun debit n'a ete valide. Vous pouvez relancer le paiement via le lien de facture.",
+            invoice_number=invoice_number,
+        )
+
+    provider_reference = _normalize_optional(str(metadata.get("payment_provider_reference") or ""))
+    if not provider_reference:
+        return _public_payment_result_html(
+            title="Paiement en attente",
+            subtitle="Reference de transaction indisponible. Merci de contacter l'administration.",
+            invoice_number=invoice_number,
+        )
+
+    provider = detect_provider_from_reference(provider_reference)
+    if provider is None:
+        provider = parse_provider(str(metadata.get("payment_provider") or ""))
+    if provider is None:
+        provider = resolve_provider(db)
+
+    lookup = lookup_payment(db, provider=provider, payment_reference=provider_reference)
+    metadata["payment_lookup_status"] = (lookup.status or "").strip().upper() or "UNKNOWN"
+    metadata["payment_last_lookup_at"] = _utcnow().isoformat()
+    if not lookup.paid:
+        note.message = _build_invoice_range_note_message(metadata)
+        db.add(note)
+        db.commit()
+        return _public_payment_result_html(
+            title="Paiement en cours",
+            subtitle="Le PSP n'a pas encore confirme le paiement. Merci de verifier a nouveau dans quelques minutes.",
+            invoice_number=invoice_number,
+            transaction_reference=provider_reference,
+        )
+
+    _, _, seller_legal_entity_id = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    if seller_legal_entity_id is None:
+        seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+    transaction_id, _ = _record_invoice_range_public_payment(
+        db,
+        client_id=client_id,
+        note=note,
+        metadata=metadata,
+        provider_reference=lookup.provider_reference,
+        seller_legal_entity_id=seller_legal_entity_id,
+    )
+
+    return _public_payment_result_html(
+        title="Paiement confirme",
+        subtitle="Votre paiement a bien ete enregistre. La facture est marquee comme payee.",
+        invoice_number=invoice_number,
+        transaction_reference=f"{lookup.provider_reference} (ligne {transaction_id})",
     )
 
 

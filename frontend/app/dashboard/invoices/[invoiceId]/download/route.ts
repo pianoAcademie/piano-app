@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
 
   if (!response.ok) {
     const fallback = new URL(
-      `/dashboard?tab=transactions&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`,
+      `/client?tab=finance&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`,
       request.url,
     );
     return NextResponse.redirect(fallback, 302);

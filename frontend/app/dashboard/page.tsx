@@ -39,14 +39,17 @@ import DrawerFilters from "../../components/client-ui/drawer-filters";
 import ListRow from "../../components/client-ui/list-row";
 import MobileHeader from "../../components/client-ui/mobile-header";
 import MobileTabs from "../../components/client-ui/mobile-tabs";
+import CopyIdButton from "../../components/client-ui/copy-id-button";
+import StatCard from "../../components/client-ui/stat-card";
 import StatChip from "../../components/client-ui/stat-chip";
 import Toast from "../../components/client-ui/toast";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
-type DashboardTab = "planning" | "reservations" | "offers" | "transactions" | "messages" | "account";
+type DashboardTab = "home" | "planning" | "reservations" | "offers" | "finance" | "messages" | "account";
 type MessageScope = "LAST_3_MONTHS" | "CURRENT_YEAR" | "ALL";
 type TimeBucket = "ALL" | "MORNING" | "AFTERNOON" | "EVENING";
+type FinanceView = "transactions" | "invoices";
 
 type AgendaRange = {
   from: Date;
@@ -130,10 +133,13 @@ function safeDate(value: string | null | undefined): Date | null {
 }
 
 function parseTab(value: string): DashboardTab {
-  if (value === "reservations" || value === "offers" || value === "transactions" || value === "messages" || value === "account") {
+  if (value === "transactions") {
+    return "finance";
+  }
+  if (value === "reservations" || value === "offers" || value === "finance" || value === "messages" || value === "account") {
     return value;
   }
-  return "planning";
+  return "home";
 }
 
 function parseAgendaView(value: string): AgendaView {
@@ -155,6 +161,13 @@ function parseTimeBucket(value: string): TimeBucket {
     return value;
   }
   return "ALL";
+}
+
+function parseFinanceView(value: string): FinanceView {
+  if (value === "invoices") {
+    return "invoices";
+  }
+  return "transactions";
 }
 
 function normalizeStatus(value: string): string {
@@ -229,6 +242,79 @@ function statusLabel(value: string): string {
     return "EN ATTENTE";
   }
   return normalized || "-";
+}
+
+function sourceLabel(value: string): string {
+  const normalized = normalizeStatus(value);
+  if (normalized === "PLAN_PURCHASE") {
+    return "Facture";
+  }
+  if (normalized === "BOOKING") {
+    return "Facture";
+  }
+  if (normalized === "INVOICE_RANGE") {
+    return "Facture";
+  }
+  if (normalized === "BOOKING_CREDIT") {
+    return "Rabais";
+  }
+  if (normalized === "REFUND") {
+    return "Remboursement";
+  }
+  if (normalized === "MANUAL") {
+    return "Paiement";
+  }
+  return "Transaction";
+}
+
+function planKindLabel(value: string): string {
+  const normalized = normalizeStatus(value);
+  if (normalized === "PACK") {
+    return "Carnet";
+  }
+  if (normalized === "SUBSCRIPTION") {
+    return "Abonnement";
+  }
+  if (normalized === "FORFAIT") {
+    return "Forfait";
+  }
+  return normalized || "Forfait";
+}
+
+function compactId(value: string): string {
+  if (!value) {
+    return "-";
+  }
+  if (value.length <= 14) {
+    return value;
+  }
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+function paymentMethodLabel(value: string | null | undefined): string {
+  const normalized = normalizeStatus(value || "");
+  if (!normalized) {
+    return "Mode non renseigne";
+  }
+  if (normalized.includes("CARD")) {
+    return "CB ••••";
+  }
+  if (normalized.includes("SEPA")) {
+    return "SEPA";
+  }
+  if (normalized.includes("PAYPAL")) {
+    return "PayPal";
+  }
+  if (normalized.includes("CASH")) {
+    return "Especes";
+  }
+  if (normalized.includes("TRANSFER")) {
+    return "Virement";
+  }
+  if (normalized.includes("CHECK")) {
+    return "Cheque";
+  }
+  return normalized;
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -552,7 +638,7 @@ function withUpdatedQuery(base: URLSearchParams, updates: Record<string, string 
     }
   }
   const query = next.toString();
-  return query ? `/dashboard?${query}` : "/dashboard";
+  return query ? `/client?${query}` : "/client";
 }
 
 export default async function DashboardPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
@@ -585,12 +671,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedMemberFilter = emptyAsAll(readParam(searchParams, "member_id"));
   const selectedBookingOwner = readParam(searchParams, "booking_owner_id") || me.id;
   const selectedSessionId = readParam(searchParams, "session_id");
+  const selectedOfferDetailId = readParam(searchParams, "offer_detail_id");
   const messageScope = parseMessageScope(readParam(searchParams, "message_scope"));
   const financeSourceFilter = readParam(searchParams, "finance_source") || "ALL";
+  const financeView = parseFinanceView(readParam(searchParams, "finance_view"));
+  const selectedInvoiceId = readParam(searchParams, "invoice_id").trim();
   const paymentSourceParam = normalizeStatus(readParam(searchParams, "source"));
   const paymentIdParam = readParam(searchParams, "payment_id").trim();
   const paymentReturnParam = readParam(searchParams, "payment_return").trim().toLowerCase();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
+  const homeCalendarView = readParam(searchParams, "home_calendar_view") === "BY_MEMBER" ? "BY_MEMBER" : "FAMILY";
   const preFetchErrors: string[] = [];
 
   const sessionQuery = new URLSearchParams();
@@ -604,7 +694,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     sessionQuery.set("location_id", selectedLocation);
   }
 
-  if (tab === "transactions" && paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "success") {
+  if (tab === "finance" && paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "success") {
     const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
     const confirm = await backendRequest<ClientPaymentConfirmOut>(
       `/api/v1/clients/me/payments/${normalizedPaymentId}/confirm`,
@@ -725,7 +815,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         return [] as ClientInvoiceOut[];
       })();
 
-  if (tab === "transactions" && paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && !paymentReturnParam) {
+  if (tab === "finance" && paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && !paymentReturnParam) {
     const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
     const paymentRow = payments.find(
       (row) =>
@@ -878,7 +968,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
     .filter((row) => financeSourceFilter === "ALL" || normalizeStatus(row.source) === normalizeStatus(financeSourceFilter));
 
-  const invoiceRows = invoices.filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter);
+  const invoiceRows = invoices
+    .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
+    .sort((a, b) => b.issued_at.localeCompare(a.issued_at));
+  const invoiceByPaymentId = new Map<string, ClientInvoiceOut>();
+  for (const invoice of invoiceRows) {
+    const paymentId = invoice.id.startsWith("invoice:") ? invoice.id.slice("invoice:".length) : invoice.id;
+    invoiceByPaymentId.set(paymentId, invoice);
+  }
+  const selectedInvoice = selectedInvoiceId
+    ? invoiceRows.find((row) => row.id === selectedInvoiceId || row.id === `invoice:${selectedInvoiceId}`) ?? null
+    : null;
 
   const subscriptions = family
     ? family.subscriptions
@@ -933,6 +1033,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         (sub.plan.kind === "SUBSCRIPTION" || sub.plan.kind === "FORFAIT" || (sub.credits_remaining ?? 0) > 0)) ||
       isPendingSubscription(sub),
   );
+  const selectedOfferSubscription = subscriptions.find((sub) => sub.id === selectedOfferDetailId) ?? null;
+  const selectedOfferInvoices = selectedOfferSubscription
+    ? invoiceRows.filter((invoice) => invoice.owner_client_id === selectedOfferSubscription.owner_client_id)
+    : [];
+  const homeSubscriptions = subscriptions
+    .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
+    .filter((sub) => isSubscriptionActiveNow(sub, now) || isPendingSubscription(sub))
+    .sort((a, b) => b.started_at.localeCompare(a.started_at));
+  const homeSubscriptionsPreview = homeSubscriptions.slice(0, 2);
+  const upcomingBookings14 = upcomingBookings.filter((booking) => {
+    const start = safeDate(booking.session.start_at_utc);
+    if (!start) {
+      return false;
+    }
+    return start.getTime() <= now.getTime() + 14 * 24 * 60 * 60 * 1000;
+  });
+  const nextBooking = upcomingBookings14[0] ?? null;
+  const latestInvoice = invoiceRows[0] ?? null;
+  const newsRows = [...messageRows]
+    .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc))
+    .slice(0, 2);
+  const homeCalendarRows = [...upcomingBookings14].sort((a, b) => {
+    if (homeCalendarView === "BY_MEMBER") {
+      const memberDiff = a.owner_display_name.localeCompare(b.owner_display_name, "fr");
+      if (memberDiff !== 0) {
+        return memberDiff;
+      }
+    }
+    return a.session.start_at_utc.localeCompare(b.session.start_at_utc);
+  });
 
   const filteredSessions = sessions.filter((session) => {
     if (selectedCoachId && session.professor.id !== selectedCoachId) {
@@ -1030,10 +1160,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : [{ value: timezone, label: `${timezone} (personnalise)` }, ...TIMEZONE_OPTIONS];
 
   const tabLinks: Array<{ id: DashboardTab; label: string; icon: string }> = [
+    { id: "home", label: "Accueil", icon: "🏠" },
     { id: "planning", label: "Planning", icon: "📅" },
     { id: "reservations", label: "Reservations", icon: "✅" },
-    { id: "offers", label: "Offres", icon: "🛍️" },
-    { id: "transactions", label: "Finance", icon: "💳" },
+    { id: "offers", label: "Forfaits", icon: "🧾" },
+    { id: "finance", label: "Finance", icon: "💳" },
     { id: "messages", label: "Messages", icon: "✉️" },
     { id: "account", label: "Compte", icon: "👤" },
   ];
@@ -1041,9 +1172,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     { id: "planning", label: "Planning", icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
     { id: "reservations", label: "Reservations", icon: "✅", href: withUpdatedQuery(rawParams, { tab: "reservations" }) },
     { id: "offers", label: "Offres", icon: "🛍️", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
-    { id: "transactions", label: "Finance", icon: "💳", href: withUpdatedQuery(rawParams, { tab: "transactions" }) },
+    { id: "finance", label: "Finance", icon: "💳", href: withUpdatedQuery(rawParams, { tab: "finance" }) },
     { id: "account", label: "Compte", icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
+  const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab) ? tab : "planning";
 
   const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email });
   const okMessage = readParam(searchParams, "ok");
@@ -1052,6 +1184,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const sessionErrorMessage = selectedSession ? readParam(searchParams, "session_error") : "";
   const globalOkMessage = sessionOkMessage ? "" : okMessage;
   const globalErrorMessage = sessionErrorMessage ? "" : errorMessage;
+  const hasPhoneNumber = Boolean(me.mobile_phone_1 || me.mobile_phone_2 || me.home_phone || me.phone);
+  const communicationSummary = `Rappels: Email ${me.lesson_reminder_email_opt_in ? "ON" : "OFF"} / SMS ${
+    me.lesson_reminder_sms_opt_in ? "ON" : "OFF"
+  } · Communications: Email ${me.email_opt_in ? "ON" : "OFF"} / SMS ${me.sms_opt_in ? "ON" : "OFF"} · Confidentialite: ${
+    me.portal_contact_visible ? "ON" : "OFF"
+  }`;
 
   return (
     <main className="client-portal-shell">
@@ -1095,6 +1233,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
                 Messages
               </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "home" })}>
+                Accueil
+              </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>
                 Compte
               </a>
@@ -1124,6 +1265,166 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           {globalOkMessage ? <Toast message={globalOkMessage} tone="ok" /> : null}
           {globalErrorMessage ? <section className="flash-err">{globalErrorMessage}</section> : null}
           {errors.length > 0 ? <section className="flash-err">Erreur backend: {errors.join(" | ")}</section> : null}
+
+          {tab === "home" ? (
+            <>
+              <Card className="client-home-header">
+                <div className="row spread">
+                  <div>
+                    <h2>Accueil</h2>
+                    <p className="muted">Bonjour {me.first_name || displayName}</p>
+                  </div>
+                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>
+                    Ouvrir planning
+                  </a>
+                </div>
+                <div className="client-chip-row client-member-chips">
+                  <a className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", member_id: "ALL" })}>
+                    Tous
+                  </a>
+                  {linkedMembers.map((member) => (
+                    <a
+                      key={`home-chip-${member.id}`}
+                      className={`badge ${selectedMemberFilter === member.id ? "active" : ""}`}
+                      href={withUpdatedQuery(rawParams, { tab: "home", member_id: member.id })}
+                    >
+                      {member.display_name}
+                    </a>
+                  ))}
+                </div>
+              </Card>
+
+              <section className="client-stats-grid">
+                <StatCard
+                  title="Prochains cours (14j)"
+                  value={String(upcomingBookings14.length)}
+                  subtitle={nextBooking ? `${formatDateTime(nextBooking.session.start_at_utc)} · ${nextBooking.owner_display_name}` : "Aucun creneau"}
+                />
+                <StatCard
+                  title="Credits / rattrapages"
+                  value={String(membersWithPositiveCredits.reduce((sum, member) => sum + (totalCreditsByMember.get(member.id) ?? 0), 0))}
+                  subtitle={membersWithPositiveCredits.length > 0 ? `${membersWithPositiveCredits.length} membre(s) avec credits` : "Aucun credit positif"}
+                />
+                <StatCard
+                  title="A payer"
+                  value={toMoney(String(pendingTotal), me.preferred_currency)}
+                  subtitle={pendingTotal > 0 ? "Paiement en attente" : "Aucun paiement urgent"}
+                  action={pendingTotal > 0 ? <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })}>Payer</a> : null}
+                />
+                <StatCard
+                  title="Derniere facture"
+                  value={latestInvoice ? latestInvoice.invoice_number : "Aucune"}
+                  subtitle={latestInvoice ? `${statusLabel(latestInvoice.status)} · ${toMoney(latestInvoice.total_incl_vat, latestInvoice.currency)}` : "Aucune facture"}
+                  action={
+                    latestInvoice ? (
+                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: latestInvoice.id })}>
+                        Ouvrir
+                      </a>
+                    ) : null
+                  }
+                />
+              </section>
+
+              <Card>
+                <div className="row spread">
+                  <h3>Mes forfaits</h3>
+                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
+                    Voir tout
+                  </a>
+                </div>
+                {homeSubscriptionsPreview.length === 0 ? (
+                  <p className="muted">Aucun carnet / abonnement actif.</p>
+                ) : (
+                  <div className="list client-forfait-preview-list">
+                    {homeSubscriptionsPreview.map((sub) => {
+                      const isPack = normalizeStatus(sub.plan.kind) === "PACK";
+                      const initialCredits = sub.credits_initial ?? 0;
+                      const remainingCredits = sub.credits_remaining ?? 0;
+                      const consumedCredits = Math.max(0, initialCredits - remainingCredits);
+                      const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
+                      return (
+                        <article key={`home-sub-${sub.id}`} className="item client-forfait-preview-card">
+                          <div className="row spread">
+                            <strong>{sub.plan.name}</strong>
+                            <span className="badge">{planKindLabel(sub.plan.kind)}</span>
+                          </div>
+                          <p className="muted">{sub.owner_display_name} · {statusLabel(sub.status)}</p>
+                          {isPack ? (
+                            <>
+                              <div className="client-progress">
+                                <div className="client-progress-bar" style={{ width: `${ratio}%` }} />
+                              </div>
+                              <p className="muted">Credits restants: {remainingCredits}/{initialCredits || "?"}</p>
+                            </>
+                          ) : (
+                            <p className="muted">
+                              {toMoney(sub.plan.kind === "FORFAIT" ? "0" : plans.find((plan) => plan.id === sub.plan.id)?.monthly_price_excl_vat, me.preferred_currency)}
+                              {" "}/ periode · {paymentMethodLabel(sub.billing_method_code)}
+                            </p>
+                          )}
+                          <p className="muted">
+                            {sub.ends_at ? `Expiration: ${formatDate(sub.ends_at)}` : sub.next_payment_at ? `Prochain prelevement: ${formatDate(sub.next_payment_at)}` : "Sans date de fin"}
+                          </p>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+
+              <Card>
+                <div className="row spread">
+                  <h3>Calendrier famille</h3>
+                  <div className="row">
+                    <a className={`mode-link ${homeCalendarView === "FAMILY" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "FAMILY" })}>
+                      Vue famille
+                    </a>
+                    <a className={`mode-link ${homeCalendarView === "BY_MEMBER" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "BY_MEMBER" })}>
+                      Par enfant
+                    </a>
+                  </div>
+                </div>
+                {homeCalendarRows.length === 0 ? (
+                  <p className="muted">Aucun cours a venir sur 14 jours.</p>
+                ) : (
+                  <div className="list client-home-calendar-list">
+                    {homeCalendarRows.map((booking) => (
+                      <article key={`home-booking-${booking.id}`} className="item client-home-calendar-item">
+                        <div>
+                          <strong>{formatTime(booking.session.start_at_utc)} · {booking.session.title}</strong>
+                          <p className="muted">{formatDate(booking.session.start_at_utc)} · {booking.owner_display_name} · {statusLabel(booking.status)}</p>
+                        </div>
+                        <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", session_id: booking.session.id })}>
+                          Voir
+                        </a>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              <Card>
+                <div className="row spread">
+                  <h3>Nouvelles recentes</h3>
+                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
+                    Voir tout
+                  </a>
+                </div>
+                {newsRows.length === 0 ? (
+                  <p className="muted">Aucune nouvelle recente.</p>
+                ) : (
+                  <div className="list">
+                    {newsRows.map((message) => (
+                      <article key={`home-news-${message.id}`} className="item">
+                        <strong>{message.subject_preview || "Message"}</strong>
+                        <p className="muted">{formatDateTime(message.sent_at || message.scheduled_for_utc)} · {message.channel}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            </>
+          ) : null}
 
           {tab === "planning" ? (
             <>
@@ -1762,7 +2063,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             <>
               <Card className="client-offers-header">
                 <div className="row spread">
-                  <h2>Souscrire une offre</h2>
+                  <h2>Mes forfaits</h2>
                   <span className="badge">{plans.length}</span>
                 </div>
                 <p className="muted">Pour reserver un nouveau creneau, ouvrez l onglet Planning puis touchez un creneau disponible.</p>
@@ -1787,6 +2088,145 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <button type="submit">Afficher les offres</button>
                 </form>
               </Card>
+
+              <Card>
+                <div className="row spread">
+                  <h3>Abonnements et carnets actifs</h3>
+                  <span className="badge">{visibleSelectedOwnerSubscriptions.length}</span>
+                </div>
+                {visibleSelectedOwnerSubscriptions.length === 0 ? (
+                  <p className="muted">Aucun carnet / abonnement actif.</p>
+                ) : (
+                  <div className="list client-forfait-card-list">
+                    {visibleSelectedOwnerSubscriptions.map((sub) => {
+                      const isPack = normalizeStatus(sub.plan.kind) === "PACK";
+                      const initialCredits = sub.credits_initial ?? 0;
+                      const remainingCredits = sub.credits_remaining ?? 0;
+                      const consumedCredits = Math.max(0, initialCredits - remainingCredits);
+                      const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
+                      const planPrice = plans.find((plan) => plan.id === sub.plan.id)?.monthly_price_excl_vat ?? null;
+                      return (
+                        <article key={`forfait-card-${sub.id}`} className="item client-forfait-card">
+                          <div className="row spread">
+                            <div>
+                              <strong>{sub.plan.name}</strong>
+                              <p className="muted">{sub.owner_display_name}</p>
+                            </div>
+                            <span className="badge">{planKindLabel(sub.plan.kind)}</span>
+                          </div>
+                          <div className="row spread">
+                            <span className={`status-pill ${statusClass(sub.status)}`}>{statusLabel(sub.status)}</span>
+                            <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>
+                              Voir details
+                            </a>
+                          </div>
+                          {isPack ? (
+                            <>
+                              <div className="client-progress">
+                                <div className="client-progress-bar" style={{ width: `${ratio}%` }} />
+                              </div>
+                              <p className="muted">Credits restants: {remainingCredits}/{initialCredits || "?"}</p>
+                            </>
+                          ) : (
+                            <p className="muted">
+                              {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, me.preferred_currency)} / mois · {paymentMethodLabel(sub.billing_method_code)}
+                            </p>
+                          )}
+                          <p className="muted">
+                            {sub.ends_at ? `Expiration: ${formatDate(sub.ends_at)}` : sub.next_payment_at ? `Prochain prelevement: ${formatDate(sub.next_payment_at)}` : "Reconduction en cours"}
+                          </p>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+
+              {selectedOfferSubscription ? (
+                <Card>
+                  <div className="row spread">
+                    <h3>Detail forfait</h3>
+                    <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: null })}>
+                      Fermer
+                    </a>
+                  </div>
+                  <div className="list">
+                    <article className="item">
+                      <h4>Contrat</h4>
+                      <p className="muted">
+                        Identifiant: {compactId(selectedOfferSubscription.id)}{" "}
+                        <CopyIdButton value={selectedOfferSubscription.id} label="Copier" />
+                      </p>
+                    </article>
+                    <article className="item">
+                      <h4>Formule</h4>
+                      <p className="muted">{selectedOfferSubscription.plan.name} · {planKindLabel(selectedOfferSubscription.plan.kind)}</p>
+                    </article>
+                    <article className="item">
+                      <h4>Tarif</h4>
+                      <p className="muted">
+                        {toMoney(
+                          selectedOfferSubscription.plan.kind === "FORFAIT"
+                            ? "0"
+                            : plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)?.monthly_price_excl_vat,
+                          me.preferred_currency,
+                        )}{" "}
+                        / periode
+                      </p>
+                    </article>
+                    <article className="item">
+                      <h4>Moyen de paiement</h4>
+                      <p className="muted">{paymentMethodLabel(selectedOfferSubscription.billing_method_code)}</p>
+                    </article>
+                    <article className="item">
+                      <h4>Restrictions d acces</h4>
+                      <p className="muted">
+                        {selectedOfferSubscription.entitlement_course_type_names.length > 0
+                          ? `${selectedOfferSubscription.entitlement_course_type_names.length} activite(s) autorisee(s)`
+                          : "Aucune restriction declarative"}
+                      </p>
+                      <div className="client-chip-row">
+                        {selectedOfferSubscription.entitlement_course_type_names.slice(0, 8).map((name) => (
+                          <span key={`restriction-${selectedOfferSubscription.id}-${name}`} className="badge">
+                            {name}
+                          </span>
+                        ))}
+                        {selectedOfferSubscription.entitlement_course_type_names.length > 8 ? (
+                          <span className="badge">+{selectedOfferSubscription.entitlement_course_type_names.length - 8}</span>
+                        ) : null}
+                      </div>
+                    </article>
+                    <article className="item">
+                      <h4>Factures associees</h4>
+                      {selectedOfferInvoices.length === 0 ? (
+                        <p className="muted">Aucune facture associee.</p>
+                      ) : (
+                        <div className="list client-mobile-list">
+                          {selectedOfferInvoices.slice(0, 6).map((invoice) => (
+                            <ListRow
+                              key={`offer-invoice-${invoice.id}`}
+                              title={invoice.invoice_number}
+                              subtitle={`${formatDate(invoice.issued_at)} · ${toMoney(invoice.total_incl_vat, invoice.currency)}`}
+                              right={
+                                <div className="row">
+                                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}>
+                                    Ouvrir
+                                  </a>
+                                  {invoice.download_url ? (
+                                    <a className="mode-link" href={invoice.download_url}>
+                                      PDF
+                                    </a>
+                                  ) : null}
+                                </div>
+                              }
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  </div>
+                </Card>
+              ) : null}
 
               <section className="grid cols-2">
                 <Card>
@@ -1860,11 +2300,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             </>
           ) : null}
 
-          {tab === "transactions" ? (
+          {tab === "finance" ? (
             <>
               <Card>
                 <div className="row spread">
-                  <h2>Transactions</h2>
+                  <h2>Finance</h2>
                   <div className="row">
                     {[...totalByCurrency.entries()].map(([currency, total]) => (
                       <span key={currency} className="badge">
@@ -1873,13 +2313,34 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ))}
                   </div>
                 </div>
-                <div className="client-chip-row">
-                  <StatChip label="A payer" value={toMoney(String(pendingTotal), me.preferred_currency)} tone="warn" />
-                  <StatChip label="Paye" value={toMoney(String(paidTotal), me.preferred_currency)} tone="ok" />
+                <section className="client-stats-grid">
+                  <StatCard title="A payer" value={toMoney(String(pendingTotal), me.preferred_currency)} subtitle="Montant en attente" />
+                  <StatCard title="Paye" value={toMoney(String(paidTotal), me.preferred_currency)} subtitle="Reglements confirms" />
+                  <StatCard
+                    title="Solde / credit"
+                    value={toMoney(String(Math.max(0, paidTotal - pendingTotal)), me.preferred_currency)}
+                    subtitle="Difference paye - a payer"
+                  />
+                </section>
+
+                <div className="row client-finance-subtabs">
+                  <a
+                    className={`mode-link ${financeView === "transactions" ? "active" : ""}`}
+                    href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", invoice_id: null })}
+                  >
+                    Transactions
+                  </a>
+                  <a
+                    className={`mode-link ${financeView === "invoices" ? "active" : ""}`}
+                    href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices" })}
+                  >
+                    Factures
+                  </a>
                 </div>
 
                 <form method="get" className="client-filter-grid">
-                  <input type="hidden" name="tab" value="transactions" />
+                  <input type="hidden" name="tab" value="finance" />
+                  <input type="hidden" name="finance_view" value={financeView} />
                   <label>
                     Membre
                     <select name="member_id" defaultValue={selectedMemberFilter}>
@@ -1890,29 +2351,40 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         </option>
                       ))}
                     </select>
-                  </label>
-                  <label>
-                    Source
-                    <select name="finance_source" defaultValue={financeSourceFilter}>
-                      <option value="ALL">Toutes</option>
-                      {allPaymentSources.map((source) => (
-                        <option key={source} value={source}>
-                          {source}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                </label>
+                  {financeView === "transactions" ? (
+                    <label>
+                      Type
+                      <select name="finance_source" defaultValue={financeSourceFilter}>
+                        <option value="ALL">Toutes</option>
+                        {allPaymentSources.map((source) => (
+                          <option key={source} value={source}>
+                            {sourceLabel(source)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <input type="hidden" name="finance_source" value={financeSourceFilter} />
+                  )}
                   <div className="row">
                     <button type="submit">🔎</button>
-                    <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "transactions", member_id: null, finance_source: "ALL" })}>
+                    <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: financeView, member_id: null, finance_source: "ALL", invoice_id: null })}>
                       ↺
                     </a>
                   </div>
                 </form>
+              </Card>
 
-                {paymentRows.length === 0 ? (
-                  <p className="muted">Aucune transaction sur cette selection.</p>
-                ) : (
+              {financeView === "transactions" ? (
+                <Card>
+                  <div className="row spread">
+                    <h3>Transactions</h3>
+                    <span className="badge">{paymentRows.length}</span>
+                  </div>
+                  {paymentRows.length === 0 ? (
+                    <p className="muted">Aucune transaction sur cette selection.</p>
+                  ) : (
                   <>
                   <div className="table-wrap client-desktop-table">
                     <table className="data-table client-data-table">
@@ -1944,22 +2416,30 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <tr key={row.id}>
                               <td>{formatDateTime(row.occurred_at)}</td>
                               <td>{row.owner_display_name}</td>
-                              <td>{row.source}</td>
+                              <td><span className="badge">{sourceLabel(row.source)}</span></td>
                               <td>{row.label}</td>
                               <td>
                                 <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
                               </td>
                               <td>{toMoney(row.total_incl_vat, row.currency)}</td>
                               <td>
+                                {invoiceByPaymentId.get(row.id) ? (
+                                  <a
+                                    className="mode-link"
+                                    href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoiceByPaymentId.get(row.id)?.id ?? null })}
+                                  >
+                                    Ouvrir facture
+                                  </a>
+                                ) : null}
                                 {canPayNow ? (
                                   <form action={openClientPaymentCheckoutAction}>
                                     <input type="hidden" name="payment_id" value={row.id} />
-                                    <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "transactions" })} />
+                                    <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })} />
                                     <button type="submit">Payer maintenant</button>
                                   </form>
-                                ) : (
+                                ) : !invoiceByPaymentId.get(row.id) ? (
                                   <span className="muted">-</span>
-                                )}
+                                ) : null}
                               </td>
                             </tr>
                           );
@@ -1983,17 +2463,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <article key={`${row.id}-mobile`} className="item client-mobile-card">
                           <div className="row spread">
                             <strong>{toMoney(row.total_incl_vat, row.currency)}</strong>
-                            <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                            <span className="badge">{sourceLabel(row.source)}</span>
                           </div>
                           <p className="muted">{row.label}</p>
                           <p className="muted">
                             {formatDateTime(row.occurred_at)} | {row.owner_display_name}
                           </p>
-                          <p className="muted">Type: {row.source}</p>
+                          <p className="muted">Statut: {statusLabel(row.status)}</p>
+                          {invoiceByPaymentId.get(row.id) ? (
+                            <a
+                              className="mode-link"
+                              href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoiceByPaymentId.get(row.id)?.id ?? null })}
+                            >
+                              Ouvrir facture
+                            </a>
+                          ) : null}
                           {canPayNow ? (
                             <form action={openClientPaymentCheckoutAction}>
                               <input type="hidden" name="payment_id" value={row.id} />
-                              <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "transactions" })} />
+                              <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })} />
                               <button type="submit">Payer maintenant</button>
                             </form>
                           ) : null}
@@ -2003,16 +2491,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </div>
                   </>
                 )}
-              </Card>
-
-              <Card>
-                <div className="row spread">
-                  <h2>Factures</h2>
-                  <span className="badge">{invoiceRows.length}</span>
-                </div>
-                {invoiceRows.length === 0 ? (
-                  <p className="muted">Aucune facture.</p>
-                ) : (
+                </Card>
+              ) : (
+                <Card>
+                  <div className="row spread">
+                    <h3>Factures</h3>
+                    <span className="badge">{invoiceRows.length}</span>
+                  </div>
+                  {invoiceRows.length === 0 ? (
+                    <p className="muted">Aucune facture.</p>
+                  ) : (
                   <>
                   <div className="table-wrap client-desktop-table">
                     <table className="data-table client-data-table">
@@ -2039,6 +2527,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             </td>
                             <td>{toMoney(row.total_incl_vat, row.currency)}</td>
                             <td>
+                              <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: row.id })}>
+                                Ouvrir
+                              </a>
                               {row.download_url ? (
                                 <a className="mode-link" href={row.download_url}>
                                   Telecharger
@@ -2065,18 +2556,44 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         </p>
                         <div className="row spread">
                           <strong>{toMoney(row.total_incl_vat, row.currency)}</strong>
-                          {row.download_url ? (
-                            <a className="mode-link" href={row.download_url}>
-                              Telecharger
+                          <div className="row">
+                            <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: row.id })}>
+                              Ouvrir
                             </a>
-                          ) : null}
+                            {row.download_url ? (
+                              <a className="mode-link" href={row.download_url}>
+                                Telecharger
+                              </a>
+                            ) : null}
+                          </div>
                         </div>
                       </article>
                     ))}
                   </div>
                   </>
-                )}
-              </Card>
+                  )}
+
+                  {selectedInvoice ? (
+                    <article className="item client-invoice-viewer">
+                      <div className="row spread">
+                        <h4>{selectedInvoice.invoice_number}</h4>
+                        <span className={`status-pill ${statusClass(selectedInvoice.status)}`}>{statusLabel(selectedInvoice.status)}</span>
+                      </div>
+                      <p className="muted">{selectedInvoice.label}</p>
+                      <p className="muted">
+                        Date: {formatDateTime(selectedInvoice.issued_at)} · Membre: {selectedInvoice.owner_display_name}
+                      </p>
+                      <p>
+                        <strong>{toMoney(selectedInvoice.total_incl_vat, selectedInvoice.currency)}</strong>
+                      </p>
+                      <div className="row">
+                        {selectedInvoice.download_url ? <a className="mode-link" href={selectedInvoice.download_url}>Telecharger PDF</a> : null}
+                        <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: null })}>Fermer</a>
+                      </div>
+                    </article>
+                  ) : null}
+                </Card>
+              )}
             </>
           ) : null}
 
@@ -2223,13 +2740,52 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                 <details className="client-account-accordion card">
                   <summary>Preferences</summary>
-                  <div className="client-account-accordion-content client-switch-list">
-                    <label className="client-switch-row"><span>Visible dans le portail</span><span className={`client-switch ${me.portal_contact_visible ? "on" : ""}`} /></label>
-                    <label className="client-switch-row"><span>Rappels email</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
-                    <label className="client-switch-row"><span>Rappels SMS</span><span className={`client-switch ${me.lesson_reminder_sms_opt_in ? "on" : ""}`} /></label>
-                    <label className="client-switch-row"><span>Emails communication</span><span className={`client-switch ${me.email_opt_in ? "on" : ""}`} /></label>
-                    <label className="client-switch-row"><span>SMS communication</span><span className={`client-switch ${me.sms_opt_in ? "on" : ""}`} /></label>
-                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Voir messages</a>
+                  <div className="client-account-accordion-content">
+                    <article className="item">
+                      <strong>Resume</strong>
+                      <p className="muted">{communicationSummary}</p>
+                    </article>
+                    <article className="item">
+                      <strong>Confidentialite</strong>
+                      <p className="muted">Choisissez la visibilite du profil dans le portail etudiant.</p>
+                      <label className="client-switch-row"><span>Afficher dans les contacts du portail etudiant</span><span className={`client-switch ${me.portal_contact_visible ? "on" : ""}`} /></label>
+                    </article>
+                    <article className="item">
+                      <strong>Rappels de cours</strong>
+                      <p className="muted">Notifications automatiques avant les seances.</p>
+                      <label className="client-switch-row"><span>Rappels de cours par email</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
+                      <label className="client-switch-row"><span>Rappels de cours par SMS</span><span className={`client-switch ${me.lesson_reminder_sms_opt_in ? "on" : ""}`} /></label>
+                      {me.lesson_reminder_sms_opt_in && !hasPhoneNumber ? <p className="muted">Numero requis pour les rappels SMS.</p> : null}
+                    </article>
+                    <article className="item">
+                      <strong>Communications de l ecole</strong>
+                      <p className="muted">Information generale, nouveautes et alertes importantes.</p>
+                      <label className="client-switch-row"><span>Recevoir les emails de communication</span><span className={`client-switch ${me.email_opt_in ? "on" : ""}`} /></label>
+                      <label className="client-switch-row"><span>Recevoir les SMS de communication</span><span className={`client-switch ${me.sms_opt_in ? "on" : ""}`} /></label>
+                      {me.sms_opt_in && !hasPhoneNumber ? <p className="muted">Numero requis pour les SMS de communication.</p> : null}
+                    </article>
+                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Voir la messagerie</a>
+                  </div>
+                </details>
+
+                <details className="client-account-accordion card">
+                  <summary>Messages</summary>
+                  <div className="client-account-accordion-content">
+                    {messageRows.length === 0 ? (
+                      <p className="muted">Aucun message recent.</p>
+                    ) : (
+                      <div className="list client-mobile-list client-inbox-list">
+                        {messageRows.slice(0, 8).map((msg) => (
+                          <ListRow
+                            key={`account-message-${msg.id}`}
+                            title={msg.subject_preview || "Message"}
+                            subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} · ${msg.owner_display_name}`}
+                            right={<span className="badge">{msg.channel}</span>}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Historique complet</a>
                   </div>
                 </details>
 
@@ -2301,13 +2857,47 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               <Card className="client-account-desktop">
                 <h2>Preferences communication</h2>
+                <p className="muted">{communicationSummary}</p>
                 <div className="client-preferences-list">
-                  <p>{me.portal_contact_visible ? "✅" : "❌"} Afficher dans les contacts du portail</p>
-                  <p>{me.lesson_reminder_email_opt_in ? "✅" : "❌"} Envoyer des rappels par email</p>
-                  <p>{me.lesson_reminder_sms_opt_in ? "✅" : "❌"} Envoyer des rappels par SMS</p>
-                  <p>{me.email_opt_in ? "✅" : "❌"} Recevoir les communications email</p>
-                  <p>{me.sms_opt_in ? "✅" : "❌"} Recevoir les communications SMS</p>
+                  <article className="item">
+                    <strong>Confidentialite</strong>
+                    <label className="client-switch-row"><span>Afficher dans les contacts du portail etudiant</span><span className={`client-switch ${me.portal_contact_visible ? "on" : ""}`} /></label>
+                  </article>
+                  <article className="item">
+                    <strong>Rappels de cours</strong>
+                    <label className="client-switch-row"><span>Rappels de cours par email</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
+                    <label className="client-switch-row"><span>Rappels de cours par SMS</span><span className={`client-switch ${me.lesson_reminder_sms_opt_in ? "on" : ""}`} /></label>
+                  </article>
+                  <article className="item">
+                    <strong>Communications de l ecole</strong>
+                    <label className="client-switch-row"><span>Recevoir les emails de communication</span><span className={`client-switch ${me.email_opt_in ? "on" : ""}`} /></label>
+                    <label className="client-switch-row"><span>Recevoir les SMS de communication</span><span className={`client-switch ${me.sms_opt_in ? "on" : ""}`} /></label>
+                  </article>
                 </div>
+              </Card>
+
+              <Card className="client-account-desktop">
+                <div className="row spread">
+                  <h2>Messages</h2>
+                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
+                    Voir tout
+                  </a>
+                </div>
+                {messageRows.length === 0 ? (
+                  <p className="muted">Aucun message recent.</p>
+                ) : (
+                  <div className="list">
+                    {messageRows.slice(0, 6).map((msg) => (
+                      <article key={`desktop-account-message-${msg.id}`} className="item row spread">
+                        <div>
+                          <strong>{msg.subject_preview || "Message"}</strong>
+                          <p className="muted">{formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} · {msg.owner_display_name}</p>
+                        </div>
+                        <span className="badge">{msg.channel}</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </Card>
 
               <Card className="client-account-desktop">
@@ -2458,7 +3048,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         </section>
       </section>
 
-      <MobileTabs items={mobileTabLinks} activeId={tab} />
+        <MobileTabs items={mobileTabLinks} activeId={activeMobileTabId} />
     </main>
   );
 }

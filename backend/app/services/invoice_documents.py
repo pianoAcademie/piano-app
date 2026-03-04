@@ -691,6 +691,7 @@ def _company_identity(
     entity = _resolve_legal_entity(db, legal_entity_id=legal_entity_id)
     if entity is None:
         raise ValueError(f"Unknown legal entity id for invoice rendering: {legal_entity_id}")
+    legacy_identity = _legacy_company_identity_from_settings(db, billing_entity=billing_entity)
 
     address = (entity.address_text or "").strip()
     if address and entity.country_code:
@@ -704,9 +705,9 @@ def _company_identity(
         company_siret=(entity.siret or "").strip() or "-",
         company_vat_number=(entity.vat_number or "").strip() or "-",
         company_address=company_address,
-        company_logo_jpeg=None,
-        company_logo_width_px=None,
-        company_logo_height_px=None,
+        company_logo_jpeg=legacy_identity.company_logo_jpeg,
+        company_logo_width_px=legacy_identity.company_logo_width_px,
+        company_logo_height_px=legacy_identity.company_logo_height_px,
     )
 
 
