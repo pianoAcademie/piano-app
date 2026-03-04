@@ -1617,6 +1617,9 @@ def list_client_invoices(
         except ValueError:
             continue
         total_amount, currency_code = _first_currency_total(metadata)
+        invoice_status = _invoice_range_status_for_client(metadata.get("invoice_status"))
+        if invoice_status == "CANCELLED":
+            continue
         owner = users_by_id.get(note.user_id)
         owner_display_name = _display_name(owner) if owner is not None else str(note.user_id)
         invoices.append(
@@ -1627,7 +1630,7 @@ def list_client_invoices(
                 invoice_number=invoice_number,
                 issued_at=datetime.combine(issued_date, datetime.min.time(), tzinfo=timezone.utc),
                 source="INVOICE_RANGE",
-                status=_invoice_range_status_for_client(metadata.get("invoice_status")),
+                status=invoice_status,
                 label=_invoice_range_label(metadata),
                 total_incl_vat=total_amount,
                 currency=currency_code,
@@ -1643,7 +1646,7 @@ def list_client_invoices(
                 continue
 
         invoice_status = _invoice_status_from_payment_status(payment.status)
-        if invoice_status not in {"PAID", "CANCELLED"}:
+        if invoice_status != "PAID":
             continue
 
         raw_id = payment.id.split(":", maxsplit=1)[-1]

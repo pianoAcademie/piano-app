@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 import re
 import unicodedata
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import select
@@ -287,11 +288,13 @@ class _SimplePdfDocument:
 
     def __init__(self) -> None:
         self._pages: list[list[str]] = []
+        self._page_links: list[list[tuple[float, float, float, float, str]]] = []
         self._images: dict[str, tuple[bytes, int, int]] = {}
         self.new_page()
 
     def new_page(self) -> None:
         self._pages.append([])
+        self._page_links.append([])
 
     def _current_page(self) -> list[str]:
         return self._pages[-1]
@@ -371,6 +374,20 @@ class _SimplePdfDocument:
         fr, fg, fb = fill_color
         self._push(f"{prefix}{fr:.3f} {fg:.3f} {fb:.3f} rg {x:.2f} {y:.2f} {width:.2f} {height:.2f} re B")
 
+    def add_link(
+        self,
+        *,
+        x: float,
+        top_y: float,
+        width: float,
+        height: float,
+        url: str,
+    ) -> None:
+        normalized = _ascii_safe((url or "").strip())
+        if not normalized:
+            return
+        self._page_links[-1].append((x, top_y, width, height, normalized))
+
     def register_jpeg_image(self, *, image_bytes: bytes, width_px: int, height_px: int) -> str:
         image_name = f"Im{len(self._images) + 1}"
         self._images[image_name] = (image_bytes, max(1, width_px), max(1, height_px))
@@ -426,7 +443,7 @@ class _SimplePdfDocument:
             image_object_ids[image_name] = image_object_id
 
         page_ids: list[int] = []
-        for page_ops in self._pages:
+        for page_index, page_ops in enumerate(self._pages):
             content_id = next_id
             page_id = next_id + 1
             next_id += 2
@@ -438,10 +455,25 @@ class _SimplePdfDocument:
             if image_object_ids:
                 refs = " ".join(f"/{name} {obj_id} 0 R" for name, obj_id in image_object_ids.items())
                 xobject_resources = f" /XObject << {refs} >>".encode("ascii")
+            annotation_refs: list[str] = []
+            for x, top_y, width, height, url in (self._page_links[page_index] if page_index < len(self._page_links) else []):
+                annotation_id = next_id
+                next_id += 1
+                y_bottom = self._to_y(top_y + height)
+                y_top = self._to_y(top_y)
+                rect = f"{x:.2f} {y_bottom:.2f} {x + width:.2f} {y_top:.2f}"
+                safe_url = _pdf_escape(url)
+                object_map[annotation_id] = (
+                    f"<< /Type /Annot /Subtype /Link /Rect [{rect}] /Border [0 0 0] "
+                    f"/A << /S /URI /URI ({safe_url}) >> >>"
+                ).encode("ascii")
+                annotation_refs.append(f"{annotation_id} 0 R")
+            annotation_block = f" /Annots [{' '.join(annotation_refs)}]".encode("ascii") if annotation_refs else b""
             object_map[page_id] = (
                 b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
                 + b"/Resources << /Font << /F1 3 0 R /F2 4 0 R >>"
                 + xobject_resources
+                + annotation_block
                 + b" >> "
                 + f"/Contents {content_id} 0 R >>".encode("ascii")
             )
@@ -808,16 +840,15 @@ def render_invoice_period_pdf(
             color=(0.92, 0.93, 0.96),
         )
 
-        # Bloc societe emettrice
-        pdf.text(x=left, top_y=116.0, value="Societe emettrice", size=11, bold=True)
-        pdf.text(x=left, top_y=134.0, value=identity.company_name, size=10, bold=True)
-        pdf.text(x=left, top_y=150.0, value=f"SIREN: {identity.company_siren}", size=10)
-        pdf.text(x=left, top_y=166.0, value=f"SIRET: {identity.company_siret}", size=10)
-        pdf.text(x=left, top_y=182.0, value=f"TVA intracom: {identity.company_vat_number}", size=10)
-        pdf.text(x=left, top_y=198.0, value=f"Telephone: {identity.company_phone}", size=10)
-        pdf.text(x=left, top_y=214.0, value=f"Email: {identity.company_email}", size=10)
+        # Bloc identite emetteur
+        pdf.text(x=left, top_y=116.0, value=identity.company_name, size=10, bold=True)
+        pdf.text(x=left, top_y=132.0, value=f"SIREN: {identity.company_siren}", size=10)
+        pdf.text(x=left, top_y=148.0, value=f"SIRET: {identity.company_siret}", size=10)
+        pdf.text(x=left, top_y=164.0, value=f"TVA intracom: {identity.company_vat_number}", size=10)
+        pdf.text(x=left, top_y=180.0, value=f"Telephone: {identity.company_phone}", size=10)
+        pdf.text(x=left, top_y=196.0, value=f"Email: {identity.company_email}", size=10)
         for index, chunk in enumerate(_wrap_text(identity.company_address, 48)):
-            pdf.text(x=left, top_y=230.0 + (index * 14.0), value=chunk, size=10)
+            pdf.text(x=left, top_y=212.0 + (index * 14.0), value=chunk, size=10)
 
         # Bloc client facture
         billing_address = _ascii_safe((client_billing_address or "").strip()) or "-"
@@ -934,13 +965,20 @@ def render_invoice_period_pdf(
         set(totals_by_currency.keys()) | set(normalized_opening_balance_by_currency.keys()) | set(normalized_total_to_pay_by_currency.keys())
     )
     payment_link_text = _ascii_safe((payment_link_url or "").strip())
-    payment_link_lines = _wrap_text(payment_link_text, 88) if payment_link_text else []
+    payment_link_preview = ""
+    if payment_link_text:
+        parsed_link = urlsplit(payment_link_text)
+        if parsed_link.scheme and parsed_link.netloc:
+            truncated_path = _truncate_text(parsed_link.path or "/", 28)
+            payment_link_preview = f"{parsed_link.scheme}://{parsed_link.netloc}{truncated_path}"
+        else:
+            payment_link_preview = _truncate_text(payment_link_text, 64)
     reserved_adjustment_space = (len(normalized_adjustments) * 18.0) + 34.0 if normalized_adjustments else 0.0
     reserved_balance_space = 0.0
     if summary_currencies:
         reserved_balance_space = 24.0 + (len(summary_currencies) * 54.0)
-    if payment_link_lines:
-        reserved_balance_space += 16.0 + (len(payment_link_lines) * 12.0)
+    if payment_link_text:
+        reserved_balance_space += 52.0
     reserved_note_space = 80.0 if normalized_note else 0.0
     if current_row_top + 140 + reserved_adjustment_space + reserved_balance_space + reserved_note_space > 780:
         pdf.new_page()
@@ -1027,13 +1065,44 @@ def render_invoice_period_pdf(
             )
             current_row_top += 26.0
 
-    if payment_link_lines:
-        pdf.text(x=col_label_x, top_y=current_row_top, value="Payer en ligne", size=9, bold=True)
-        current_row_top += 12.0
-        for chunk in payment_link_lines:
-            pdf.text(x=col_label_x, top_y=current_row_top, value=chunk, size=9, color=(0.18, 0.59, 0.82))
+    if payment_link_text:
+        pdf.text(x=col_label_x, top_y=current_row_top, value="Paiement en ligne", size=9, bold=True)
+        current_row_top += 10.0
+        button_x = col_label_x
+        button_top = current_row_top
+        button_width = 118.0
+        button_height = 22.0
+        pdf.rect(
+            x=button_x,
+            top_y=button_top,
+            width=button_width,
+            height=button_height,
+            stroke_color=(0.83, 0.69, 0.22),
+            fill_color=(0.83, 0.69, 0.22),
+            stroke_width=0.8,
+        )
+        button_label = "Payer en ligne"
+        button_text_width = _text_width_estimate(button_label, size=9)
+        button_text_x = button_x + max(8.0, (button_width - button_text_width) / 2.0)
+        pdf.text(
+            x=button_text_x,
+            top_y=button_top + 14.0,
+            value=button_label,
+            size=9,
+            bold=True,
+            color=(0.11, 0.15, 0.24),
+        )
+        pdf.add_link(
+            x=button_x,
+            top_y=button_top,
+            width=button_width,
+            height=button_height,
+            url=payment_link_text,
+        )
+        current_row_top += button_height + 8.0
+        if payment_link_preview:
+            pdf.text(x=col_label_x, top_y=current_row_top, value=payment_link_preview, size=8, color=(0.18, 0.59, 0.82))
             current_row_top += 12.0
-        current_row_top += 6.0
 
     if normalized_adjustments:
         if current_row_top + 34.0 + (len(normalized_adjustments) * 18.0) + reserved_note_space > 780:

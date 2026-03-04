@@ -304,6 +304,10 @@ function financeStatusLabel(value: string): string {
   return statusLabel(value);
 }
 
+function isCancelledFinanceStatus(value: string): boolean {
+  return FINANCE_CANCELLED_STATUSES.has(normalizeStatus(value));
+}
+
 function statusMatchesFinanceFilter(statusValue: string, filter: FinanceStatusFilter): boolean {
   if (filter === "ALL") {
     return true;
@@ -1109,6 +1113,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .filter((row) => matchesFinanceAsOf(row.occurred_at, financeAsOfUtcEnd));
 
   const baseInvoiceRows = invoices
+    .filter((row) => !isCancelledFinanceStatus(row.status))
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
     .sort((a, b) => b.issued_at.localeCompare(a.issued_at));
   const invoiceRows = baseInvoiceRows
@@ -1512,7 +1517,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       <button type="submit" className="client-card-primary-action">Payer</button>
                                     </form>
                                   ) : null}
-                                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}>
+                                  <a
+                                    className="mode-link"
+                                    href={invoice.download_url || withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}
+                                    target={invoice.download_url ? "_blank" : undefined}
+                                    rel={invoice.download_url ? "noreferrer" : undefined}
+                                  >
                                     Ouvrir
                                   </a>
                                 </div>
@@ -1626,7 +1636,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             subline={invoice.label}
                             actions={
                               <div className="row client-home-due-actions">
-                                <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}>
+                                <a
+                                  className="mode-link"
+                                  href={invoice.download_url || withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}
+                                  target={invoice.download_url ? "_blank" : undefined}
+                                  rel={invoice.download_url ? "noreferrer" : undefined}
+                                >
                                   Ouvrir
                                 </a>
                                 {invoice.download_url ? (
@@ -2537,7 +2552,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               subtitle={`${formatDate(invoice.issued_at)} · ${toMoney(invoice.total_incl_vat, invoice.currency)}`}
                               right={
                                 <div className="row">
-                                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}>
+                                  <a
+                                    className="mode-link"
+                                    href={invoice.download_url || withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}
+                                    target={invoice.download_url ? "_blank" : undefined}
+                                    rel={invoice.download_url ? "noreferrer" : undefined}
+                                  >
                                     Ouvrir
                                   </a>
                                   {invoice.download_url ? (
@@ -2810,7 +2830,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             actions={
                               <div className="row client-finance-card-actions">
                                 {linkedInvoice ? (
-                                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: linkedInvoice.id })}>
+                                  <a
+                                    className="mode-link"
+                                    href={
+                                      linkedInvoice.download_url ||
+                                      withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: linkedInvoice.id })
+                                    }
+                                    target={linkedInvoice.download_url ? "_blank" : undefined}
+                                    rel={linkedInvoice.download_url ? "noreferrer" : undefined}
+                                  >
                                     Ouvrir facture
                                   </a>
                                 ) : null}
@@ -2854,7 +2882,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     <button type="submit" className="client-card-primary-action">Payer</button>
                                   </form>
                                 ) : (
-                                  <a className="mode-link client-card-primary-action" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: row.id })}>
+                                  <a
+                                    className="mode-link client-card-primary-action"
+                                    href={row.download_url || withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: row.id })}
+                                    target={row.download_url ? "_blank" : undefined}
+                                    rel={row.download_url ? "noreferrer" : undefined}
+                                  >
                                     Ouvrir
                                   </a>
                                 )}
