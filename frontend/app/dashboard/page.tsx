@@ -50,6 +50,8 @@ type DashboardTab = "home" | "planning" | "reservations" | "offers" | "finance" 
 type MessageScope = "LAST_3_MONTHS" | "CURRENT_YEAR" | "ALL";
 type TimeBucket = "ALL" | "MORNING" | "AFTERNOON" | "EVENING";
 type FinanceView = "transactions" | "invoices";
+type FinanceStatusFilter = "ALL" | "TO_PAY" | "PAID" | "CANCELLED" | "FAILED";
+type FinancePeriodFilter = "ALL" | "LAST_30_DAYS" | "LAST_90_DAYS" | "LAST_365_DAYS";
 
 type AgendaRange = {
   from: Date;
@@ -99,6 +101,10 @@ const SESSION_ACCENT_COLORS = [
   "#90be6d",
   "#7b9acc",
 ];
+const FINANCE_PAGE_SIZES = [20, 30] as const;
+const FINANCE_PENDING_STATUSES = new Set(["PENDING", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT"]);
+const FINANCE_CANCELLED_STATUSES = new Set(["CANCELLED", "CANCELED", "NOT_BILLABLE", "REFUNDED"]);
+const FINANCE_FAILED_STATUSES = new Set(["FAILED", "ERROR", "DECLINED", "NETWORK_ERROR", "UNEXPECTED_ERROR"]);
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -168,6 +174,36 @@ function parseFinanceView(value: string): FinanceView {
     return "invoices";
   }
   return "transactions";
+}
+
+function parseFinanceStatusFilter(value: string): FinanceStatusFilter {
+  if (value === "TO_PAY" || value === "PAID" || value === "CANCELLED" || value === "FAILED") {
+    return value;
+  }
+  return "ALL";
+}
+
+function parseFinancePeriodFilter(value: string): FinancePeriodFilter {
+  if (value === "LAST_30_DAYS" || value === "LAST_90_DAYS" || value === "LAST_365_DAYS") {
+    return value;
+  }
+  return "ALL";
+}
+
+function parsePositiveInt(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function parseFinancePageSize(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (FINANCE_PAGE_SIZES.includes(parsed as (typeof FINANCE_PAGE_SIZES)[number])) {
+    return parsed;
+  }
+  return FINANCE_PAGE_SIZES[0];
 }
 
 function normalizeStatus(value: string): string {
@@ -242,6 +278,70 @@ function statusLabel(value: string): string {
     return "EN ATTENTE";
   }
   return normalized || "-";
+}
+
+function financeStatusLabel(value: string): string {
+  const normalized = normalizeStatus(value);
+  if (normalized === "PAID") {
+    return "Payee";
+  }
+  if (FINANCE_PENDING_STATUSES.has(normalized)) {
+    return "A payer";
+  }
+  if (FINANCE_CANCELLED_STATUSES.has(normalized)) {
+    return "Annulee";
+  }
+  if (FINANCE_FAILED_STATUSES.has(normalized)) {
+    return "Echouee";
+  }
+  return statusLabel(value);
+}
+
+function statusMatchesFinanceFilter(statusValue: string, filter: FinanceStatusFilter): boolean {
+  if (filter === "ALL") {
+    return true;
+  }
+  const normalized = normalizeStatus(statusValue);
+  if (filter === "TO_PAY") {
+    return FINANCE_PENDING_STATUSES.has(normalized);
+  }
+  if (filter === "PAID") {
+    return normalized === "PAID";
+  }
+  if (filter === "CANCELLED") {
+    return FINANCE_CANCELLED_STATUSES.has(normalized);
+  }
+  return FINANCE_FAILED_STATUSES.has(normalized);
+}
+
+function matchesFinancePeriod(dateValue: string, period: FinancePeriodFilter, now: Date): boolean {
+  if (period === "ALL") {
+    return true;
+  }
+  const rowDate = safeDate(dateValue);
+  if (!rowDate) {
+    return false;
+  }
+  const days = period === "LAST_30_DAYS" ? 30 : period === "LAST_90_DAYS" ? 90 : 365;
+  const minTime = now.getTime() - days * 24 * 60 * 60 * 1000;
+  return rowDate.getTime() >= minTime;
+}
+
+function financePeriodLabel(period: FinancePeriodFilter): string {
+  if (period === "LAST_30_DAYS") {
+    return "30j";
+  }
+  if (period === "LAST_90_DAYS") {
+    return "90j";
+  }
+  if (period === "LAST_365_DAYS") {
+    return "1 an";
+  }
+  return "Toutes periodes";
+}
+
+function canPayNowForPayment(row: ClientPaymentOut): boolean {
+  return normalizeStatus(row.source) === "PLAN_PURCHASE" && FINANCE_PENDING_STATUSES.has(normalizeStatus(row.status));
 }
 
 function sourceLabel(value: string): string {
@@ -674,7 +774,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedOfferDetailId = readParam(searchParams, "offer_detail_id");
   const messageScope = parseMessageScope(readParam(searchParams, "message_scope"));
   const financeSourceFilter = readParam(searchParams, "finance_source") || "ALL";
+  const financeStatusFilter = parseFinanceStatusFilter(readParam(searchParams, "finance_status"));
+  const financePeriodFilter = parseFinancePeriodFilter(readParam(searchParams, "finance_period"));
   const financeView = parseFinanceView(readParam(searchParams, "finance_view"));
+  const financePageSize = parseFinancePageSize(readParam(searchParams, "finance_page_size"));
+  const financePageRaw = parsePositiveInt(readParam(searchParams, "finance_page"), 1);
   const selectedInvoiceId = readParam(searchParams, "invoice_id").trim();
   const paymentSourceParam = normalizeStatus(readParam(searchParams, "source"));
   const paymentIdParam = readParam(searchParams, "payment_id").trim();
@@ -964,20 +1068,40 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
     .sort((a, b) => (a.sent_at || a.scheduled_for_utc).localeCompare(b.sent_at || b.scheduled_for_utc));
 
-  const paymentRows = payments
+  const basePaymentRows = payments
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
-    .filter((row) => financeSourceFilter === "ALL" || normalizeStatus(row.source) === normalizeStatus(financeSourceFilter));
+    .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
+  const paymentRows = basePaymentRows
+    .filter((row) => financeSourceFilter === "ALL" || normalizeStatus(row.source) === normalizeStatus(financeSourceFilter))
+    .filter((row) => statusMatchesFinanceFilter(row.status, financeStatusFilter))
+    .filter((row) => matchesFinancePeriod(row.occurred_at, financePeriodFilter, now));
 
-  const invoiceRows = invoices
+  const baseInvoiceRows = invoices
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
     .sort((a, b) => b.issued_at.localeCompare(a.issued_at));
+  const invoiceRows = baseInvoiceRows
+    .filter((row) => statusMatchesFinanceFilter(row.status, financeStatusFilter))
+    .filter((row) => matchesFinancePeriod(row.issued_at, financePeriodFilter, now));
   const invoiceByPaymentId = new Map<string, ClientInvoiceOut>();
-  for (const invoice of invoiceRows) {
+  for (const invoice of baseInvoiceRows) {
     const paymentId = invoice.id.startsWith("invoice:") ? invoice.id.slice("invoice:".length) : invoice.id;
     invoiceByPaymentId.set(paymentId, invoice);
   }
+  const paymentByInvoiceId = new Map<string, ClientPaymentOut>();
+  for (const row of basePaymentRows) {
+    const linkedInvoice = invoiceByPaymentId.get(row.id);
+    if (linkedInvoice) {
+      paymentByInvoiceId.set(linkedInvoice.id, row);
+    }
+  }
+  const financeTotalRows = financeView === "transactions" ? paymentRows.length : invoiceRows.length;
+  const financePageCount = Math.max(1, Math.ceil(financeTotalRows / financePageSize));
+  const financePage = Math.min(financePageRaw, financePageCount);
+  const financeOffset = (financePage - 1) * financePageSize;
+  const pagedPaymentRows = paymentRows.slice(financeOffset, financeOffset + financePageSize);
+  const pagedInvoiceRows = invoiceRows.slice(financeOffset, financeOffset + financePageSize);
   const selectedInvoice = selectedInvoiceId
-    ? invoiceRows.find((row) => row.id === selectedInvoiceId || row.id === `invoice:${selectedInvoiceId}`) ?? null
+    ? baseInvoiceRows.find((row) => row.id === selectedInvoiceId || row.id === `invoice:${selectedInvoiceId}`) ?? null
     : null;
 
   const subscriptions = family
@@ -1130,6 +1254,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   const allBookingStatuses = Array.from(new Set(allBookings.map((row) => normalizeStatus(row.status)))).sort();
   const allPaymentSources = Array.from(new Set(payments.map((row) => normalizeStatus(row.source)))).sort();
+  const visibleFinanceStatusOptions: Array<{ value: FinanceStatusFilter; label: string }> = [
+    { value: "ALL", label: "Tous statuts" },
+    { value: "TO_PAY", label: "A payer" },
+    { value: "PAID", label: "Payee" },
+    { value: "CANCELLED", label: "Annulee" },
+    { value: "FAILED", label: "Echouee" },
+  ];
 
   const totalCreditsByMember = new Map<string, number>();
   const positivePackSubscriptions = subscriptions.filter(
@@ -1143,17 +1274,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
   const membersWithPositiveCredits = members.filter((member) => (totalCreditsByMember.get(member.id) ?? 0) > 0);
 
-  const totalByCurrency = new Map<string, number>();
-  for (const row of paymentRows) {
-    const currency = (row.currency || "EUR").toUpperCase();
-    totalByCurrency.set(currency, (totalByCurrency.get(currency) ?? 0) + Number(row.total_incl_vat || "0"));
-  }
   const paidTotal = paymentRows
     .filter((row) => normalizeStatus(row.status) === "PAID")
     .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
   const pendingTotal = paymentRows
     .filter((row) => normalizeStatus(row.status) !== "PAID")
     .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
+  const payableRows = paymentRows.filter((row) => canPayNowForPayment(row));
+  const primaryPayableRow = payableRows[0] ?? null;
+  const financeSummaryTotals: Array<{ label: string; value: string; tone: "default" | "ok" | "warn" }> = [
+    { label: "A payer", value: toMoney(String(pendingTotal), me.preferred_currency), tone: pendingTotal > 0 ? "warn" : "default" },
+    { label: "Paye", value: toMoney(String(paidTotal), me.preferred_currency), tone: "ok" },
+    { label: "Solde", value: toMoney(String(Math.max(0, paidTotal - pendingTotal)), me.preferred_currency), tone: "default" },
+  ];
 
   const timezoneOptions = TIMEZONE_OPTIONS.some((item) => item.value === timezone)
     ? TIMEZONE_OPTIONS
@@ -2302,82 +2435,156 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
           {tab === "finance" ? (
             <>
-              <Card>
-                <div className="row spread">
-                  <h2>Finance</h2>
-                  <div className="row">
-                    {[...totalByCurrency.entries()].map(([currency, total]) => (
-                      <span key={currency} className="badge">
-                        {currency}: {toMoney(String(total), currency)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <section className="client-stats-grid">
-                  <StatCard title="A payer" value={toMoney(String(pendingTotal), me.preferred_currency)} subtitle="Montant en attente" />
-                  <StatCard title="Paye" value={toMoney(String(paidTotal), me.preferred_currency)} subtitle="Reglements confirms" />
-                  <StatCard
-                    title="Solde / credit"
-                    value={toMoney(String(Math.max(0, paidTotal - pendingTotal)), me.preferred_currency)}
-                    subtitle="Difference paye - a payer"
-                  />
-                </section>
-
-                <div className="row client-finance-subtabs">
-                  <a
-                    className={`mode-link ${financeView === "transactions" ? "active" : ""}`}
-                    href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", invoice_id: null })}
-                  >
-                    Transactions
-                  </a>
-                  <a
-                    className={`mode-link ${financeView === "invoices" ? "active" : ""}`}
-                    href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices" })}
-                  >
-                    Factures
-                  </a>
+              <Card className="client-finance-shell">
+                <div className="client-finance-summarybar">
+                  {financeSummaryTotals.map((item) => (
+                    <StatChip key={item.label} label={item.label} value={item.value} tone={item.tone} />
+                  ))}
+                  {pendingTotal > 0 ? (
+                    <div className="client-finance-top-pay">
+                      {primaryPayableRow ? (
+                        <form action={openClientPaymentCheckoutAction}>
+                          <input type="hidden" name="payment_id" value={primaryPayableRow.id} />
+                          <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })} />
+                          <button type="submit" className="client-pay-cta">
+                            Payer {toMoney(primaryPayableRow.total_incl_vat, primaryPayableRow.currency)}
+                          </button>
+                        </form>
+                      ) : (
+                        <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
+                          Payer {toMoney(String(pendingTotal), me.preferred_currency)}
+                        </a>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
 
-                <form method="get" className="client-filter-grid">
-                  <input type="hidden" name="tab" value="finance" />
-                  <input type="hidden" name="finance_view" value={financeView} />
-                  <label>
-                    Membre
-                    <select name="member_id" defaultValue={selectedMemberFilter}>
-                      <option value="ALL">Tous les membres</option>
-                      {members.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          {member.display_name}
-                        </option>
-                      ))}
-                    </select>
-                </label>
-                  {financeView === "transactions" ? (
-                    <label>
-                      Type
-                      <select name="finance_source" defaultValue={financeSourceFilter}>
-                        <option value="ALL">Toutes</option>
-                        {allPaymentSources.map((source) => (
-                          <option key={source} value={source}>
-                            {sourceLabel(source)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : (
-                    <input type="hidden" name="finance_source" value={financeSourceFilter} />
-                  )}
-                  <div className="row">
-                    <button type="submit">🔎</button>
-                    <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: financeView, member_id: null, finance_source: "ALL", invoice_id: null })}>
-                      ↺
+                <div className="client-finance-toolbar">
+                  <div className="client-finance-tab-scroll">
+                    <a
+                      className={`mode-link ${financeView === "transactions" ? "active" : ""}`}
+                      href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", invoice_id: null, finance_page: "1" })}
+                    >
+                      Transactions
+                    </a>
+                    <a
+                      className={`mode-link ${financeView === "invoices" ? "active" : ""}`}
+                      href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_page: "1" })}
+                    >
+                      Factures
                     </a>
                   </div>
-                </form>
+
+                  <DrawerFilters title="Filtres" className="client-finance-drawer">
+                    <form method="get" className="client-finance-drawer-form">
+                      <input type="hidden" name="tab" value="finance" />
+                      <input type="hidden" name="finance_view" value={financeView} />
+                      <input type="hidden" name="invoice_id" value="" />
+                      <input type="hidden" name="finance_page" value="1" />
+                      <label>
+                        Membre
+                        <select name="member_id" defaultValue={selectedMemberFilter}>
+                          <option value="ALL">Tous les membres</option>
+                          {members.map((member) => (
+                            <option key={member.id} value={member.id}>
+                              {member.display_name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Statut
+                        <select name="finance_status" defaultValue={financeStatusFilter}>
+                          {visibleFinanceStatusOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Periode
+                        <select name="finance_period" defaultValue={financePeriodFilter}>
+                          <option value="ALL">Toutes periodes</option>
+                          <option value="LAST_30_DAYS">30 derniers jours</option>
+                          <option value="LAST_90_DAYS">3 derniers mois</option>
+                          <option value="LAST_365_DAYS">Derniere annee</option>
+                        </select>
+                      </label>
+                      <label>
+                        Lignes / page
+                        <select name="finance_page_size" defaultValue={String(financePageSize)}>
+                          {FINANCE_PAGE_SIZES.map((size) => (
+                            <option key={size} value={size}>
+                              {size}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {financeView === "transactions" ? (
+                        <label>
+                          Type
+                          <select name="finance_source" defaultValue={financeSourceFilter}>
+                            <option value="ALL">Tous types</option>
+                            {allPaymentSources.map((source) => (
+                              <option key={source} value={source}>
+                                {sourceLabel(source)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <input type="hidden" name="finance_source" value={financeSourceFilter} />
+                      )}
+                      <div className="row client-finance-drawer-actions">
+                        <button type="submit">Appliquer</button>
+                        <a
+                          className="reset-link"
+                          href={withUpdatedQuery(rawParams, {
+                            tab: "finance",
+                            finance_view: financeView,
+                            member_id: null,
+                            finance_source: "ALL",
+                            finance_status: "ALL",
+                            finance_period: "ALL",
+                            finance_page: "1",
+                            invoice_id: null,
+                          })}
+                        >
+                          Reinitialiser
+                        </a>
+                      </div>
+                    </form>
+                  </DrawerFilters>
+                </div>
+
+                <div className="client-chip-row client-member-chips client-finance-member-chips">
+                  <a
+                    className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`}
+                    href={withUpdatedQuery(rawParams, { tab: "finance", member_id: "ALL", finance_page: "1", invoice_id: null })}
+                  >
+                    Tous
+                  </a>
+                  {members.map((member) => (
+                    <a
+                      key={`finance-member-${member.id}`}
+                      className={`badge ${selectedMemberFilter === member.id ? "active" : ""}`}
+                      href={withUpdatedQuery(rawParams, { tab: "finance", member_id: member.id, finance_page: "1", invoice_id: null })}
+                    >
+                      {member.display_name}
+                    </a>
+                  ))}
+                </div>
+
+                <div className="client-chip-row client-finance-active-filters">
+                  {financeStatusFilter !== "ALL" ? <span className="badge">Statut: {visibleFinanceStatusOptions.find((item) => item.value === financeStatusFilter)?.label}</span> : null}
+                  {financePeriodFilter !== "ALL" ? <span className="badge">Periode: {financePeriodLabel(financePeriodFilter)}</span> : null}
+                  {financeView === "transactions" && financeSourceFilter !== "ALL" ? <span className="badge">Type: {sourceLabel(financeSourceFilter)}</span> : null}
+                </div>
               </Card>
 
               {financeView === "transactions" ? (
-                <Card>
+                <Card className="client-finance-list-card">
                   <div className="row spread">
                     <h3>Transactions</h3>
                     <span className="badge">{paymentRows.length}</span>
@@ -2385,115 +2592,50 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   {paymentRows.length === 0 ? (
                     <p className="muted">Aucune transaction sur cette selection.</p>
                   ) : (
-                  <>
-                  <div className="table-wrap client-desktop-table">
-                    <table className="data-table client-data-table">
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Membre</th>
-                          <th>Type</th>
-                          <th>Libelle</th>
-                          <th>Statut</th>
-                          <th>Total</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {paymentRows.map((row) => {
-                          const normalizedSource = normalizeStatus(row.source);
-                          const normalizedStatus = normalizeStatus(row.status);
-                          const canPayNow =
-                            normalizedSource === "PLAN_PURCHASE" &&
-                            (normalizedStatus === "PENDING" ||
-                              normalizedStatus === "OPEN" ||
-                              normalizedStatus === "CREATED" ||
-                              normalizedStatus === "PROCESSING" ||
-                              normalizedStatus === "WAITING_PAYMENT" ||
-                              normalizedStatus === "FAILED");
-
-                          return (
-                            <tr key={row.id}>
-                              <td>{formatDateTime(row.occurred_at)}</td>
-                              <td>{row.owner_display_name}</td>
-                              <td><span className="badge">{sourceLabel(row.source)}</span></td>
-                              <td>{row.label}</td>
-                              <td>
-                                <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
-                              </td>
-                              <td>{toMoney(row.total_incl_vat, row.currency)}</td>
-                              <td>
-                                {invoiceByPaymentId.get(row.id) ? (
-                                  <a
-                                    className="mode-link"
-                                    href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoiceByPaymentId.get(row.id)?.id ?? null })}
-                                  >
-                                    Ouvrir facture
-                                  </a>
-                                ) : null}
-                                {canPayNow ? (
-                                  <form action={openClientPaymentCheckoutAction}>
-                                    <input type="hidden" name="payment_id" value={row.id} />
-                                    <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })} />
-                                    <button type="submit">Payer maintenant</button>
-                                  </form>
-                                ) : !invoiceByPaymentId.get(row.id) ? (
-                                  <span className="muted">-</span>
-                                ) : null}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="list client-mobile-list">
-                    {paymentRows.map((row) => {
-                      const normalizedSource = normalizeStatus(row.source);
-                      const normalizedStatus = normalizeStatus(row.status);
-                      const canPayNow =
-                        normalizedSource === "PLAN_PURCHASE" &&
-                        (normalizedStatus === "PENDING" ||
-                          normalizedStatus === "OPEN" ||
-                          normalizedStatus === "CREATED" ||
-                          normalizedStatus === "PROCESSING" ||
-                          normalizedStatus === "WAITING_PAYMENT" ||
-                          normalizedStatus === "FAILED");
-                      return (
-                        <article key={`${row.id}-mobile`} className="item client-mobile-card">
-                          <div className="row spread">
-                            <strong>{toMoney(row.total_incl_vat, row.currency)}</strong>
-                            <span className="badge">{sourceLabel(row.source)}</span>
-                          </div>
-                          <p className="muted">{row.label}</p>
-                          <p className="muted">
-                            {formatDateTime(row.occurred_at)} | {row.owner_display_name}
-                          </p>
-                          <p className="muted">Statut: {statusLabel(row.status)}</p>
-                          {invoiceByPaymentId.get(row.id) ? (
-                            <a
-                              className="mode-link"
-                              href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoiceByPaymentId.get(row.id)?.id ?? null })}
-                            >
-                              Ouvrir facture
-                            </a>
-                          ) : null}
-                          {canPayNow ? (
-                            <form action={openClientPaymentCheckoutAction}>
-                              <input type="hidden" name="payment_id" value={row.id} />
-                              <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })} />
-                              <button type="submit">Payer maintenant</button>
-                            </form>
-                          ) : null}
-                        </article>
-                      );
-                    })}
-                  </div>
-                  </>
-                )}
+                    <div className="list client-finance-list">
+                      {pagedPaymentRows.map((row) => {
+                        const linkedInvoice = invoiceByPaymentId.get(row.id);
+                        const canPayNow = canPayNowForPayment(row);
+                        return (
+                          <article key={`tx-${row.id}`} className="item client-finance-card">
+                            <div className="row spread client-finance-card-head">
+                              <strong>{toMoney(row.total_incl_vat, row.currency)}</strong>
+                              <div className="row client-finance-badge-row">
+                                <span className="badge">{sourceLabel(row.source)}</span>
+                                <span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status)}</span>
+                              </div>
+                            </div>
+                            <p className="client-finance-card-meta">
+                              {formatDateTime(row.occurred_at)} · {row.owner_display_name}
+                            </p>
+                            <p className="client-finance-card-label" title={row.label}>
+                              {row.label}
+                            </p>
+                            <div className="row client-finance-card-actions">
+                              {linkedInvoice ? (
+                                <a
+                                  className="mode-link"
+                                  href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: linkedInvoice.id })}
+                                >
+                                  Ouvrir facture
+                                </a>
+                              ) : null}
+                              {canPayNow ? (
+                                <form action={openClientPaymentCheckoutAction}>
+                                  <input type="hidden" name="payment_id" value={row.id} />
+                                  <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })} />
+                                  <button type="submit">Payer</button>
+                                </form>
+                              ) : null}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
                 </Card>
               ) : (
-                <Card>
+                <Card className="client-finance-list-card">
                   <div className="row spread">
                     <h3>Factures</h3>
                     <span className="badge">{invoiceRows.length}</span>
@@ -2501,83 +2643,51 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   {invoiceRows.length === 0 ? (
                     <p className="muted">Aucune facture.</p>
                   ) : (
-                  <>
-                  <div className="table-wrap client-desktop-table">
-                    <table className="data-table client-data-table">
-                      <thead>
-                        <tr>
-                          <th>Numero</th>
-                          <th>Date</th>
-                          <th>Membre</th>
-                          <th>Objet</th>
-                          <th>Statut</th>
-                          <th>Total</th>
-                          <th>Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {invoiceRows.map((row) => (
-                          <tr key={row.id}>
-                            <td>{row.invoice_number}</td>
-                            <td>{formatDateTime(row.issued_at)}</td>
-                            <td>{row.owner_display_name}</td>
-                            <td>{row.label}</td>
-                            <td>
-                              <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
-                            </td>
-                            <td>{toMoney(row.total_incl_vat, row.currency)}</td>
-                            <td>
-                              <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: row.id })}>
-                                Ouvrir
-                              </a>
+                    <div className="list client-finance-list">
+                      {pagedInvoiceRows.map((row) => {
+                        const linkedPayment = paymentByInvoiceId.get(row.id);
+                        const canPayInvoice = linkedPayment ? canPayNowForPayment(linkedPayment) : false;
+                        return (
+                          <article key={`inv-${row.id}`} className="item client-finance-card">
+                            <div className="row spread client-finance-card-head">
+                              <strong title={row.invoice_number}>{compactId(row.invoice_number)}</strong>
+                              <span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status)}</span>
+                            </div>
+                            <p className="client-finance-card-meta" title={`${toMoney(row.total_incl_vat, row.currency)} · ${formatDate(row.issued_at)} · ${row.owner_display_name}`}>
+                              {toMoney(row.total_incl_vat, row.currency)} · {formatDate(row.issued_at)} · {row.owner_display_name}
+                            </p>
+                            <p className="client-finance-card-label" title={row.label}>
+                              {row.label}
+                            </p>
+                            <div className="row client-finance-card-actions">
+                              {canPayInvoice && linkedPayment ? (
+                                <form action={openClientPaymentCheckoutAction}>
+                                  <input type="hidden" name="payment_id" value={linkedPayment.id} />
+                                  <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices" })} />
+                                  <button type="submit" className="client-card-primary-action">Payer</button>
+                                </form>
+                              ) : (
+                                <a className="mode-link client-card-primary-action" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: row.id })}>
+                                  Ouvrir
+                                </a>
+                              )}
                               {row.download_url ? (
                                 <a className="mode-link" href={row.download_url}>
-                                  Telecharger
+                                  Télécharger
                                 </a>
-                              ) : (
-                                <span className="muted">-</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="list client-mobile-list">
-                    {invoiceRows.map((row) => (
-                      <article key={`${row.id}-mobile`} className="item client-mobile-card">
-                        <div className="row spread">
-                          <strong>{row.invoice_number}</strong>
-                          <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
-                        </div>
-                        <p className="muted">{row.label}</p>
-                        <p className="muted">
-                          {formatDateTime(row.issued_at)} | {row.owner_display_name}
-                        </p>
-                        <div className="row spread">
-                          <strong>{toMoney(row.total_incl_vat, row.currency)}</strong>
-                          <div className="row">
-                            <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: row.id })}>
-                              Ouvrir
-                            </a>
-                            {row.download_url ? (
-                              <a className="mode-link" href={row.download_url}>
-                                Telecharger
-                              </a>
-                            ) : null}
-                          </div>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                  </>
+                              ) : null}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
                   )}
 
                   {selectedInvoice ? (
                     <article className="item client-invoice-viewer">
                       <div className="row spread">
                         <h4>{selectedInvoice.invoice_number}</h4>
-                        <span className={`status-pill ${statusClass(selectedInvoice.status)}`}>{statusLabel(selectedInvoice.status)}</span>
+                        <span className={`status-pill ${statusClass(selectedInvoice.status)}`}>{financeStatusLabel(selectedInvoice.status)}</span>
                       </div>
                       <p className="muted">{selectedInvoice.label}</p>
                       <p className="muted">
@@ -2586,14 +2696,69 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <p>
                         <strong>{toMoney(selectedInvoice.total_incl_vat, selectedInvoice.currency)}</strong>
                       </p>
-                      <div className="row">
-                        {selectedInvoice.download_url ? <a className="mode-link" href={selectedInvoice.download_url}>Telecharger PDF</a> : null}
+                      <div className="row client-invoice-viewer-actions">
+                        <CopyIdButton value={selectedInvoice.invoice_number} label="Copier numero" />
+                        {selectedInvoice.download_url ? <a className="mode-link" href={selectedInvoice.download_url}>Télécharger PDF</a> : null}
                         <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: null })}>Fermer</a>
                       </div>
                     </article>
                   ) : null}
                 </Card>
               )}
+
+              {financeTotalRows > financePageSize ? (
+                <Card className="client-finance-pagination-card">
+                  <div className="row spread">
+                    <p className="muted">
+                      Page {financePage}/{financePageCount} · {financeTotalRows} ligne(s)
+                    </p>
+                    <div className="row client-finance-pagination-actions">
+                      {financePage > 1 ? (
+                        <a
+                          className="mode-link"
+                          href={withUpdatedQuery(rawParams, { tab: "finance", finance_page: String(financePage - 1), invoice_id: null })}
+                        >
+                          Precedent
+                        </a>
+                      ) : (
+                        <span className="mode-link disabled" aria-disabled="true">
+                          Precedent
+                        </span>
+                      )}
+                      {financePage < financePageCount ? (
+                        <a
+                          className="mode-link"
+                          href={withUpdatedQuery(rawParams, { tab: "finance", finance_page: String(financePage + 1), invoice_id: null })}
+                        >
+                          Suivant
+                        </a>
+                      ) : (
+                        <span className="mode-link disabled" aria-disabled="true">
+                          Suivant
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              ) : null}
+
+              {pendingTotal > 0 ? (
+                <div className="client-finance-sticky-pay">
+                  {primaryPayableRow ? (
+                    <form action={openClientPaymentCheckoutAction}>
+                      <input type="hidden" name="payment_id" value={primaryPayableRow.id} />
+                      <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })} />
+                      <button type="submit" className="client-pay-cta">
+                        Payer {toMoney(primaryPayableRow.total_incl_vat, primaryPayableRow.currency)}
+                      </button>
+                    </form>
+                  ) : (
+                    <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
+                      Payer {toMoney(String(pendingTotal), me.preferred_currency)}
+                    </a>
+                  )}
+                </div>
+              ) : null}
             </>
           ) : null}
 
