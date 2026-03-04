@@ -22,6 +22,7 @@ import RichMessageEditor from "../../components/rich-message-editor";
 import SearchMultiSelect from "../../components/search-multi-select";
 import SessionTimeFields from "../../components/session-time-fields";
 import SessionVisibilityFields from "../../components/session-visibility-fields";
+import ModalA11yFrame from "../../components/modal-a11y-frame";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
 import type {
@@ -419,6 +420,46 @@ function statusClass(status: string): string {
     return "status-completed";
   }
   return "status-scheduled";
+}
+
+function bookingEnrollmentLabel(status: string): string {
+  if (status === "WAITLISTED") {
+    return "Liste attente";
+  }
+  if (status === "BOOKED") {
+    return "Inscrit";
+  }
+  if (status === "CANCELLED") {
+    return "Annule";
+  }
+  return "Inscrit";
+}
+
+function bookingPresenceLabel(status: string): string | null {
+  if (status === "ATTENDED") {
+    return "Present";
+  }
+  if (status === "NO_SHOW") {
+    return "Absent";
+  }
+  if (status === "EXCUSED_ABSENCE") {
+    return "Abs. excusee";
+  }
+  return null;
+}
+
+function sessionTypeLabel(session: AdminSessionOut, locationLabel: string): string {
+  const lowerLocation = locationLabel.toLowerCase();
+  if (lowerLocation.includes("online") || lowerLocation.includes("ligne")) {
+    return "Online";
+  }
+  if (lowerLocation.includes("domicile")) {
+    return "Domicile";
+  }
+  if (session.is_private) {
+    return "Prive";
+  }
+  return "Collectif";
 }
 
 function isBookingRemovable(session: AdminSessionOut, booking: AdminSessionBookingOut): boolean {
@@ -925,6 +966,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       ? `${selectedProfessorDetail.first_name} ${selectedProfessorDetail.last_name}`.trim()
       : "Professeur non defini"
     : "";
+  const selectedSessionTypeName = selectedSession ? sessionTypeLabel(selectedSession, selectedLocationName) : "";
+  const selectedSessionHeaderTitle = selectedSession ? `${selectedCourseTypeName} - ${selectedLocationName}` : "";
+  const selectedSessionSubtitle = selectedSession
+    ? `${formatDate(selectedSession.start_at_utc)} · ${sessionTimeRangeLabel(selectedSession)} · ${selectedSession.timezone}`
+    : "";
   const timezoneOptionValues = new Set(PLANNING_TIMEZONES.map((option) => option.value));
   const timezoneOptions = timezoneOptionValues.has(timezone)
     ? PLANNING_TIMEZONES
@@ -1379,238 +1425,247 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       />
 
       {selectedSession && !editSessionOpen ? (
-        <section className="modal-overlay">
-          <article className="modal-panel">
-            <a className="modal-close-x" href={baseHref} aria-label="Fermer">
-              ×
-            </a>
-            <h2 className="modal-title">{selectedSession.title}</h2>
+        <ModalA11yFrame className="modal-overlay session-slot-overlay" closeHref={baseHref} label="Detail du creneau">
+          <article className="modal-panel session-slot-modal">
+            <header className="session-slot-header">
+              <div className="session-slot-header-main">
+                <h2 className="modal-title session-slot-title">{selectedSessionHeaderTitle}</h2>
+                <p className="muted session-slot-subtitle">{selectedSessionSubtitle}</p>
+              </div>
+              <div className="session-slot-header-actions">
+                <span className={`status-badge ${statusClass(selectedSession.status)}`}>{selectedSession.status_label}</span>
+                <details className="session-slot-overflow-menu">
+                  <summary aria-label="Plus d options">⋯</summary>
+                  <div className="session-slot-overflow-panel">
+                    <p className="muted">Actions</p>
+                    <a className="mode-link" href={attendanceModalHref}>
+                      Prendre les presences
+                    </a>
+                    <a className="mode-link" href={groupNotesModalHref}>
+                      Note de groupe
+                    </a>
+                    <a className="mode-link" href={sessionEmailModalHref}>
+                      Envoyer email
+                    </a>
+                    <a className="mode-link" href={sessionSmsModalHref}>
+                      Envoyer SMS
+                    </a>
+                    <a className="mode-link" href={duplicateModalHref}>
+                      Dupliquer
+                    </a>
+                    <a className="danger-link" href={deleteConfirmHref}>
+                      Supprimer le creneau
+                    </a>
+                    <hr />
+                    <p className="muted">Infos</p>
+                    <span className="badge">Professeur: {selectedProfessorName}</span>
+                    <span className="badge">{selectedSession.allow_online_booking ? "Reservation en ligne: oui" : "Reservation en ligne: non"}</span>
+                    {selectedSession.is_private ? <span className="badge">Prive</span> : null}
+                  </div>
+                </details>
+                <a className="modal-close-x session-slot-close" href={baseHref} aria-label="Fermer">
+                  ×
+                </a>
+              </div>
+            </header>
 
             {okMessage ? <section className="flash-ok modal-flash">{okMessage}</section> : null}
             {errorMessage ? <section className="flash-err modal-flash">{errorMessage}</section> : null}
 
-            <p className="muted">
-              {formatDate(selectedSession.start_at_utc)} | {sessionTimeRangeLabel(selectedSession)} | Statut: {selectedSession.status_label}
-            </p>
-            <div className="row">
+            <div className="session-slot-badges">
               <span className={`occ-badge ${occupancyClass(selectedSession.booked_count, selectedSession.capacity_max)}`}>
                 {selectedSession.booked_count}/{selectedSession.capacity_max}
               </span>
-              <span className={`status-badge ${statusClass(selectedSession.status)}`}>{selectedSession.status_label}</span>
-              {selectedSession.recurrence_group_id ? <span className="badge">Serie recurrente</span> : null}
-              {selectedSession.is_private ? <span className="status-badge status-private">PRIVE</span> : null}
-              {!selectedSession.is_private ? (
-                <span className="badge">{selectedSession.allow_online_booking ? "Reservation en ligne: oui" : "Reservation en ligne: non"}</span>
-              ) : null}
+              <span className="badge">{selectedSessionTypeName}</span>
+              <span className="badge">{recurrenceLabel(selectedSession)}</span>
             </div>
-            <p className="muted session-summary-line">
-              <span className="meta-icon" aria-hidden="true">
-                🎵
-              </span>
-              {selectedCourseTypeName}
-              {"  "}
-              <span className="meta-icon" aria-hidden="true">
-                👤
-              </span>
-              {selectedProfessorName}
-              {"  "}
-              <span className="meta-icon" aria-hidden="true">
-                📍
-              </span>
-              {selectedLocationName}
-              {"  "}
-              <span className="meta-icon" aria-hidden="true">
-                🕒
-              </span>
-              {selectedSession.timezone}
-              {"  "}
-              <span className="meta-icon" aria-hidden="true">
-                🔁
-              </span>
-              {recurrenceLabel(selectedSession)}
-            </p>
 
-            <div className="row quick-actions-row session-quick-actions">
-              {selectedSessionHasBookings ? (
-                <a
-                  className="session-quick-action"
-                  href={attendanceModalHref}
-                  aria-label="Prendre les presences"
-                  title="Prendre les presences"
-                >
-                  ✅
-                </a>
-              ) : null}
-              <a className="session-quick-action" href={groupNotesModalHref} aria-label="Note de groupe" title="Note de groupe">
-                📝
-              </a>
-              <a className="session-quick-action" href={sessionEmailModalHref} aria-label="Envoyer email" title="Envoyer email">
-                ✉️
-              </a>
-              <a className="session-quick-action" href={sessionSmsModalHref} aria-label="Envoyer SMS" title="Envoyer SMS">
-                💬
-              </a>
-              <a className="session-quick-action" href={duplicateModalHref} aria-label="Dupliquer" title="Dupliquer">
-                📄
-              </a>
-              <a className="session-quick-action" href={editSessionHref} aria-label="Modifier le creneau" title="Modifier le creneau">
-                ✏️
+            <div className="session-slot-toolbar">
+              <a className="mode-link" href={editSessionHref}>
+                Modifier
               </a>
               {selectedSession.status !== "CANCELLED" ? (
-                <a
-                  className="session-quick-action danger"
-                  href={cancelConfirmHref}
-                  aria-label="Annuler le creneau"
-                  title="Annuler le creneau"
-                >
-                  ⛔
+                <a className="danger-link" href={cancelConfirmHref}>
+                  Annuler
                 </a>
               ) : null}
-              <a className="session-quick-action danger" href={deleteConfirmHref} aria-label="Supprimer le creneau" title="Supprimer le creneau">
-                🗑
-              </a>
+              <details className="session-slot-overflow-menu session-slot-toolbar-menu">
+                <summary aria-label="Plus d actions">⋯</summary>
+                <div className="session-slot-overflow-panel">
+                  <a className="mode-link" href={attendanceModalHref}>
+                    Prendre les presences
+                  </a>
+                  <a className="mode-link" href={groupNotesModalHref}>
+                    Note de groupe
+                  </a>
+                  <a className="mode-link" href={sessionEmailModalHref}>
+                    Envoyer email
+                  </a>
+                  <a className="mode-link" href={sessionSmsModalHref}>
+                    Envoyer SMS
+                  </a>
+                  <a className="mode-link" href={duplicateModalHref}>
+                    Dupliquer
+                  </a>
+                  <a className="danger-link" href={deleteConfirmHref}>
+                    Supprimer
+                  </a>
+                </div>
+              </details>
             </div>
 
-            {selectedSession.zoom_link ? (
-              <p>
-                <a href={selectedSession.zoom_link} target="_blank" rel="noreferrer">
-                  Lien Zoom
-                </a>
-              </p>
-            ) : null}
+            <div className="session-slot-body">
+              <details className="session-slot-section session-slot-section-attendees" open>
+                <summary>Inscrits ({selectedSessionBookings.length})</summary>
+                <div className="session-slot-section-body">
+                  {selectedSessionBookings.length === 0 ? (
+                    <p className="muted">Aucun eleve inscrit.</p>
+                  ) : (
+                    <div className="session-bookings-summary-list session-slot-attendees-list">
+                      {selectedSessionBookings.map((booking, index) => {
+                        const presence = bookingPresenceLabel(booking.status);
+                        const enrollment = bookingEnrollmentLabel(booking.status);
+                        return (
+                          <article key={booking.id} className="session-slot-attendee-row">
+                            <div className="session-slot-attendee-identity">
+                              {booking.client_id ? (
+                                <Link
+                                  className="client-name-link"
+                                  href={`/admin/clients/${booking.client_id}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title="Ouvrir la fiche client dans un nouvel onglet"
+                                >
+                                  {booking.client_display_name || `Participant ${index + 1}`}
+                                </Link>
+                              ) : (
+                                <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
+                              )}
+                              <small className="muted">{booking.client_email}</small>
+                            </div>
+                            <div className="session-slot-attendee-badges">
+                              <span className={`status-pill ${statusClass(booking.status)}`}>
+                                {enrollment}
+                                {booking.waitlist_position ? ` #${booking.waitlist_position}` : ""}
+                              </span>
+                              <span className={`status-pill ${presence ? "status-ok" : "status-off"}`}>{presence ?? "Presence: -"}</span>
+                            </div>
+                            <div className="session-slot-attendee-actions">
+                              <a className="mode-link" href={attendanceBookingHref(booking.id)}>
+                                Presence & note
+                              </a>
+                              {isBookingRemovable(selectedSession, booking) ? (
+                                <details className="session-slot-inline-confirm">
+                                  <summary className="session-slot-delete-icon" aria-label="Retirer cet inscrit" title="Retirer cet inscrit">
+                                    🗑
+                                  </summary>
+                                  <form action={adminRemoveClientFromSessionAction} className="session-slot-inline-confirm-panel">
+                                    <input type="hidden" name="session_id" value={selectedSession.id} />
+                                    <input type="hidden" name="booking_id" value={booking.id} />
+                                    <input type="hidden" name="return_to" value={modalHref} />
+                                    <button className="danger" type="submit">
+                                      Confirmer
+                                    </button>
+                                  </form>
+                                </details>
+                              ) : (
+                                <span className="muted">Verrouille</span>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {selectedSession.group_note ? (
+                    <p className="muted top-gap-sm">
+                      <strong>Note de groupe:</strong> {stripHtml(selectedSession.group_note)}
+                    </p>
+                  ) : null}
+                </div>
+              </details>
 
-            {selectedSession.public_description ? (
-              <p className="muted">
-                <strong>Description publique:</strong> {selectedSession.public_description}
-              </p>
-            ) : null}
-            {selectedSession.private_description ? (
-              <p className="muted">
-                <strong>Description privee:</strong> {selectedSession.private_description}
-              </p>
-            ) : null}
-            {selectedSession.professor_reminder_note ? (
-              <p className="muted">
-                <strong>Note professeur (rappel 24h):</strong> {stripHtml(selectedSession.professor_reminder_note)}
-              </p>
-            ) : null}
+              <aside className="session-slot-right">
+                <details className="session-slot-section session-slot-section-enroll" open>
+                  <summary>Inscrire un eleve</summary>
+                  <div className="session-slot-section-body">
+                    <form action={adminAddClientToSessionAction} className="session-enroll-form">
+                      <input type="hidden" name="session_id" value={selectedSession.id} />
+                      <input type="hidden" name="return_to" value={modalHref} />
 
-            <section className="card modal-card">
-              <div className="row spread">
-                <h3>Inscrits sur ce creneau</h3>
-                <span className="badge">{selectedSessionBookings.length}</span>
-              </div>
+                      <SearchMultiSelect
+                        className="session-enroll-search"
+                        label="Eleve"
+                        name="client_id"
+                        options={bookingClientOptions}
+                        selectedIds={[]}
+                        placeholder="Rechercher un eleve..."
+                        emptySelectionLabel="Aucun eleve selectionne."
+                        maxSelections={1}
+                      />
 
-              {selectedSessionBookings.length === 0 ? (
-                <p className="muted">Aucun eleve inscrit.</p>
-              ) : (
-                <div className="list session-bookings-summary-list">
-                  {selectedSessionBookings.map((booking, index) => (
-                    <article key={booking.id} className="item row spread session-booking-summary-row">
-                      <div>
-                        {booking.client_id ? (
-                          <Link
-                            className="client-name-link"
-                            href={`/admin/clients/${booking.client_id}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            title="Ouvrir la fiche client dans un nouvel onglet"
-                          >
-                            {booking.client_display_name || `Participant ${index + 1}`}
-                          </Link>
-                        ) : (
-                          <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
-                        )}
-                        <br />
-                        <small className="muted">{booking.client_email}</small>
+                      <details className="session-enroll-advanced">
+                        <summary>Options avancees</summary>
+                        <div className="session-enroll-advanced-body">
+                          <label className="checkline">
+                            <input type="checkbox" name="apply_recurrence" />
+                            Inscription recurrente (meme jour/heure/type/lieu/coach)
+                          </label>
+                          <label>
+                            Date fin recurrence (UTC)
+                            <input type="date" name="recurrence_end_date" />
+                          </label>
+                          <p className="muted">Sans activation, inscription sur ce creneau uniquement.</p>
+                        </div>
+                      </details>
+
+                      <div className="session-enroll-submit">
+                        <button type="submit">Ajouter</button>
                       </div>
-                      <div className="row">
-                        <span className={`status-badge ${statusClass(booking.status)}`}>
-                          {booking.status}
-                          {booking.waitlist_position ? ` #${booking.waitlist_position}` : ""}
-                        </span>
-                        <a className="mode-link" href={attendanceBookingHref(booking.id)}>
-                          Presence & note
+                    </form>
+                  </div>
+                </details>
+
+                <details className="session-slot-section session-slot-section-details" open>
+                  <summary>Details</summary>
+                  <div className="session-slot-section-body session-slot-details-list">
+                    <p className="muted">
+                      <strong>Activite:</strong> {selectedCourseTypeName}
+                    </p>
+                    <p className="muted">
+                      <strong>Professeur:</strong> {selectedProfessorName}
+                    </p>
+                    <p className="muted">
+                      <strong>Lieu:</strong> {selectedLocationName}
+                    </p>
+                    {selectedSession.zoom_link ? (
+                      <p>
+                        <a href={selectedSession.zoom_link} target="_blank" rel="noreferrer">
+                          Lien Zoom
                         </a>
-                        {isBookingRemovable(selectedSession, booking) ? (
-                          <form action={adminRemoveClientFromSessionAction} className="row">
-                            <input type="hidden" name="session_id" value={selectedSession.id} />
-                            <input type="hidden" name="booking_id" value={booking.id} />
-                            <input type="hidden" name="return_to" value={modalHref} />
-                            <button className="icon-btn danger" type="submit" title="Retirer l adherent">
-                              🗑
-                            </button>
-                          </form>
-                        ) : (
-                          <span className="muted">Verrouille</span>
-                        )}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              )}
-              <div className="row session-primary-actions session-quick-actions">
-                {selectedSessionHasBookings ? (
-                  <a
-                    className="session-quick-action"
-                    href={attendanceModalHref}
-                    aria-label="Prendre les presences"
-                    title="Prendre les presences"
-                  >
-                    ✅
-                  </a>
-                ) : null}
-                <a
-                  className="session-quick-action"
-                  href={groupNotesModalHref}
-                  aria-label="Ajouter des notes de groupe"
-                  title="Ajouter des notes de groupe"
-                >
-                  📝
-                </a>
-              </div>
-              {selectedSession.group_note ? (
-                <p className="muted top-gap-sm">
-                  <strong>Note de groupe:</strong> {stripHtml(selectedSession.group_note)}
-                </p>
-              ) : null}
-            </section>
-
-            <section className="card modal-card">
-              <h3>Inscrire un adherent</h3>
-              <form action={adminAddClientToSessionAction} className="grid cols-3">
-                <input type="hidden" name="session_id" value={selectedSession.id} />
-                <input type="hidden" name="return_to" value={modalHref} />
-
-                <SearchMultiSelect
-                  className="span-2"
-                  label="Eleve"
-                  name="client_id"
-                  options={bookingClientOptions}
-                  selectedIds={[]}
-                  placeholder="Rechercher un eleve..."
-                  emptySelectionLabel="Aucun eleve selectionne."
-                  maxSelections={1}
-                />
-
-                <label className="checkline span-2">
-                  <input type="checkbox" name="apply_recurrence" />
-                  Inscription recurrente (meme jour/heure/type/lieu/coach)
-                </label>
-                <label>
-                  Date fin recurrence (UTC)
-                  <input type="date" name="recurrence_end_date" />
-                </label>
-                <p className="muted span-3">Sans activation, inscription sur ce creneau uniquement.</p>
-
-                <div className="row">
-                  <button type="submit">Valider la reservation</button>
-                </div>
-              </form>
-            </section>
-
+                      </p>
+                    ) : null}
+                    {selectedSession.public_description ? (
+                      <p className="muted">
+                        <strong>Description publique:</strong> {selectedSession.public_description}
+                      </p>
+                    ) : null}
+                    {selectedSession.private_description ? (
+                      <p className="muted">
+                        <strong>Description privee:</strong> {selectedSession.private_description}
+                      </p>
+                    ) : null}
+                    {selectedSession.professor_reminder_note ? (
+                      <p className="muted">
+                        <strong>Note professeur (rappel 24h):</strong> {stripHtml(selectedSession.professor_reminder_note)}
+                      </p>
+                    ) : null}
+                  </div>
+                </details>
+              </aside>
+            </div>
           </article>
-        </section>
+        </ModalA11yFrame>
       ) : null}
 
       {selectedSession && editSessionOpen ? (
