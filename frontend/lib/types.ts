@@ -1557,6 +1557,16 @@ export type CommunicationReportRow = {
   error_message: string | null;
 };
 
+export type CommunicationPeriod = "TODAY" | "WEEK" | "MONTH" | "SEMESTER" | "YEAR" | "ALL";
+
+export type CommunicationReportPageOut = {
+  items: CommunicationReportRow[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+};
+
 export type CommunicationTypeFilterOut = {
   code: string;
   label: string;

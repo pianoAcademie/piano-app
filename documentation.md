@@ -131,3 +131,26 @@
 - `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python scripts/smoke_billing_entities_v1.py`
 - `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T backend python scripts/smoke_teacher_invoicing_v1.py`
 - `COMPOSE_PROJECT_NAME=piano-app docker compose exec -T frontend npm run build`
+
+## Reporting communications (pagination + periodes + archivage)
+
+### Endpoint admin
+- `GET /api/v1/admin/reports/communications`
+- Parametres:
+  - `channel`: `EMAIL` | `SMS` (optionnel; absent => tous)
+  - `period`: `TODAY` | `WEEK` | `MONTH` | `SEMESTER` | `YEAR` | `ALL` (defaut `TODAY`)
+  - `page`: index 1-based (defaut `1`)
+  - `per_page`: `25` | `50` | `100` (defaut `50`)
+  - `q`, `communication_type`, `professor_id` (filtres existants)
+- Reponse:
+  - `{ items, page, per_page, total, total_pages }`
+
+### Regle d archivage
+- Les messages de plus d un an sont marques archives (`communication_logs.archived_at`) automatiquement.
+- Le filtre `ALL` permet l affichage depuis origine.
+
+### UI BO
+- Page `/admin/communications`:
+  - pagination avec 25/50/100 (defaut 50),
+  - filtre periode (defaut jour),
+  - colonne `Canal` (Email/SMS).

@@ -103,6 +103,23 @@ class CommunicationReportRow(BaseModel):
     error_message: str | None
 
 
+class CommunicationPeriod(str, enum.Enum):
+    TODAY = "TODAY"
+    WEEK = "WEEK"
+    MONTH = "MONTH"
+    SEMESTER = "SEMESTER"
+    YEAR = "YEAR"
+    ALL = "ALL"
+
+
+class CommunicationReportPageOut(BaseModel):
+    items: list[CommunicationReportRow]
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+
+
 class CommunicationTypeFilterOut(BaseModel):
     code: str
     label: str

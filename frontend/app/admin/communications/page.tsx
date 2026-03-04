@@ -2,9 +2,16 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../lib/backend";
-import type { CommunicationFiltersOut, CommunicationReportRow } from "../../../lib/types";
+import type {
+  CommunicationFiltersOut,
+  CommunicationPeriod,
+  CommunicationReportPageOut,
+  CommunicationReportRow,
+} from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+type ChannelFilter = "ALL" | "EMAIL" | "SMS";
+type PerPage = 25 | 50 | 100;
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -14,24 +21,54 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function parseChannel(value: string): "EMAIL" | "SMS" {
-  return value === "SMS" ? "SMS" : "EMAIL";
+function parseChannel(value: string): ChannelFilter {
+  if (value === "EMAIL" || value === "SMS") {
+    return value;
+  }
+  return "ALL";
 }
 
-function todayIsoDate(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = `${now.getMonth() + 1}`.padStart(2, "0");
-  const day = `${now.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+function parsePeriod(value: string): CommunicationPeriod {
+  if (
+    value === "TODAY" ||
+    value === "WEEK" ||
+    value === "MONTH" ||
+    value === "SEMESTER" ||
+    value === "YEAR" ||
+    value === "ALL"
+  ) {
+    return value;
+  }
+  return "TODAY";
+}
+
+function parsePerPage(value: string): PerPage {
+  if (value === "25") {
+    return 25;
+  }
+  if (value === "100") {
+    return 100;
+  }
+  return 50;
+}
+
+function parsePage(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+  return parsed;
 }
 
 function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return date.toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+  return parsed.toLocaleString("fr-FR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function deliveryLabel(value: CommunicationReportRow["delivery_status"]): string {
@@ -63,27 +100,54 @@ function senderCategoryLabel(value: CommunicationReportRow["sender_category"]): 
   return "Autre utilisateur";
 }
 
+function channelLabel(value: CommunicationReportRow["channel"]): string {
+  return value === "SMS" ? "SMS" : "Email";
+}
+
+function periodLabel(value: CommunicationPeriod): string {
+  if (value === "TODAY") {
+    return "du jour";
+  }
+  if (value === "WEEK") {
+    return "des 7 derniers jours";
+  }
+  if (value === "MONTH") {
+    return "des 30 derniers jours";
+  }
+  if (value === "SEMESTER") {
+    return "des 6 derniers mois";
+  }
+  if (value === "YEAR") {
+    return "de la derniere annee";
+  }
+  return "depuis origine";
+}
+
 type CommunicationFiltersState = {
-  channel: "EMAIL" | "SMS";
+  channel: ChannelFilter;
   q: string;
   communicationType: string;
-  occurredOn: string;
+  period: CommunicationPeriod;
   professorId: string;
   messageId: string;
+  page: number;
+  perPage: PerPage;
 };
 
 function buildHref(filters: CommunicationFiltersState, overrides?: Partial<CommunicationFiltersState>): string {
   const next: CommunicationFiltersState = { ...filters, ...(overrides ?? {}) };
   const params = new URLSearchParams();
-  params.set("channel", next.channel);
+  if (next.channel !== "ALL") {
+    params.set("channel", next.channel);
+  }
   if (next.q) {
     params.set("q", next.q);
   }
   if (next.communicationType) {
     params.set("communication_type", next.communicationType);
   }
-  if (next.occurredOn) {
-    params.set("occurred_on", next.occurredOn);
+  if (next.period !== "TODAY") {
+    params.set("period", next.period);
   }
   if (next.professorId) {
     params.set("professor_id", next.professorId);
@@ -91,21 +155,29 @@ function buildHref(filters: CommunicationFiltersState, overrides?: Partial<Commu
   if (next.messageId) {
     params.set("message_id", next.messageId);
   }
-  return `/admin/communications?${params.toString()}`;
+  if (next.page > 1) {
+    params.set("page", String(next.page));
+  }
+  if (next.perPage !== 50) {
+    params.set("per_page", String(next.perPage));
+  }
+  const query = params.toString();
+  return query ? `/admin/communications?${query}` : "/admin/communications";
 }
 
 function buildApiHref(filters: CommunicationFiltersState): string {
   const params = new URLSearchParams();
-  params.set("channel", filters.channel);
-  params.set("limit", "500");
+  if (filters.channel !== "ALL") {
+    params.set("channel", filters.channel);
+  }
+  params.set("period", filters.period);
+  params.set("page", String(filters.page));
+  params.set("per_page", String(filters.perPage));
   if (filters.q) {
     params.set("q", filters.q);
   }
   if (filters.communicationType) {
     params.set("communication_type", filters.communicationType);
-  }
-  if (filters.occurredOn) {
-    params.set("occurred_on", filters.occurredOn);
   }
   if (filters.professorId) {
     params.set("professor_id", filters.professorId);
@@ -123,58 +195,81 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
   const selectedMessageId = readParam(searchParams, "message_id");
   const q = readParam(searchParams, "q");
   const communicationType = readParam(searchParams, "communication_type");
-  const occurredOn = readParam(searchParams, "occurred_on") || todayIsoDate();
+  const period = parsePeriod(readParam(searchParams, "period"));
   const professorId = readParam(searchParams, "professor_id");
+  const page = parsePage(readParam(searchParams, "page"));
+  const perPage = parsePerPage(readParam(searchParams, "per_page"));
 
   const filters: CommunicationFiltersState = {
     channel,
     q,
     communicationType,
-    occurredOn,
+    period,
     professorId,
     messageId: selectedMessageId,
+    page,
+    perPage,
   };
 
-  const dataResult = await backendRequest<CommunicationReportRow[]>(buildApiHref(filters), {}, token);
+  const dataResult = await backendRequest<CommunicationReportPageOut>(buildApiHref(filters), {}, token);
+  const filterQuery = new URLSearchParams();
+  if (channel !== "ALL") {
+    filterQuery.set("channel", channel);
+  }
   const filtersResult = await backendRequest<CommunicationFiltersOut>(
-    `/api/v1/admin/reports/communications/filters?channel=${encodeURIComponent(channel)}`,
+    `/api/v1/admin/reports/communications/filters?${filterQuery.toString()}`,
     {},
     token,
   );
 
-  const rows = dataResult.ok ? dataResult.data : [];
+  const pageData: CommunicationReportPageOut = dataResult.ok
+    ? dataResult.data
+    : { items: [], page: 1, per_page: perPage, total: 0, total_pages: 1 };
+  const rows = pageData.items;
   const selected = selectedMessageId ? rows.find((row) => row.id === selectedMessageId) ?? null : null;
   const closeDetailHref = buildHref(filters, { messageId: "" });
-  const resetHref = buildHref({ ...filters, q: "", communicationType: "", occurredOn: todayIsoDate(), professorId: "", messageId: "" });
+  const resetHref = buildHref({
+    ...filters,
+    channel: "ALL",
+    q: "",
+    communicationType: "",
+    period: "TODAY",
+    professorId: "",
+    messageId: "",
+    page: 1,
+    perPage: 50,
+  });
   const communicationTypeOptions = filtersResult.ok ? filtersResult.data.communication_types : [];
   const professorOptions = filtersResult.ok ? filtersResult.data.professors : [];
+
+  const previousPageHref = buildHref(filters, { page: Math.max(1, pageData.page - 1), messageId: "" });
+  const nextPageHref = buildHref(filters, { page: Math.min(pageData.total_pages, pageData.page + 1), messageId: "" });
 
   return (
     <section className="admin-page-grid">
       <section className="card">
         <h2>Suivi des communications</h2>
-        <p className="muted">Journal unifie persistant: emetteur, destinataire, date, type, sujet et etat de livraison.</p>
+        <p className="muted">Journal unifie persistant: emetteur, destinataire, date, canal, type, sujet et etat de livraison.</p>
       </section>
 
       <section className="card">
-        <div className="row">
-          <a className={`mode-link ${channel === "EMAIL" ? "mode-active" : ""}`} href={buildHref(filters, { channel: "EMAIL", messageId: "" })}>
-            Mails
-          </a>
-          <a className={`mode-link ${channel === "SMS" ? "mode-active" : ""}`} href={buildHref(filters, { channel: "SMS", messageId: "" })}>
-            SMS
-          </a>
-        </div>
         {!dataResult.ok ? <p className="flash-err top-gap-sm">Erreur backend: {dataResult.message}</p> : null}
         {!filtersResult.ok ? <p className="flash-err top-gap-sm">Erreur filtres: {filtersResult.message}</p> : null}
       </section>
 
       <section className="card">
         <form method="get" className="grid cols-4">
-          <input type="hidden" name="channel" value={channel} />
           <label className="stack-sm">
             Recherche libre
             <input type="text" name="q" defaultValue={q} placeholder="Sujet, destinataire, contenu..." />
+          </label>
+          <label className="stack-sm">
+            Canal
+            <select name="channel" defaultValue={channel}>
+              <option value="ALL">Tous</option>
+              <option value="EMAIL">Emails</option>
+              <option value="SMS">SMS</option>
+            </select>
           </label>
           <label className="stack-sm">
             Type communication
@@ -188,8 +283,15 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
             </select>
           </label>
           <label className="stack-sm">
-            Date
-            <input type="date" name="occurred_on" defaultValue={occurredOn} />
+            Periode
+            <select name="period" defaultValue={period}>
+              <option value="TODAY">Jour</option>
+              <option value="WEEK">Semaine (7 jours)</option>
+              <option value="MONTH">Dernier mois</option>
+              <option value="SEMESTER">Dernier semestre</option>
+              <option value="YEAR">Derniere annee</option>
+              <option value="ALL">Depuis origine</option>
+            </select>
           </label>
           <label className="stack-sm">
             Professeur
@@ -202,6 +304,15 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
               ))}
             </select>
           </label>
+          <label className="stack-sm">
+            Messages / page
+            <select name="per_page" defaultValue={String(perPage)}>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+          <input type="hidden" name="page" value="1" />
           <div className="row">
             <button type="submit">Filtrer</button>
             <a className="mode-link" href={resetHref}>
@@ -209,7 +320,29 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
             </a>
           </div>
         </form>
-        <p className="muted">Affichage par defaut: communications du jour ({occurredOn}).</p>
+        <p className="muted">
+          Affichage par defaut: communications du jour. Archive automatique des messages de plus d&apos;un an.
+        </p>
+      </section>
+
+      <section className="card row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <p className="muted">
+          {pageData.total} message(s) {periodLabel(period)}.
+        </p>
+        <div className="row">
+          <a className={`mode-link ${pageData.page <= 1 ? "disabled" : ""}`} href={pageData.page <= 1 ? "#" : previousPageHref}>
+            ← Precedent
+          </a>
+          <span className="muted">
+            Page {pageData.page} / {pageData.total_pages}
+          </span>
+          <a
+            className={`mode-link ${pageData.page >= pageData.total_pages ? "disabled" : ""}`}
+            href={pageData.page >= pageData.total_pages ? "#" : nextPageHref}
+          >
+            Suivant →
+          </a>
+        </div>
       </section>
 
       <section className="card table-wrap">
@@ -217,6 +350,7 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
           <thead>
             <tr>
               <th>Date & heure</th>
+              <th>Canal</th>
               <th>Envoye par</th>
               <th>Type communication</th>
               <th>Sujet</th>
@@ -228,14 +362,15 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7}>
-                  <p className="muted">Aucune communication {channel === "EMAIL" ? "mail" : "SMS"} pour les filtres selectionnes.</p>
+                <td colSpan={8}>
+                  <p className="muted">Aucune communication pour les filtres selectionnes.</p>
                 </td>
               </tr>
             ) : (
               rows.map((row) => (
                 <tr key={row.id}>
                   <td>{formatDate(row.occurred_at)}</td>
+                  <td>{channelLabel(row.channel)}</td>
                   <td>
                     <strong>{row.sender_label}</strong>
                     <div className="muted">{senderCategoryLabel(row.sender_category)}</div>

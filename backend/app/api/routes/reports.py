@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
-from sqlalchemy import Numeric, case, cast, extract, func, or_, select
+from sqlalchemy import Numeric, case, cast, extract, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
@@ -22,6 +22,8 @@ from app.schemas.report import (
     AttendanceReportRow,
     CommunicationChannel,
     CommunicationFiltersOut,
+    CommunicationPeriod,
+    CommunicationReportPageOut,
     CommunicationProfessorFilterOut,
     CommunicationReportRow,
     CommunicationTypeFilterOut,
@@ -32,6 +34,7 @@ from app.services.communication_journal import COMMUNICATION_TYPE_LABELS, KNOWN_
 
 router = APIRouter(prefix="/admin/reports")
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
+COMMUNICATION_ARCHIVE_RETENTION_DAYS = 365
 
 
 def _professor_name(prof: Professor) -> str:
@@ -90,6 +93,39 @@ def _utc_today() -> date:
 def _day_bounds(day: date) -> tuple[datetime, datetime]:
     start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
     return start, start + timedelta(days=1)
+
+
+def _communication_period_bounds(
+    period: CommunicationPeriod,
+    now_utc: datetime,
+) -> tuple[datetime, datetime] | None:
+    today_start, today_end = _day_bounds(now_utc.date())
+    if period == CommunicationPeriod.ALL:
+        return None
+    if period == CommunicationPeriod.TODAY:
+        return today_start, today_end
+    if period == CommunicationPeriod.WEEK:
+        return now_utc - timedelta(days=7), now_utc
+    if period == CommunicationPeriod.MONTH:
+        return now_utc - timedelta(days=30), now_utc
+    if period == CommunicationPeriod.SEMESTER:
+        return now_utc - timedelta(days=183), now_utc
+    if period == CommunicationPeriod.YEAR:
+        return now_utc - timedelta(days=365), now_utc
+    return today_start, today_end
+
+
+def _archive_communications_older_than_one_year(db: Session, now_utc: datetime) -> None:
+    archive_before = now_utc - timedelta(days=COMMUNICATION_ARCHIVE_RETENTION_DAYS)
+    db.execute(
+        update(CommunicationLog)
+        .where(
+            CommunicationLog.archived_at.is_(None),
+            CommunicationLog.occurred_at < archive_before,
+        )
+        .values(archived_at=now_utc, updated_at=now_utc)
+    )
+    db.commit()
 
 
 def _communication_row_out(row: CommunicationLog) -> CommunicationReportRow:
@@ -504,40 +540,49 @@ def report_sap_csv(
     )
 
 
-@router.get("/communications", response_model=list[CommunicationReportRow])
+@router.get("/communications", response_model=CommunicationReportPageOut)
 def report_communications(
-    channel: CommunicationChannel = Query(default=CommunicationChannel.EMAIL),
-    limit: int = Query(default=300, ge=1, le=2000),
+    channel: CommunicationChannel | None = Query(default=None),
+    period: CommunicationPeriod = Query(default=CommunicationPeriod.TODAY),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, ge=25, le=100),
     q: str | None = Query(default=None),
     communication_type: str | None = Query(default=None),
     occurred_on: date | None = Query(default=None),
     professor_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> list[CommunicationReportRow]:
+) -> CommunicationReportPageOut:
+    if per_page not in (25, 50, 100):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="per_page must be one of: 25, 50, 100",
+        )
+
+    now_utc = datetime.now(timezone.utc)
+    _archive_communications_older_than_one_year(db, now_utc)
+
     normalized_type = (communication_type or "").strip().upper()
     search = (q or "").strip()
-    day = occurred_on or _utc_today()
-    day_start, day_end = _day_bounds(day)
+    period_bounds = _communication_period_bounds(period, now_utc)
+    if occurred_on is not None:
+        period_bounds = _day_bounds(occurred_on)
 
-    stmt = (
-        select(CommunicationLog)
-        .where(
-            CommunicationLog.channel == channel.value,
-            CommunicationLog.occurred_at >= day_start,
-            CommunicationLog.occurred_at < day_end,
-        )
-        .order_by(CommunicationLog.occurred_at.desc())
-        .limit(limit)
-    )
+    filters: list = []
+    if channel is not None:
+        filters.append(CommunicationLog.channel == channel.value)
+    if period_bounds is not None:
+        start_at, end_at = period_bounds
+        filters.append(CommunicationLog.occurred_at >= start_at)
+        filters.append(CommunicationLog.occurred_at < end_at)
 
     if normalized_type and normalized_type != "ALL":
-        stmt = stmt.where(func.upper(CommunicationLog.communication_type) == normalized_type)
+        filters.append(func.upper(CommunicationLog.communication_type) == normalized_type)
     if professor_id is not None:
-        stmt = stmt.where(CommunicationLog.professor_id == professor_id)
+        filters.append(CommunicationLog.professor_id == professor_id)
     if search:
         pattern = f"%{search.lower()}%"
-        stmt = stmt.where(
+        filters.append(
             or_(
                 func.lower(CommunicationLog.subject).like(pattern),
                 func.lower(CommunicationLog.sender_label).like(pattern),
@@ -547,24 +592,42 @@ def report_communications(
             )
         )
 
-    rows = db.scalars(stmt).all()
-    return [_communication_row_out(row) for row in rows]
+    count_stmt = select(func.count()).select_from(CommunicationLog)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
+    total = int(db.scalar(count_stmt) or 0)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    current_page = min(page, total_pages)
+    offset = (current_page - 1) * per_page
+
+    data_stmt = select(CommunicationLog)
+    if filters:
+        data_stmt = data_stmt.where(*filters)
+    data_stmt = data_stmt.order_by(CommunicationLog.occurred_at.desc()).offset(offset).limit(per_page)
+    rows = db.scalars(data_stmt).all()
+
+    return CommunicationReportPageOut(
+        items=[_communication_row_out(row) for row in rows],
+        page=current_page,
+        per_page=per_page,
+        total=total,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/communications/filters", response_model=CommunicationFiltersOut)
 def report_communication_filters(
-    channel: CommunicationChannel = Query(default=CommunicationChannel.EMAIL),
+    channel: CommunicationChannel | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> CommunicationFiltersOut:
     type_codes: set[str] = set()
     for code in KNOWN_COMMUNICATION_TYPES:
         type_codes.add(code)
-    db_type_rows = db.scalars(
-        select(CommunicationLog.communication_type)
-        .where(CommunicationLog.channel == channel.value)
-        .distinct()
-    ).all()
+    db_type_stmt = select(CommunicationLog.communication_type).distinct()
+    if channel is not None:
+        db_type_stmt = db_type_stmt.where(CommunicationLog.channel == channel.value)
+    db_type_rows = db.scalars(db_type_stmt).all()
     for code in db_type_rows:
         normalized = (code or "").strip().upper()
         if normalized:
