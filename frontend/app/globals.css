@@ -2179,6 +2179,78 @@ button.danger {
   background: #fff8ec;
 }
 
+.transaction-wizard-modal {
+  width: min(760px, 95vw);
+  max-height: 80vh;
+  padding: 0;
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #e6e8ee;
+  border-radius: 16px;
+}
+
+.transaction-wizard-modal form {
+  padding: 14px;
+  overflow: auto;
+}
+
+.transaction-wizard-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-bottom: 1px solid #e6e8ee;
+  background: #ffffff;
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.transaction-type-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.transaction-type-chip {
+  display: grid;
+  gap: 4px;
+  min-height: 60px;
+  padding: 10px 12px;
+  border: 1px solid #d8e1ec;
+  border-radius: 12px;
+  background: #ffffff;
+  color: inherit;
+  text-decoration: none;
+}
+
+.transaction-type-chip strong {
+  font-size: 13px;
+}
+
+.transaction-type-chip.active {
+  border-color: rgba(212, 175, 55, 0.45);
+  background: rgba(212, 175, 55, 0.14);
+}
+
+.transaction-vat-field {
+  max-width: 240px;
+}
+
+.transaction-category-accordion {
+  margin-top: 2px;
+}
+
+.transaction-wizard-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  border-top: 1px solid #e6e8ee;
+  padding-top: 10px;
+  background: #ffffff;
+}
+
 .purchase-total-line {
   margin-top: 6px;
   font-weight: 700;
@@ -2283,6 +2355,39 @@ button.danger {
 }
 
 @media (max-width: 900px) {
+  .transaction-wizard-modal {
+    width: 100vw;
+    max-width: 100vw;
+    min-height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .transaction-wizard-header {
+    padding: 12px 16px;
+  }
+
+  .transaction-wizard-modal form {
+    padding: 14px 16px 96px;
+  }
+
+  .transaction-type-segmented {
+    grid-template-columns: 1fr;
+  }
+
+  .transaction-type-chip {
+    min-height: 52px;
+  }
+
+  .transaction-wizard-footer {
+    margin-top: 8px;
+  }
+
+  .transaction-wizard-footer button,
+  .transaction-wizard-footer .reset-link {
+    min-height: 44px;
+  }
+
   .purchase-wizard-modal {
     width: 100vw;
     max-width: 100vw;

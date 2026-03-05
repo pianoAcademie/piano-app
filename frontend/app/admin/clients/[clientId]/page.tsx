@@ -43,7 +43,6 @@ import {
   TIMEZONE_OPTIONS,
   labelFromOptions,
 } from "../../../../lib/reference-data";
-import ManualTransactionNonCashFlowFields from "../../../../components/manual-transaction-noncashflow-fields";
 import ManualTransactionLegalEntityFields from "../../../../components/manual-transaction-legal-entity-fields";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import type {
@@ -644,7 +643,7 @@ function messagesHref(clientId: string, params: Record<string, string>): string 
   return `/admin/clients/${clientId}?${search.toString()}`;
 }
 
-const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount"] as const;
+const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount", "fees"] as const;
 type ManualTransactionModalType = (typeof MANUAL_TRANSACTION_MODAL_TYPES)[number];
 
 const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{
@@ -833,6 +832,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   )
     ? (manualTransactionModalTypeRaw as ManualTransactionModalType)
     : null;
+  const manualStepRaw = readParam(searchParams, "manual_step").trim();
+  const manualAmountRaw = readParam(searchParams, "manual_amount").trim().replace(",", ".");
+  const manualVatRaw = readParam(searchParams, "manual_vat").trim().replace(",", ".");
+  const manualDateRaw = readParam(searchParams, "manual_date").trim();
   const paymentModalSource = readParam(searchParams, "payment_source").toUpperCase();
   const paymentModalId = readParam(searchParams, "payment_id");
   const invoiceNoteId = readParam(searchParams, "invoice_note_id");
@@ -918,6 +921,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
   const monthStartInputValue = `${todayInputValue.slice(0, 8)}01`;
   const nextMonthCycleStartInputValue = formatDateInput(addMonths(new Date(`${monthStartInputValue}T00:00:00.000Z`), 1));
+  const manualAmountParsed = Number(manualAmountRaw);
+  const manualAmountInputValue =
+    Number.isFinite(manualAmountParsed) && manualAmountParsed > 0 ? manualAmountParsed.toFixed(2) : "";
+  const manualVatParsed = Number(manualVatRaw);
+  const manualVatInputValue =
+    Number.isFinite(manualVatParsed) && manualVatParsed >= 0 ? String(manualVatParsed) : "";
+  const manualDateInputValue = isDateInput(manualDateRaw) ? manualDateRaw : todayInputValue;
 
   const errors: string[] = [];
 
@@ -1380,8 +1390,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .slice(0, 3)
     .map((row) => formatDate(row.session_start_at_utc))
     .join(", ");
-  const openManualTransactionSelector = paymentModalAction === "manual" && manualTransactionModalType === null;
-  const openManualTransactionForm = paymentModalAction === "manual" && manualTransactionModalType !== null;
+  const openManualTransactionWizard = paymentModalAction === "manual";
+  const manualTransactionSelectedType = manualTransactionModalType ?? "payment";
+  const manualWizardStep = manualStepRaw === "2" && manualTransactionModalType !== null ? 2 : 1;
+  const openManualTransactionStepOne = openManualTransactionWizard && manualWizardStep === 1;
+  const openManualTransactionStepTwo = openManualTransactionWizard && manualWizardStep === 2 && manualTransactionModalType !== null;
   const openManualTransactionEditModal = paymentModalAction === "edit_manual" && selectedManualTransactionForEdit !== null;
   const openPaymentFiltersModal = paymentModalAction === "filters";
 
@@ -1592,37 +1605,73 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     refund: "REFUND",
     charge: "CHARGE",
     discount: "DISCOUNT",
+    fees: "CHARGE",
   };
   const manualTransactionTitleByModal: Record<ManualTransactionModalType, string> = {
-    payment: "Ajouter un paiement",
-    refund: "Ajouter un remboursement",
-    charge: "Ajouter des frais",
-    discount: "Ajouter une remise",
+    payment: "Paiement",
+    refund: "Remboursement",
+    charge: "Facturation (montant du)",
+    discount: "Remise (rabais)",
+    fees: "Frais",
   };
   const manualTransactionHelpByModal: Record<ManualTransactionModalType, string> = {
-    payment: "Utiliser cette vue lorsque la famille paie.",
-    refund: "Utiliser cette vue lorsque vous remettez de l argent a la famille.",
-    charge: "Utiliser cette vue pour ajouter un montant facture sans encaissement.",
-    discount: "Utiliser cette vue pour ajouter un rabais (transaction negative).",
+    payment: "Encaissement d un paiement client.",
+    refund: "Sortie de fonds vers le client.",
+    charge: "Ajoute un montant du sans encaissement immediat.",
+    discount: "Reduit un montant du (transaction negative).",
+    fees: "Ajoute des frais au solde client.",
   };
   const manualTransactionDefaultLabelByModal: Record<ManualTransactionModalType, string> = {
     payment: "Paiement manuel",
     refund: "Remboursement",
     charge: "Montant facture",
     discount: "Rabais manuel",
+    fees: "Frais",
+  };
+  const manualTransactionSubmitLabelByModal: Record<ManualTransactionModalType, string> = {
+    payment: "Enregistrer le paiement",
+    refund: "Enregistrer le remboursement",
+    charge: "Ajouter au solde",
+    discount: "Appliquer la remise",
+    fees: "Ajouter les frais",
   };
   const manualTransactionTypeCode =
     manualTransactionModalType === null ? null : manualTransactionTypeCodeByModal[manualTransactionModalType];
-  const manualTransactionTitle =
-    manualTransactionModalType === null ? "Ajouter une transaction" : manualTransactionTitleByModal[manualTransactionModalType];
-  const manualTransactionHelp =
-    manualTransactionModalType === null ? "" : manualTransactionHelpByModal[manualTransactionModalType];
-  const manualTransactionDefaultLabel =
-    manualTransactionModalType === null ? "" : manualTransactionDefaultLabelByModal[manualTransactionModalType];
-  const manualIsCashFlow = manualTransactionModalType === "payment" || manualTransactionModalType === "refund";
-  const manualIsPayment = manualTransactionModalType === "payment";
+  const manualTransactionTitle = manualTransactionTitleByModal[manualTransactionSelectedType];
+  const manualTransactionDefaultLabel = manualTransactionDefaultLabelByModal[manualTransactionSelectedType];
+  const manualTransactionSubmitLabel = manualTransactionSubmitLabelByModal[manualTransactionSelectedType];
+  const manualIsCashFlow = manualTransactionSelectedType === "payment" || manualTransactionSelectedType === "refund";
+  const manualIsPayment = manualTransactionSelectedType === "payment";
   const manualVatDefault = manualIsCashFlow ? "0" : "20";
   const manualNonCashFlowType = manualTransactionTypeCode === "CHARGE" || manualTransactionTypeCode === "DISCOUNT" ? manualTransactionTypeCode : null;
+  const manualStepOneBackHref = paymentsHref(client.id, { balance_date: selectedBalanceDate });
+  const manualStepOneTypeHref = (type: ManualTransactionModalType): string => {
+    const params: Record<string, string> = {
+      payment_modal: "manual",
+      manual_type: type,
+      manual_step: "1",
+      balance_date: selectedBalanceDate,
+    };
+    if (manualAmountInputValue) {
+      params.manual_amount = manualAmountInputValue;
+    }
+    if (manualVatInputValue) {
+      params.manual_vat = manualVatInputValue;
+    }
+    if (manualDateInputValue) {
+      params.manual_date = manualDateInputValue;
+    }
+    return paymentsHref(client.id, params);
+  };
+  const manualStepTwoBackHref = paymentsHref(client.id, {
+    payment_modal: "manual",
+    manual_type: manualTransactionSelectedType,
+    manual_step: "1",
+    balance_date: selectedBalanceDate,
+    manual_amount: manualAmountInputValue,
+    manual_vat: manualVatInputValue || manualVatDefault,
+    manual_date: manualDateInputValue,
+  });
   const editManualTransactionTypeCode = (selectedManualTransactionForEdit?.manual_transaction_type || "").trim().toUpperCase();
   const editManualIsPayment = editManualTransactionTypeCode === "PAYMENT";
   const editManualVatDefault = selectedManualTransactionForEdit?.vat_rate
@@ -4097,32 +4146,62 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
-      {currentTab === "paiements" && openManualTransactionSelector ? (
+      {currentTab === "paiements" && openManualTransactionStepOne ? (
         <section className="modal-overlay">
-          <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+          <article className="modal-panel transaction-wizard-modal">
+            <Link className="modal-close-x" href={manualStepOneBackHref} aria-label="Fermer">
               ×
             </Link>
-            <h3 className="modal-title">Ajouter une transaction</h3>
-            <p className="muted">Paiement, remboursement, montant facture ou rabais.</p>
-            <div className="manual-transaction-choice-grid top-gap-sm">
-              <Link className="manual-transaction-choice" href={paymentsHref(client.id, { payment_modal: "manual", manual_type: "payment" })}>
-                <strong>Paiement</strong>
-                <small className="muted">Quand une famille vous regle.</small>
-              </Link>
-              <Link className="manual-transaction-choice" href={paymentsHref(client.id, { payment_modal: "manual", manual_type: "refund" })}>
-                <strong>Remboursement</strong>
-                <small className="muted">Quand vous redonnez de l argent a la famille.</small>
-              </Link>
-              <Link className="manual-transaction-choice" href={paymentsHref(client.id, { payment_modal: "manual", manual_type: "charge" })}>
-                <strong>Montant facture</strong>
-                <small className="muted">Ajouter un montant du, sans encaissement.</small>
-              </Link>
-              <Link className="manual-transaction-choice" href={paymentsHref(client.id, { payment_modal: "manual", manual_type: "discount" })}>
-                <strong>Rabais</strong>
-                <small className="muted">Reduire le montant du (transaction negative).</small>
-              </Link>
-            </div>
+            <header className="transaction-wizard-header">
+              <h3 className="modal-title">Ajouter une transaction</h3>
+              <div className="purchase-wizard-stepper" aria-label="Progression transaction">
+                <span className="active">1. Type & montant</span>
+                <span>2. Affectation & details</span>
+              </div>
+            </header>
+            <form method="get" action={`/admin/clients/${client.id}`} className="grid top-gap-sm transaction-step-form">
+              <input type="hidden" name="tab" value="paiements" />
+              <input type="hidden" name="payment_modal" value="manual" />
+              <input type="hidden" name="manual_step" value="2" />
+              <input type="hidden" name="balance_date" value={selectedBalanceDate} />
+
+              <section className="transaction-type-segmented span-2" aria-label="Type de transaction">
+                {(["payment", "refund", "charge", "discount", "fees"] as ManualTransactionModalType[]).map((type) => (
+                  <Link
+                    key={`manual-type-${type}`}
+                    href={manualStepOneTypeHref(type)}
+                    className={`transaction-type-chip${manualTransactionSelectedType === type ? " active" : ""}`}
+                  >
+                    <strong>{manualTransactionTitleByModal[type]}</strong>
+                    <small className="muted">{manualTransactionHelpByModal[type]}</small>
+                  </Link>
+                ))}
+              </section>
+              <input type="hidden" name="manual_type" value={manualTransactionSelectedType} />
+
+              <label>
+                Montant TTC *
+                <input type="number" name="manual_amount" step="0.01" min="0.01" defaultValue={manualAmountInputValue} required />
+              </label>
+              <label>
+                Date *
+                <input type="date" name="manual_date" defaultValue={manualDateInputValue} required />
+              </label>
+
+              {!manualIsCashFlow ? (
+                <label className="transaction-vat-field">
+                  TVA (%) (optionnel)
+                  <input type="number" name="manual_vat" step="0.001" min="0" max="100" defaultValue={manualVatInputValue || manualVatDefault} />
+                </label>
+              ) : null}
+
+              <div className="row modal-actions-end transaction-wizard-footer">
+                <Link className="reset-link" href={manualStepOneBackHref}>
+                  Annuler
+                </Link>
+                <button type="submit">Continuer</button>
+              </div>
+            </form>
           </article>
         </section>
       ) : null}
@@ -4172,22 +4251,46 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
-      {currentTab === "paiements" && openManualTransactionForm && manualTransactionTypeCode ? (
+      {currentTab === "paiements" && openManualTransactionStepTwo && manualTransactionTypeCode ? (
         <section className="modal-overlay">
-          <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+          <article className="modal-panel transaction-wizard-modal">
+            <Link className="modal-close-x" href={manualStepOneBackHref} aria-label="Fermer">
               ×
             </Link>
-            <Link className="mode-link manual-transaction-back-link" href={paymentsHref(client.id, { payment_modal: "manual" })}>
-              Retour aux types
-            </Link>
-            <h3 className="modal-title">{manualTransactionTitle}</h3>
-            <p className="muted">{manualTransactionHelp}</p>
+            <header className="transaction-wizard-header">
+              <h3 className="modal-title">Ajouter une transaction</h3>
+              <div className="purchase-wizard-stepper" aria-label="Progression transaction">
+                <span>1. Type & montant</span>
+                <span className="active">2. Affectation & details</span>
+              </div>
+              <p className="muted">
+                Type: <strong>{manualTransactionTitle}</strong> · Montant:{" "}
+                <strong>{manualAmountInputValue ? `${manualAmountInputValue} EUR` : "-"}</strong>
+              </p>
+            </header>
             <form action={createAdminClientManualTransactionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="currency" value={client.preferred_currency || "EUR"} />
               <input type="hidden" name="transaction_type" value={manualTransactionTypeCode} />
-              {manualIsCashFlow ? <input type="hidden" name="vat_rate" value={manualVatDefault} /> : null}
+              <input type="hidden" name="occurred_at" value={manualDateInputValue} />
+              {manualAmountInputValue ? (
+                <input type="hidden" name="amount_incl_vat" value={manualAmountInputValue} />
+              ) : (
+                <label>
+                  Montant TTC *
+                  <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
+                </label>
+              )}
+              {manualIsCashFlow ? (
+                <input type="hidden" name="vat_rate" value="0" />
+              ) : manualVatInputValue ? (
+                <input type="hidden" name="vat_rate" value={manualVatInputValue} />
+              ) : (
+                <label>
+                  TVA (%) *
+                  <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={manualVatDefault} required />
+                </label>
+              )}
               <label>
                 Etudiant (optionnel)
                 <select name="student_id" defaultValue="">
@@ -4200,24 +4303,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   ))}
                 </select>
               </label>
-              <label>
-                Date
-                <input type="date" name="occurred_at" defaultValue={todayInputValue} required />
-              </label>
-              {manualIsCashFlow ? (
-                <label>
-                  Montant TTC
-                  <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
-                </label>
-              ) : manualNonCashFlowType ? (
-                <ManualTransactionNonCashFlowFields
-                  transactionType={manualNonCashFlowType}
-                  amountLabel={manualTransactionModalType === "discount" ? "Le montant" : "Montant TTC"}
-                  defaultVatRate={manualVatDefault}
-                  categories={manualChargeCategories}
-                  products={manualChargeProductOptions}
-                />
-              ) : null}
               {manualIsPayment ? (
                 <ManualTransactionLegalEntityFields
                   legalEntities={manualTransactionLegalEntities}
@@ -4229,6 +4314,41 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ) : (
                 <ManualTransactionLegalEntityFields legalEntities={manualTransactionLegalEntities} />
               )}
+              <small className="muted span-2">
+                L entite correspond au compte bancaire / PSP concerne. Si une facture est rapprochee, l entite est deduite automatiquement.
+              </small>
+              {manualNonCashFlowType ? (
+                <details className="session-edit-collapsible transaction-category-accordion span-2">
+                  <summary>Categorisation (optionnel)</summary>
+                  <div className="grid cols-2">
+                    <label>
+                      Categorie (optionnelle)
+                      <select name="category" defaultValue="">
+                        <option value="">Selectionner...</option>
+                        {manualChargeCategories.map((category) => (
+                          <option key={`manual-category-${category}`} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {manualNonCashFlowType === "CHARGE" ? (
+                      <label>
+                        Produit de la categorie (optionnel)
+                        <select name="catalog_product_id" defaultValue="">
+                          <option value="">Selectionner...</option>
+                          {manualChargeProductOptions.map((product) => (
+                            <option key={`manual-product-${product.id}`} value={product.id}>
+                              {product.title}
+                              {product.categoryName ? ` · ${product.categoryName}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                  </div>
+                </details>
+              ) : null}
               <label>
                 Libelle (optionnel)
                 <input type="text" name="label" maxLength={255} defaultValue={manualTransactionDefaultLabel} placeholder="Ex: Frais de dossier" />
@@ -4259,11 +4379,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   .
                 </p>
               ) : null}
-              <div className="row modal-actions-end">
-                <Link className="reset-link" href={tabHref(client.id, "paiements")}>
-                  Annuler
+              <div className="row modal-actions-end transaction-wizard-footer">
+                <Link className="reset-link" href={manualStepTwoBackHref}>
+                  Retour
                 </Link>
-                <button type="submit">Ajouter la transaction</button>
+                <button type="submit">{manualTransactionSubmitLabel}</button>
               </div>
             </form>
           </article>
