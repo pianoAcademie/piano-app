@@ -814,7 +814,7 @@ function contactDisplayLabel(firstName: string | null | undefined, lastName: str
 }
 
 export default async function AdminClientDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1524,8 +1524,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link className="mode-link" href="/admin/clients?new_client=1">
               Nouveau client
             </Link>
-            <form action={adminViewClientPortalAction}>
+            <form action={adminViewClientPortalAction} target="_blank" rel="noopener noreferrer">
               <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="return_to" value={`/admin/clients/${client.id}?tab=${currentTab}`} />
               <button type="submit" className="mode-link">
                 Vue client
               </button>

@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { backendUrl } from "../../../../../lib/backend";
 
 export async function GET(): Promise<Response> {
-  const token = cookies().get("access_token")?.value;
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     return new Response("Session expiree", { status: 401 });
   }

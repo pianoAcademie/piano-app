@@ -257,7 +257,7 @@ async function loadLocationsForProducts(token: string): Promise<{ ok: true; data
 }
 
 export default async function AdminProductsPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }

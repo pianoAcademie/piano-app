@@ -12,7 +12,7 @@ function formatDate(value: string): string {
 }
 
 export default async function AdminReportingPage(): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }

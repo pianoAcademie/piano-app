@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  adminViewTeacherPortalAction,
   deleteAdminCollaboratorContractAction,
   sendAdminCollaboratorPasswordLinkAction,
   upsertAdminCollaboratorContractGridAction,
@@ -11,6 +11,7 @@ import {
   updateAdminCollaboratorPermissionsAction,
   updateAdminCollaboratorProfileAction,
 } from "../../../../lib/actions";
+import { getAdminToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
 import CollaboratorClientChunkAnchor from "./_client-chunk-anchor";
 import type {
@@ -331,7 +332,7 @@ const PERMISSION_SECTIONS: Array<{ title: string; keys: Array<{ key: string; lab
 ];
 
 export default async function AdminCollaboratorDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = getAdminToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -479,6 +480,13 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
           <Link className="reset-link" href="/admin/professors">
             Retour collaborateurs
           </Link>
+          <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
+            <input type="hidden" name="teacher_id" value={professor.id} />
+            <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
+            <button type="submit" className="mode-link">
+              Vue professeur
+            </button>
+          </form>
           <span className={`status-pill ${professor.active ? "status-ok" : "status-off"}`}>{professor.active ? "Actif" : "Inactif"}</span>
         </div>
         <div className="client-hero-main">

@@ -1,16 +1,16 @@
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import AdminBreadcrumb from "../../components/admin-breadcrumb";
 import AdminSidebar from "../../components/admin-sidebar";
+import { getAdminToken } from "../../lib/auth-cookies";
 import { logoutAction } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
 import type { UserOut } from "../../lib/types";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = getAdminToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -35,7 +35,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </Suspense>
           </div>
           <div className="row admin-topbar-actions">
-            <Link className="reset-link topbar-btn" href="/dashboard">
+            <Link className="reset-link topbar-btn" href="/client?tab=home">
               Vue client
             </Link>
             <form action={logoutAction}>

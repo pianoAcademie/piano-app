@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
@@ -16,6 +15,7 @@ import {
   shiftAdminSessionAction,
   updateAdminSessionAction,
 } from "../../lib/actions";
+import { getAdminToken } from "../../lib/auth-cookies";
 import { backendRequest } from "../../lib/backend";
 import AutoSubmitSelect from "../../components/auto-submit-select";
 import RichMessageEditor from "../../components/rich-message-editor";
@@ -640,7 +640,7 @@ function compactList(values: string[], limit = 2): string {
 }
 
 export default async function AdminPlanningPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = getAdminToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -897,7 +897,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       if (selectedCourseType && session.course_type_id !== selectedCourseType) {
         return false;
       }
-      if (selectedProfessorSet.size > 0 && (!session.professor_id || !selectedProfessorSet.has(session.professor_id))) {
+      if (selectedProfessorSet.size > 0 && (!session.teacher_id || !selectedProfessorSet.has(session.teacher_id))) {
         return false;
       }
       if (selectedStatus !== "ALL" && session.status !== selectedStatus) {
@@ -1057,25 +1057,39 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const attendanceCompletedCount = selectedSessionBookings.length - attendanceMissingCount;
   const selectedCourseTypeName = selectedSession ? courseTypeById.get(selectedSession.course_type_id)?.name ?? "Type non defini" : "";
   const selectedLocationName = selectedSession ? locationById.get(selectedSession.location_id)?.name ?? "Lieu non defini" : "";
-  const selectedProfessorDetail =
-    selectedSession && selectedSession.professor_id ? professorById.get(selectedSession.professor_id) : null;
+  const selectedHabitualProfessorDetail =
+    selectedSession && selectedSession.habitual_teacher_id ? professorById.get(selectedSession.habitual_teacher_id) : null;
+  const selectedSubstituteProfessorDetail =
+    selectedSession && selectedSession.substitute_teacher_id ? professorById.get(selectedSession.substitute_teacher_id) : null;
+  const selectedEffectiveProfessorDetail =
+    selectedSession && selectedSession.effective_teacher_id ? professorById.get(selectedSession.effective_teacher_id) : null;
   const selectedSessionIsOnline = selectedSession
     ? (locationById.get(selectedSession.location_id)?.is_online ?? false) || selectedSession.type_label.toLowerCase().includes("online")
     : false;
-  const selectedProfessorName = selectedSession
-    ? selectedProfessorDetail
-      ? `${selectedProfessorDetail.first_name} ${selectedProfessorDetail.last_name}`.trim()
-      : "Professeur non defini"
+  const selectedHabitualProfessorName = selectedSession
+    ? (selectedSession.habitual_teacher_display_name || "").trim() ||
+      (selectedHabitualProfessorDetail ? `${selectedHabitualProfessorDetail.first_name} ${selectedHabitualProfessorDetail.last_name}`.trim() : "") ||
+      "Professeur non defini"
     : "";
-  const selectedProfessorZoomLink = (selectedProfessorDetail?.zoom_link ?? "").trim();
+  const selectedSubstituteProfessorName = selectedSession
+    ? (selectedSession.substitute_teacher_display_name || "").trim() ||
+      (selectedSubstituteProfessorDetail ? `${selectedSubstituteProfessorDetail.first_name} ${selectedSubstituteProfessorDetail.last_name}`.trim() : "")
+    : "";
+  const selectedEffectiveProfessorName = selectedSession
+    ? (selectedSession.effective_teacher_display_name || "").trim() ||
+      (selectedEffectiveProfessorDetail ? `${selectedEffectiveProfessorDetail.first_name} ${selectedEffectiveProfessorDetail.last_name}`.trim() : "") ||
+      selectedHabitualProfessorName
+    : "";
+  const selectedSessionIsSubstituted = Boolean(selectedSession?.substitute_teacher_id);
+  const selectedEffectiveProfessorZoomLink = (selectedEffectiveProfessorDetail?.zoom_link ?? "").trim();
   const selectedSessionZoomLink =
-    selectedSession && ((selectedSession.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedProfessorZoomLink : ""))
-      ? ((selectedSession?.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedProfessorZoomLink : ""))
+    selectedSession && ((selectedSession.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedEffectiveProfessorZoomLink : ""))
+      ? ((selectedSession?.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedEffectiveProfessorZoomLink : ""))
       : null;
   const selectedSessionTypeName = selectedSession ? sessionTypeLabel(selectedSession, selectedLocationName) : "";
   const selectedSessionHeaderTitle = selectedSession ? `${selectedCourseTypeName} - ${selectedLocationName}` : "";
   const selectedSessionSubtitle = selectedSession
-    ? `${formatDate(selectedSession.start_at_utc)} · ${sessionTimeRangeLabel(selectedSession)} · ${selectedSession.timezone}`
+    ? `${formatDate(selectedSession.start_at_utc)} · ${sessionTimeRangeLabel(selectedSession)} · ${selectedSession.timezone} · Prof: ${selectedEffectiveProfessorName}${selectedSessionIsSubstituted ? " (remplacant)" : ""}`
     : "";
   const timezoneOptionValues = new Set(PLANNING_TIMEZONES.map((option) => option.value));
   const timezoneOptions = timezoneOptionValues.has(timezone)
@@ -1564,7 +1578,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </a>
                     <hr />
                     <p className="muted">Infos</p>
-                    <span className="badge">Professeur: {selectedProfessorName}</span>
+                    <span className="badge">Professeur: {selectedEffectiveProfessorName}</span>
+                    {selectedSessionIsSubstituted ? <span className="badge">Remplacant</span> : null}
                     <span className="badge">{selectedSession.allow_online_booking ? "Reservation en ligne: oui" : "Reservation en ligne: non"}</span>
                     {selectedSession.is_private ? <span className="badge">Prive</span> : null}
                   </div>
@@ -1760,7 +1775,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       <strong>Activite:</strong> {selectedCourseTypeName}
                     </p>
                     <p className="muted">
-                      <strong>Professeur:</strong> {selectedProfessorName}
+                      <strong>Professeur habituel:</strong> {selectedHabitualProfessorName}
+                    </p>
+                    <p className="muted">
+                      <strong>Professeur remplacant:</strong> {selectedSubstituteProfessorName || "Aucun"}
+                    </p>
+                    <p className="muted">
+                      <strong>Professeur effectif:</strong> {selectedEffectiveProfessorName}
                     </p>
                     <p className="muted">
                       <strong>Lieu:</strong> {selectedLocationName}
@@ -1838,7 +1859,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <nav className="session-edit-tabs" aria-label="Sections modification creneau">
                 <a className={`session-edit-tab ${editTab === "general" ? "active" : ""}`} href={editTabHref("general")}>
                   <span>General</span>
-                  <small>{selectedProfessorName} · {selectedSession.capacity_max} places</small>
+                  <small>{selectedEffectiveProfessorName} · {selectedSession.capacity_max} places</small>
                 </a>
                 <a className={`session-edit-tab ${editTab === "schedule" ? "active" : ""}`} href={editTabHref("schedule")}>
                   <span>Horaire & recurrence</span>
@@ -1897,6 +1918,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </label>
 
                     <label>
+                      Professeur remplacant (occurrence)
+                      <select name="substitute_teacher_id" defaultValue={selectedSession.substitute_teacher_id ?? ""}>
+                        <option value="">Aucun remplacant</option>
+                        {professors.map((row) => (
+                          <option key={row.id} value={row.id}>
+                            {row.first_name} {row.last_name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label>
                       Capacite max
                       <input type="number" name="capacity_max" min={0} defaultValue={selectedSession.capacity_max} />
                     </label>
@@ -1913,6 +1946,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <label className="session-edit-span">
                       Lien Zoom
                       <input type="url" name="zoom_link" defaultValue={selectedSession.zoom_link ?? ""} />
+                    </label>
+
+                    <label className="session-edit-span">
+                      Note remplaçant (optionnel)
+                      <textarea name="substitute_note" rows={2} defaultValue={selectedSession.substitute_note ?? ""} />
                     </label>
                   </div>
                 </section>
@@ -2764,7 +2802,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               )}
 
               <p className="muted span-3">
-                Professeur cible: <strong>{selectedProfessorName}</strong>
+                Professeur cible: <strong>{selectedEffectiveProfessorName}</strong>
               </p>
 
               <label className="checkline span-3">

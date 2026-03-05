@@ -1,6 +1,6 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
+import { getAdminToken } from "../../../../../lib/auth-cookies";
 import { backendUrl } from "../../../../../lib/backend";
 
 type Params = {
@@ -10,7 +10,7 @@ type Params = {
 };
 
 export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
-  const token = cookies().get("access_token")?.value;
+  const token = getAdminToken();
   if (!token) {
     const loginUrl = new URL("/login?error=Session%20expiree", request.url);
     return NextResponse.redirect(loginUrl, 302);
