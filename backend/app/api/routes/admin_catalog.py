@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import delete, select
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
@@ -20,7 +20,9 @@ from app.models.product_catalog import (
     ProductRequest,
     ProductRequestSource,
     ProductRequestStatus,
+    ProductStockMovement,
     ProductStockTransfer,
+    StockMovementType,
     ProductTransferStatus,
 )
 from app.models.user import User, UserRole
@@ -47,12 +49,21 @@ from app.schemas.catalog_admin import (
     AdminCatalogStockTransferCompleteRequest,
     AdminCatalogStockTransferCreateRequest,
     AdminCatalogStockTransferOut,
+    AdminCatalogProductStockOut,
+    AdminStockAdjustmentCreateRequest,
+    AdminStockEntryCreateRequest,
+    AdminStockEntryCreateResponse,
+    AdminStockMovementListOut,
+    AdminStockMovementOut,
+    AdminStockSnapshotOut,
 )
 from app.services.product_catalog import (
     apply_request_acceptance,
     cancel_stock_transfer,
+    create_stock_movement,
     create_stock_transfer,
     ensure_product_stock_rows,
+    find_recent_stock_movement_by_idempotency_key,
     mark_stock_transfer_done,
     mark_request_delivered,
     mark_request_rejected,
@@ -196,6 +207,51 @@ def _transfer_out(
         note=row.note,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _stock_movement_out(
+    row: ProductStockMovement,
+    *,
+    product_title_by_id: dict[UUID, str],
+    location_name_by_id: dict[UUID, str],
+    user_name_by_id: dict[UUID, str],
+) -> AdminStockMovementOut:
+    return AdminStockMovementOut(
+        id=row.id,
+        product_id=row.product_id,
+        product_title=product_title_by_id.get(row.product_id, "Produit"),
+        location_id=row.location_id,
+        location_name=location_name_by_id.get(row.location_id, "Lieu"),
+        movement_type=row.movement_type,
+        quantity=Decimal(row.quantity or Decimal("0.00")),
+        occurred_at=row.occurred_at,
+        source_type=row.source_type,
+        source_reference=row.source_reference,
+        note=row.note,
+        attachment_key=row.attachment_key,
+        created_by=row.created_by,
+        created_by_name=user_name_by_id.get(row.created_by) if row.created_by else None,
+        meta=row.meta if isinstance(row.meta, dict) else None,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _stock_snapshot_out(db: Session, *, product_id: UUID, location_id: UUID) -> AdminStockSnapshotOut:
+    product = _require_product(db, product_id)
+    stock_row = db.scalar(
+        select(ProductLocationStock).where(
+            ProductLocationStock.product_id == product_id,
+            ProductLocationStock.location_id == location_id,
+        )
+    )
+    return AdminStockSnapshotOut(
+        product_id=product.id,
+        product_title=product.title,
+        stock_global=int(product.stock_global_quantity or 0),
+        stock_location=int(stock_row.real_quantity or 0) if stock_row is not None else 0,
+        stock_reserved=int(product.reserve_stock or 0),
     )
 
 
@@ -759,6 +815,243 @@ def list_admin_catalog_stocks(
         )
         for row in rows
     ]
+
+
+@router.post("/stock/entries", response_model=AdminStockEntryCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_admin_stock_entry(
+    payload: AdminStockEntryCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AdminStockEntryCreateResponse:
+    _require_product(db, payload.product_id)
+    _require_location(db, payload.location_id)
+
+    normalized_idempotency = (idempotency_key or "").strip()
+    if normalized_idempotency:
+        duplicate = find_recent_stock_movement_by_idempotency_key(
+            db,
+            created_by=actor.id,
+            idempotency_key=normalized_idempotency,
+            movement_type=StockMovementType.STOCK_IN,
+            within_minutes=10,
+        )
+        if duplicate is not None:
+            snapshot = _stock_snapshot_out(db, product_id=duplicate.product_id, location_id=duplicate.location_id)
+            return AdminStockEntryCreateResponse(movement_id=duplicate.id, stock_snapshot=snapshot)
+
+    meta = {"idempotency_key": normalized_idempotency} if normalized_idempotency else None
+    try:
+        movement = create_stock_movement(
+            db,
+            product_id=payload.product_id,
+            location_id=payload.location_id,
+            movement_type=StockMovementType.STOCK_IN,
+            quantity=payload.quantity,
+            source_type=payload.source_type,
+            source_reference=payload.source_reference,
+            note=payload.note,
+            attachment_key=payload.attachment_key,
+            created_by=actor.id,
+            occurred_at=payload.occurred_at,
+            meta=meta,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(movement)
+    snapshot = _stock_snapshot_out(db, product_id=payload.product_id, location_id=payload.location_id)
+    return AdminStockEntryCreateResponse(movement_id=movement.id, stock_snapshot=snapshot)
+
+
+@router.post("/stock/adjustments", response_model=AdminStockEntryCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_admin_stock_adjustment(
+    payload: AdminStockAdjustmentCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AdminStockEntryCreateResponse:
+    if payload.quantity == Decimal("0"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Adjustment quantity must be non-zero")
+    _require_product(db, payload.product_id)
+    _require_location(db, payload.location_id)
+
+    normalized_idempotency = (idempotency_key or "").strip()
+    if normalized_idempotency:
+        duplicate = find_recent_stock_movement_by_idempotency_key(
+            db,
+            created_by=actor.id,
+            idempotency_key=normalized_idempotency,
+            movement_type=StockMovementType.ADJUSTMENT,
+            within_minutes=10,
+        )
+        if duplicate is not None:
+            snapshot = _stock_snapshot_out(db, product_id=duplicate.product_id, location_id=duplicate.location_id)
+            return AdminStockEntryCreateResponse(movement_id=duplicate.id, stock_snapshot=snapshot)
+
+    meta = {"idempotency_key": normalized_idempotency} if normalized_idempotency else None
+    try:
+        movement = create_stock_movement(
+            db,
+            product_id=payload.product_id,
+            location_id=payload.location_id,
+            movement_type=StockMovementType.ADJUSTMENT,
+            quantity=payload.quantity,
+            source_type=payload.source_type,
+            source_reference=payload.source_reference,
+            note=payload.note,
+            attachment_key=payload.attachment_key,
+            created_by=actor.id,
+            occurred_at=payload.occurred_at,
+            meta=meta,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(movement)
+    snapshot = _stock_snapshot_out(db, product_id=payload.product_id, location_id=payload.location_id)
+    return AdminStockEntryCreateResponse(movement_id=movement.id, stock_snapshot=snapshot)
+
+
+@router.get("/stock/entries", response_model=AdminStockMovementListOut)
+def list_admin_stock_entries(
+    product_id: UUID | None = None,
+    location_id: UUID | None = None,
+    from_date: date | None = Query(default=None, alias="from"),
+    to_date: date | None = Query(default=None, alias="to"),
+    q: str = "",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminStockMovementListOut:
+    q_normalized = q.strip()
+
+    stmt = (
+        select(ProductStockMovement)
+        .join(CatalogProduct, CatalogProduct.id == ProductStockMovement.product_id)
+        .join(Location, Location.id == ProductStockMovement.location_id)
+        .where(ProductStockMovement.movement_type.in_([StockMovementType.STOCK_IN, StockMovementType.ADJUSTMENT]))
+    )
+    if product_id is not None:
+        stmt = stmt.where(ProductStockMovement.product_id == product_id)
+    if location_id is not None:
+        stmt = stmt.where(ProductStockMovement.location_id == location_id)
+    if from_date is not None:
+        stmt = stmt.where(ProductStockMovement.occurred_at >= from_date)
+    if to_date is not None:
+        stmt = stmt.where(ProductStockMovement.occurred_at < (to_date + timedelta(days=1)))
+    if q_normalized:
+        ilike_pattern = f"%{q_normalized}%"
+        stmt = stmt.where(
+            or_(
+                CatalogProduct.title.ilike(ilike_pattern),
+                Location.name.ilike(ilike_pattern),
+                ProductStockMovement.source_reference.ilike(ilike_pattern),
+                ProductStockMovement.note.ilike(ilike_pattern),
+            )
+        )
+
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    rows = db.scalars(
+        stmt.order_by(ProductStockMovement.occurred_at.desc(), ProductStockMovement.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+
+    product_title_by_id = {product_id_row: title for product_id_row, title in db.execute(select(CatalogProduct.id, CatalogProduct.title)).all()}
+    location_name_by_id = _location_name_map(db)
+    user_name_by_id = _user_name_map(db, [row.created_by for row in rows if row.created_by is not None])
+
+    return AdminStockMovementListOut(
+        items=[
+            _stock_movement_out(
+                row,
+                product_title_by_id=product_title_by_id,
+                location_name_by_id=location_name_by_id,
+                user_name_by_id=user_name_by_id,
+            )
+            for row in rows
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/config/catalog/products/{product_id}/stock", response_model=AdminCatalogProductStockOut)
+def get_admin_catalog_product_stock(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCatalogProductStockOut:
+    product = _require_product(db, product_id)
+    if product.is_virtual:
+        return AdminCatalogProductStockOut(
+            product_id=product.id,
+            product_title=product.title,
+            stock_global=0,
+            stock_reserved=0,
+            stock_by_location=[],
+            recent_movements=[],
+        )
+
+    ensure_product_stock_rows(db, product_id=product.id)
+    recalculate_product_global_stock(db, product_id=product.id)
+    db.flush()
+
+    location_name_by_id = _location_name_map(db)
+    stock_rows = db.scalars(
+        select(ProductLocationStock)
+        .where(ProductLocationStock.product_id == product.id)
+        .order_by(ProductLocationStock.location_id.asc())
+    ).all()
+    stock_by_location = [
+        AdminCatalogStockOut(
+            product_id=row.product_id,
+            product_title=product.title,
+            location_id=row.location_id,
+            location_name=location_name_by_id.get(row.location_id, "Lieu"),
+            inventory_quantity=int(row.inventory_quantity or 0),
+            inventory_date=row.inventory_date,
+            real_quantity=int(row.real_quantity or 0),
+            estimated_quantity=int(row.estimated_quantity or 0),
+            inventory_updated_at=row.inventory_updated_at,
+            real_updated_at=row.real_updated_at,
+            estimated_updated_at=row.estimated_updated_at,
+            updated_at=row.updated_at,
+        )
+        for row in stock_rows
+    ]
+
+    recent_rows = db.scalars(
+        select(ProductStockMovement)
+        .where(ProductStockMovement.product_id == product.id)
+        .order_by(ProductStockMovement.occurred_at.desc(), ProductStockMovement.created_at.desc())
+        .limit(10)
+    ).all()
+    user_name_by_id = _user_name_map(db, [row.created_by for row in recent_rows if row.created_by is not None])
+    product_title_by_id = {product.id: product.title}
+    recent_movements = [
+        _stock_movement_out(
+            row,
+            product_title_by_id=product_title_by_id,
+            location_name_by_id=location_name_by_id,
+            user_name_by_id=user_name_by_id,
+        )
+        for row in recent_rows
+    ]
+
+    return AdminCatalogProductStockOut(
+        product_id=product.id,
+        product_title=product.title,
+        stock_global=int(product.stock_global_quantity or 0),
+        stock_reserved=int(product.reserve_stock or 0),
+        stock_by_location=stock_by_location,
+        recent_movements=recent_movements,
+    )
 
 
 @router.put("/config/catalog/stocks/{product_id}/{location_id}/inventory", response_model=AdminCatalogStockOut)

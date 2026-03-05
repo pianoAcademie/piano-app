@@ -69,7 +69,10 @@ from app.models.product_catalog import (
     ProductReorderStatus,
     ProductRequestSource,
     ProductRequestStatus,
+    ProductStockMovement,
     ProductStockTransfer,
+    StockMovementSourceType,
+    StockMovementType,
     ProductTransferStatus,
 )
 from app.models.user import ClientKind, ClientStatus, User, UserRole
@@ -131,7 +134,10 @@ __all__ = [
     "ProductReorderStatus",
     "ProductRequestSource",
     "ProductRequestStatus",
+    "ProductStockMovement",
     "ProductStockTransfer",
+    "StockMovementSourceType",
+    "StockMovementType",
     "ProductTransferStatus",
     "MessageFormat",
     "ReminderStatus",

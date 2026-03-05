@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -16,7 +16,10 @@ from app.models.product_catalog import (
     ProductReorderStatus,
     ProductRequest,
     ProductRequestStatus,
+    ProductStockMovement,
     ProductStockTransfer,
+    StockMovementSourceType,
+    StockMovementType,
     ProductTransferStatus,
 )
 from app.models.user import User
@@ -144,6 +147,93 @@ def recalculate_product_global_stock(db: Session, *, product_id: UUID) -> None:
         product.reorder_status_updated_at = utcnow()
     product.updated_at = utcnow()
     db.add(product)
+
+
+def create_stock_movement(
+    db: Session,
+    *,
+    product_id: UUID,
+    location_id: UUID,
+    movement_type: StockMovementType,
+    quantity: Decimal,
+    source_type: StockMovementSourceType,
+    source_reference: str | None,
+    note: str | None,
+    attachment_key: str | None,
+    created_by: UUID | None,
+    occurred_at: datetime | None = None,
+    meta: dict | None = None,
+) -> ProductStockMovement:
+    product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == product_id))
+    if product is None:
+        raise ValueError("Product not found")
+    if product.is_virtual:
+        raise ValueError("Virtual products have no stock management")
+
+    quantized = Decimal(quantity).quantize(Decimal("0.01"))
+    if movement_type == StockMovementType.STOCK_IN and quantized <= Decimal("0"):
+        raise ValueError("Stock entry quantity must be positive")
+    if movement_type == StockMovementType.ADJUSTMENT and quantized == Decimal("0"):
+        raise ValueError("Adjustment quantity must be non-zero")
+    if quantized != quantized.to_integral_value():
+        raise ValueError("Stock quantity must be an integer unit")
+
+    delta = int(quantized)
+    now = utcnow()
+    stock_row = get_or_create_stock_row(db, product_id=product_id, location_id=location_id, lock=True)
+    stock_row.real_quantity = int(stock_row.real_quantity or 0) + delta
+    stock_row.estimated_quantity = int(stock_row.estimated_quantity or 0) + delta
+    stock_row.real_updated_at = now
+    stock_row.estimated_updated_at = now
+    stock_row.updated_at = now
+    db.add(stock_row)
+
+    movement = ProductStockMovement(
+        product_id=product_id,
+        location_id=location_id,
+        movement_type=movement_type,
+        quantity=quantized,
+        occurred_at=occurred_at or now,
+        source_type=source_type,
+        source_reference=normalize_optional(source_reference),
+        note=normalize_optional(note),
+        attachment_key=normalize_optional(attachment_key),
+        created_by=created_by,
+        meta=meta,
+        updated_at=now,
+    )
+    db.add(movement)
+
+    recalculate_product_global_stock(db, product_id=product_id)
+    db.flush()
+    return movement
+
+
+def find_recent_stock_movement_by_idempotency_key(
+    db: Session,
+    *,
+    created_by: UUID | None,
+    idempotency_key: str,
+    movement_type: StockMovementType,
+    within_minutes: int = 10,
+) -> ProductStockMovement | None:
+    if not created_by or not idempotency_key.strip():
+        return None
+    threshold = utcnow() - timedelta(minutes=max(within_minutes, 1))
+    rows = db.scalars(
+        select(ProductStockMovement)
+        .where(
+            ProductStockMovement.created_by == created_by,
+            ProductStockMovement.movement_type == movement_type,
+            ProductStockMovement.created_at >= threshold,
+        )
+        .order_by(ProductStockMovement.created_at.desc())
+        .limit(100)
+    ).all()
+    for row in rows:
+        if isinstance(row.meta, dict) and row.meta.get("idempotency_key") == idempotency_key:
+            return row
+    return None
 
 
 def create_stock_transfer(

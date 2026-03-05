@@ -7,6 +7,8 @@ import {
   completeAdminCatalogTransferAction,
   createAdminCatalogProductAction,
   createAdminCatalogRequestAction,
+  createAdminStockAdjustmentAction,
+  createAdminStockEntryAction,
   createAdminCatalogTransferAction,
   deleteAdminCatalogProductAction,
   deliverAdminCatalogRequestAction,
@@ -23,13 +25,14 @@ import type {
   AdminCatalogRequestOut,
   AdminCatalogStockOut,
   AdminCatalogStockTransferOut,
+  AdminStockMovementListOut,
   AdminClientOut,
   LocationOut,
 } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-type ProductsView = "products" | "reorder" | "transfers" | "requests";
+type ProductsView = "products" | "reorder" | "entries" | "transfers" | "requests";
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -46,6 +49,9 @@ function parseView(value: string): ProductsView {
   }
   if (normalized === "transfers") {
     return "transfers";
+  }
+  if (normalized === "entries") {
+    return "entries";
   }
   if (normalized === "requests") {
     return "requests";
@@ -140,6 +146,31 @@ function catalogRequestSourceLabel(source: string): string {
   return normalized || "-";
 }
 
+function stockMovementTypeLabel(movementType: string): string {
+  const normalized = movementType.trim().toUpperCase();
+  if (normalized === "ADJUSTMENT") {
+    return "Correction";
+  }
+  return "Entree";
+}
+
+function stockMovementSourceTypeLabel(sourceType: string): string {
+  const normalized = sourceType.trim().toLowerCase();
+  if (normalized === "purchase") {
+    return "Achat";
+  }
+  if (normalized === "delivery") {
+    return "Livraison";
+  }
+  if (normalized === "correction") {
+    return "Correction";
+  }
+  if (normalized === "return") {
+    return "Retour";
+  }
+  return "Autre";
+}
+
 function buildProductsQuery(params: {
   q: string;
   category: string;
@@ -152,6 +183,11 @@ function buildProductsQuery(params: {
   editProduct: string;
   reorderStatus: string;
   transferStatus: string;
+  entryProduct: string;
+  entryLocation: string;
+  entryQuery: string;
+  entryId: string;
+  entryPage: string;
 }): string {
   const sp = new URLSearchParams();
   if (params.q) {
@@ -186,6 +222,21 @@ function buildProductsQuery(params: {
   }
   if (params.transferStatus && params.transferStatus !== "all") {
     sp.set("transfer_status", params.transferStatus);
+  }
+  if (params.entryProduct) {
+    sp.set("entry_product", params.entryProduct);
+  }
+  if (params.entryLocation) {
+    sp.set("entry_location", params.entryLocation);
+  }
+  if (params.entryQuery) {
+    sp.set("entry_q", params.entryQuery);
+  }
+  if (params.entryId) {
+    sp.set("entry_id", params.entryId);
+  }
+  if (params.entryPage && params.entryPage !== "1") {
+    sp.set("entry_page", params.entryPage);
   }
   const query = sp.toString();
   return query ? `?${query}` : "";
@@ -223,6 +274,13 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const currentView = parseView(readParam(params, "view"));
   const reorderStatus = readParam(params, "reorder_status").trim() || "all";
   const transferStatus = readParam(params, "transfer_status").trim() || "all";
+  const entryProduct = readParam(params, "entry_product").trim();
+  const entryLocation = readParam(params, "entry_location").trim();
+  const entryQuery = readParam(params, "entry_q").trim();
+  const entryId = readParam(params, "entry_id").trim();
+  const entryPageRaw = readParam(params, "entry_page").trim();
+  const entryPageParsed = Number.parseInt(entryPageRaw, 10);
+  const entryPage = Number.isFinite(entryPageParsed) && entryPageParsed > 0 ? entryPageParsed : 1;
   const showAddForm = add === "1" && currentView === "products";
 
   const baseQuery = {
@@ -235,6 +293,11 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     product: selectedProductId,
     reorderStatus,
     transferStatus,
+    entryProduct,
+    entryLocation,
+    entryQuery,
+    entryId,
+    entryPage: String(entryPage),
   };
 
   const returnTo = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "" })}`;
@@ -252,8 +315,21 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const transfersPath = transferStatus && transferStatus !== "all"
     ? `/api/v1/admin/config/catalog/transfers?status_filter=${encodeURIComponent(transferStatus)}`
     : "/api/v1/admin/config/catalog/transfers";
+  const entryQueryParams = new URLSearchParams();
+  entryQueryParams.set("page", String(entryPage));
+  entryQueryParams.set("page_size", "20");
+  if (entryProduct) {
+    entryQueryParams.set("product_id", entryProduct);
+  }
+  if (entryLocation) {
+    entryQueryParams.set("location_id", entryLocation);
+  }
+  if (entryQuery) {
+    entryQueryParams.set("q", entryQuery);
+  }
+  const entriesPath = `/api/v1/admin/stock/entries?${entryQueryParams.toString()}`;
 
-  const [categoriesResult, productsResult, stocksResult, requestsResult, locationsResult, clientsResult, reorderResult, transfersResult] = await Promise.all([
+  const [categoriesResult, productsResult, stocksResult, requestsResult, locationsResult, clientsResult, reorderResult, transfersResult, entriesResult] = await Promise.all([
     backendRequest<AdminCatalogCategoryOut[]>("/api/v1/admin/config/catalog/categories?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
     stocksPath ? backendRequest<AdminCatalogStockOut[]>(stocksPath, {}, token) : Promise.resolve({ ok: true as const, data: [] as AdminCatalogStockOut[] }),
@@ -262,6 +338,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000", {}, token),
     backendRequest<AdminCatalogReorderProductOut[]>(reorderPath, {}, token),
     backendRequest<AdminCatalogStockTransferOut[]>(transfersPath, {}, token),
+    backendRequest<AdminStockMovementListOut>(entriesPath, {}, token),
   ]);
 
   const loadErrors: string[] = [];
@@ -313,9 +390,16 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
         loadErrors.push(`Transferts: ${transfersResult.message}`);
         return [] as AdminCatalogStockTransferOut[];
       })();
+  const entriesPage = entriesResult.ok
+    ? entriesResult.data
+    : (() => {
+        loadErrors.push(`Entrees stock: ${entriesResult.message}`);
+        return { items: [], total: 0, page: 1, page_size: 20 } as AdminStockMovementListOut;
+      })();
 
   const activeCategories = categories.filter((row) => row.active);
   const activeProducts = products.filter((row) => row.active);
+  const stockableProducts = activeProducts.filter((row) => !row.is_virtual);
   const activeLocations = locations.filter((row) => row.active);
 
   const qLower = query.toLocaleLowerCase("fr-FR");
@@ -393,6 +477,22 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     }, [])
     .sort((a, b) => a.locationName.localeCompare(b.locationName, "fr") || a.productTitle.localeCompare(b.productTitle, "fr"));
 
+  const entryItems = entriesPage.items;
+  const entryTotalPages = Math.max(1, Math.ceil(entriesPage.total / Math.max(entriesPage.page_size || 1, 1)));
+  const selectedEntry = entryItems.find((row) => row.id === entryId) ?? null;
+  const entryPrevLink = `/admin/products${buildProductsQuery({
+    ...baseQuery,
+    add: "",
+    editProduct: "",
+    entryPage: String(Math.max(1, entryPage - 1)),
+  })}`;
+  const entryNextLink = `/admin/products${buildProductsQuery({
+    ...baseQuery,
+    add: "",
+    editProduct: "",
+    entryPage: String(Math.min(entryTotalPages, entryPage + 1)),
+  })}`;
+
   return (
     <section className="admin-page-grid">
       <section className="card">
@@ -401,12 +501,15 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
       </section>
 
       <section className="card">
-        <div className="row wrap gap-xs">
+        <div className="row wrap gap-xs catalog-tabs-scroll">
           <Link className={currentView === "products" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "products" })}`}>
             Produits
           </Link>
           <Link className={currentView === "reorder" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "reorder" })}`}>
             Produits a commander
+          </Link>
+          <Link className={currentView === "entries" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "entries" })}`}>
+            Entrees stock
           </Link>
           <Link className={currentView === "transfers" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "transfers" })}`}>
             Transferts stock
@@ -499,7 +602,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </div>
             </form>
 
-            <div className="table-wrap top-gap-sm">
+            <div className="table-wrap catalog-desktop-table top-gap-sm">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -543,18 +646,21 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                           <td>{product.is_virtual ? "n/a" : needsAlert ? "Oui" : "Non"}</td>
                           <td>{yesNoLabel(product.active)}</td>
                           <td>
-                            <div className="row wrap gap-xs">
-                              <Link className="ghost" href={editLink}>
-                                Modifier
-                              </Link>
-                              <form action={deleteAdminCatalogProductAction}>
-                                <input type="hidden" name="product_id" value={product.id} />
-                                <input type="hidden" name="return_to" value={returnTo} />
-                                <button type="submit" className="danger">
-                                  Supprimer
-                                </button>
-                              </form>
-                            </div>
+                            <details className="catalog-actions-menu">
+                              <summary className="ghost">⋯</summary>
+                              <div className="catalog-actions-menu-panel">
+                                <Link className="ghost" href={editLink}>
+                                  Modifier
+                                </Link>
+                                <form action={deleteAdminCatalogProductAction}>
+                                  <input type="hidden" name="product_id" value={product.id} />
+                                  <input type="hidden" name="return_to" value={returnTo} />
+                                  <button type="submit" className="danger ghost">
+                                    Supprimer
+                                  </button>
+                                </form>
+                              </div>
+                            </details>
                           </td>
                         </tr>
                       );
@@ -563,107 +669,136 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </tbody>
               </table>
             </div>
+            <div className="catalog-mobile-cards top-gap-sm">
+              {filteredProducts.map((product) => {
+                const selectLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", product: product.id })}`;
+                const editLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: product.id, product: selectedProductId || product.id })}`;
+                return (
+                  <article key={`product-mobile-${product.id}`} className="catalog-mobile-card">
+                    <p className="catalog-mobile-title">{product.title}</p>
+                    <p className="muted">
+                      {product.category_name || "Sans categorie"} · {formatMoney(product.price_incl_vat, "EUR")}
+                    </p>
+                    <p className="muted">
+                      {product.is_virtual ? "Virtuel" : `Stock ${product.stock_global_quantity} / reserve ${product.reserve_stock}`}
+                    </p>
+                    <div className="row wrap gap-xs top-gap-sm">
+                      <Link className="ghost" href={selectLink}>
+                        Voir stock
+                      </Link>
+                      <Link className="ghost" href={editLink}>
+                        Modifier
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
           </section>
 
           <section className="card">
-            <div className="row spread">
-              <h3>Stocks par local</h3>
+            <details>
+              <summary>Stocks par local ({selectedProductStocks.length})</summary>
               {selectedProduct ? (
-                <Link className="ghost" href={clearSelectedProductLink}>
-                  Retirer la selection produit
-                </Link>
-              ) : null}
-            </div>
-            {!selectedProduct ? (
-              <p className="muted">Choisissez un produit dans la liste pour afficher ses stocks par local.</p>
-            ) : selectedProduct.is_virtual ? (
-              <p className="muted">Produit virtuel: aucune gestion de stock par local.</p>
-            ) : selectedProductStocks.length === 0 ? (
-              <p className="muted">Aucun stock initialise pour ce produit.</p>
-            ) : (
-              <>
-                <p className="muted">
-                  Produit selectionne: <strong>{selectedProduct.title}</strong> ({selectedProduct.stock_global_quantity} en stock reel global)
+                <p className="top-gap-sm">
+                  <Link className="ghost" href={clearSelectedProductLink}>
+                    Retirer la selection produit
+                  </Link>
                 </p>
+              ) : null}
+              {!selectedProduct ? (
+                <p className="muted">Choisissez un produit dans la liste pour afficher ses stocks par local.</p>
+              ) : selectedProduct.is_virtual ? (
+                <p className="muted">Produit virtuel: aucune gestion de stock par local.</p>
+              ) : selectedProductStocks.length === 0 ? (
+                <p className="muted">Aucun stock initialise pour ce produit.</p>
+              ) : (
+                <>
+                  <p className="muted">
+                    Produit selectionne: <strong>{selectedProduct.title}</strong> ({selectedProduct.stock_global_quantity} en stock reel global)
+                  </p>
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Lieu</th>
+                          <th>Inventaire</th>
+                          <th>Date inventaire</th>
+                          <th>Stock reel</th>
+                          <th>Stock estime</th>
+                          <th>Mise a jour inventaire</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedProductStocks.map((stock) => (
+                          <tr
+                            key={`${stock.product_id}-${stock.location_id}`}
+                            className={stock.real_quantity < 0 || stock.estimated_quantity < 0 ? "catalog-stock-negative" : ""}
+                          >
+                            <td>{stock.location_name}</td>
+                            <td>{stock.inventory_quantity}</td>
+                            <td>{stock.inventory_date || "-"}</td>
+                            <td>{stock.real_quantity}</td>
+                            <td>{stock.estimated_quantity}</td>
+                            <td>
+                              <form action={updateAdminCatalogInventoryAction} className="catalog-stock-form">
+                                <input type="hidden" name="product_id" value={stock.product_id} />
+                                <input type="hidden" name="location_id" value={stock.location_id} />
+                                <input type="hidden" name="return_to" value={returnTo} />
+                                <input type="number" name="inventory_quantity" min={0} step={1} defaultValue={stock.inventory_quantity} required />
+                                <input type="date" name="inventory_date" defaultValue={dateInputValue(stock.inventory_date)} />
+                                <button type="submit">Reset inventaire</button>
+                              </form>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </details>
+          </section>
+
+          <section className="card">
+            <details>
+              <summary>Besoins par local ({requestsByLocation.length})</summary>
+              {!selectedProduct ? (
+                <p className="muted">Choisissez un produit pour visualiser les besoins consolides par local.</p>
+              ) : requestsByLocation.length === 0 ? (
+                <p className="muted">Aucun besoin en cours pour ce produit.</p>
+              ) : (
                 <div className="table-wrap">
                   <table className="data-table">
                     <thead>
                       <tr>
                         <th>Lieu</th>
-                        <th>Inventaire</th>
-                        <th>Date inventaire</th>
-                        <th>Stock reel</th>
-                        <th>Stock estime</th>
-                        <th>Mise a jour inventaire</th>
+                        <th>Produit</th>
+                        <th>Statut</th>
+                        <th>Quantite demandee</th>
+                        <th>Stock estime local</th>
+                        <th>Alerte</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedProductStocks.map((stock) => (
-                        <tr
-                          key={`${stock.product_id}-${stock.location_id}`}
-                          className={stock.real_quantity < 0 || stock.estimated_quantity < 0 ? "catalog-stock-negative" : ""}
-                        >
-                          <td>{stock.location_name}</td>
-                          <td>{stock.inventory_quantity}</td>
-                          <td>{stock.inventory_date || "-"}</td>
-                          <td>{stock.real_quantity}</td>
-                          <td>{stock.estimated_quantity}</td>
-                          <td>
-                            <form action={updateAdminCatalogInventoryAction} className="catalog-stock-form">
-                              <input type="hidden" name="product_id" value={stock.product_id} />
-                              <input type="hidden" name="location_id" value={stock.location_id} />
-                              <input type="hidden" name="return_to" value={returnTo} />
-                              <input type="number" name="inventory_quantity" min={0} step={1} defaultValue={stock.inventory_quantity} required />
-                              <input type="date" name="inventory_date" defaultValue={dateInputValue(stock.inventory_date)} />
-                              <button type="submit">Reset inventaire</button>
-                            </form>
-                          </td>
-                        </tr>
-                      ))}
+                      {requestsByLocation.map((row) => {
+                        const shortage = row.estimatedStock !== null ? row.estimatedStock < row.quantity : false;
+                        return (
+                          <tr key={row.key} className={shortage ? "catalog-stock-negative" : ""}>
+                            <td>{row.locationName}</td>
+                            <td>{row.productTitle}</td>
+                            <td>{catalogRequestStatusLabel(row.status)}</td>
+                            <td>{row.quantity}</td>
+                            <td>{row.estimatedStock ?? "-"}</td>
+                            <td>{shortage ? "Stock estime insuffisant" : "-"}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
-              </>
-            )}
-          </section>
-
-          <section className="card">
-            <h3>Besoins par local (demandes eleves / achats)</h3>
-            {!selectedProduct ? (
-              <p className="muted">Choisissez un produit pour visualiser les besoins consolides par local.</p>
-            ) : requestsByLocation.length === 0 ? (
-              <p className="muted">Aucun besoin en cours pour ce produit.</p>
-            ) : (
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Lieu</th>
-                      <th>Produit</th>
-                      <th>Statut</th>
-                      <th>Quantite demandee</th>
-                      <th>Stock estime local</th>
-                      <th>Alerte</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {requestsByLocation.map((row) => {
-                      const shortage = row.estimatedStock !== null ? row.estimatedStock < row.quantity : false;
-                      return (
-                        <tr key={row.key} className={shortage ? "catalog-stock-negative" : ""}>
-                          <td>{row.locationName}</td>
-                          <td>{row.productTitle}</td>
-                          <td>{catalogRequestStatusLabel(row.status)}</td>
-                          <td>{row.quantity}</td>
-                          <td>{row.estimatedStock ?? "-"}</td>
-                          <td>{shortage ? "Stock estime insuffisant" : "-"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+              )}
+            </details>
           </section>
         </>
       ) : null}
@@ -687,7 +822,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               <button type="submit">Filtrer</button>
             </form>
           </div>
-          <div className="table-wrap top-gap-sm">
+          <div className="table-wrap catalog-desktop-table top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
@@ -735,7 +870,287 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </tbody>
             </table>
           </div>
+          <div className="catalog-mobile-cards top-gap-sm">
+            {reorderProducts.map((product) => (
+              <article key={`reorder-mobile-${product.product_id}`} className="catalog-mobile-card">
+                <p className="catalog-mobile-title">{product.title}</p>
+                <p className="muted">
+                  {product.category_name || "Sans categorie"} · {product.primary_location_name || "Sans local"}
+                </p>
+                <p className="muted">
+                  Stock {product.stock_global_quantity} / Reserve {product.reserve_stock}
+                </p>
+                <form action={updateAdminCatalogReorderStatusAction} className="row wrap gap-xs top-gap-sm">
+                  <input type="hidden" name="product_id" value={product.product_id} />
+                  <input type="hidden" name="return_to" value={returnTo} />
+                  <select name="reorder_status" defaultValue={product.reorder_status}>
+                    <option value="TO_ORDER">A commander</option>
+                    <option value="ORDERED">Commande passee</option>
+                    <option value="RECEIVED">Recu</option>
+                    <option value="NORMAL">Normal</option>
+                  </select>
+                  <button type="submit">Maj</button>
+                </form>
+              </article>
+            ))}
+          </div>
         </section>
+      ) : null}
+
+      {currentView === "entries" ? (
+        <>
+          <section className="card">
+            <div className="row spread">
+              <h3>Nouvelle entree en stock</h3>
+              <span className="badge">{entriesPage.total} mouvement(s)</span>
+            </div>
+            <form action={createAdminStockEntryAction} className="grid cols-2 config-form-grid catalog-entry-form top-gap-sm">
+              <input type="hidden" name="return_to" value={returnTo} />
+              <label>
+                Produit
+                <select name="product_id" required defaultValue={entryProduct || selectedProduct?.id || ""}>
+                  <option value="">Selectionner un produit</option>
+                  {stockableProducts.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Local
+                <select name="location_id" required defaultValue={entryLocation || selectedProduct?.primary_location_id || ""}>
+                  <option value="">Selectionner un local</option>
+                  {activeLocations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Quantite
+                <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
+              </label>
+              <label>
+                Date
+                <input type="date" name="occurred_at" defaultValue={new Date().toISOString().slice(0, 10)} />
+              </label>
+              <label>
+                Source
+                <select name="source_type" defaultValue="delivery">
+                  <option value="delivery">Livraison</option>
+                  <option value="purchase">Achat</option>
+                  <option value="return">Retour</option>
+                  <option value="correction">Correction</option>
+                  <option value="other">Autre</option>
+                </select>
+              </label>
+              <label>
+                Reference (optionnel)
+                <input type="text" name="source_reference" maxLength={255} />
+              </label>
+              <label className="span-2">
+                Note (optionnel)
+                <textarea name="note" rows={2} maxLength={2000} />
+              </label>
+              <div className="row span-2">
+                <button type="submit">Enregistrer l entree</button>
+              </div>
+            </form>
+            <details className="top-gap-sm">
+              <summary className="mode-link">Correction inventaire</summary>
+              <form action={createAdminStockAdjustmentAction} className="grid cols-2 config-form-grid top-gap-sm">
+                <input type="hidden" name="return_to" value={returnTo} />
+                <label>
+                  Produit
+                  <select name="adjust_product_id" required defaultValue={entryProduct || selectedProduct?.id || ""}>
+                    <option value="">Selectionner un produit</option>
+                    {stockableProducts.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Local
+                  <select name="adjust_location_id" required defaultValue={entryLocation || selectedProduct?.primary_location_id || ""}>
+                    <option value="">Selectionner un local</option>
+                    {activeLocations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Delta quantite (+/-)
+                  <input type="number" name="adjust_quantity" step={1} defaultValue={0} required />
+                </label>
+                <label>
+                  Date
+                  <input type="date" name="adjust_occurred_at" defaultValue={new Date().toISOString().slice(0, 10)} />
+                </label>
+                <label>
+                  Motif
+                  <select name="adjust_source_type" defaultValue="correction">
+                    <option value="correction">Correction</option>
+                    <option value="return">Retour</option>
+                    <option value="other">Autre</option>
+                  </select>
+                </label>
+                <label>
+                  Reference (optionnel)
+                  <input type="text" name="adjust_source_reference" maxLength={255} />
+                </label>
+                <label className="span-2">
+                  Note (optionnel)
+                  <textarea name="adjust_note" rows={2} maxLength={2000} />
+                </label>
+                <div className="row span-2">
+                  <button type="submit" className="ghost">
+                    Enregistrer la correction
+                  </button>
+                </div>
+              </form>
+            </details>
+          </section>
+
+          <section className="card">
+            <div className="row spread">
+              <h3>Historique des entrees</h3>
+              <form method="get" className="row wrap gap-xs">
+                <input type="hidden" name="view" value="entries" />
+                <label>
+                  Produit
+                  <select name="entry_product" defaultValue={entryProduct}>
+                    <option value="">Tous</option>
+                    {stockableProducts.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Local
+                  <select name="entry_location" defaultValue={entryLocation}>
+                    <option value="">Tous</option>
+                    {activeLocations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Recherche
+                  <input type="search" name="entry_q" defaultValue={entryQuery} placeholder="Produit, local, reference..." />
+                </label>
+                <button type="submit">Filtrer</button>
+              </form>
+            </div>
+            <div className="table-wrap catalog-desktop-table top-gap-sm">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Produit</th>
+                    <th>Local</th>
+                    <th>Qt</th>
+                    <th>Type</th>
+                    <th>Source</th>
+                    <th>Reference</th>
+                    <th>Cree par</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entryItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="muted">
+                        Aucune entree pour ces filtres.
+                      </td>
+                    </tr>
+                  ) : (
+                    entryItems.map((entry) => {
+                      const qty = Number(entry.quantity);
+                      const detailLink = `/admin/products${buildProductsQuery({
+                        ...baseQuery,
+                        add: "",
+                        editProduct: "",
+                        entryId: entry.id,
+                      })}`;
+                      return (
+                        <tr key={entry.id}>
+                          <td>{new Date(entry.occurred_at).toLocaleString("fr-FR")}</td>
+                          <td>{entry.product_title}</td>
+                          <td>{entry.location_name}</td>
+                          <td>{qty >= 0 ? `+${qty}` : qty}</td>
+                          <td>{stockMovementTypeLabel(entry.movement_type)}</td>
+                          <td>{stockMovementSourceTypeLabel(entry.source_type)}</td>
+                          <td>{entry.source_reference || "-"}</td>
+                          <td>{entry.created_by_name || "-"}</td>
+                          <td>
+                            <Link className="ghost" href={detailLink}>
+                              Details
+                            </Link>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="catalog-mobile-cards top-gap-sm">
+              {entryItems.map((entry) => {
+                const qty = Number(entry.quantity);
+                const detailLink = `/admin/products${buildProductsQuery({
+                  ...baseQuery,
+                  add: "",
+                  editProduct: "",
+                  entryId: entry.id,
+                })}`;
+                return (
+                  <article key={`mobile-${entry.id}`} className="catalog-mobile-card">
+                    <p className="catalog-mobile-title">{entry.product_title}</p>
+                    <p className="muted">
+                      {new Date(entry.occurred_at).toLocaleString("fr-FR")} · {entry.location_name}
+                    </p>
+                    <p className="muted">
+                      {stockMovementTypeLabel(entry.movement_type)} · {stockMovementSourceTypeLabel(entry.source_type)}
+                    </p>
+                    <div className="row spread">
+                      <strong>{qty >= 0 ? `+${qty}` : qty}</strong>
+                      <Link className="ghost" href={detailLink}>
+                        Details
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="row spread top-gap-sm">
+              <span className="muted">
+                Page {entryPage} / {entryTotalPages}
+              </span>
+              <div className="row gap-xs">
+                {entryPage > 1 ? (
+                  <Link className="ghost" href={entryPrevLink}>
+                    Precedent
+                  </Link>
+                ) : null}
+                {entryPage < entryTotalPages ? (
+                  <Link className="ghost" href={entryNextLink}>
+                    Suivant
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+          </section>
+        </>
       ) : null}
 
       {currentView === "transfers" ? (
@@ -748,7 +1163,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 Produit
                 <select name="product_id" defaultValue={selectedProduct?.id ?? ""} required>
                   <option value="">Selectionner un produit</option>
-                  {activeProducts.map((product) => (
+                  {stockableProducts.map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.title}
                     </option>
@@ -823,7 +1238,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 <button type="submit">Filtrer</button>
               </form>
             </div>
-            <div className="table-wrap top-gap-sm">
+            <div className="table-wrap catalog-desktop-table top-gap-sm">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -888,6 +1303,37 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </tbody>
               </table>
             </div>
+            <div className="catalog-mobile-cards top-gap-sm">
+              {transfers.map((transfer) => (
+                <article key={`transfer-mobile-${transfer.id}`} className="catalog-mobile-card">
+                  <p className="catalog-mobile-title">{transfer.product_title}</p>
+                  <p className="muted">
+                    {transfer.source_location_name} {"->"} {transfer.target_location_name}
+                  </p>
+                  <p className="muted">
+                    Qt {transfer.quantity} · {transferStatusLabel(transfer.status)}
+                  </p>
+                  {transfer.status === "PENDING" ? (
+                    <div className="catalog-request-actions">
+                      <form action={completeAdminCatalogTransferAction} className="row wrap gap-xs">
+                        <input type="hidden" name="transfer_id" value={transfer.id} />
+                        <input type="hidden" name="return_to" value={returnTo} />
+                        <input type="date" name="completed_transfer_date" defaultValue={dateInputValue(transfer.planned_transfer_date)} />
+                        <button type="submit">Marquer fait</button>
+                      </form>
+                      <form action={cancelAdminCatalogTransferAction} className="row wrap gap-xs">
+                        <input type="hidden" name="transfer_id" value={transfer.id} />
+                        <input type="hidden" name="return_to" value={returnTo} />
+                        <input type="text" name="note" maxLength={2000} placeholder="Motif annulation" />
+                        <button type="submit" className="danger ghost">
+                          Annuler
+                        </button>
+                      </form>
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
           </section>
         </>
       ) : null}
@@ -948,7 +1394,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
             </div>
           </form>
 
-          <div className="table-wrap top-gap-sm">
+          <div className="table-wrap catalog-desktop-table top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
@@ -1040,6 +1486,99 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </tbody>
             </table>
           </div>
+          <div className="catalog-mobile-cards top-gap-sm">
+            {requests.map((request) => (
+              <article key={`request-mobile-${request.id}`} className="catalog-mobile-card">
+                <p className="catalog-mobile-title">{request.product_title}</p>
+                <p className="muted">
+                  {request.student_name} · {request.location_name}
+                </p>
+                <p className="muted">
+                  {catalogRequestStatusLabel(request.status)} · Qt {request.quantity}
+                </p>
+                <div className="catalog-request-actions">
+                  {request.status === "PROCESSING" ? (
+                    <>
+                      <form action={reviewAdminCatalogRequestAction} className="row wrap gap-xs">
+                        <input type="hidden" name="request_id" value={request.id} />
+                        <input type="hidden" name="decision" value="ACCEPT" />
+                        <input type="hidden" name="return_to" value={returnTo} />
+                        <label className="checkline">
+                          <input type="checkbox" name="should_bill" />
+                          Facturer
+                        </label>
+                        <button type="submit">Accepter</button>
+                      </form>
+                      <form action={reviewAdminCatalogRequestAction} className="row wrap gap-xs">
+                        <input type="hidden" name="request_id" value={request.id} />
+                        <input type="hidden" name="decision" value="REJECT" />
+                        <input type="hidden" name="return_to" value={returnTo} />
+                        <button type="submit" className="danger ghost">
+                          Refuser
+                        </button>
+                      </form>
+                    </>
+                  ) : null}
+                  {(request.status === "TO_DELIVER" || request.status === "INVOICE_TO_SEND") ? (
+                    <form action={deliverAdminCatalogRequestAction} className="row wrap gap-xs">
+                      <input type="hidden" name="request_id" value={request.id} />
+                      <input type="hidden" name="return_to" value={returnTo} />
+                      <button type="submit">Marquer remis</button>
+                    </form>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {selectedEntry ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Details entree stock">
+          <section className="modal-panel modal-day-details">
+            <div className="row spread">
+              <h3 className="modal-title">Details mouvement stock</h3>
+              <Link
+                className="ghost"
+                href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", entryId: "" })}`}
+                aria-label="Fermer"
+              >
+                Fermer
+              </Link>
+            </div>
+            <section className="modal-card">
+              <div className="grid cols-2 config-form-grid">
+                <p>
+                  <strong>Produit:</strong> {selectedEntry.product_title}
+                </p>
+                <p>
+                  <strong>Local:</strong> {selectedEntry.location_name}
+                </p>
+                <p>
+                  <strong>Date:</strong> {new Date(selectedEntry.occurred_at).toLocaleString("fr-FR")}
+                </p>
+                <p>
+                  <strong>Quantite:</strong> {Number(selectedEntry.quantity) >= 0 ? "+" : ""}
+                  {selectedEntry.quantity}
+                </p>
+                <p>
+                  <strong>Type:</strong> {stockMovementTypeLabel(selectedEntry.movement_type)}
+                </p>
+                <p>
+                  <strong>Source:</strong> {stockMovementSourceTypeLabel(selectedEntry.source_type)}
+                </p>
+                <p>
+                  <strong>Reference:</strong> {selectedEntry.source_reference || "-"}
+                </p>
+                <p>
+                  <strong>Cree par:</strong> {selectedEntry.created_by_name || "-"}
+                </p>
+                <p className="span-2">
+                  <strong>Note:</strong> {selectedEntry.note || "-"}
+                </p>
+              </div>
+            </section>
+          </section>
         </section>
       ) : null}
 

@@ -1210,6 +1210,58 @@ export type AdminCatalogStockOut = {
   updated_at: string;
 };
 
+export type AdminStockMovementType = "STOCK_IN" | "ADJUSTMENT" | string;
+export type AdminStockMovementSourceType = "purchase" | "delivery" | "correction" | "return" | "other" | string;
+
+export type AdminStockMovementOut = {
+  id: string;
+  product_id: string;
+  product_title: string;
+  location_id: string;
+  location_name: string;
+  movement_type: AdminStockMovementType;
+  quantity: string;
+  occurred_at: string;
+  source_type: AdminStockMovementSourceType;
+  source_reference: string | null;
+  note: string | null;
+  attachment_key: string | null;
+  created_by: string | null;
+  created_by_name: string | null;
+  meta: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminStockSnapshotOut = {
+  product_id: string;
+  product_title: string;
+  stock_global: number;
+  stock_location: number;
+  stock_reserved: number;
+};
+
+export type AdminStockEntryCreateOut = {
+  movement_id: string;
+  stock_snapshot: AdminStockSnapshotOut;
+};
+
+export type AdminStockMovementListOut = {
+  items: AdminStockMovementOut[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type AdminCatalogProductStockOut = {
+  product_id: string;
+  product_title: string;
+  stock_global: number;
+  stock_reserved: number;
+  stock_by_location: AdminCatalogStockOut[];
+  recent_movements: AdminStockMovementOut[];
+};
+
 export type AdminCatalogRequestStatus = "PROCESSING" | "REJECTED" | "INVOICE_TO_SEND" | "TO_DELIVER" | "DELIVERED" | string;
 export type AdminCatalogRequestSource = "ADMIN" | "PROFESSOR" | string;
 

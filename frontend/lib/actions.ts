@@ -28,6 +28,7 @@ import type {
   AdminCatalogKitOut,
   AdminCatalogRequestOut,
   AdminCatalogStockOut,
+  AdminStockEntryCreateOut,
   AdminProductCategoriesOut,
   AdminProfessorContractDeleteOut,
   AdminCollaboratorSendPasswordOut,
@@ -385,6 +386,18 @@ function parseNonNegativeDecimal(raw: string): number | null {
     return null;
   }
 
+  return parsed;
+}
+
+function parseSignedDecimal(raw: string): number | null {
+  const value = raw.trim();
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
   return parsed;
 }
 
@@ -6178,6 +6191,90 @@ export async function cancelAdminCatalogTransferAction(formData: FormData): Prom
   }
   revalidatePath("/admin/products");
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Transfert annule"));
+}
+
+export async function createAdminStockEntryAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/products?view=entries");
+  const productId = parseUuid(String(formData.get("product_id") ?? ""));
+  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const quantity = parseNonNegativeDecimal(String(formData.get("quantity") ?? ""));
+  const occurredAtDate = parseDateOnly(String(formData.get("occurred_at") ?? ""));
+  const sourceType = String(formData.get("source_type") ?? "other").trim().toLowerCase();
+  if (!productId || !locationId || quantity === null || quantity <= 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Entree stock invalide"));
+  }
+  const payload = {
+    product_id: productId,
+    location_id: locationId,
+    quantity,
+    occurred_at: occurredAtDate ? `${occurredAtDate}T00:00:00Z` : null,
+    source_type: sourceType,
+    source_reference: optionalField(formData, "source_reference"),
+    note: optionalField(formData, "note"),
+  };
+  const result = await backendRequest<AdminStockEntryCreateOut>(
+    "/api/v1/admin/stock/entries",
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": `entry-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      },
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Entree stock enregistree"));
+}
+
+export async function createAdminStockAdjustmentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/products?view=entries");
+  const productId = parseUuid(String(formData.get("adjust_product_id") ?? ""));
+  const locationId = parseUuid(String(formData.get("adjust_location_id") ?? ""));
+  const quantity = parseSignedDecimal(String(formData.get("adjust_quantity") ?? ""));
+  const occurredAtDate = parseDateOnly(String(formData.get("adjust_occurred_at") ?? ""));
+  const sourceType = String(formData.get("adjust_source_type") ?? "correction").trim().toLowerCase();
+  if (!productId || !locationId || quantity === null || quantity === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Correction inventaire invalide"));
+  }
+  const payload = {
+    product_id: productId,
+    location_id: locationId,
+    quantity,
+    occurred_at: occurredAtDate ? `${occurredAtDate}T00:00:00Z` : null,
+    source_type: sourceType,
+    source_reference: optionalField(formData, "adjust_source_reference"),
+    note: optionalField(formData, "adjust_note"),
+  };
+  const result = await backendRequest<AdminStockEntryCreateOut>(
+    "/api/v1/admin/stock/adjustments",
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": `adjust-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      },
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Correction inventaire enregistree"));
 }
 
 export async function createAdminCatalogRequestAction(formData: FormData): Promise<void> {

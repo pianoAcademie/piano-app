@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.models.product_catalog import ProductRequestSource, ProductRequestStatus
 from app.models.product_catalog import ProductReorderStatus, ProductTransferStatus
+from app.models.product_catalog import StockMovementSourceType, StockMovementType
 
 
 class AdminCatalogCategoryOut(BaseModel):
@@ -211,6 +212,77 @@ class AdminCatalogStockTransferCancelRequest(BaseModel):
 class AdminCatalogStockInventoryUpdateRequest(BaseModel):
     inventory_quantity: int = Field(ge=0, le=1000000)
     inventory_date: date | None = None
+
+
+class AdminStockEntryCreateRequest(BaseModel):
+    product_id: UUID
+    location_id: UUID
+    quantity: Decimal = Field(gt=Decimal("0"), le=Decimal("1000000"), multiple_of=Decimal("1"))
+    occurred_at: datetime | None = None
+    source_type: StockMovementSourceType = StockMovementSourceType.OTHER
+    source_reference: str | None = Field(default=None, max_length=255)
+    note: str | None = Field(default=None, max_length=2000)
+    attachment_key: str | None = Field(default=None, max_length=4000)
+
+
+class AdminStockAdjustmentCreateRequest(BaseModel):
+    product_id: UUID
+    location_id: UUID
+    quantity: Decimal = Field(le=Decimal("1000000"), multiple_of=Decimal("1"))
+    occurred_at: datetime | None = None
+    source_type: StockMovementSourceType = StockMovementSourceType.CORRECTION
+    source_reference: str | None = Field(default=None, max_length=255)
+    note: str | None = Field(default=None, max_length=2000)
+    attachment_key: str | None = Field(default=None, max_length=4000)
+
+
+class AdminStockMovementOut(BaseModel):
+    id: UUID
+    product_id: UUID
+    product_title: str
+    location_id: UUID
+    location_name: str
+    movement_type: StockMovementType
+    quantity: Decimal
+    occurred_at: datetime
+    source_type: StockMovementSourceType
+    source_reference: str | None
+    note: str | None
+    attachment_key: str | None
+    created_by: UUID | None
+    created_by_name: str | None
+    meta: dict | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminStockSnapshotOut(BaseModel):
+    product_id: UUID
+    product_title: str
+    stock_global: int
+    stock_location: int
+    stock_reserved: int
+
+
+class AdminStockEntryCreateResponse(BaseModel):
+    movement_id: UUID
+    stock_snapshot: AdminStockSnapshotOut
+
+
+class AdminStockMovementListOut(BaseModel):
+    items: list[AdminStockMovementOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminCatalogProductStockOut(BaseModel):
+    product_id: UUID
+    product_title: str
+    stock_global: int
+    stock_reserved: int
+    stock_by_location: list[AdminCatalogStockOut]
+    recent_movements: list[AdminStockMovementOut]
 
 
 class AdminCatalogRequestOut(BaseModel):
