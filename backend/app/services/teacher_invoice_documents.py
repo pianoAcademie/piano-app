@@ -3,15 +3,20 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 import html
+import io
+import logging
 import re
 from decimal import InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from xhtml2pdf import pisa
 
 from app.models.teacher_invoicing import DocumentTemplate
 from app.services.invoice_documents import _SimplePdfDocument, _wrap_text
+
+logger = logging.getLogger(__name__)
 
 TEACHER_INVOICE_TEMPLATE_KEY = "teacher_invoice"
 TEACHER_INVOICE_TEMPLATE_VARIABLES: tuple[str, ...] = (
@@ -241,7 +246,26 @@ def render_teacher_invoice_html(*, html_template: str, context: dict[str, Any]) 
     return _render_template(html_template, context)
 
 
-def render_teacher_invoice_pdf_from_html(rendered_html: str) -> bytes:
+def _ensure_full_html_document(rendered_html: str) -> str:
+    candidate = (rendered_html or "").strip()
+    if not candidate:
+        return "<html><body><p>Facture</p></body></html>"
+    if "<html" in candidate.lower():
+        return candidate
+    return f"<html><body>{candidate}</body></html>"
+
+
+def _render_html_pdf_with_xhtml2pdf(rendered_html: str) -> bytes | None:
+    html_document = _ensure_full_html_document(rendered_html)
+    output = io.BytesIO()
+    status = pisa.CreatePDF(src=html_document, dest=output, encoding="utf-8")
+    if status.err:
+        logger.warning("Teacher invoice HTML PDF rendering failed with xhtml2pdf; using fallback renderer")
+        return None
+    return output.getvalue()
+
+
+def _render_plain_text_pdf_from_html(rendered_html: str) -> bytes:
     normalized = rendered_html.replace("<br/>", "\n").replace("<br>", "\n").replace("<br />", "\n")
     normalized = re.sub(r"<style[^>]*>.*?</style>", "", normalized, flags=re.IGNORECASE | re.DOTALL)
     normalized = re.sub(r"<script[^>]*>.*?</script>", "", normalized, flags=re.IGNORECASE | re.DOTALL)
@@ -263,3 +287,10 @@ def render_teacher_invoice_pdf_from_html(rendered_html: str) -> bytes:
         current_top += 4.0
 
     return pdf.build()
+
+
+def render_teacher_invoice_pdf_from_html(rendered_html: str) -> bytes:
+    html_pdf = _render_html_pdf_with_xhtml2pdf(rendered_html)
+    if html_pdf:
+        return html_pdf
+    return _render_plain_text_pdf_from_html(rendered_html)
