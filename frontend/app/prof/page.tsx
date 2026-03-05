@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
@@ -14,7 +13,7 @@ import { backendRequest } from "../../lib/backend";
 import AutoSubmitSelect from "../../components/auto-submit-select";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
-import RichMessageEditor from "../../components/rich-message-editor";
+import PortalImpersonationBanner from "../../components/portal-impersonation-banner";
 import ActionCard from "../../components/teacher-ui/action-card";
 import AlertCard from "../../components/teacher-ui/alert-card";
 import BottomTabs from "../../components/teacher-ui/bottom-tabs";
@@ -24,6 +23,7 @@ import SectionAccordion from "../../components/teacher-ui/section-accordion";
 import StatCard from "../../components/teacher-ui/stat-card";
 import StatChip from "../../components/teacher-ui/stat-chip";
 import StickyActionBar from "../../components/teacher-ui/sticky-action-bar";
+import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
 import type { PlanningEventChipData } from "../../components/planning/month-event-chip";
 import type {
   ProfessorAttendancePendingOut,
@@ -288,6 +288,20 @@ function attendanceLabel(status: string): string {
   return normalized;
 }
 
+function attendanceRowTone(status: string): "warn" | "ok" | "neutral" | "danger" {
+  const normalized = status.toUpperCase();
+  if (normalized === "ATTENDED") {
+    return "ok";
+  }
+  if (normalized === "NO_SHOW") {
+    return "danger";
+  }
+  if (normalized === "EXCUSED_ABSENCE") {
+    return "neutral";
+  }
+  return "warn";
+}
+
 function buildProfHref(params: {
   tab: Tab;
   agendaView: AgendaView;
@@ -295,6 +309,7 @@ function buildProfHref(params: {
   sessionId?: string | null;
   messageId?: string | null;
   dayDetails?: string | null;
+  attendanceFilter?: string | null;
 }): string {
   const query = new URLSearchParams();
   query.set("tab", params.tab);
@@ -308,6 +323,9 @@ function buildProfHref(params: {
   }
   if (params.dayDetails) {
     query.set("day_details", params.dayDetails);
+  }
+  if (params.attendanceFilter && params.attendanceFilter !== "all") {
+    query.set("attendance_filter", params.attendanceFilter);
   }
   return `/prof?${query.toString()}`;
 }
@@ -345,10 +363,6 @@ function parseMessageSubject(subject: string): { cleanedSubject: string; targetL
 
 function pendingAttendanceCount(session: ProfessorSessionOut): number {
   return session.students.filter((student) => student.attendance_status === "BOOKED").length;
-}
-
-function presentAttendanceCount(session: ProfessorSessionOut): number {
-  return session.students.filter((student) => student.attendance_status === "ATTENDED").length;
 }
 
 function reservedStudentsCountFromRoster(session: ProfessorSessionOut): number {
@@ -406,7 +420,7 @@ function productRequestSourceLabel(source: string): string {
 }
 
 export default async function ProfessorPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = getPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -424,6 +438,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   }
 
   const currentTab = parseTab(readParam(searchParams, "tab"));
+  const impersonationClaims = readPortalImpersonationClaims();
+  const isImpersonating = Boolean(impersonationClaims?.imp);
+  const impersonationReturnTo = getPortalReturnTo() ?? "/admin";
+  const impersonationNameHint = readParam(searchParams, "imp_name").trim();
   const agendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
   const agendaDateRaw = readParam(searchParams, "agenda_date");
   const agendaDate = isDateKey(agendaDateRaw) ? agendaDateRaw : todayKeyUtc();
@@ -466,6 +484,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const profile = profileResult.data;
   const fullName = `${profile.first_name} ${profile.last_name}`.trim();
+  const impersonationDisplayName = impersonationNameHint || fullName || profile.email;
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
 
@@ -515,8 +534,14 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const selectedSessionReservedCount = selectedSession
     ? Math.max(selectedSession.booked_count, reservedStudentsCountFromRoster(selectedSession))
     : 0;
-  const selectedSessionPresentCount = selectedSession ? presentAttendanceCount(selectedSession) : 0;
   const selectedSessionPendingCount = selectedSession ? pendingAttendanceCount(selectedSession) : 0;
+  const attendanceFilter = readParam(searchParams, "attendance_filter") === "missing" ? "missing" : "all";
+  const selectedSessionStudents = selectedSession?.students ?? [];
+  const visibleAttendanceStudents =
+    attendanceFilter === "missing"
+      ? selectedSessionStudents.filter((student) => student.attendance_status === "BOOKED")
+      : selectedSessionStudents;
+  const editableAttendanceStudents = selectedSessionStudents.filter((student) => student.attendance_status !== "WAITLISTED");
   const selectedMessageId = readParam(searchParams, "message_id");
 
   const pendingRows = pendingResult.ok ? pendingResult.data : [];
@@ -605,6 +630,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           { id: "profile", label: "Profil", icon: "👤", href: buildProfHref({ tab: "profile", agendaView, agendaDate }) },
         ]}
       />
+
+      {isImpersonating ? (
+        <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} />
+      ) : null}
 
       {okMessage ? <AlertCard tone="ok">{okMessage}</AlertCard> : null}
       {errorMessage ? <AlertCard tone="error">{errorMessage}</AlertCard> : null}
@@ -1104,226 +1133,232 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       ) : null}
 
       {currentTab === "planning" && selectedSession ? (
-        <section className="modal-overlay modal-overlay-front">
-          <article className="modal-panel modal-day-details">
-            <Link
-              className="modal-close-x"
-              href={buildProfHref({ tab: "planning", agendaView, agendaDate })}
-              aria-label="Fermer"
-            >
-              ×
-            </Link>
-            <h3 className="modal-title">{selectedSession.title}</h3>
-            <p className="muted">
-              {formatDateTime(selectedSession.start_at_utc)} - {formatTime(selectedSession.end_at_utc)} | Statut:{" "}
-              {statusLabel(selectedSessionDisplayStatus ?? selectedSession.status)}
-            </p>
-            <div className="row">
-              <span className={`occ-badge ${selectedSessionReservedCount >= selectedSession.capacity_max ? "occ-high" : "occ-low"}`}>
-                {selectedSessionReservedCount}/{selectedSession.capacity_max}
-              </span>
-              <span className={`status-badge ${statusBadgeClass(selectedSessionDisplayStatus ?? selectedSession.status)}`}>
-                {statusLabel(selectedSessionDisplayStatus ?? selectedSession.status)}
-              </span>
-              <span className={`status-badge ${selectedSessionPresentCount > 0 ? "status-completed" : "status-scheduled"}`}>
-                Présents: {selectedSessionPresentCount}
-              </span>
-              {selectedSessionPendingCount > 0 ? (
+        <section className="modal-overlay modal-overlay-front teacher-attendance-overlay">
+          <article className="modal-panel session-attendance-modal-v2 teacher-attendance-modal">
+            <header className="teacher-attendance-header">
+              <div className="teacher-attendance-header-main">
+                <h2 className="modal-title">Presences</h2>
+                <p className="muted">
+                  {formatDateTime(selectedSession.start_at_utc)} - {formatTime(selectedSession.end_at_utc)} · {selectedSession.location.name}
+                </p>
+              </div>
+              <div className="teacher-attendance-header-meta">
+                <span className={`occ-badge ${selectedSessionReservedCount >= selectedSession.capacity_max ? "occ-high" : "occ-low"}`}>
+                  {selectedSessionReservedCount}/{selectedSession.capacity_max}
+                </span>
                 <span className="status-badge status-waitlist">A saisir: {selectedSessionPendingCount}</span>
-              ) : null}
-            </div>
-            <p className="muted">
-              {selectedSession.course_type.name} | {selectedSession.location.name}
-              {selectedSession.zoom_link ? ` | Zoom: ${selectedSession.zoom_link}` : ""}
-            </p>
+                <Link
+                  className="modal-close-x"
+                  href={buildProfHref({ tab: "planning", agendaView, agendaDate })}
+                  aria-label="Fermer"
+                >
+                  ×
+                </Link>
+              </div>
+            </header>
 
-            <section className="modal-card">
-              <h4>Eleves du creneau</h4>
-              {selectedSession.students.length === 0 ? (
-                <p className="muted">Aucun eleve inscrit.</p>
-              ) : (
-                <div className="list session-bookings-list">
-                  {selectedSession.students.map((student) => (
-                    <article key={student.booking_id} className="item prof-student-item">
-                      <div className="row spread">
-                        <div>
-                          <strong>{student.display_name}</strong>
-                          <div className="row">
-                            <span className="status-badge status-scheduled">{attendanceLabel(student.attendance_status)}</span>
-                            {student.is_trial_course ? <span className="status-pill status-warn">Essai</span> : null}
+            <div className="teacher-attendance-body">
+              <section className="teacher-attendance-primary">
+                <div className="teacher-attendance-toolbar">
+                  <div className="teacher-attendance-filters">
+                    <Link
+                      className={`mode-link ${attendanceFilter === "all" ? "mode-active" : ""}`}
+                      href={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter: "all" })}
+                    >
+                      Tous
+                    </Link>
+                    <Link
+                      className={`mode-link ${attendanceFilter === "missing" ? "mode-active" : ""}`}
+                      href={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter: "missing" })}
+                    >
+                      Manquants
+                    </Link>
+                  </div>
+                  {canEditPlanning && editableAttendanceStudents.length > 0 ? (
+                    <span className="status-badge status-scheduled">1 tap par eleve</span>
+                  ) : null}
+                </div>
+
+                {visibleAttendanceStudents.length === 0 ? (
+                  <div className="teacher-attendance-empty">
+                    <p className="muted">
+                      {attendanceFilter === "missing" ? "Aucune presence manquante." : "Aucun eleve inscrit."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="teacher-attendance-rows">
+                    {visibleAttendanceStudents.map((student) => (
+                      <article key={student.booking_id} className="teacher-attendance-row-card">
+                        <div className="teacher-attendance-row-head">
+                          <div className="teacher-attendance-row-identity">
+                            <strong>{student.display_name}</strong>
+                            <small className="muted">Eleve #{student.user_id.slice(0, 8)}</small>
+                          </div>
+                          <div className="teacher-attendance-row-tags">
+                            <span className={`status-pill attendance-pill-${attendanceRowTone(student.attendance_status)}`}>
+                              {attendanceLabel(student.attendance_status)}
+                            </span>
                             {student.is_first_course ? <span className="status-pill status-ok">Premier cours</span> : null}
+                            {student.is_trial_course ? <span className="status-pill status-warn">Essai</span> : null}
                           </div>
                         </div>
-                        {student.attendance_status !== "WAITLISTED" && canEditPlanning ? (
-                          <div className="prof-attendance-actions">
-                            <form action={professorUpdateAttendanceAction}>
-                              <input type="hidden" name="booking_id" value={student.booking_id} />
-                              <input type="hidden" name="attendance_status" value="ATTENDED" />
-                              <input
-                                type="hidden"
-                                name="return_to"
-                                value={buildProfHref({
-                                  tab: "planning",
-                                  agendaView,
-                                  agendaDate,
-                                  sessionId: selectedSession.id,
-                                })}
-                              />
-                              <button type="submit" className="ghost small-btn">Present</button>
-                            </form>
-                            <form action={professorUpdateAttendanceAction}>
-                              <input type="hidden" name="booking_id" value={student.booking_id} />
-                              <input type="hidden" name="attendance_status" value="EXCUSED_ABSENCE" />
-                              <input
-                                type="hidden"
-                                name="return_to"
-                                value={buildProfHref({
-                                  tab: "planning",
-                                  agendaView,
-                                  agendaDate,
-                                  sessionId: selectedSession.id,
-                                })}
-                              />
-                              <button type="submit" className="ghost small-btn">Abs. excuse</button>
-                            </form>
-                            <form action={professorUpdateAttendanceAction}>
-                              <input type="hidden" name="booking_id" value={student.booking_id} />
-                              <input type="hidden" name="attendance_status" value="NO_SHOW" />
-                              <input
-                                type="hidden"
-                                name="return_to"
-                                value={buildProfHref({
-                                  tab: "planning",
-                                  agendaView,
-                                  agendaDate,
-                                  sessionId: selectedSession.id,
-                                })}
-                              />
-                              <button type="submit" className="small-btn">Abs. non excuse</button>
-                            </form>
+
+                        {student.attendance_status === "WAITLISTED" ? (
+                          <p className="muted">Eleve en liste d attente (statut non modifiable).</p>
+                        ) : canEditPlanning ? (
+                          <div className="teacher-attendance-segment-grid">
+                            {[
+                              { value: "ATTENDED", label: "Present", tone: "ok" },
+                              { value: "EXCUSED_ABSENCE", label: "Excuse", tone: "neutral" },
+                              { value: "NO_SHOW", label: "Non excuse", tone: "danger" },
+                            ].map((choice) => (
+                              <form key={`${student.booking_id}-${choice.value}`} action={professorUpdateAttendanceAction}>
+                                <input type="hidden" name="booking_id" value={student.booking_id} />
+                                <input type="hidden" name="attendance_status" value={choice.value} />
+                                <input
+                                  type="hidden"
+                                  name="return_to"
+                                  value={buildProfHref({
+                                    tab: "planning",
+                                    agendaView,
+                                    agendaDate,
+                                    sessionId: selectedSession.id,
+                                    attendanceFilter,
+                                  })}
+                                />
+                                <button
+                                  type="submit"
+                                  className={`teacher-attendance-btn tone-${choice.tone} ${
+                                    student.attendance_status === choice.value ? "active" : ""
+                                  }`}
+                                >
+                                  {choice.label}
+                                </button>
+                              </form>
+                            ))}
                           </div>
                         ) : (
-                          <span className="muted">{student.attendance_status === "WAITLISTED" ? "Liste attente" : "Lecture seule"}</span>
+                          <p className="muted">Lecture seule</p>
                         )}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {canMessageStudents ? (
-              <section className="modal-card">
-                <h4>Envoyer un message (groupe ou eleve)</h4>
-                <form action={professorSendSessionMessageAction} className="grid">
-                  <input type="hidden" name="session_id" value={selectedSession.id} />
-                  <input
-                    type="hidden"
-                    name="return_to"
-                    value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id })}
-                  />
-                  <label>
-                    Objet
-                    <input type="text" name="subject" required maxLength={255} />
-                  </label>
-                  <label>
-                    Destinataire
-                    <select name="recipient_target" defaultValue="GROUP">
-                      <option value="GROUP">Tous les eleves du creneau</option>
-                      {selectedSession.students.map((student) => (
-                        <option key={`msg-${student.user_id}`} value={`STUDENT:${student.user_id}`}>
-                          {student.display_name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Message
-                    <RichMessageEditor
-                      name="body"
-                      formatName="body_format"
-                      rows={8}
-                      maxLength={12000}
-                      defaultFormat="HTML"
-                      placeholder="Rédiger votre message..."
-                    />
-                  </label>
-                  <div className="row">
-                    <button type="submit">Envoyer</button>
+                      </article>
+                    ))}
                   </div>
-                </form>
+                )}
               </section>
-            ) : null}
 
-            {canMessageStudents ? (
-              <section className="modal-card">
-                <h4>Note a l administration</h4>
-                <form action={professorSendSessionMessageAction} className="grid">
-                  <input type="hidden" name="session_id" value={selectedSession.id} />
-                  <input
-                    type="hidden"
-                    name="return_to"
-                    value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id })}
-                  />
-                  <input type="hidden" name="recipient_target" value="ADMIN" />
-                  <label>
-                    Objet
-                    <input type="text" name="subject" required maxLength={255} defaultValue={`Note cours - ${selectedSession.title}`} />
-                  </label>
-                  <label>
-                    Message (administration uniquement)
-                    <RichMessageEditor
-                      name="body"
-                      formatName="body_format"
-                      rows={8}
-                      maxLength={12000}
-                      defaultFormat="HTML"
-                      placeholder="Saisir une note pour l administration..."
-                    />
-                  </label>
-                  <div className="row">
-                    <button type="submit">Envoyer a l administration</button>
-                  </div>
-                </form>
-              </section>
-            ) : null}
+              <aside className="teacher-attendance-secondary">
+                {canMessageStudents ? (
+                  <details className="teacher-attendance-accordion">
+                    <summary>Notes (optionnel)</summary>
+                    <div className="teacher-attendance-accordion-body">
+                      <form action={professorSendSessionMessageAction} className="grid">
+                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                        <input
+                          type="hidden"
+                          name="return_to"
+                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
+                        />
+                        <input type="hidden" name="recipient_target" value="ADMIN" />
+                        <label>
+                          Objet
+                          <input type="text" name="subject" required maxLength={255} defaultValue={`Note cours - ${selectedSession.title}`} />
+                        </label>
+                        <label>
+                          Note interne
+                          <input type="hidden" name="body_format" value="TEXT" />
+                          <textarea name="body" rows={4} maxLength={12000} placeholder="Saisir une note pour l administration..." />
+                        </label>
+                        <div className="row">
+                          <button type="submit" className="ghost">
+                            Enregistrer note
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </details>
+                ) : null}
 
-            {canEditPlanning && selectedSession.status !== "CANCELLED" ? (
-              <section className="modal-card">
-                <h4>Absence professeur</h4>
-                <form action={professorMarkSessionAbsentAction} className="grid">
-                  <input type="hidden" name="session_id" value={selectedSession.id} />
-                  <input
-                    type="hidden"
-                    name="return_to"
-                    value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id })}
-                  />
-                  <label className="checkline">
-                    <input type="checkbox" name="notify_students" />
-                    Notifier les eleves par email
-                  </label>
-                  <label>
-                    Sujet (optionnel)
-                    <input type="text" name="students_subject" maxLength={255} />
-                  </label>
-                  <label className="span-2">
-                    Message (optionnel)
-                    <RichMessageEditor
-                      name="students_message"
-                      formatName="students_format"
-                      rows={6}
-                      maxLength={12000}
-                      defaultFormat="HTML"
-                      placeholder="Message aux eleves"
-                    />
-                  </label>
-                  <div className="row">
-                    <button type="submit" className="danger">Declarer absence professeur</button>
+                {canEditPlanning && selectedSession.status !== "CANCELLED" ? (
+                  <details className="teacher-attendance-accordion teacher-attendance-accordion-danger">
+                    <summary>Absence professeur</summary>
+                    <div className="teacher-attendance-accordion-body">
+                      <form action={professorMarkSessionAbsentAction} className="grid">
+                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                        <input
+                          type="hidden"
+                          name="return_to"
+                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
+                        />
+                        <label className="checkline">
+                          <input type="checkbox" name="notify_students" />
+                          Notifier les eleves
+                        </label>
+                        <label>
+                          Sujet (optionnel)
+                          <input type="text" name="students_subject" maxLength={255} />
+                        </label>
+                        <label>
+                          Message (optionnel)
+                          <input type="hidden" name="students_format" value="TEXT" />
+                          <textarea name="students_message" rows={4} maxLength={12000} placeholder="Message aux eleves..." />
+                        </label>
+                        <details className="teacher-attendance-confirm">
+                          <summary className="danger-link">Declarer absence professeur</summary>
+                          <div className="teacher-attendance-confirm-body">
+                            <p className="muted">Le creneau sera annule. Confirmez pour continuer.</p>
+                            <button type="submit" className="danger">
+                              Confirmer l absence professeur
+                            </button>
+                          </div>
+                        </details>
+                      </form>
+                    </div>
+                  </details>
+                ) : null}
+
+                <details className="teacher-attendance-accordion">
+                  <summary>Details du creneau</summary>
+                  <div className="teacher-attendance-accordion-body teacher-attendance-details-list">
+                    <p>
+                      <strong>Activite:</strong> {selectedSession.course_type.name}
+                    </p>
+                    <p>
+                      <strong>Statut:</strong> {statusLabel(selectedSessionDisplayStatus ?? selectedSession.status)}
+                    </p>
+                    <p>
+                      <strong>Lieu:</strong> {selectedSession.location.name}
+                    </p>
+                    <p>
+                      <strong>Professeur:</strong> {fullName || profile.email}
+                    </p>
+                    {selectedSession.zoom_link ? (
+                      <p className="teacher-attendance-zoom-row">
+                        <strong>Zoom:</strong>{" "}
+                        <a href={selectedSession.zoom_link} target="_blank" rel="noreferrer">
+                          Ouvrir le lien
+                        </a>
+                      </p>
+                    ) : null}
                   </div>
-                </form>
-                <p className="muted">Le creneau sera annule et les credits restores si applicable.</p>
-              </section>
-            ) : null}
+                </details>
+              </aside>
+            </div>
+
+            <footer className="teacher-attendance-footer">
+              <Link className="reset-link" href={buildProfHref({ tab: "planning", agendaView, agendaDate })}>
+                Fermer
+              </Link>
+              <div className="row">
+                {selectedSessionPendingCount > 0 ? (
+                  <span className="status-badge status-waitlist">A saisir: {selectedSessionPendingCount}</span>
+                ) : (
+                  <span className="status-badge status-completed">Tout est saisi</span>
+                )}
+                <Link className="mode-link" href={buildProfHref({ tab: "planning", agendaView, agendaDate })}>
+                  Terminer
+                </Link>
+              </div>
+            </footer>
           </article>
         </section>
       ) : null}
