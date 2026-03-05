@@ -23,6 +23,7 @@ import SearchMultiSelect from "../../components/search-multi-select";
 import SessionTimeFields from "../../components/session-time-fields";
 import SessionVisibilityFields from "../../components/session-visibility-fields";
 import ModalA11yFrame from "../../components/modal-a11y-frame";
+import PresenceButtonsGroup from "../../components/presence-buttons-group";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
 import type {
@@ -461,11 +462,24 @@ function attendanceChoiceLabel(status: string): string {
   if (status === "EXCUSED_ABSENCE") {
     return "Absent excuse";
   }
-  return "Non renseigne";
+  return "A saisir";
 }
 
 function canEditAttendance(status: string): boolean {
   return ["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(status);
+}
+
+function attendanceBadgeToneClass(status: string): string {
+  if (status === "ATTENDED") {
+    return "status-ok";
+  }
+  if (status === "NO_SHOW") {
+    return "status-cancelled";
+  }
+  if (status === "EXCUSED_ABSENCE") {
+    return "status-scheduled";
+  }
+  return "status-waitlist";
 }
 
 function sessionTypeLabel(session: AdminSessionOut, locationLabel: string): string {
@@ -656,8 +670,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedSessionId = readParam(searchParams, "session_id");
   const attendanceModalOpen = readParam(searchParams, "attendance") === "1";
   const attendanceFilter = parseAttendanceFilter(readParam(searchParams, "attendance_filter").trim().toLowerCase());
-  const attendanceNotesOpen = readParam(searchParams, "attendance_notes") === "1";
-  const attendanceNoteAdvancedMode = readParam(searchParams, "attendance_note_mode").trim().toLowerCase() === "advanced";
   const notesModal = readParam(searchParams, "notes").toLowerCase();
   const groupNotesModalOpen = notesModal === "group";
   const groupNoteTab = parseComposerTab(readParam(searchParams, "note_tab").trim().toLowerCase());
@@ -982,14 +994,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
   const modalHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const attendanceModalHref = selectedSession ? withQueryParam(modalHref, "attendance", "1") : modalHref;
-  const attendanceModalBaseHref = removeQueryParam(
-    removeQueryParam(removeQueryParam(removeQueryParam(attendanceModalHref, "booking_focus"), "attendance_filter"), "attendance_note_mode"),
-    "attendance_notes",
-  );
+  const attendanceModalBaseHref = removeQueryParam(removeQueryParam(attendanceModalHref, "booking_focus"), "attendance_filter");
   const attendanceFilteredHref = (filter: AttendanceFilter): string => withQueryParam(attendanceModalBaseHref, "attendance_filter", filter);
-  const attendanceNotesHref = withQueryParam(attendanceFilteredHref(attendanceFilter), "attendance_notes", "1");
-  const attendanceNoteAdvancedHref = withQueryParam(attendanceNotesHref, "attendance_note_mode", "advanced");
-  const attendanceNoteSimpleHref = removeQueryParam(attendanceNotesHref, "attendance_note_mode");
   const groupNotesModalHref = selectedSession ? withQueryParam(modalHref, "notes", "group") : modalHref;
   const groupNotesModalBaseHref = removeQueryParam(
     removeQueryParam(removeQueryParam(groupNotesModalHref, "group_note_template_id"), "note_tab"),
@@ -1022,7 +1028,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     return removeQueryParam(base, "notes_mode");
   })();
   const attendanceBookingHref = (bookingId: string): string =>
-    withQueryParam(withQueryParam(attendanceFilteredHref(attendanceFilter), "attendance_notes", attendanceNotesOpen ? "1" : "0"), "booking_focus", bookingId);
+    withQueryParam(attendanceFilteredHref(attendanceFilter), "booking_focus", bookingId);
   const confirmCloseHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const cancelConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "cancel") : baseHref;
   const deleteConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "delete") : baseHref;
@@ -2116,9 +2122,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </div>
               <div className="note-modal-header-meta">
                 <span className="status-badge status-waitlist">
-                  {focusedAttendanceBooking ? `${focusedAttendanceIndex + 1}/${attendanceBookings.length || 1}` : `0/${attendanceBookings.length || 0}`}
+                  {focusedAttendanceBooking ? `Eleve ${focusedAttendanceIndex + 1}/${attendanceBookings.length || 1}` : `Eleve 0/${attendanceBookings.length || 0}`}
                 </span>
-                <span className="status-badge status-scheduled">Restant: {attendanceMissingCount}</span>
+                <span className="status-badge status-scheduled">Restant {attendanceMissingCount}</span>
                 <a className="modal-close-x" href={modalHref} aria-label="Fermer">
                   ×
                 </a>
@@ -2152,7 +2158,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                             <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
                             <small className="muted">{bookingEnrollmentLabel(booking.status)}</small>
                           </div>
-                          <span className={`status-badge ${bookingPresenceLabel(booking.status) ? "status-ok" : "status-off"}`}>
+                          <span className={`status-badge ${attendanceBadgeToneClass(booking.status)}`}>
                             {attendanceChoiceLabel(booking.status)}
                           </span>
                         </a>
@@ -2189,42 +2195,25 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           name="return_to"
                           value={nextAttendanceBooking ? attendanceBookingHref(nextAttendanceBooking.id) : attendanceBookingHref(focusedAttendanceBooking.id)}
                         />
-                        <fieldset className="attendance-v2-segmented">
-                          <legend>Presence</legend>
-                          <label className="attendance-segment-pill">
-                            <input type="radio" name="attendance_status" value="BOOKED" defaultChecked={focusedAttendanceBooking.status === "BOOKED"} />
-                            Non renseigne
-                          </label>
-                          <label className="attendance-segment-pill">
-                            <input
-                              type="radio"
-                              name="attendance_status"
-                              value="ATTENDED"
-                              defaultChecked={focusedAttendanceBooking.status === "ATTENDED"}
-                            />
-                            Present
-                          </label>
-                          <label className="attendance-segment-pill">
-                            <input
-                              type="radio"
-                              name="attendance_status"
-                              value="EXCUSED_ABSENCE"
-                              defaultChecked={focusedAttendanceBooking.status === "EXCUSED_ABSENCE"}
-                            />
-                            Absent excuse
-                          </label>
-                          <label className="attendance-segment-pill">
-                            <input type="radio" name="attendance_status" value="NO_SHOW" defaultChecked={focusedAttendanceBooking.status === "NO_SHOW"} />
-                            Absent non excuse
-                          </label>
-                        </fieldset>
+                        <PresenceButtonsGroup
+                          formId="attendance-status-form"
+                          initialValue={
+                            focusedAttendanceBooking.status === "ATTENDED" ||
+                            focusedAttendanceBooking.status === "NO_SHOW" ||
+                            focusedAttendanceBooking.status === "EXCUSED_ABSENCE"
+                              ? focusedAttendanceBooking.status
+                              : "BOOKED"
+                          }
+                          previousHref={previousAttendanceBooking ? attendanceBookingHref(previousAttendanceBooking.id) : null}
+                          nextHref={nextAttendanceBooking ? attendanceBookingHref(nextAttendanceBooking.id) : null}
+                        />
                       </form>
                     ) : (
                       <p className="muted">Presence non editable pour ce statut.</p>
                     )}
 
-                    <details className="attendance-v2-notes" open={attendanceNotesOpen}>
-                      <summary>{attendanceNotesOpen ? "Masquer notes" : "Notes"}</summary>
+                    <details className="attendance-v2-notes">
+                      <summary>Notes (optionnel)</summary>
                       <form action={adminUpdateSessionBookingNoteAction} className="attendance-v2-note-form">
                         <input type="hidden" name="session_id" value={selectedSession.id} />
                         <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
@@ -2232,35 +2221,16 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         <input type="hidden" name="student_display_name" value={focusedAttendanceBooking.client_display_name || "Eleve"} />
                         <input type="hidden" name="session_title" value={selectedSession.title} />
                         <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
-                        <div className="row spread">
-                          <p className="muted">Note eleve (interne ou parents)</p>
-                          {attendanceNoteAdvancedMode ? (
-                            <a className="mode-link" href={attendanceNoteSimpleHref}>
-                              Mode simple
-                            </a>
-                          ) : (
-                            <a className="mode-link" href={attendanceNoteAdvancedHref}>
-                              Mode avance
-                            </a>
-                          )}
-                        </div>
-                        {attendanceNoteAdvancedMode ? (
-                          <RichMessageEditor
+                        <label className="session-edit-span">
+                          Message
+                          <input type="hidden" name="student_note_format" value="TEXT" />
+                          <textarea
                             name="student_note"
-                            formatName="student_note_format"
-                            rows={8}
-                            maxLength={12000}
-                            defaultFormat="HTML"
-                            placeholder="Saisir une note pour cet eleve..."
-                            defaultValue={focusedAttendanceBooking.student_note ?? ""}
+                            rows={5}
+                            placeholder="Note interne..."
+                            defaultValue={stripHtml(focusedAttendanceBooking.student_note ?? "")}
                           />
-                        ) : (
-                          <label className="session-edit-span">
-                            Message
-                            <input type="hidden" name="student_note_format" value="TEXT" />
-                            <textarea name="student_note" rows={6} defaultValue={stripHtml(focusedAttendanceBooking.student_note ?? "")} />
-                          </label>
-                        )}
+                        </label>
                         <div className="row">
                           <button type="submit" name="note_action" value="SAVE_INTERNAL" className="ghost">
                             Enregistrer note
