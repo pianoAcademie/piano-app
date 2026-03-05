@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import html
 import re
+from decimal import InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
@@ -57,20 +58,119 @@ DEFAULT_TEACHER_INVOICE_TEMPLATE = """\
 <p>Compta: {{comptability_email}}</p>
 """
 
-MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_\.]*)\s*\}\}")
+MUSTACHE_EACH_BLOCK_RE = re.compile(
+    r"\{\{\s*#each\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}(.*?)\{\{\s*/each\s*\}\}",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+LIQUID_FOR_BLOCK_RE = re.compile(
+    r"\{%\s*for\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*%\}(.*?)\{%\s*endfor\s*%\}",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 
 
-class _SafeTemplateContext(dict[str, str]):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
-def _render_template(template: str, context: dict[str, str]) -> str:
-    normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template)
+def _format_decimal_like(value: Any) -> str:
     try:
-        return normalized.format_map(_SafeTemplateContext(context))
-    except Exception:
-        return normalized
+        return f"{Decimal(str(value)).quantize(Decimal('0.01'))}"
+    except (InvalidOperation, ValueError, TypeError):
+        return str(value)
+
+
+def _stringify(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        rendered_items: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                label = str(item.get("label") or item.get("course_type_label") or "-")
+                quantity = _format_decimal_like(item.get("quantity") or item.get("hours") or "0")
+                unit = _format_decimal_like(item.get("unit_price_ht") or item.get("unit_rate_ht") or "0")
+                total = _format_decimal_like(item.get("total_ht") or item.get("amount_ht") or "0")
+                rendered_items.append(f"{label}: {quantity} x {unit} = {total} HT")
+            else:
+                rendered_items.append(str(item))
+        return " | ".join(rendered_items)
+    return str(value)
+
+
+def _resolve_path(path: str, *, root_context: dict[str, Any], row_context: dict[str, Any] | None = None) -> Any:
+    chunks = [chunk for chunk in (path or "").split(".") if chunk]
+    if not chunks:
+        return ""
+    head = chunks[0]
+    if row_context and head in row_context:
+        value: Any = row_context[head]
+    else:
+        value = root_context.get(head)
+    for key in chunks[1:]:
+        if isinstance(value, dict):
+            value = value.get(key)
+        else:
+            value = getattr(value, key, None)
+    return value
+
+
+def _render_mustache_placeholders(template: str, *, root_context: dict[str, Any], row_context: dict[str, Any] | None = None) -> str:
+    def replace(match: re.Match[str]) -> str:
+        key = (match.group(1) or "").strip()
+        value = _resolve_path(key, root_context=root_context, row_context=row_context)
+        return _stringify(value)
+
+    return MUSTACHE_PLACEHOLDER_RE.sub(replace, template)
+
+
+def _render_each_blocks(template: str, context: dict[str, Any]) -> str:
+    def replace_each(match: re.Match[str]) -> str:
+        list_name = (match.group(1) or "").strip()
+        block = match.group(2) or ""
+        items = context.get(list_name)
+        if not isinstance(items, list):
+            return ""
+        rendered: list[str] = []
+        for item in items:
+            row = item if isinstance(item, dict) else {"value": item}
+            rendered.append(
+                _render_mustache_placeholders(
+                    block,
+                    root_context=context,
+                    row_context={"this": row, **row},
+                )
+            )
+        return "".join(rendered)
+
+    return MUSTACHE_EACH_BLOCK_RE.sub(replace_each, template)
+
+
+def _render_liquid_for_blocks(template: str, context: dict[str, Any]) -> str:
+    def replace_for(match: re.Match[str]) -> str:
+        alias = (match.group(1) or "").strip()
+        list_name = (match.group(2) or "").strip()
+        block = match.group(3) or ""
+        items = context.get(list_name)
+        if not isinstance(items, list):
+            return ""
+        rendered: list[str] = []
+        for item in items:
+            row = item if isinstance(item, dict) else {"value": item}
+            rendered.append(
+                _render_mustache_placeholders(
+                    block,
+                    root_context=context,
+                    row_context={alias: row, **row},
+                )
+            )
+        return "".join(rendered)
+
+    return LIQUID_FOR_BLOCK_RE.sub(replace_for, template)
+
+
+def _render_template(template: str, context: dict[str, Any]) -> str:
+    rendered = template
+    rendered = _render_liquid_for_blocks(rendered, context)
+    rendered = _render_each_blocks(rendered, context)
+    rendered = _render_mustache_placeholders(rendered, root_context=context)
+    return rendered
 
 
 def get_teacher_invoice_template(db: Session) -> tuple[str, int, Any]:
@@ -102,7 +202,7 @@ def save_teacher_invoice_template(db: Session, *, html_template: str) -> tuple[s
     return row.html_template, int(row.version or 1), row.updated_at
 
 
-def default_teacher_invoice_context() -> dict[str, str]:
+def default_teacher_invoice_context() -> dict[str, Any]:
     return {
         "teacher_full_name": "Demo Professeur",
         "teacher_company_name": "Demo Professeur EI",
@@ -119,7 +219,15 @@ def default_teacher_invoice_context() -> dict[str, str]:
         "invoice_date": "2026-03-03",
         "due_date": "2026-04-02",
         "invoice_period_label": "Mars 2026",
-        "lines_by_course_type": "Cours collectif: 4.00h x 35.00 HT = 140.00 HT",
+        "lines_by_course_type": [
+            {
+                "ref": "CC",
+                "label": "Cours collectif",
+                "unit_price_ht": "35.00",
+                "quantity": "4.00",
+                "total_ht": "140.00",
+            }
+        ],
         "totals_ht": f"{Decimal('140.00')}",
         "totals_vat": f"{Decimal('28.00')}",
         "totals_ttc": f"{Decimal('168.00')}",
@@ -129,12 +237,14 @@ def default_teacher_invoice_context() -> dict[str, str]:
     }
 
 
-def render_teacher_invoice_html(*, html_template: str, context: dict[str, str]) -> str:
+def render_teacher_invoice_html(*, html_template: str, context: dict[str, Any]) -> str:
     return _render_template(html_template, context)
 
 
 def render_teacher_invoice_pdf_from_html(rendered_html: str) -> bytes:
     normalized = rendered_html.replace("<br/>", "\n").replace("<br>", "\n").replace("<br />", "\n")
+    normalized = re.sub(r"<style[^>]*>.*?</style>", "", normalized, flags=re.IGNORECASE | re.DOTALL)
+    normalized = re.sub(r"<script[^>]*>.*?</script>", "", normalized, flags=re.IGNORECASE | re.DOTALL)
     normalized = re.sub(r"</(p|div|h[1-6]|li|tr|td|th|ul|ol|table|hr)>", "\n", normalized, flags=re.IGNORECASE)
     plain = re.sub(r"<[^>]+>", "", normalized)
     plain = html.unescape(plain)

@@ -54,6 +54,28 @@ def _quantize(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"))
 
 
+def _format_money(value: Decimal | None) -> str:
+    return f"{_quantize(value or Decimal('0'))}"
+
+
+def _teacher_invoice_lines_payload(lines: list[TeacherInvoiceLine]) -> list[dict[str, str]]:
+    payload: list[dict[str, str]] = []
+    for line in lines:
+        ref = "-"
+        if line.course_type_id:
+            ref = str(line.course_type_id).split("-")[0].upper()
+        payload.append(
+            {
+                "ref": ref,
+                "label": (line.course_type_label or "").strip() or "-",
+                "unit_price_ht": _format_money(line.unit_rate_ht),
+                "quantity": _format_money(line.hours),
+                "total_ht": _format_money(line.amount_ht),
+            }
+        )
+    return payload
+
+
 def _resolve_professor_profile(db: Session, *, current_user: User) -> Professor:
     professor = db.scalar(select(Professor).where(Professor.email == current_user.email))
     if professor is None:
@@ -256,6 +278,11 @@ def _invoice_pdf_bytes(db: Session, *, invoice: TeacherInvoice, payor: LegalEnti
             pass
 
     html_template, _, _ = get_teacher_invoice_template(db)
+    invoice_lines = db.scalars(
+        select(TeacherInvoiceLine)
+        .where(TeacherInvoiceLine.invoice_id == invoice.id)
+        .order_by(TeacherInvoiceLine.created_at.asc(), TeacherInvoiceLine.id.asc())
+    ).all()
     rendered_html = render_teacher_invoice_html(
         html_template=html_template,
         context={
@@ -274,10 +301,10 @@ def _invoice_pdf_bytes(db: Session, *, invoice: TeacherInvoice, payor: LegalEnti
             "invoice_date": invoice.invoice_date.isoformat(),
             "due_date": invoice.due_date.isoformat(),
             "invoice_period_label": invoice_period_label(year=invoice.invoice_date.year, month=invoice.invoice_date.month),
-            "lines_by_course_type": "-",
-            "totals_ht": f"{invoice.totals_ht}",
-            "totals_vat": f"{invoice.totals_vat}",
-            "totals_ttc": f"{invoice.totals_ttc}",
+            "lines_by_course_type": _teacher_invoice_lines_payload(invoice_lines),
+            "totals_ht": _format_money(invoice.totals_ht),
+            "totals_vat": _format_money(invoice.totals_vat),
+            "totals_ttc": _format_money(invoice.totals_ttc),
             "payment_instructions": "Paiement par virement bancaire sous 30 jours.",
             "late_payment_penalty_text": "Penalites de retard conformement aux CGV.",
             "comptability_email": "-",
@@ -473,6 +500,12 @@ def approve_teacher_statement_month(
                     meta=line.meta,
                 )
             )
+        db.flush()
+        invoice_lines = db.scalars(
+            select(TeacherInvoiceLine)
+            .where(TeacherInvoiceLine.invoice_id == invoice.id)
+            .order_by(TeacherInvoiceLine.created_at.asc(), TeacherInvoiceLine.id.asc())
+        ).all()
 
         html_template, _, _ = get_teacher_invoice_template(db)
         rendered_html = render_teacher_invoice_html(
@@ -493,13 +526,10 @@ def approve_teacher_statement_month(
                 "invoice_date": invoice_date.isoformat(),
                 "due_date": due_date.isoformat(),
                 "invoice_period_label": invoice_period_label(year=year, month=month),
-                "lines_by_course_type": " | ".join(
-                    f"{line.course_type_label}: {line.hours}h x {line.unit_rate_ht} = {line.amount_ht} HT"
-                    for line in computed.lines
-                ),
-                "totals_ht": f"{_quantize(computed.totals_ht)}",
-                "totals_vat": f"{_quantize(computed.totals_vat)}",
-                "totals_ttc": f"{_quantize(computed.totals_ttc)}",
+                "lines_by_course_type": _teacher_invoice_lines_payload(invoice_lines),
+                "totals_ht": _format_money(computed.totals_ht),
+                "totals_vat": _format_money(computed.totals_vat),
+                "totals_ttc": _format_money(computed.totals_ttc),
                 "payment_instructions": "Paiement par virement bancaire sous 30 jours.",
                 "late_payment_penalty_text": "Penalites de retard conformement aux CGV.",
                 "comptability_email": _resolve_accounting_email(db, payor=payor),
