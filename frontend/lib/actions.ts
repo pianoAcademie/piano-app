@@ -479,6 +479,10 @@ function parsePaymentMethodCode(raw: string): string | null {
   return null;
 }
 
+function parsePurchaseType(raw: string): "FORMULA" | "PRODUCT" {
+  return raw.trim().toUpperCase() === "PRODUCT" ? "PRODUCT" : "FORMULA";
+}
+
 function parseCheckboxFlag(formData: FormData, key: string, defaultValue = false): boolean {
   const values = formData.getAll(key).map((entry) => String(entry).trim().toLowerCase());
   if (values.length === 0) {
@@ -2651,19 +2655,19 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
   await ensureAdmin(token);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
-  const planId = String(formData.get("plan_id") ?? "").trim();
+  const offerId = String(formData.get("plan_id") ?? "").trim();
   const returnTabRaw = String(formData.get("return_tab") ?? "fiche").trim().toLowerCase();
   const returnTab =
     returnTabRaw === "paiements" || returnTabRaw === "messages" || returnTabRaw === "infos" || returnTabRaw === "famille" || returnTabRaw === "reservations"
       ? returnTabRaw
       : "fiche";
-  const purchaseType = String(formData.get("purchase_type") ?? "FORMULA").trim().toUpperCase() || "FORMULA";
+  const purchaseType = parsePurchaseType(String(formData.get("purchase_type") ?? "FORMULA"));
   const paymentMethodCode = parsePaymentMethodCode(String(formData.get("payment_method_code") ?? ""));
   const startDateRaw = String(formData.get("start_date") ?? "").trim();
   const discountedTotalRaw = String(formData.get("discounted_total_incl_vat") ?? "").trim();
   const discountedTotal = discountedTotalRaw ? parseNonNegativeDecimal(discountedTotalRaw.replace(",", ".")) : null;
 
-  if (!clientId || !planId) {
+  if (!clientId || !offerId) {
     redirect("/admin/clients?error=Client%20ou%20plan%20invalide");
   }
   if (!paymentMethodCode) {
@@ -2676,10 +2680,40 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Date%20de%20demarrage%20invalide`);
   }
 
+  if (purchaseType === "FORMULA") {
+    const formulaResult = await backendRequest<{ id: string; payment_methods: string[] }>(
+      `/api/v1/admin/formulas/${offerId}`,
+      {},
+      token,
+    );
+    if (!formulaResult.ok) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(formulaResult.message)}`);
+    }
+    const allowedMethods = new Set(
+      (formulaResult.data.payment_methods ?? []).map((method) => String(method || "").trim().toUpperCase()).filter(Boolean),
+    );
+    if (allowedMethods.size > 0 && !allowedMethods.has(paymentMethodCode)) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Ce%20mode%20de%20reglement%20n%20est%20pas%20autorise%20pour%20cette%20formule`);
+    }
+  } else {
+    const catalogResult = await backendRequest<Array<{ id: string }>>(
+      "/api/v1/admin/config/catalog/products?include_inactive=false",
+      {},
+      token,
+    );
+    if (!catalogResult.ok) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(catalogResult.message)}`);
+    }
+    const exists = catalogResult.data.some((product) => product.id === offerId);
+    if (!exists) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Produit%20catalogue%20introuvable%20ou%20inactif`);
+    }
+  }
+
   const params = new URLSearchParams({
     tab: returnTab,
     purchase_modal: "terms",
-    purchase_plan_id: planId,
+    purchase_plan_id: offerId,
     purchase_type: purchaseType,
     purchase_payment_method: paymentMethodCode,
   });
@@ -2701,10 +2735,10 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   await ensureAdmin(token);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
-  const planId = String(formData.get("plan_id") ?? "").trim();
+  const offerId = String(formData.get("plan_id") ?? "").trim();
   const planKind = String(formData.get("plan_kind") ?? "").trim().toUpperCase();
   const planName = String(formData.get("plan_name") ?? "").trim() || "Formule";
-  const purchaseType = String(formData.get("purchase_type") ?? "FORMULA").trim().toUpperCase() || "FORMULA";
+  const purchaseType = parsePurchaseType(String(formData.get("purchase_type") ?? "FORMULA"));
   const startDateRaw = String(formData.get("start_date") ?? "").trim();
   const returnTabRaw = String(formData.get("return_tab") ?? "fiche").trim().toLowerCase();
   const returnTab =
@@ -2716,15 +2750,16 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   const discountedTotal = discountedTotalRaw ? parseNonNegativeDecimal(discountedTotalRaw.replace(",", ".")) : null;
   const signatureChannelRaw = String(formData.get("signature_channel") ?? "NONE").trim().toUpperCase();
   const isCardOnlinePayment = paymentMethodCode === "CARD_ONLINE";
+  const canSendPaymentLink = purchaseType === "FORMULA" && isCardOnlinePayment;
   const signatureChannel =
-    isCardOnlinePayment && (signatureChannelRaw === "EMAIL" || signatureChannelRaw === "SMS") ? signatureChannelRaw : "NONE";
-  if (!clientId || !planId) {
+    canSendPaymentLink && (signatureChannelRaw === "EMAIL" || signatureChannelRaw === "SMS") ? signatureChannelRaw : "NONE";
+  if (!clientId || !offerId) {
     redirect("/admin/clients?error=Client%20ou%20plan%20invalide");
   }
   if (!paymentMethodCode) {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Moyen%20de%20paiement%20invalide`);
   }
-  if (isCardOnlinePayment && signatureChannel === "NONE") {
+  if (canSendPaymentLink && signatureChannel === "NONE") {
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Choisir%20un%20canal%20email%20ou%20SMS`);
   }
   if (discountedTotalRaw && discountedTotal === null) {
@@ -2734,52 +2769,113 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
     redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Date%20de%20demarrage%20invalide`);
   }
 
-  const purchaseResult = await backendRequest<{ id: string }>(
-    `/api/v1/admin/clients/${clientId}/plans/${planId}/purchase`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        payment_method_code: paymentMethodCode,
-        start_date: startDateRaw || null,
-      }),
-    },
-    token,
-  );
-  if (!purchaseResult.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(purchaseResult.message)}`);
-  }
-
-  const subscriptionId = purchaseResult.data.id;
-  if (planKind === "SUBSCRIPTION") {
-    const setupResult = await backendRequest<{ id: string }>(
-      `/api/v1/admin/clients/${clientId}/subscriptions/${subscriptionId}/billing-setup`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          billing_method_code: paymentMethodCode,
-        }),
-      },
-      token,
-    );
-    if (!setupResult.ok) {
-      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(setupResult.message)}`);
-    }
-  }
-
-  if (isCardOnlinePayment && signatureChannel === "EMAIL") {
-    const emailResult = await backendRequest<{ message_id: string }>(
-      `/api/v1/admin/clients/${clientId}/subscriptions/${subscriptionId}/send-payment-email`,
+  let subscriptionId: string | null = null;
+  if (purchaseType === "FORMULA") {
+    const purchaseResult = await backendRequest<{ id: string }>(
+      `/api/v1/admin/clients/${clientId}/plans/${offerId}/purchase`,
       {
         method: "POST",
         body: JSON.stringify({
           payment_method_code: paymentMethodCode,
-          discounted_total_incl_vat: discountedTotal !== null ? discountedTotal.toFixed(2) : null,
+          start_date: startDateRaw || null,
         }),
       },
       token,
     );
-    if (!emailResult.ok) {
-      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(emailResult.message)}`);
+    if (!purchaseResult.ok) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(purchaseResult.message)}`);
+    }
+    subscriptionId = purchaseResult.data.id;
+
+    if (planKind === "SUBSCRIPTION") {
+      const setupResult = await backendRequest<{ id: string }>(
+        `/api/v1/admin/clients/${clientId}/subscriptions/${subscriptionId}/billing-setup`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            billing_method_code: paymentMethodCode,
+          }),
+        },
+        token,
+      );
+      if (!setupResult.ok) {
+        redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(setupResult.message)}`);
+      }
+    }
+
+    if (canSendPaymentLink && signatureChannel === "EMAIL") {
+      const emailResult = await backendRequest<{ message_id: string }>(
+        `/api/v1/admin/clients/${clientId}/subscriptions/${subscriptionId}/send-payment-email`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            payment_method_code: paymentMethodCode,
+            discounted_total_incl_vat: discountedTotal !== null ? discountedTotal.toFixed(2) : null,
+          }),
+        },
+        token,
+      );
+      if (!emailResult.ok) {
+        redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(emailResult.message)}`);
+      }
+    }
+  } else {
+    const productListResult = await backendRequest<
+      Array<{ id: string; title: string; category_name: string | null; price_incl_vat: string; vat_rate: string }>
+    >("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token);
+    if (!productListResult.ok) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(productListResult.message)}`);
+    }
+    const product = productListResult.data.find((row) => row.id === offerId);
+    if (!product) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Produit%20catalogue%20introuvable%20ou%20inactif`);
+    }
+    const basePrice = parseNonNegativeDecimal(String(product.price_incl_vat ?? "").replace(",", "."));
+    if (basePrice === null || basePrice <= 0) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Prix%20produit%20invalide`);
+    }
+    const vatRate = parseNonNegativeDecimal(String(product.vat_rate ?? "0").replace(",", ".")) ?? 0;
+    const amountInclVat = discountedTotal !== null ? discountedTotal : basePrice;
+
+    const paymentMethodsResult = await backendRequest<{
+      methods: Array<{ code: string; default_legal_entity_id: string | null }>;
+    }>("/api/v1/admin/config/payment-methods", {}, token);
+    if (!paymentMethodsResult.ok) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(paymentMethodsResult.message)}`);
+    }
+    const selectedMethod = paymentMethodsResult.data.methods.find((method) => method.code.toUpperCase() === paymentMethodCode);
+    let legalEntityId = selectedMethod?.default_legal_entity_id ?? null;
+    if (!legalEntityId) {
+      const legalEntitiesResult = await backendRequest<Array<{ id: string }>>("/api/v1/admin/legal-entities?include_inactive=false", {}, token);
+      if (!legalEntitiesResult.ok) {
+        redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(legalEntitiesResult.message)}`);
+      }
+      legalEntityId = legalEntitiesResult.data[0]?.id ?? null;
+    }
+    if (!legalEntityId) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Configurer%20une%20entite%20juridique%20active%20avant%20l%20achat%20catalogue`);
+    }
+
+    const manualResult = await backendRequest<{ id: string }>(
+      `/api/v1/admin/clients/${clientId}/manual-transactions`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          transaction_type: "CHARGE",
+          label: product.title,
+          description: "Achat produit catalogue",
+          category: product.category_name,
+          amount_incl_vat: amountInclVat.toFixed(2),
+          vat_rate: vatRate.toFixed(3),
+          currency: "EUR",
+          reference: `CATALOG:${product.id}`,
+          legal_entity_id: legalEntityId,
+        }),
+      },
+      token,
+    );
+    if (!manualResult.ok) {
+      redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(manualResult.message)}`);
     }
   }
 
@@ -2789,11 +2885,11 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   if (discountedTotal !== null) {
     notes.push(`Prix remise saisi: ${discountedTotal.toFixed(2)} EUR TTC.`);
   }
-  if (planKind === "FORFAIT") {
+  if (purchaseType === "FORMULA" && planKind === "FORFAIT") {
     notes.push("Tarification forfait: surcouche par activite disponible en etape optionnelle.");
   }
   notes.push("Achat valide depuis le back-office.");
-  if (!isCardOnlinePayment) {
+  if (!canSendPaymentLink) {
     notes.push("Lien de paiement: non envoye (reglement hors carte).");
   } else if (signatureChannel === "EMAIL") {
     notes.push("Lien de paiement: email envoye.");
@@ -2816,8 +2912,8 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
 
   revalidatePath("/admin/clients");
   revalidatePath(`/admin/clients/${clientId}`);
-  const channelMessage = !isCardOnlinePayment ? "paiement enregistre" : signatureChannel === "EMAIL" ? "lien email envoye" : "SMS a envoyer";
-  if (planKind === "FORFAIT") {
+  const channelMessage = !canSendPaymentLink ? "paiement enregistre" : signatureChannel === "EMAIL" ? "lien email envoye" : "SMS a envoyer";
+  if (purchaseType === "FORMULA" && planKind === "FORFAIT" && subscriptionId) {
     redirect(
       `/admin/clients/${clientId}?tab=fiche&subscription_modal=forfait_pricing&subscription_id=${subscriptionId}&ok=${encodeURIComponent(
         `Produit ajoute (${channelMessage}). Etape optionnelle: ajustez la tarification par activite.`,

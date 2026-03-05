@@ -55,6 +55,7 @@ import type {
   AdminClientNoteOut,
   AdminClientOut,
   AdminClientPaymentOut,
+  AdminFormulaOut,
   AdminLegalEntityOut,
   AdminRangeInvoiceEmailPreviewOut,
   AdminClientSubscriptionOut,
@@ -868,6 +869,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const [
     clientResult,
     plansResult,
+    formulasResult,
     subscriptionsResult,
     bookingsResult,
     messagesResult,
@@ -884,6 +886,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   ] = await Promise.all([
     backendRequest<AdminClientOut>(`/api/v1/admin/clients/${params.clientId}`, {}, token),
     backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
+    backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas", {}, token),
     backendRequest<AdminClientSubscriptionOut[]>(`/api/v1/admin/clients/${params.clientId}/subscriptions`, {}, token),
     backendRequest<AdminClientBookingOut[]>(`/api/v1/admin/clients/${params.clientId}/bookings`, {}, token),
     backendRequest<AdminClientMessageOut[]>(messagesApiPath, {}, token),
@@ -923,6 +926,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : (() => {
         errors.push(`plans: ${plansResult.message}`);
         return [] as PlanOut[];
+      })();
+
+  const formulas = formulasResult.ok
+    ? formulasResult.data.filter((formula) => formula.active)
+    : (() => {
+        errors.push(`formulas: ${formulasResult.message}`);
+        return [] as AdminFormulaOut[];
       })();
 
   const subscriptions = subscriptionsResult.ok
@@ -965,6 +975,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         errors.push(`catalog_products: ${catalogProductsResult.message}`);
         return [] as AdminCatalogProductOut[];
       })();
+  const purchaseCatalogProducts = catalogProducts.filter((product) => product.active);
   const manualChargeProductOptions = catalogProducts
     .filter((product) => product.active && product.category_name)
     .map((product) => ({
@@ -987,6 +998,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         errors.push(`payment_methods: ${paymentMethodsResult.message}`);
         return DEFAULT_PAYMENT_METHOD_OPTIONS.map((item) => ({ ...item, enabled: true }));
       })();
+  const paymentMethodLabelByCode = new Map<string, string>();
+  for (const method of DEFAULT_PAYMENT_METHOD_OPTIONS) {
+    paymentMethodLabelByCode.set(method.code.toUpperCase(), method.label);
+  }
+  for (const method of enabledPaymentMethods) {
+    paymentMethodLabelByCode.set(method.code.toUpperCase(), method.label);
+  }
   const legalEntities = legalEntitiesResult.ok
     ? legalEntitiesResult.data.filter((row) => row.is_active)
     : (() => {
@@ -1158,20 +1176,126 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const openNoteViewModal = currentTab === "fiche" && noteModalAction === "view" && noteModalId.length > 0;
   const selectedNoteForView = openNoteViewModal ? notes.find((row) => row.id === noteModalId) ?? null : null;
 
+  const normalizedPurchaseType = purchaseType === "PRODUCT" ? "PRODUCT" : "FORMULA";
+  const selectedFormulaForPurchase = purchasePlanId ? formulas.find((formula) => formula.id === purchasePlanId) ?? null : null;
+  const selectedCatalogProductForPurchase =
+    purchasePlanId ? purchaseCatalogProducts.find((product) => product.id === purchasePlanId) ?? null : null;
   const selectedPlanForPurchase = purchasePlanId ? plans.find((plan) => plan.id === purchasePlanId) ?? null : null;
+  const purchaseOfferOptions =
+    normalizedPurchaseType === "PRODUCT"
+      ? purchaseCatalogProducts.map((product) => ({
+          id: product.id,
+          label: `${product.title}${product.category_name ? ` · ${product.category_name}` : ""}`,
+          helper: `${formatMoney(product.price_incl_vat, client.preferred_currency || "EUR")} · Produit catalogue`,
+        }))
+      : formulas.map((formula) => ({
+          id: formula.id,
+          label: `${formula.name} (${planKindLabel(formula.kind)})`,
+          helper:
+            formula.monthly_price_excl_vat !== null
+              ? `${formatMoney(formula.monthly_price_excl_vat, formula.currency_code || client.preferred_currency || "EUR")} · ${planKindLabel(formula.kind)}`
+              : planKindLabel(formula.kind),
+        }));
+  const selectedPurchaseOfferHelper =
+    purchaseOfferOptions.find((offer) => offer.id === purchasePlanId)?.helper ?? purchaseOfferOptions[0]?.helper ?? null;
+  const formulaPaymentMethodCodes = (() => {
+    if (selectedFormulaForPurchase && selectedFormulaForPurchase.payment_methods.length > 0) {
+      return selectedFormulaForPurchase.payment_methods;
+    }
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const formula of formulas) {
+      for (const method of formula.payment_methods) {
+        const code = method.trim().toUpperCase();
+        if (!code || seen.has(code)) {
+          continue;
+        }
+        seen.add(code);
+        out.push(code);
+      }
+    }
+    return out;
+  })();
+  const purchasePaymentMethodOptions = (() => {
+    const fallbackCodes = DEFAULT_PAYMENT_METHOD_OPTIONS.map((method) => method.code.toUpperCase());
+    const sourceCodes =
+      normalizedPurchaseType === "FORMULA"
+        ? formulaPaymentMethodCodes.length > 0
+          ? formulaPaymentMethodCodes
+          : enabledPaymentMethods.map((method) => method.code)
+        : enabledPaymentMethods.map((method) => method.code);
+    const uniqueCodes = Array.from(new Set((sourceCodes.length > 0 ? sourceCodes : fallbackCodes).map((code) => code.toUpperCase())));
+    return uniqueCodes.map((code) => ({
+      code,
+      label: paymentMethodLabelByCode.get(code) ?? billingMethodLabel(code),
+    }));
+  })();
+  const selectedPurchaseOfferForTerms =
+    normalizedPurchaseType === "PRODUCT"
+      ? selectedCatalogProductForPurchase
+        ? {
+            id: selectedCatalogProductForPurchase.id,
+            name: selectedCatalogProductForPurchase.title,
+          }
+        : null
+      : selectedPlanForPurchase
+        ? {
+            id: selectedPlanForPurchase.id,
+            name: selectedPlanForPurchase.name,
+          }
+        : null;
   const discountedTotalForPurchase = purchaseDiscountedTotalRaw ? Number(purchaseDiscountedTotalRaw) : Number.NaN;
   const hasDiscountedTotalForPurchase = Number.isFinite(discountedTotalForPurchase) && discountedTotalForPurchase >= 0;
-  const selectedPlanBaseTotal = selectedPlanForPurchase?.monthly_price_excl_vat ?? null;
-  const selectedPlanCurrency = selectedPlanForPurchase?.currency_code || client.preferred_currency || "EUR";
+  const selectedPlanBaseTotal =
+    normalizedPurchaseType === "PRODUCT"
+      ? selectedCatalogProductForPurchase?.price_incl_vat ?? null
+      : selectedPlanForPurchase?.monthly_price_excl_vat ?? null;
+  const selectedPlanCurrency =
+    normalizedPurchaseType === "PRODUCT"
+      ? client.preferred_currency || "EUR"
+      : selectedPlanForPurchase?.currency_code || client.preferred_currency || "EUR";
   const isCardOnlinePurchase = purchasePaymentMethod === "CARD_ONLINE";
-  const purchaseTypeLabel = purchaseType === "PRODUCT" ? "Produits catalogues" : "Formule de cours";
+  const canSendPaymentLink = isCardOnlinePurchase && normalizedPurchaseType === "FORMULA";
+  const purchaseTypeLabel = normalizedPurchaseType === "PRODUCT" ? "Produits catalogues" : "Formule de cours";
   const purchaseWizardReturnSearch = new URLSearchParams({
     tab: purchaseReturnTab,
     purchase_modal: "wizard",
     purchase_return_tab: purchaseReturnTab,
+    purchase_type: normalizedPurchaseType,
+    purchase_plan_id: purchasePlanId,
+    purchase_payment_method: purchasePaymentMethod,
     purchase_start_date: purchaseStartDateInputValue,
   });
+  if (hasDiscountedTotalForPurchase) {
+    purchaseWizardReturnSearch.set("purchase_discounted_total", discountedTotalForPurchase.toFixed(2));
+  }
   const purchaseWizardReturnHref = `/admin/clients/${client.id}?${purchaseWizardReturnSearch.toString()}`;
+  const purchaseTypeFormulaHref = (() => {
+    const search = new URLSearchParams({
+      tab: purchaseReturnTab,
+      purchase_modal: "wizard",
+      purchase_return_tab: purchaseReturnTab,
+      purchase_type: "FORMULA",
+      purchase_start_date: purchaseStartDateInputValue,
+    });
+    if (hasDiscountedTotalForPurchase) {
+      search.set("purchase_discounted_total", discountedTotalForPurchase.toFixed(2));
+    }
+    return `/admin/clients/${client.id}?${search.toString()}`;
+  })();
+  const purchaseTypeProductHref = (() => {
+    const search = new URLSearchParams({
+      tab: purchaseReturnTab,
+      purchase_modal: "wizard",
+      purchase_return_tab: purchaseReturnTab,
+      purchase_type: "PRODUCT",
+      purchase_start_date: purchaseStartDateInputValue,
+    });
+    if (hasDiscountedTotalForPurchase) {
+      search.set("purchase_discounted_total", discountedTotalForPurchase.toFixed(2));
+    }
+    return `/admin/clients/${client.id}?${search.toString()}`;
+  })();
 
   const activeSubscriptions = subscriptions.filter(
     (sub) => (sub.status === "ACTIVE" || sub.status === "PAUSED") && !isPendingSubscriptionCancellation(sub),
@@ -1928,34 +2052,53 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
       {(currentTab === "fiche" || currentTab === "paiements") && purchaseModalAction === "wizard" ? (
         <section className="modal-overlay">
-          <article className="modal-panel modal-compact">
+          <article className="modal-panel purchase-wizard-modal">
             <Link className="modal-close-x" href={tabHref(client.id, purchaseReturnTab)} aria-label="Fermer">
               ×
             </Link>
-            <h3 className="modal-title">Nouvel achat</h3>
-            <p className="muted">Selectionnez l offre, le prix et le reglement avant validation.</p>
+            <header className="purchase-wizard-header">
+              <h3 className="modal-title">Nouvel achat</h3>
+              <div className="purchase-wizard-stepper" aria-label="Progression de l achat">
+                <span className="active">1. Achat</span>
+                <span>2. Paiement</span>
+              </div>
+              <p className="muted">Selectionnez l offre, le prix et le reglement avant validation.</p>
+            </header>
             <form action={adminOpenClientPurchaseTermsAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value={purchaseReturnTab} />
-              <label>
-                Type d achat
-                <select name="purchase_type" defaultValue="FORMULA">
-                  <option value="FORMULA">Formule de cours</option>
-                  <option value="PRODUCT">Produits catalogues</option>
-                </select>
-              </label>
+              <input type="hidden" name="purchase_type" value={normalizedPurchaseType} />
+              <section className="purchase-type-toggle" aria-label="Type d achat">
+                <Link
+                  href={purchaseTypeFormulaHref}
+                  className={`purchase-type-chip${normalizedPurchaseType === "FORMULA" ? " active" : ""}`}
+                >
+                  Formule de cours
+                </Link>
+                <Link
+                  href={purchaseTypeProductHref}
+                  className={`purchase-type-chip${normalizedPurchaseType === "PRODUCT" ? " active" : ""}`}
+                >
+                  Produits catalogues
+                </Link>
+              </section>
               <label>
                 Offre
-                <select name="plan_id" required defaultValue="">
+                <select name="plan_id" required defaultValue={purchasePlanId || ""}>
                   <option value="" disabled>
-                    Selectionner une offre active
+                    {normalizedPurchaseType === "PRODUCT" ? "Selectionner un produit catalogue actif" : "Selectionner une offre active"}
                   </option>
-                  {plans.map((plan) => (
-                    <option key={plan.id} value={plan.id}>
-                      {plan.name} ({planKindLabel(plan.kind)})
+                  {purchaseOfferOptions.map((offer) => (
+                    <option key={offer.id} value={offer.id}>
+                      {offer.label}
                     </option>
                   ))}
                 </select>
+                {selectedPurchaseOfferHelper ? (
+                  <small className="muted">{selectedPurchaseOfferHelper}</small>
+                ) : (
+                  <small className="muted">Aucune offre active pour ce type d achat.</small>
+                )}
               </label>
               <label>
                 Prix remisé (optionnel)
@@ -1965,50 +2108,50 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   placeholder="Ex: 115.00"
                   defaultValue={hasDiscountedTotalForPurchase ? discountedTotalForPurchase.toFixed(2) : ""}
                 />
+                <small className="muted">Laisser vide pour appliquer le prix catalogue.</small>
               </label>
-              <label>
-                Date de debut (abonnement)
-                <input type="date" name="start_date" defaultValue={purchaseStartDateInputValue} />
-              </label>
+              {normalizedPurchaseType === "FORMULA" ? (
+                <label>
+                  Date de debut (abonnement)
+                  <input type="date" name="start_date" defaultValue={purchaseStartDateInputValue} />
+                </label>
+              ) : (
+                <input type="hidden" name="start_date" value="" />
+              )}
               <label>
                 Reglement
-                <select name="payment_method_code" required defaultValue="">
+                <select name="payment_method_code" required defaultValue={purchasePaymentMethod || ""}>
                   <option value="" disabled>
                     Choisir un moyen de paiement
                   </option>
-                  {enabledPaymentMethods.length > 0 ? (
-                    enabledPaymentMethods.map((method) => (
-                      <option key={method.code} value={method.code}>
-                        {method.label}
-                      </option>
-                    ))
-                  ) : (
-                    <>
-                      <option value="CHECK">Cheque</option>
-                      <option value="CASH">Especes</option>
-                      <option value="BANK_TRANSFER">Virement bancaire</option>
-                      <option value="CARD_ONLINE">CB en ligne (Mollie / Payplug)</option>
-                      <option value="PAYPAL">PayPal</option>
-                      <option value="CARD_TERMINAL">CB sur place (TPE)</option>
-                      <option value="FACTURATION_AUTO">Paiement sur facture</option>
-                    </>
-                  )}
+                  {purchasePaymentMethodOptions.map((method) => (
+                    <option key={method.code} value={method.code}>
+                      {method.label}
+                    </option>
+                  ))}
                 </select>
+                {purchasePaymentMethod === "CARD_ONLINE" ? (
+                  <small className="muted">Un lien de paiement sera propose a l etape suivante.</small>
+                ) : (
+                  <small className="muted">Paiement enregistre sans envoi de lien.</small>
+                )}
               </label>
-              <div className="row modal-actions-end">
+              <div className="row modal-actions-end purchase-wizard-footer">
                 <Link className="reset-link" href={tabHref(client.id, purchaseReturnTab)}>
                   Annuler
                 </Link>
-                <button type="submit">Continuer</button>
+                <button type="submit" disabled={purchaseOfferOptions.length === 0}>
+                  Continuer
+                </button>
               </div>
             </form>
           </article>
         </section>
       ) : null}
 
-      {(currentTab === "fiche" || currentTab === "paiements") && purchaseModalAction === "terms" && selectedPlanForPurchase ? (
+      {(currentTab === "fiche" || currentTab === "paiements") && purchaseModalAction === "terms" && selectedPurchaseOfferForTerms ? (
         <section className="modal-overlay">
-          <article className="modal-panel">
+          <article className="modal-panel purchase-wizard-modal purchase-wizard-terms-modal">
             <Link
               className="modal-close-x"
               href={purchaseWizardReturnHref}
@@ -2016,27 +2159,35 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             >
               ×
             </Link>
-            <h3 className="modal-title">{selectedPlanForPurchase.name}</h3>
+            <header className="purchase-wizard-header">
+              <h3 className="modal-title">Nouvel achat</h3>
+              <div className="purchase-wizard-stepper" aria-label="Progression de l achat">
+                <span>1. Achat</span>
+                <span className="active">2. Paiement</span>
+              </div>
+            </header>
+            <h4 className="purchase-wizard-offer-title">{selectedPurchaseOfferForTerms.name}</h4>
             <p className="muted">
               Reglement: {billingMethodLabel(purchasePaymentMethod)} | Type d achat: {purchaseTypeLabel}
             </p>
-            <p className="muted">
-              {selectedPlanForPurchase.kind === "FORFAIT"
-                ? `Periode forfait: ${selectedPlanForPurchase.forfait_start_date ? formatDateInputLabel(selectedPlanForPurchase.forfait_start_date) : "-"} - ${selectedPlanForPurchase.forfait_end_date ? formatDateInputLabel(selectedPlanForPurchase.forfait_end_date) : "-"}`
-                : `Demarrage souhaite: ${formatDateInputLabel(purchaseStartDateInputValue)}`}
-            </p>
-            <article className="card modal-card">
+            {normalizedPurchaseType === "FORMULA" && selectedPlanForPurchase ? (
+              <p className="muted">
+                {selectedPlanForPurchase.kind === "FORFAIT"
+                  ? `Periode forfait: ${selectedPlanForPurchase.forfait_start_date ? formatDateInputLabel(selectedPlanForPurchase.forfait_start_date) : "-"} - ${selectedPlanForPurchase.forfait_end_date ? formatDateInputLabel(selectedPlanForPurchase.forfait_end_date) : "-"}`
+                  : `Demarrage souhaite: ${formatDateInputLabel(purchaseStartDateInputValue)}`}
+              </p>
+            ) : null}
+            <article className="card modal-card purchase-summary-card">
               <h4>Recapitulatif de la commande</h4>
               <p className="muted">
-                Offre: {selectedPlanForPurchase.name} ({planKindLabel(selectedPlanForPurchase.kind)})
+                Offre: {selectedPurchaseOfferForTerms.name}{" "}
+                ({normalizedPurchaseType === "PRODUCT" ? "Produit catalogue" : planKindLabel(selectedPlanForPurchase?.kind ?? "SUBSCRIPTION")})
               </p>
-              <p className="muted">
-                Prix catalogue: {selectedPlanBaseTotal ? formatMoney(selectedPlanBaseTotal, selectedPlanCurrency) : "n/a"}
-              </p>
+              {selectedPlanBaseTotal ? <p className="muted">Prix catalogue: {formatMoney(selectedPlanBaseTotal, selectedPlanCurrency)}</p> : null}
               {hasDiscountedTotalForPurchase ? (
                 <p className="muted">Prix remisé: {formatMoney(String(discountedTotalForPurchase), selectedPlanCurrency)}</p>
               ) : (
-                <p className="muted">Prix remisé: aucun</p>
+                <p className="muted">Prix remisé: aucune remise</p>
               )}
               <p className="purchase-total-line">
                 Total a payer aujourd hui:{" "}
@@ -2044,24 +2195,28 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   ? formatMoney(String(discountedTotalForPurchase), selectedPlanCurrency)
                   : selectedPlanBaseTotal
                     ? formatMoney(selectedPlanBaseTotal, selectedPlanCurrency)
-                    : "n/a"}
+                    : formatMoney("0", selectedPlanCurrency)}
               </p>
             </article>
 
             <form action={adminFinalizeClientPurchaseAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
-              <input type="hidden" name="plan_id" value={selectedPlanForPurchase.id} />
-              <input type="hidden" name="plan_kind" value={selectedPlanForPurchase.kind} />
-              <input type="hidden" name="plan_name" value={selectedPlanForPurchase.name} />
-              <input type="hidden" name="purchase_type" value={purchaseType} />
+              <input type="hidden" name="plan_id" value={selectedPurchaseOfferForTerms.id} />
+              <input
+                type="hidden"
+                name="plan_kind"
+                value={normalizedPurchaseType === "FORMULA" ? selectedPlanForPurchase?.kind ?? "SUBSCRIPTION" : "PRODUCT"}
+              />
+              <input type="hidden" name="plan_name" value={selectedPurchaseOfferForTerms.name} />
+              <input type="hidden" name="purchase_type" value={normalizedPurchaseType} />
               <input type="hidden" name="payment_method_code" value={purchasePaymentMethod} />
               <input type="hidden" name="return_tab" value={purchaseReturnTab} />
-              <input type="hidden" name="start_date" value={purchaseStartDateInputValue} />
+              <input type="hidden" name="start_date" value={normalizedPurchaseType === "FORMULA" ? purchaseStartDateInputValue : ""} />
               {hasDiscountedTotalForPurchase ? (
                 <input type="hidden" name="discounted_total_incl_vat" value={discountedTotalForPurchase.toFixed(2)} />
               ) : null}
 
-              {isCardOnlinePurchase ? (
+              {canSendPaymentLink ? (
                 <label>
                   Canal d envoi du lien de paiement
                   <select name="signature_channel" defaultValue="EMAIL">
@@ -2073,7 +2228,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <>
                   <input type="hidden" name="signature_channel" value="NONE" />
                   <p className="muted">
-                    Paiement hors carte: la transaction sera enregistree sans envoi de lien de paiement.
+                    {normalizedPurchaseType === "PRODUCT"
+                      ? "Achat catalogue enregistre sans envoi de lien de paiement."
+                      : "Paiement hors carte: la transaction sera enregistree sans envoi de lien de paiement."}
                   </p>
                 </>
               )}
@@ -2086,7 +2243,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   Retour
                 </Link>
                 <button type="submit">
-                  {isCardOnlinePurchase ? "Envoyer le lien de paiement par mail ou SMS" : "Valider le paiement"}
+                  {canSendPaymentLink ? "Envoyer le lien" : "Valider l achat"}
                 </button>
               </div>
             </form>
