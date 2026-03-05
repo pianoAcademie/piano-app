@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
+import os
+from pathlib import Path
 from uuid import UUID
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -36,6 +40,7 @@ from app.schemas.catalog_admin import (
     AdminCatalogKitUpdateRequest,
     AdminCatalogProductCreateRequest,
     AdminCatalogProductOut,
+    AdminCatalogProductImageUploadOut,
     AdminCatalogProductUpdateRequest,
     AdminCatalogReorderProductOut,
     AdminCatalogReorderStatusUpdateRequest,
@@ -74,6 +79,15 @@ from app.services.product_catalog import (
 )
 
 router = APIRouter(prefix="/admin")
+
+PRODUCT_IMAGE_MAX_BYTES = int(os.getenv("PRODUCT_IMAGE_MAX_BYTES", str(5 * 1024 * 1024)))
+PRODUCT_IMAGE_UPLOAD_DIR = Path(os.getenv("PRODUCT_IMAGE_UPLOAD_DIR", "/app/uploads/catalog-products"))
+PRODUCT_IMAGE_ALLOWED_TYPES: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
 
 
 def _require_category(db: Session, category_id: UUID) -> ProductCategory:
@@ -116,6 +130,23 @@ def _require_student_client(db: Session, student_user_id: UUID) -> User:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
     return row
+
+
+def _ensure_product_image_dir() -> Path:
+    PRODUCT_IMAGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    return PRODUCT_IMAGE_UPLOAD_DIR
+
+
+def _resolve_product_image_path(file_name: str) -> Path:
+    if not file_name or "/" in file_name or "\\" in file_name or ".." in file_name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+    base = _ensure_product_image_dir().resolve()
+    path = (base / file_name).resolve()
+    if base not in path.parents and path != base:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+    return path
 
 
 def _display_name(user: User | None) -> str | None:
@@ -599,6 +630,44 @@ def update_admin_catalog_product(
     category_name_by_id = _category_name_map(db)
     location_name_by_id = _location_name_map(db)
     return _product_out(row, category_name_by_id, location_name_by_id)
+
+
+@router.post("/config/catalog/products/{product_id}/image", response_model=AdminCatalogProductImageUploadOut)
+async def upload_admin_catalog_product_image(
+    product_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCatalogProductImageUploadOut:
+    row = _require_product(db, product_id)
+    content_type = (file.content_type or "").strip().lower()
+    extension = PRODUCT_IMAGE_ALLOWED_TYPES.get(content_type)
+    if extension is None:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Image type not supported")
+
+    raw = await file.read(PRODUCT_IMAGE_MAX_BYTES + 1)
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image file is empty")
+    if len(raw) > PRODUCT_IMAGE_MAX_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image file is too large")
+
+    storage_key = f"{uuid4().hex}{extension}"
+    image_dir = _ensure_product_image_dir()
+    image_path = image_dir / storage_key
+    image_path.write_bytes(raw)
+
+    row.image_url = f"/api/admin/products/images/{storage_key}"
+    row.updated_at = utcnow()
+    db.add(row)
+    db.commit()
+
+    return AdminCatalogProductImageUploadOut(image_url=row.image_url, storage_key=storage_key)
+
+
+@router.get("/config/catalog/products/images/{file_name}")
+def get_admin_catalog_product_image(file_name: str) -> FileResponse:
+    path = _resolve_product_image_path(file_name)
+    return FileResponse(path)
 
 
 @router.delete(

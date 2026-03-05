@@ -2,6 +2,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import AdminProductActionsMenu from "../../../components/admin-product-actions-menu";
+import AdminProductEditModal from "../../../components/admin-product-edit-modal";
 import {
   cancelAdminCatalogTransferAction,
   completeAdminCatalogTransferAction,
@@ -305,6 +307,8 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const addLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "1", editProduct: "" })}`;
   const closeModalLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "" })}`;
   const clearSelectedProductLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", product: "" })}`;
+  const entriesViewLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "entries" })}`;
+  const transfersViewLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "transfers" })}`;
 
   const stocksPath = selectedProductId
     ? `/api/v1/admin/config/catalog/stocks?product_id=${encodeURIComponent(selectedProductId)}`
@@ -646,21 +650,12 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                           <td>{product.is_virtual ? "n/a" : needsAlert ? "Oui" : "Non"}</td>
                           <td>{yesNoLabel(product.active)}</td>
                           <td>
-                            <details className="catalog-actions-menu">
-                              <summary className="ghost">⋯</summary>
-                              <div className="catalog-actions-menu-panel">
-                                <Link className="ghost" href={editLink}>
-                                  Modifier
-                                </Link>
-                                <form action={deleteAdminCatalogProductAction}>
-                                  <input type="hidden" name="product_id" value={product.id} />
-                                  <input type="hidden" name="return_to" value={returnTo} />
-                                  <button type="submit" className="danger ghost">
-                                    Supprimer
-                                  </button>
-                                </form>
-                              </div>
-                            </details>
+                            <AdminProductActionsMenu
+                              editHref={editLink}
+                              productId={product.id}
+                              returnTo={returnTo}
+                              deleteAction={deleteAdminCatalogProductAction}
+                            />
                           </td>
                         </tr>
                       );
@@ -1721,122 +1716,16 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
       ) : null}
 
       {editedProduct ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Modifier produit">
-          <section className="modal-panel modal-day-details">
-            <div className="row spread">
-              <h3 className="modal-title">Modifier produit</h3>
-              <Link href={closeModalLink} className="ghost" aria-label="Fermer">
-                Fermer
-              </Link>
-            </div>
-            <section className="modal-card">
-              <form action={updateAdminCatalogProductAction} className="grid cols-3 config-form-grid">
-                <input type="hidden" name="product_id" value={editedProduct.id} />
-                <input type="hidden" name="return_to" value={returnTo} />
-                <label className="span-2">
-                  Titre
-                  <input type="text" name="title" defaultValue={editedProduct.title} required maxLength={255} />
-                </label>
-                <label>
-                  Categorie
-                  <select name="category_id" defaultValue={editedProduct.category_id ?? ""}>
-                    <option value="">-</option>
-                    {categories.map((categoryRow) => (
-                      <option key={categoryRow.id} value={categoryRow.id}>
-                        {categoryRow.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Local principal
-                  <select name="primary_location_id" defaultValue={editedProduct.primary_location_id ?? ""}>
-                    <option value="">-</option>
-                    {locations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Code-barres
-                  <input type="text" name="barcode" defaultValue={editedProduct.barcode || ""} maxLength={120} />
-                </label>
-                <label>
-                  Tarif HT
-                  <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue={editedProduct.price_excl_vat} required />
-                </label>
-                <label>
-                  Tarif TTC
-                  <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue={editedProduct.price_incl_vat} required />
-                </label>
-                <label>
-                  TVA (%)
-                  <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue={editedProduct.vat_rate} required />
-                </label>
-                <label>
-                  Stock de reserve
-                  <input type="number" name="reserve_stock" min="0" step="1" defaultValue={editedProduct.reserve_stock} required />
-                </label>
-                <label>
-                  Statut commande
-                  <select name="reorder_status" defaultValue={editedProduct.reorder_status}>
-                    <option value="NORMAL">Normal</option>
-                    <option value="TO_ORDER">A commander</option>
-                    <option value="ORDERED">Commande passee</option>
-                    <option value="RECEIVED">Recu</option>
-                  </select>
-                </label>
-                <fieldset className="span-2">
-                  <legend>Type de produit</legend>
-                  <label className="checkline">
-                    <input type="radio" name="is_virtual" value="false" defaultChecked={!editedProduct.is_virtual} />
-                    Physique (stock gere)
-                  </label>
-                  <label className="checkline">
-                    <input type="radio" name="is_virtual" value="true" defaultChecked={editedProduct.is_virtual} />
-                    Virtuel (pas de stock)
-                  </label>
-                </fieldset>
-                <label>
-                  Lien web
-                  <input type="url" name="web_link" defaultValue={editedProduct.web_link || ""} />
-                </label>
-                <label className="span-3">
-                  Visuel (URL)
-                  <input type="url" name="image_url" defaultValue={editedProduct.image_url || ""} />
-                </label>
-                <label className="span-3">
-                  Description courte
-                  <input type="text" name="short_description" defaultValue={editedProduct.short_description || ""} maxLength={500} />
-                </label>
-                <label className="span-3">
-                  Description longue
-                  <textarea name="long_description" rows={4} maxLength={12000} defaultValue={editedProduct.long_description || ""} />
-                </label>
-                <label className="checkline">
-                  <input type="checkbox" name="purchasable_online" defaultChecked={editedProduct.purchasable_online} />
-                  Achetable en ligne
-                </label>
-                <label className="checkline">
-                  <input type="checkbox" name="is_public" defaultChecked={editedProduct.is_public} />
-                  Public
-                </label>
-                <label className="checkline">
-                  <input type="checkbox" name="active" defaultChecked={editedProduct.active} />
-                  Actif
-                </label>
-                <div className="row span-3 modal-actions-end">
-                  <Link className="ghost" href={closeModalLink}>
-                    Annuler
-                  </Link>
-                  <button type="submit">Enregistrer</button>
-                </div>
-              </form>
-            </section>
-          </section>
-        </section>
+        <AdminProductEditModal
+          product={editedProduct}
+          categories={categories}
+          locations={locations}
+          closeHref={closeModalLink}
+          returnTo={returnTo}
+          entriesHref={entriesViewLink}
+          transfersHref={transfersViewLink}
+          updateAction={updateAdminCatalogProductAction}
+        />
       ) : null}
     </section>
   );

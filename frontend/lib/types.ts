@@ -1129,6 +1129,11 @@ export type AdminCatalogProductOut = {
   updated_at: string;
 };
 
+export type AdminCatalogProductImageUploadOut = {
+  image_url: string;
+  storage_key: string;
+};
+
 export type AdminCatalogReorderProductOut = {
   product_id: string;
   title: string;

@@ -83,6 +83,11 @@ class AdminCatalogProductUpdateRequest(AdminCatalogProductCreateRequest):
     pass
 
 
+class AdminCatalogProductImageUploadOut(BaseModel):
+    image_url: str
+    storage_key: str
+
+
 class AdminCatalogKitItemIn(BaseModel):
     product_id: UUID
     quantity: int = Field(ge=1, le=1000)
