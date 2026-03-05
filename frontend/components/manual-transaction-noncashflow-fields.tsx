@@ -16,6 +16,8 @@ type ManualTransactionNonCashFlowFieldsProps = {
   defaultVatRate: string;
   categories: string[];
   products: ManualNonCashFlowProductOption[];
+  initialAmountInclVat?: string;
+  initialVatRate?: string;
 };
 
 function normalizeCategory(value: string): string {
@@ -39,11 +41,13 @@ export default function ManualTransactionNonCashFlowFields({
   defaultVatRate,
   categories,
   products,
+  initialAmountInclVat = "",
+  initialVatRate = "",
 }: ManualTransactionNonCashFlowFieldsProps): JSX.Element {
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [selectedProductId, setSelectedProductId] = useState<string>("");
-  const [amountInclVat, setAmountInclVat] = useState<string>("");
-  const [vatRate, setVatRate] = useState<string>(defaultVatRate);
+  const [amountInclVat, setAmountInclVat] = useState<string>(initialAmountInclVat);
+  const [vatRate, setVatRate] = useState<string>(initialVatRate || defaultVatRate);
 
   const availableProducts = useMemo(() => {
     if (transactionType !== "CHARGE" || !selectedCategory) {
@@ -110,7 +114,7 @@ export default function ManualTransactionNonCashFlowFields({
       {transactionType === "CHARGE" ? (
         <>
           <label>
-            Produit de la categorie (optionnel)
+            Produit / kit du catalogue (optionnel)
             <select
               name="catalog_product_id"
               value={selectedProductId}
@@ -136,6 +140,9 @@ export default function ManualTransactionNonCashFlowFields({
               ))}
             </select>
           </label>
+          <p className="muted span-2">
+            Si un produit/kit est selectionne, le montant TTC et la TVA sont auto-renseignes a partir du catalogue.
+          </p>
           {selectedCategory && availableProducts.length === 0 ? (
             <p className="muted span-2">Aucun produit actif disponible dans cette categorie.</p>
           ) : null}

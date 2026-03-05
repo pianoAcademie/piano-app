@@ -43,6 +43,7 @@ import {
   TIMEZONE_OPTIONS,
   labelFromOptions,
 } from "../../../../lib/reference-data";
+import ManualTransactionNonCashFlowFields from "../../../../components/manual-transaction-noncashflow-fields";
 import ManualTransactionLegalEntityFields from "../../../../components/manual-transaction-legal-entity-fields";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import type {
@@ -4180,8 +4181,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="manual_type" value={manualTransactionSelectedType} />
 
               <label>
-                Montant TTC *
-                <input type="number" name="manual_amount" step="0.01" min="0.01" defaultValue={manualAmountInputValue} required />
+                {manualIsCashFlow ? "Montant TTC *" : "Montant TTC (optionnel)"}
+                <input
+                  type="number"
+                  name="manual_amount"
+                  step="0.01"
+                  min="0.01"
+                  defaultValue={manualAmountInputValue}
+                  required={manualIsCashFlow}
+                />
+                {!manualIsCashFlow ? (
+                  <small className="muted">
+                    Laisser vide si vous voulez choisir un produit/kit du catalogue a l etape suivante.
+                  </small>
+                ) : null}
               </label>
               <label>
                 Date *
@@ -4273,24 +4286,29 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="currency" value={client.preferred_currency || "EUR"} />
               <input type="hidden" name="transaction_type" value={manualTransactionTypeCode} />
               <input type="hidden" name="occurred_at" value={manualDateInputValue} />
-              {manualAmountInputValue ? (
-                <input type="hidden" name="amount_incl_vat" value={manualAmountInputValue} />
-              ) : (
-                <label>
-                  Montant TTC *
-                  <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
-                </label>
-              )}
               {manualIsCashFlow ? (
-                <input type="hidden" name="vat_rate" value="0" />
-              ) : manualVatInputValue ? (
-                <input type="hidden" name="vat_rate" value={manualVatInputValue} />
-              ) : (
-                <label>
-                  TVA (%) *
-                  <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={manualVatDefault} required />
-                </label>
-              )}
+                <>
+                  {manualAmountInputValue ? (
+                    <input type="hidden" name="amount_incl_vat" value={manualAmountInputValue} />
+                  ) : (
+                    <label>
+                      Montant TTC *
+                      <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
+                    </label>
+                  )}
+                  <input type="hidden" name="vat_rate" value="0" />
+                </>
+              ) : manualNonCashFlowType ? (
+                <ManualTransactionNonCashFlowFields
+                  transactionType={manualNonCashFlowType}
+                  amountLabel="Montant TTC *"
+                  defaultVatRate={manualVatDefault}
+                  initialAmountInclVat={manualAmountInputValue}
+                  initialVatRate={manualVatInputValue}
+                  categories={manualChargeCategories}
+                  products={manualChargeProductOptions}
+                />
+              ) : null}
               <label>
                 Etudiant (optionnel)
                 <select name="student_id" defaultValue="">
@@ -4317,38 +4335,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <small className="muted span-2">
                 L entite correspond au compte bancaire / PSP concerne. Si une facture est rapprochee, l entite est deduite automatiquement.
               </small>
-              {manualNonCashFlowType ? (
-                <details className="session-edit-collapsible transaction-category-accordion span-2">
-                  <summary>Categorisation (optionnel)</summary>
-                  <div className="grid cols-2">
-                    <label>
-                      Categorie (optionnelle)
-                      <select name="category" defaultValue="">
-                        <option value="">Selectionner...</option>
-                        {manualChargeCategories.map((category) => (
-                          <option key={`manual-category-${category}`} value={category}>
-                            {category}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {manualNonCashFlowType === "CHARGE" ? (
-                      <label>
-                        Produit de la categorie (optionnel)
-                        <select name="catalog_product_id" defaultValue="">
-                          <option value="">Selectionner...</option>
-                          {manualChargeProductOptions.map((product) => (
-                            <option key={`manual-product-${product.id}`} value={product.id}>
-                              {product.title}
-                              {product.categoryName ? ` · ${product.categoryName}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
-                  </div>
-                </details>
-              ) : null}
               <label>
                 Libelle (optionnel)
                 <input type="text" name="label" maxLength={255} defaultValue={manualTransactionDefaultLabel} placeholder="Ex: Frais de dossier" />
@@ -4372,7 +4358,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ) : null}
               {!manualIsCashFlow && manualChargeCategories.length === 0 ? (
                 <p className="muted">
-                  Aucune categorie disponible. Configurez-les dans{" "}
+                  Aucun produit / kit catalogue disponible. Vous pouvez tout de meme saisir manuellement le montant TTC et la TVA. Configuration dans{" "}
                   <Link className="mode-link" href="/admin/products">
                     Les produits
                   </Link>
