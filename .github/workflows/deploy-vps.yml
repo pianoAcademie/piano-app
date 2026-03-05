@@ -77,7 +77,9 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
             set -euo pipefail
             cd '${VPS_PATH}'
-            docker compose up -d --build
+            docker compose up -d --build db
+            docker compose run --rm -T backend alembic upgrade head
+            docker compose up -d --build backend frontend
             docker compose ps
           "
 
