@@ -39,6 +39,8 @@ type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "month" | "week" | "day";
 type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
 type SlotEditTab = "general" | "schedule" | "visibility" | "notes";
+type AttendanceFilter = "all" | "missing";
+type ComposerTab = "content" | "recipients" | "send";
 
 type AgendaRange = {
   from: Date;
@@ -449,6 +451,23 @@ function bookingPresenceLabel(status: string): string | null {
   return null;
 }
 
+function attendanceChoiceLabel(status: string): string {
+  if (status === "ATTENDED") {
+    return "Present";
+  }
+  if (status === "NO_SHOW") {
+    return "Absent non excuse";
+  }
+  if (status === "EXCUSED_ABSENCE") {
+    return "Absent excuse";
+  }
+  return "Non renseigne";
+}
+
+function canEditAttendance(status: string): boolean {
+  return ["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(status);
+}
+
 function sessionTypeLabel(session: AdminSessionOut, locationLabel: string): string {
   const lowerLocation = locationLabel.toLowerCase();
   if (lowerLocation.includes("online") || lowerLocation.includes("ligne")) {
@@ -583,6 +602,17 @@ function parseSlotEditTab(value: string): SlotEditTab {
   return "general";
 }
 
+function parseAttendanceFilter(value: string): AttendanceFilter {
+  return value === "missing" ? "missing" : "all";
+}
+
+function parseComposerTab(value: string): ComposerTab {
+  if (value === "recipients" || value === "send") {
+    return value;
+  }
+  return "content";
+}
+
 function clientDisplayName(client: AdminClientOut): string {
   const fullName = `${client.first_name ?? ""} ${client.last_name ?? ""}`.trim();
   return fullName || client.email;
@@ -625,8 +655,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const dayDetails = isDateKey(dayDetailsRaw) ? dayDetailsRaw : "";
   const selectedSessionId = readParam(searchParams, "session_id");
   const attendanceModalOpen = readParam(searchParams, "attendance") === "1";
+  const attendanceFilter = parseAttendanceFilter(readParam(searchParams, "attendance_filter").trim().toLowerCase());
+  const attendanceNotesOpen = readParam(searchParams, "attendance_notes") === "1";
+  const attendanceNoteAdvancedMode = readParam(searchParams, "attendance_note_mode").trim().toLowerCase() === "advanced";
   const notesModal = readParam(searchParams, "notes").toLowerCase();
   const groupNotesModalOpen = notesModal === "group";
+  const groupNoteTab = parseComposerTab(readParam(searchParams, "note_tab").trim().toLowerCase());
+  const groupNoteAdvancedMode = readParam(searchParams, "group_note_mode").trim().toLowerCase() === "advanced";
   const groupNoteTemplateId = readParam(searchParams, "group_note_template_id");
   const groupNoteDestinationRaw = readParam(searchParams, "note_destination").trim().toUpperCase();
   const groupNoteDestination =
@@ -643,6 +678,17 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const messageModalRaw = readParam(searchParams, "message").trim().toLowerCase();
   const sessionEmailModalOpen = messageModalRaw === "email";
   const sessionSmsModalOpen = messageModalRaw === "sms";
+  const emailAudienceRaw = readParam(searchParams, "email_audience").trim().toUpperCase();
+  const emailAudience =
+    emailAudienceRaw === "PARENTS" ||
+    emailAudienceRaw === "STUDENTS_AND_PARENTS" ||
+    emailAudienceRaw === "PROFESSOR" ||
+    emailAudienceRaw === "ADMINS" ||
+    emailAudienceRaw === "SELF"
+      ? emailAudienceRaw
+      : "STUDENTS";
+  const emailTab = parseComposerTab(readParam(searchParams, "email_tab").trim().toLowerCase());
+  const emailAdvancedMode = readParam(searchParams, "email_mode").trim().toLowerCase() === "advanced";
   const bookingFocusId = readParam(searchParams, "booking_focus");
   const editSessionOpen = readParam(searchParams, "edit") === "1";
   const editTab = parseSlotEditTab(readParam(searchParams, "edit_tab").trim().toLowerCase());
@@ -928,19 +974,41 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     ).values(),
   );
   const sessionRecipientStudentIds = sessionRecipientStudents.map((item) => item.id);
+  const sessionRecipientStudentNames = sessionRecipientStudents.map((item) => item.label.split(" <")[0] || item.label);
+  const sessionRecipientSummary = compactList(sessionRecipientStudentNames, 2);
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
 
   const modalHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const attendanceModalHref = selectedSession ? withQueryParam(modalHref, "attendance", "1") : modalHref;
+  const attendanceModalBaseHref = removeQueryParam(
+    removeQueryParam(removeQueryParam(removeQueryParam(attendanceModalHref, "booking_focus"), "attendance_filter"), "attendance_note_mode"),
+    "attendance_notes",
+  );
+  const attendanceFilteredHref = (filter: AttendanceFilter): string => withQueryParam(attendanceModalBaseHref, "attendance_filter", filter);
+  const attendanceNotesHref = withQueryParam(attendanceFilteredHref(attendanceFilter), "attendance_notes", "1");
+  const attendanceNoteAdvancedHref = withQueryParam(attendanceNotesHref, "attendance_note_mode", "advanced");
+  const attendanceNoteSimpleHref = removeQueryParam(attendanceNotesHref, "attendance_note_mode");
   const groupNotesModalHref = selectedSession ? withQueryParam(modalHref, "notes", "group") : modalHref;
+  const groupNotesModalBaseHref = removeQueryParam(
+    removeQueryParam(removeQueryParam(groupNotesModalHref, "group_note_template_id"), "note_tab"),
+    "group_note_mode",
+  );
+  const groupNoteTabHref = (tab: ComposerTab): string => withQueryParam(groupNotesModalBaseHref, "note_tab", tab);
+  const groupNoteAdvancedHref = withQueryParam(groupNoteTabHref("content"), "group_note_mode", "advanced");
+  const groupNoteSimpleHref = removeQueryParam(groupNoteTabHref("content"), "group_note_mode");
   const selectedGroupNoteTemplate =
     groupNoteTemplateId && groupNoteTemplates.length > 0
       ? groupNoteTemplates.find((template) => template.id === groupNoteTemplateId) ?? null
       : null;
   const duplicateModalHref = selectedSession ? withQueryParam(modalHref, "duplicate", "1") : modalHref;
   const sessionEmailModalHref = selectedSession ? withQueryParam(modalHref, "message", "email") : modalHref;
+  const sessionEmailModalBaseHref = removeQueryParam(removeQueryParam(sessionEmailModalHref, "email_tab"), "email_mode");
+  const sessionEmailTabHref = (tab: ComposerTab): string =>
+    withQueryParam(withQueryParam(sessionEmailModalBaseHref, "email_tab", tab), "email_audience", emailAudience);
+  const sessionEmailAdvancedHref = withQueryParam(sessionEmailTabHref("content"), "email_mode", "advanced");
+  const sessionEmailSimpleHref = removeQueryParam(sessionEmailTabHref("content"), "email_mode");
   const sessionSmsModalHref = selectedSession ? withQueryParam(modalHref, "message", "sms") : modalHref;
   const editSessionHref = selectedSession ? withQueryParam(modalHref, "edit", "1") : modalHref;
   const editTabHref = (tab: SlotEditTab): string => withQueryParam(editSessionHref, "edit_tab", tab);
@@ -953,31 +1021,34 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     }
     return removeQueryParam(base, "notes_mode");
   })();
-  const attendanceBookingHref = (bookingId: string): string => withQueryParam(attendanceModalHref, "booking_focus", bookingId);
+  const attendanceBookingHref = (bookingId: string): string =>
+    withQueryParam(withQueryParam(attendanceFilteredHref(attendanceFilter), "attendance_notes", attendanceNotesOpen ? "1" : "0"), "booking_focus", bookingId);
   const confirmCloseHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const cancelConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "cancel") : baseHref;
   const deleteConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "delete") : baseHref;
+  const attendanceBookings = attendanceFilter === "missing"
+    ? selectedSessionBookings.filter((booking) => bookingPresenceLabel(booking.status) === null)
+    : selectedSessionBookings;
   const focusedAttendanceBooking =
-    selectedSessionBookings.find((booking) => booking.id === bookingFocusId) ?? selectedSessionBookings[0] ?? null;
+    attendanceBookings.find((booking) => booking.id === bookingFocusId) ?? attendanceBookings[0] ?? null;
   const selectedSessionHasBookings = selectedSessionBookings.length > 0;
   const isGroupNoteStudentAudience =
     groupNoteDestination === "STUDENTS" ||
     groupNoteDestination === "PARENTS" ||
     groupNoteDestination === "STUDENTS_AND_PARENTS";
   const groupNotePrefill = selectedGroupNoteTemplate?.body ?? selectedSession?.group_note ?? "";
-  const groupNotesModalBaseHref = removeQueryParam(groupNotesModalHref, "group_note_template_id");
   const groupNotesModalClearTemplateHref = groupNotesModalBaseHref;
-  const groupNoteTemplateHref = (templateId: string): string =>
-    withQueryParam(withQueryParam(groupNotesModalBaseHref, "group_note_template_id", templateId), "note_destination", groupNoteDestination);
   const focusedAttendanceIndex = focusedAttendanceBooking
-    ? selectedSessionBookings.findIndex((booking) => booking.id === focusedAttendanceBooking.id)
+    ? attendanceBookings.findIndex((booking) => booking.id === focusedAttendanceBooking.id)
     : -1;
   const previousAttendanceBooking =
-    focusedAttendanceIndex > 0 ? selectedSessionBookings[focusedAttendanceIndex - 1] : null;
+    focusedAttendanceIndex > 0 ? attendanceBookings[focusedAttendanceIndex - 1] : null;
   const nextAttendanceBooking =
-    focusedAttendanceIndex >= 0 && focusedAttendanceIndex < selectedSessionBookings.length - 1
-      ? selectedSessionBookings[focusedAttendanceIndex + 1]
+    focusedAttendanceIndex >= 0 && focusedAttendanceIndex < attendanceBookings.length - 1
+      ? attendanceBookings[focusedAttendanceIndex + 1]
       : null;
+  const attendanceMissingCount = selectedSessionBookings.filter((booking) => bookingPresenceLabel(booking.status) === null).length;
+  const attendanceCompletedCount = selectedSessionBookings.length - attendanceMissingCount;
   const selectedCourseTypeName = selectedSession ? courseTypeById.get(selectedSession.course_type_id)?.name ?? "Type non defini" : "";
   const selectedLocationName = selectedSession ? locationById.get(selectedSession.location_id)?.name ?? "Lieu non defini" : "";
   const selectedProfessorDetail =
@@ -2033,115 +2104,188 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      {selectedSession && attendanceModalOpen && selectedSessionHasBookings ? (
+      {selectedSession && attendanceModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
-          <article className="modal-panel session-attendance-modal">
-            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
-              ×
-            </a>
-            <h2 className="modal-title">Prendre les presences</h2>
-            <p className="muted">Saisie eleve par eleve dans une popup dediee.</p>
+          <article className="modal-panel session-attendance-modal-v2">
+            <header className="note-modal-header">
+              <div className="note-modal-header-main">
+                <h2 className="modal-title">Presences</h2>
+                <p className="muted">
+                  {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc)} · {sessionTimeRangeLabel(selectedSession)} · {selectedLocationName}
+                </p>
+              </div>
+              <div className="note-modal-header-meta">
+                <span className="status-badge status-waitlist">
+                  {focusedAttendanceBooking ? `${focusedAttendanceIndex + 1}/${attendanceBookings.length || 1}` : `0/${attendanceBookings.length || 0}`}
+                </span>
+                <span className="status-badge status-scheduled">Restant: {attendanceMissingCount}</span>
+                <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+                  ×
+                </a>
+              </div>
+            </header>
 
-            {selectedSessionBookings.length === 0 || !focusedAttendanceBooking ? (
-              <p className="muted">Aucun eleve inscrit sur ce creneau.</p>
+            {!selectedSessionHasBookings || !focusedAttendanceBooking ? (
+              <section className="note-modal-empty">
+                <p className="muted">Aucun eleve inscrit sur ce creneau.</p>
+              </section>
             ) : (
-              <div className="attendance-modal-layout">
-                <aside className="attendance-students-list">
-                  {selectedSessionBookings.map((booking, index) => (
-                    <a
-                      key={booking.id}
-                      href={attendanceBookingHref(booking.id)}
-                      className={`attendance-student-link ${booking.id === focusedAttendanceBooking.id ? "active" : ""}`}
-                    >
-                      <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
-                      <small className="muted">{booking.client_email}</small>
-                      <span className={`status-badge ${statusClass(booking.status)}`}>{booking.status}</span>
-                    </a>
-                  ))}
-                </aside>
-
-                <section className="attendance-focus-card">
-                  <div className="row spread">
-                    <div>
-                      <h3>{focusedAttendanceBooking.client_display_name || "Participant"}</h3>
-                      <small className="muted">{focusedAttendanceBooking.client_email}</small>
+              <>
+                <div className="attendance-v2-body">
+                  <aside className="attendance-v2-list">
+                    <div className="attendance-v2-list-filters">
+                      <a className={`mode-link ${attendanceFilter === "all" ? "mode-active" : ""}`} href={attendanceFilteredHref("all")}>
+                        Tous
+                      </a>
+                      <a className={`mode-link ${attendanceFilter === "missing" ? "mode-active" : ""}`} href={attendanceFilteredHref("missing")}>
+                        Manquants
+                      </a>
                     </div>
-                    <span className={`status-badge ${statusClass(focusedAttendanceBooking.status)}`}>
-                      {focusedAttendanceBooking.status}
-                    </span>
-                  </div>
+                    <div className="attendance-v2-students">
+                      {attendanceBookings.map((booking, index) => (
+                        <a
+                          key={booking.id}
+                          href={attendanceBookingHref(booking.id)}
+                          className={`attendance-v2-student-row ${booking.id === focusedAttendanceBooking.id ? "active" : ""}`}
+                        >
+                          <div className="attendance-v2-student-main">
+                            <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
+                            <small className="muted">{bookingEnrollmentLabel(booking.status)}</small>
+                          </div>
+                          <span className={`status-badge ${bookingPresenceLabel(booking.status) ? "status-ok" : "status-off"}`}>
+                            {attendanceChoiceLabel(booking.status)}
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  </aside>
 
-                  {["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(focusedAttendanceBooking.status) ? (
-                    <form action={adminUpdateSessionAttendanceAction} className="grid top-gap-sm">
-                      <input type="hidden" name="session_id" value={selectedSession.id} />
-                      <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
-                      <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
-                      <label>
-                        Presence
-                        <select name="attendance_status" defaultValue={focusedAttendanceBooking.status} required>
-                          <option value="BOOKED">Non renseigne</option>
-                          <option value="ATTENDED">Present</option>
-                          <option value="NO_SHOW">Absent</option>
-                          <option value="EXCUSED_ABSENCE">Absent excuse</option>
-                        </select>
-                      </label>
-                      <div className="row">
-                        <button type="submit">Sauvegarder presence</button>
+                  <section className="attendance-v2-main">
+                    <div className="attendance-v2-main-head">
+                      <div>
+                        <h3>{focusedAttendanceBooking.client_display_name || "Participant"}</h3>
+                        <p className="muted">Completes: {attendanceCompletedCount} / {selectedSessionBookings.length}</p>
                       </div>
-                    </form>
-                  ) : (
-                    <p className="muted top-gap-sm">Presence non editable pour ce statut.</p>
-                  )}
-
-                  <form action={adminUpdateSessionBookingNoteAction} className="grid top-gap-sm">
-                    <input type="hidden" name="session_id" value={selectedSession.id} />
-                    <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
-                    <input type="hidden" name="student_id" value={focusedAttendanceBooking.client_id} />
-                    <input
-                      type="hidden"
-                      name="student_display_name"
-                      value={focusedAttendanceBooking.client_display_name || "Eleve"}
-                    />
-                    <input type="hidden" name="session_title" value={selectedSession.title} />
-                    <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
-                    <label className="session-edit-span">
-                      Note eleve
-                      <RichMessageEditor
-                        name="student_note"
-                        formatName="student_note_format"
-                        rows={8}
-                        maxLength={12000}
-                        defaultFormat="HTML"
-                        placeholder="Saisir une note pour cet eleve..."
-                        defaultValue={focusedAttendanceBooking.student_note ?? ""}
-                      />
-                    </label>
-                    <div className="row">
-                      <button type="submit" name="note_action" value="SAVE_INTERNAL" className="ghost">
-                        Sauvegarder note interne
-                      </button>
-                      <button type="submit" name="note_action" value="SEND_PARENTS">
-                        Envoyer aux parents
-                      </button>
+                      <div className="attendance-v2-nav-links">
+                        {previousAttendanceBooking ? (
+                          <a className="mode-link" href={attendanceBookingHref(previousAttendanceBooking.id)}>
+                            ← Precedent
+                          </a>
+                        ) : null}
+                        {nextAttendanceBooking ? (
+                          <a className="mode-link" href={attendanceBookingHref(nextAttendanceBooking.id)}>
+                            Suivant →
+                          </a>
+                        ) : null}
+                      </div>
                     </div>
-                  </form>
 
-                  <div className="row spread attendance-focus-nav">
-                    {previousAttendanceBooking ? (
-                      <a className="mode-link" href={attendanceBookingHref(previousAttendanceBooking.id)}>
-                        ← Eleve precedent
-                      </a>
+                    {canEditAttendance(focusedAttendanceBooking.status) ? (
+                      <form action={adminUpdateSessionAttendanceAction} className="attendance-v2-status-form" id="attendance-status-form">
+                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                        <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
+                        <input
+                          type="hidden"
+                          name="return_to"
+                          value={nextAttendanceBooking ? attendanceBookingHref(nextAttendanceBooking.id) : attendanceBookingHref(focusedAttendanceBooking.id)}
+                        />
+                        <fieldset className="attendance-v2-segmented">
+                          <legend>Presence</legend>
+                          <label className="attendance-segment-pill">
+                            <input type="radio" name="attendance_status" value="BOOKED" defaultChecked={focusedAttendanceBooking.status === "BOOKED"} />
+                            Non renseigne
+                          </label>
+                          <label className="attendance-segment-pill">
+                            <input
+                              type="radio"
+                              name="attendance_status"
+                              value="ATTENDED"
+                              defaultChecked={focusedAttendanceBooking.status === "ATTENDED"}
+                            />
+                            Present
+                          </label>
+                          <label className="attendance-segment-pill">
+                            <input
+                              type="radio"
+                              name="attendance_status"
+                              value="EXCUSED_ABSENCE"
+                              defaultChecked={focusedAttendanceBooking.status === "EXCUSED_ABSENCE"}
+                            />
+                            Absent excuse
+                          </label>
+                          <label className="attendance-segment-pill">
+                            <input type="radio" name="attendance_status" value="NO_SHOW" defaultChecked={focusedAttendanceBooking.status === "NO_SHOW"} />
+                            Absent non excuse
+                          </label>
+                        </fieldset>
+                      </form>
                     ) : (
-                      <span />
+                      <p className="muted">Presence non editable pour ce statut.</p>
                     )}
-                    {nextAttendanceBooking ? (
-                      <a className="mode-link" href={attendanceBookingHref(nextAttendanceBooking.id)}>
-                        Eleve suivant →
-                      </a>
+
+                    <details className="attendance-v2-notes" open={attendanceNotesOpen}>
+                      <summary>{attendanceNotesOpen ? "Masquer notes" : "Notes"}</summary>
+                      <form action={adminUpdateSessionBookingNoteAction} className="attendance-v2-note-form">
+                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                        <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
+                        <input type="hidden" name="student_id" value={focusedAttendanceBooking.client_id} />
+                        <input type="hidden" name="student_display_name" value={focusedAttendanceBooking.client_display_name || "Eleve"} />
+                        <input type="hidden" name="session_title" value={selectedSession.title} />
+                        <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
+                        <div className="row spread">
+                          <p className="muted">Note eleve (interne ou parents)</p>
+                          {attendanceNoteAdvancedMode ? (
+                            <a className="mode-link" href={attendanceNoteSimpleHref}>
+                              Mode simple
+                            </a>
+                          ) : (
+                            <a className="mode-link" href={attendanceNoteAdvancedHref}>
+                              Mode avance
+                            </a>
+                          )}
+                        </div>
+                        {attendanceNoteAdvancedMode ? (
+                          <RichMessageEditor
+                            name="student_note"
+                            formatName="student_note_format"
+                            rows={8}
+                            maxLength={12000}
+                            defaultFormat="HTML"
+                            placeholder="Saisir une note pour cet eleve..."
+                            defaultValue={focusedAttendanceBooking.student_note ?? ""}
+                          />
+                        ) : (
+                          <label className="session-edit-span">
+                            Message
+                            <input type="hidden" name="student_note_format" value="TEXT" />
+                            <textarea name="student_note" rows={6} defaultValue={stripHtml(focusedAttendanceBooking.student_note ?? "")} />
+                          </label>
+                        )}
+                        <div className="row">
+                          <button type="submit" name="note_action" value="SAVE_INTERNAL" className="ghost">
+                            Enregistrer note
+                          </button>
+                          <button type="submit" name="note_action" value="SEND_PARENTS" className="ghost">
+                            Envoyer aux parents
+                          </button>
+                        </div>
+                      </form>
+                    </details>
+                  </section>
+                </div>
+                <footer className="note-modal-footer">
+                  <a className="reset-link" href={modalHref}>
+                    Annuler
+                  </a>
+                  <div className="row">
+                    {canEditAttendance(focusedAttendanceBooking.status) ? (
+                      <button type="submit" form="attendance-status-form">
+                        Enregistrer & suivant
+                      </button>
                     ) : null}
                   </div>
-                </section>
-              </div>
+                </footer>
+              </>
             )}
           </article>
         </section>
@@ -2149,99 +2293,190 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       {selectedSession && groupNotesModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
-          <article className="modal-panel modal-compact session-group-notes-modal">
-            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
-              ×
-            </a>
-            <h2 className="modal-title">Notes de groupe</h2>
-            <p className="muted">Notes partagees pour le groupe de ce creneau.</p>
-            {groupNoteTemplates.length > 0 ? (
-              <div className="row quick-actions-row top-gap-sm">
-                <span className="muted">Modeles:</span>
-                {groupNoteTemplates.map((template) => (
-                  <a
-                    key={template.id}
-                    className={`mode-link ${selectedGroupNoteTemplate?.id === template.id ? "mode-active" : ""}`}
-                    href={groupNoteTemplateHref(template.id)}
-                  >
-                    {template.name}
-                  </a>
-                ))}
-                {selectedGroupNoteTemplate ? (
-                  <a className="reset-link" href={groupNotesModalClearTemplateHref}>
-                    Retirer modele
-                  </a>
-                ) : null}
+          <article className="modal-panel note-modal-shell">
+            <header className="note-modal-header">
+              <div className="note-modal-header-main">
+                <h2 className="modal-title">Note de groupe</h2>
+                <p className="muted">
+                  {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc)} · {sessionTimeRangeLabel(selectedSession)}
+                </p>
               </div>
-            ) : (
-              <p className="muted top-gap-sm">
-                Aucun modele de note de groupe. Configurez-les dans Configuration › Messagerie › Modeles notes de groupe.
-              </p>
-            )}
-            <form action={adminUpdateSessionGroupNoteAction} className="grid top-gap-sm">
+              <div className="note-modal-header-meta">
+                <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+                  ×
+                </a>
+              </div>
+            </header>
+
+            <form action={adminUpdateSessionGroupNoteAction} className="note-modal-form">
               <input type="hidden" name="session_id" value={selectedSession.id} />
               <input type="hidden" name="session_title" value={selectedSession.title} />
-              <input type="hidden" name="return_to" value={groupNotesModalHref} />
-              <label>
-                Destination de la note
-                <select name="note_destination" defaultValue={groupNoteDestination}>
-                  <option value="PRIVATE">Prive (administration)</option>
-                  <option value="STUDENTS">Etudiants du creneau</option>
-                  <option value="PARENTS">Parents des etudiants</option>
-                  <option value="STUDENTS_AND_PARENTS">Etudiants + parents</option>
-                  <option value="PROFESSOR">Professeur du creneau</option>
-                  <option value="ADMINS">Equipe administration</option>
-                  <option value="SELF">Moi-meme uniquement</option>
-                </select>
-              </label>
+              <input type="hidden" name="return_to" value={groupNoteTabHref(groupNoteTab)} />
 
-              <SearchMultiSelect
-                className="session-edit-span"
-                label="Eleves inclus (utilise pour Etudiants / Parents)"
-                name="included_student_ids"
-                options={sessionRecipientStudents}
-                selectedIds={sessionRecipientStudentIds}
-                placeholder="Rechercher un eleve..."
-                emptySelectionLabel={selectedSessionHasBookings ? "Aucun eleve selectionne." : "Aucun eleve inscrit sur ce creneau."}
-              />
-              {!selectedSessionHasBookings && isGroupNoteStudentAudience ? (
-                <p className="flash-err">Aucun eleve inscrit sur ce creneau pour une diffusion Etudiants/Parents.</p>
-              ) : null}
+              <nav className="note-modal-tabs">
+                <a className={`note-modal-tab ${groupNoteTab === "content" ? "active" : ""}`} href={groupNoteTabHref("content")}>
+                  Contenu
+                </a>
+                <a className={`note-modal-tab ${groupNoteTab === "recipients" ? "active" : ""}`} href={groupNoteTabHref("recipients")}>
+                  Destinataires
+                </a>
+                <a className={`note-modal-tab ${groupNoteTab === "send" ? "active" : ""}`} href={groupNoteTabHref("send")}>
+                  Envoi
+                </a>
+              </nav>
 
-              <label className="checkline">
-                <input type="checkbox" name="send_to_self" />
-                M envoyer aussi une copie
-              </label>
+              <div className="note-modal-body">
+                <section className={`note-modal-panel ${groupNoteTab === "content" ? "active" : ""}`}>
+                  {groupNoteTemplates.length > 0 ? (
+                    <label className="session-edit-span">
+                      Modele
+                      <div className="note-template-row">
+                        <select name="group_note_template_id" defaultValue={selectedGroupNoteTemplate?.id ?? ""}>
+                          <option value="">Aucun modele</option>
+                          {groupNoteTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.name}
+                            </option>
+                          ))}
+                        </select>
+                        {selectedGroupNoteTemplate ? (
+                          <a className="mode-link" href={groupNotesModalClearTemplateHref}>
+                            Retirer
+                          </a>
+                        ) : null}
+                      </div>
+                    </label>
+                  ) : (
+                    <div className="session-edit-alert">
+                      Aucun modele configure. Ajoutez un modele dans Configuration › Messagerie.
+                    </div>
+                  )}
+                  <div className="row spread">
+                    <p className="muted">Contenu de la note</p>
+                    {groupNoteAdvancedMode ? (
+                      <a className="mode-link" href={groupNoteSimpleHref}>
+                        Mode simple
+                      </a>
+                    ) : (
+                      <a className="mode-link" href={groupNoteAdvancedHref}>
+                        Mode avance
+                      </a>
+                    )}
+                  </div>
+                  {groupNoteAdvancedMode ? (
+                    <RichMessageEditor
+                      name="group_note"
+                      formatName="group_note_format"
+                      rows={10}
+                      maxLength={12000}
+                      placeholder="Saisir une note de groupe..."
+                      defaultValue={groupNotePrefill}
+                    />
+                  ) : (
+                    <label className="session-edit-span">
+                      Message
+                      <input type="hidden" name="group_note_format" value="TEXT" />
+                      <textarea name="group_note" rows={8} defaultValue={stripHtml(groupNotePrefill)} />
+                    </label>
+                  )}
+                </section>
 
-              <label>
-                Sujet email (si envoi)
-                <input type="text" name="subject" defaultValue={`Note de groupe - ${selectedSession.title}`} maxLength={255} />
-              </label>
+                <section className={`note-modal-panel ${groupNoteTab === "recipients" ? "active" : ""}`}>
+                  <fieldset className="note-destination-radios">
+                    <legend>Destination</legend>
+                    <label className="checkline">
+                      <input type="radio" name="note_destination" value="PRIVATE" defaultChecked={groupNoteDestination === "PRIVATE"} />
+                      Interne
+                    </label>
+                    <label className="checkline">
+                      <input
+                        type="radio"
+                        name="note_destination"
+                        value="STUDENTS_AND_PARENTS"
+                        defaultChecked={groupNoteDestination === "STUDENTS_AND_PARENTS"}
+                      />
+                      Parents / eleves
+                    </label>
+                    <label className="checkline">
+                      <input type="radio" name="note_destination" value="PARENTS" defaultChecked={groupNoteDestination === "PARENTS"} />
+                      Parents uniquement
+                    </label>
+                    <label className="checkline">
+                      <input type="radio" name="note_destination" value="STUDENTS" defaultChecked={groupNoteDestination === "STUDENTS"} />
+                      Eleves uniquement
+                    </label>
+                    <label className="checkline">
+                      <input type="radio" name="note_destination" value="PROFESSOR" defaultChecked={groupNoteDestination === "PROFESSOR"} />
+                      Professeur
+                    </label>
+                    <label className="checkline">
+                      <input type="radio" name="note_destination" value="ADMINS" defaultChecked={groupNoteDestination === "ADMINS"} />
+                      Administration
+                    </label>
+                    <label className="checkline">
+                      <input type="radio" name="note_destination" value="SELF" defaultChecked={groupNoteDestination === "SELF"} />
+                      Moi-meme
+                    </label>
+                  </fieldset>
 
-              <label className="session-edit-span">
-                Note du creneau (groupe)
-                <RichMessageEditor
-                  name="group_note"
-                  formatName="group_note_format"
-                  rows={10}
-                  maxLength={12000}
-                  placeholder="Saisir une note de groupe..."
-                  defaultValue={groupNotePrefill}
-                />
-              </label>
-              <div className="row spread">
+                  <div className="note-recipient-summary">
+                    <strong>{sessionRecipientStudentIds.length} eleve(s) selectionne(s)</strong>
+                    <span className="muted">{sessionRecipientSummary || "Aucun eleve"}</span>
+                  </div>
+                  <details className="note-recipient-picker" open={isGroupNoteStudentAudience}>
+                    <summary>Modifier la selection</summary>
+                    <SearchMultiSelect
+                      className="session-edit-span"
+                      label="Eleves inclus"
+                      name="included_student_ids"
+                      options={sessionRecipientStudents}
+                      selectedIds={sessionRecipientStudentIds}
+                      placeholder="Rechercher un eleve..."
+                      emptySelectionLabel={selectedSessionHasBookings ? "Aucun eleve selectionne." : "Aucun eleve inscrit sur ce creneau."}
+                    />
+                  </details>
+                  {!selectedSessionHasBookings && isGroupNoteStudentAudience ? (
+                    <p className="flash-err">Aucun eleve inscrit sur ce creneau pour une diffusion Etudiants/Parents.</p>
+                  ) : null}
+                </section>
+
+                <section className={`note-modal-panel ${groupNoteTab === "send" ? "active" : ""}`}>
+                  {groupNoteDestination === "PRIVATE" ? (
+                    <p className="muted">Destination interne: aucun envoi externe n est effectue.</p>
+                  ) : (
+                    <>
+                      <label className="checkline">
+                        <input type="checkbox" name="send_to_self" />
+                        M envoyer aussi une copie
+                      </label>
+                      <label>
+                        Sujet email (optionnel)
+                        <input type="text" name="subject" defaultValue={`Note de groupe - ${selectedSession.title}`} maxLength={255} />
+                      </label>
+                      <label className="checkline">
+                        <input type="checkbox" name="confirm_send" />
+                        Confirmer l envoi ({sessionRecipientStudentIds.length} destinataire(s) potentiels)
+                      </label>
+                    </>
+                  )}
+                </section>
+              </div>
+
+              <footer className="note-modal-footer">
                 <a className="reset-link" href={modalHref}>
                   Fermer
                 </a>
                 <div className="row">
                   <button type="submit" name="note_action" value="SAVE_ONLY" className="ghost">
-                    Sauvegarder (interne)
+                    Enregistrer
                   </button>
-                  <button type="submit" name="note_action" value="SEND_EMAIL">
-                    Sauvegarder + envoyer email
-                  </button>
+                  {groupNoteDestination !== "PRIVATE" ? (
+                    <button type="submit" name="note_action" value="SEND_EMAIL">
+                      Envoyer
+                    </button>
+                  ) : null}
                 </div>
-              </div>
+              </footer>
             </form>
           </article>
         </section>
@@ -2249,73 +2484,133 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       {selectedSession && sessionEmailModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
-          <article className="modal-panel modal-compact session-group-notes-modal">
-            <a className="modal-close-x" href={modalHref} aria-label="Fermer">
-              ×
-            </a>
-            <h2 className="modal-title">Envoyer un email</h2>
-            <p className="muted">Envoi groupe pour les eleves ou parents rattaches a ce creneau.</p>
-            <form action={adminSendSessionBroadcastAction} className="grid top-gap-sm">
+          <article className="modal-panel note-modal-shell">
+            <header className="note-modal-header">
+              <div className="note-modal-header-main">
+                <h2 className="modal-title">Envoyer un email</h2>
+                <p className="muted">
+                  Creneau: {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc)} · {formatTime(selectedSession.start_at_utc)}
+                </p>
+              </div>
+              <div className="note-modal-header-meta">
+                <a className="modal-close-x" href={modalHref} aria-label="Fermer">
+                  ×
+                </a>
+              </div>
+            </header>
+            <form action={adminSendSessionBroadcastAction} className="note-modal-form">
               <input type="hidden" name="session_id" value={selectedSession.id} />
               <input type="hidden" name="channel" value="EMAIL" />
-              <input type="hidden" name="return_to" value={sessionEmailModalHref} />
+              <input type="hidden" name="return_to" value={sessionEmailTabHref(emailTab)} />
 
-              <label>
-                Destinataires
-                <select name="audience" defaultValue="STUDENTS">
-                  <option value="STUDENTS">Eleves inscrits</option>
-                  <option value="PARENTS">Parents des eleves</option>
-                  <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
-                  <option value="PROFESSOR">Professeur</option>
-                  <option value="ADMINS">Administration</option>
-                  <option value="SELF">Moi-meme</option>
-                </select>
-              </label>
-
-              <SearchMultiSelect
-                className="session-edit-span"
-                label="Eleves inclus (vous pouvez en retirer)"
-                name="included_student_ids"
-                options={sessionRecipientStudents}
-                selectedIds={sessionRecipientStudentIds}
-                placeholder="Rechercher un eleve..."
-                emptySelectionLabel="Aucun eleve selectionne."
-              />
-              {!selectedSessionHasBookings ? <p className="muted">Aucun eleve inscrit: utilisez Professeur, Administration ou Moi-meme.</p> : null}
-
-              <label className="checkline">
-                <input type="checkbox" name="send_to_self" />
-                M envoyer aussi une copie
-              </label>
-
-              <label>
-                Sujet
-                <input type="text" name="subject" defaultValue={`Message creneau: ${selectedSession.title}`} maxLength={255} required />
-              </label>
-
-              <label className="session-edit-span">
-                Copie (emails, separes par virgule/point-virgule/retour ligne)
-                <textarea name="cc_emails" rows={2} placeholder="copie@example.com; autre@example.com" />
-              </label>
-
-              <label className="session-edit-span">
-                Message
-                <RichMessageEditor
-                  name="body"
-                  formatName="body_format"
-                  rows={10}
-                  maxLength={12000}
-                  defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.\n`}
-                  placeholder="Saisir votre message..."
-                />
-              </label>
-
-              <div className="row spread">
-                <a className="reset-link" href={modalHref}>
-                  Annuler
+              <nav className="note-modal-tabs">
+                <a className={`note-modal-tab ${emailTab === "recipients" ? "active" : ""}`} href={sessionEmailTabHref("recipients")}>
+                  Destinataires
                 </a>
-                <button type="submit">Envoyer l email</button>
+                <a className={`note-modal-tab ${emailTab === "content" ? "active" : ""}`} href={sessionEmailTabHref("content")}>
+                  Contenu
+                </a>
+                <a className={`note-modal-tab ${emailTab === "send" ? "active" : ""}`} href={sessionEmailTabHref("send")}>
+                  Options
+                </a>
+              </nav>
+
+              <div className="note-modal-body">
+                <section className={`note-modal-panel ${emailTab === "recipients" ? "active" : ""}`}>
+                  <label>
+                    Destinataires
+                    <select name="audience" defaultValue={emailAudience}>
+                      <option value="STUDENTS">Eleves inscrits</option>
+                      <option value="PARENTS">Parents des eleves</option>
+                      <option value="STUDENTS_AND_PARENTS">Eleves + parents</option>
+                      <option value="PROFESSOR">Professeur</option>
+                      <option value="ADMINS">Administration</option>
+                      <option value="SELF">Moi-meme</option>
+                    </select>
+                  </label>
+                  <div className="note-recipient-summary">
+                    <strong>{sessionRecipientStudentIds.length} destinataire(s) selectionnes</strong>
+                    <span className="muted">{sessionRecipientSummary || "Aucun destinataire eleve"}</span>
+                  </div>
+                  <details className="note-recipient-picker" open={emailAudience === "STUDENTS" || emailAudience === "PARENTS" || emailAudience === "STUDENTS_AND_PARENTS"}>
+                    <summary>Modifier</summary>
+                    <SearchMultiSelect
+                      className="session-edit-span"
+                      label="Eleves inclus (vous pouvez en retirer)"
+                      name="included_student_ids"
+                      options={sessionRecipientStudents}
+                      selectedIds={sessionRecipientStudentIds}
+                      placeholder="Rechercher un eleve..."
+                      emptySelectionLabel="Aucun eleve selectionne."
+                    />
+                  </details>
+                  {!selectedSessionHasBookings ? <p className="muted">Aucun eleve inscrit: utilisez Professeur, Administration ou Moi-meme.</p> : null}
+                </section>
+
+                <section className={`note-modal-panel ${emailTab === "content" ? "active" : ""}`}>
+                  <label>
+                    Sujet
+                    <input type="text" name="subject" defaultValue={`Message creneau: ${selectedSession.title}`} maxLength={255} required />
+                  </label>
+                  <div className="row spread">
+                    <p className="muted">Message</p>
+                    {emailAdvancedMode ? (
+                      <a className="mode-link" href={sessionEmailSimpleHref}>
+                        Mode simple
+                      </a>
+                    ) : (
+                      <a className="mode-link" href={sessionEmailAdvancedHref}>
+                        Mode avance
+                      </a>
+                    )}
+                  </div>
+                  {emailAdvancedMode ? (
+                    <RichMessageEditor
+                      name="body"
+                      formatName="body_format"
+                      rows={10}
+                      maxLength={12000}
+                      defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.\n`}
+                      placeholder="Saisir votre message..."
+                    />
+                  ) : (
+                    <label className="session-edit-span">
+                      Message
+                      <input type="hidden" name="body_format" value="TEXT" />
+                      <textarea
+                        name="body"
+                        rows={8}
+                        defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.\n`}
+                        placeholder="Saisir votre message..."
+                      />
+                    </label>
+                  )}
+                </section>
+
+                <section className={`note-modal-panel ${emailTab === "send" ? "active" : ""}`}>
+                  <label className="checkline">
+                    <input type="checkbox" name="send_to_self" />
+                    M envoyer aussi une copie
+                  </label>
+                  <label className="session-edit-span">
+                    Copie (emails, optionnel)
+                    <textarea name="cc_emails" rows={2} placeholder="copie@example.com; autre@example.com" />
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="confirm_send" />
+                    Confirmer l envoi a {sessionRecipientStudentIds.length} destinataire(s)
+                  </label>
+                </section>
               </div>
+
+              <footer className="note-modal-footer">
+                <a className="reset-link" href={modalHref}>
+                  Fermer
+                </a>
+                <div className="row">
+                  <button type="submit">Envoyer</button>
+                </div>
+              </footer>
             </form>
           </article>
         </section>

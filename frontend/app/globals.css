@@ -2808,58 +2808,301 @@ button.danger {
   margin: 0;
 }
 
-.session-attendance-modal {
-  width: min(1100px, 95vw);
+.session-attendance-modal-v2 {
+  width: min(1040px, 96vw);
+  max-height: 86vh;
+  border-radius: 16px;
+  padding: 0;
+  gap: 0;
+  background: #ffffff;
 }
 
-.attendance-modal-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
+.note-modal-shell {
+  width: min(980px, 96vw);
+  max-height: 86vh;
+  border-radius: 16px;
+  padding: 0;
+  gap: 0;
+  background: #ffffff;
+}
+
+.note-modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  border-bottom: 1px solid #e6e8ee;
+  background: #ffffff;
+  padding: 12px 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 12px;
-  max-height: min(72vh, 760px);
 }
 
-.attendance-students-list {
-  display: grid;
-  gap: 8px;
-  overflow: auto;
-  padding-right: 4px;
-}
-
-.attendance-student-link {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px;
-  background: #fffdf9;
-  color: inherit;
-  text-decoration: none;
+.note-modal-header-main {
+  min-width: 0;
   display: grid;
   gap: 4px;
 }
 
-.attendance-student-link.active {
-  border-color: #d2b184;
-  background: #fff4df;
+.note-modal-header-main .modal-title {
+  margin: 0;
+  padding-right: 0;
 }
 
-.attendance-focus-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px;
-  background: #fffdf9;
-  overflow: auto;
-}
-
-.attendance-focus-card h3 {
+.note-modal-header-main p {
   margin: 0;
 }
 
-.attendance-focus-nav {
-  margin-top: 8px;
+.note-modal-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.session-group-notes-modal textarea {
-  min-height: 240px;
+.note-modal-form {
+  display: grid;
+  gap: 0;
+}
+
+.note-modal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: auto;
+  padding: 10px 16px;
+  border-bottom: 1px solid #e6e8ee;
+}
+
+.note-modal-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid #d9e0ea;
+  border-radius: 999px;
+  padding: 0 12px;
+  color: #33475b;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.note-modal-tab.active {
+  border-color: #d4af37;
+  background: rgba(212, 175, 55, 0.14);
+  color: #3b2f16;
+}
+
+.note-modal-body {
+  padding: 12px 16px;
+}
+
+.note-modal-panel {
+  display: none;
+  gap: 10px;
+}
+
+.note-modal-panel.active {
+  display: grid;
+}
+
+.note-modal-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  border-top: 1px solid #e6e8ee;
+  background: #ffffff;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.note-modal-empty {
+  padding: 16px;
+}
+
+.note-template-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.note-destination-radios {
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.note-recipient-summary {
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.note-recipient-picker > summary {
+  list-style: none;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.note-recipient-picker > summary::-webkit-details-marker {
+  display: none;
+}
+
+.attendance-v2-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 12px;
+  min-height: min(62vh, 620px);
+  padding: 12px 16px;
+}
+
+.attendance-v2-list {
+  border: 1px solid #e6e8ee;
+  border-radius: 14px;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.attendance-v2-list-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.attendance-v2-students {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+}
+
+.attendance-v2-student-row {
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid #e6e8ee;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.attendance-v2-student-row.active {
+  border-color: #d4af37;
+  background: rgba(212, 175, 55, 0.12);
+}
+
+.attendance-v2-student-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.attendance-v2-student-main strong,
+.attendance-v2-student-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attendance-v2-main {
+  border: 1px solid #e6e8ee;
+  border-radius: 14px;
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+}
+
+.attendance-v2-main-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.attendance-v2-main-head h3 {
+  margin: 0;
+}
+
+.attendance-v2-main-head p {
+  margin: 4px 0 0;
+}
+
+.attendance-v2-nav-links {
+  display: flex;
+  gap: 8px;
+}
+
+.attendance-v2-status-form {
+  display: grid;
+  gap: 10px;
+}
+
+.attendance-v2-segmented {
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.attendance-v2-segmented legend {
+  width: 100%;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.attendance-segment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  border: 1px solid #d9e0ea;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.attendance-segment-pill:has(input:checked) {
+  border-color: #d4af37;
+  background: rgba(212, 175, 55, 0.14);
+}
+
+.attendance-v2-notes {
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.attendance-v2-notes > summary {
+  list-style: none;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.attendance-v2-notes > summary::-webkit-details-marker {
+  display: none;
+}
+
+.attendance-v2-note-form {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
 }
 
 .day-details-list {
@@ -2907,12 +3150,13 @@ button.danger {
     grid-column: auto;
   }
 
-  .attendance-modal-layout {
+  .attendance-v2-body {
     grid-template-columns: 1fr;
     max-height: none;
+    min-height: 0;
   }
 
-  .attendance-students-list {
+  .attendance-v2-students {
     max-height: 220px;
   }
 
@@ -2928,6 +3172,13 @@ button.danger {
     width: min(100vw, 100%);
     max-height: 92vh;
     padding: 8px;
+  }
+
+  .session-attendance-modal-v2,
+  .note-modal-shell {
+    width: min(100vw, 100%);
+    max-height: 92vh;
+    padding: 0;
   }
 
   .modal-create-session {
@@ -2978,6 +3229,68 @@ button.danger {
 }
 
 @media (max-width: 767px) {
+  .session-attendance-modal-v2,
+  .note-modal-shell {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .note-modal-header,
+  .note-modal-tabs,
+  .note-modal-body,
+  .note-modal-footer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .note-modal-tabs {
+    gap: 6px;
+  }
+
+  .note-modal-tab {
+    min-height: 32px;
+    padding: 0 10px;
+  }
+
+  .note-modal-footer {
+    flex-wrap: wrap;
+  }
+
+  .note-modal-footer .row {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .attendance-v2-list {
+    max-height: 34vh;
+  }
+
+  .attendance-v2-main {
+    max-height: calc(100vh - 310px);
+  }
+
+  .attendance-v2-main-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .attendance-v2-nav-links {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .attendance-v2-segmented {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .attendance-segment-pill {
+    min-height: 44px;
+  }
+
   .session-slot-overlay {
     padding: 0;
     align-items: stretch;
