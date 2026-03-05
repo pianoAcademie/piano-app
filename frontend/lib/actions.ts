@@ -2,9 +2,18 @@
 
 import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import {
+  clearAllAuthTokens,
+  clearPortalReturnTo,
+  clearPortalToken,
+  getAnyToken,
+  getPortalReturnTo,
+  setAdminToken,
+  setPortalReturnTo,
+  setPortalToken,
+} from "./auth-cookies";
 import { backendRequest, backendUrl } from "./backend";
 import type {
   AdminActivityOut,
@@ -30,6 +39,7 @@ import type {
   AdminCatalogStockOut,
   AdminStockEntryCreateOut,
   AdminProductCategoriesOut,
+  AdminImpersonationStartOut,
   AdminProfessorContractDeleteOut,
   AdminCollaboratorSendPasswordOut,
   AdminProfessorContractGridOut,
@@ -52,27 +62,24 @@ import type {
   UserOut,
 } from "./types";
 
-const ACCESS_TOKEN_COOKIE = "access_token";
-
 type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
 type BookingScope = "OCCURRENCE" | "SERIES_FUTURE";
 
 function currentToken(): string | null {
-  return cookies().get(ACCESS_TOKEN_COOKIE)?.value ?? null;
+  return getAnyToken();
 }
 
-function setToken(token: string): void {
-  cookies().set(ACCESS_TOKEN_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    path: "/",
-    maxAge: 60 * 60 * 8,
-  });
+function setAdminSessionToken(token: string): void {
+  setAdminToken(token);
+}
+
+function setPortalSessionToken(token: string, maxAgeSeconds?: number): void {
+  setPortalToken(token, { maxAge: maxAgeSeconds });
 }
 
 function clearToken(): void {
-  cookies().delete(ACCESS_TOKEN_COOKIE);
+  clearAllAuthTokens();
+  clearPortalReturnTo();
 }
 
 function optionalField(formData: FormData, fieldName: string): string | null {
@@ -131,6 +138,11 @@ function parseBookingScope(raw: string): BookingScope {
     return "SERIES_FUTURE";
   }
   return "OCCURRENCE";
+}
+
+function appendQueryParam(path: string, key: string, value: string): string {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
 }
 
 function parseUtcFromLocalInput(raw: string): string | null {
@@ -670,11 +682,15 @@ export async function loginAction(formData: FormData): Promise<void> {
     redirect(`/login?error=${encodeURIComponent(result.message)}`);
   }
 
-  setToken(result.data.access_token);
-
   const me = await fetchCurrentUser(result.data.access_token);
   if (!me) {
     redirect("/login?error=Session%20invalide");
+  }
+
+  if (me.role === "admin") {
+    setAdminSessionToken(result.data.access_token);
+  } else {
+    setPortalSessionToken(result.data.access_token);
   }
 
   if (me.role === "admin") {
@@ -727,7 +743,7 @@ export async function registerAction(formData: FormData): Promise<void> {
     redirect(`/login?error=${encodeURIComponent(loginResult.message)}`);
   }
 
-  setToken(loginResult.data.access_token);
+  setPortalSessionToken(loginResult.data.access_token);
   redirect("/client?tab=home&ok=Compte%20cree");
 }
 
@@ -1402,6 +1418,8 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const course_type_id = String(formData.get("course_type_id") ?? "").trim();
   const location_id = String(formData.get("location_id") ?? "").trim();
   const professor_id = String(formData.get("professor_id") ?? "").trim();
+  const substitute_teacher_id = String(formData.get("substitute_teacher_id") ?? "").trim();
+  const substitute_note = optionalField(formData, "substitute_note");
   const zoom_link = optionalField(formData, "zoom_link");
   const status = String(formData.get("status") ?? "").trim();
   const sessionVisibility = parseSessionVisibility(formData);
@@ -1497,6 +1515,10 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     timezone: session_timezone,
   };
   payload.professor_id = professor_id || null;
+  if (apply_scope === "ONE") {
+    payload.substitute_teacher_id = substitute_teacher_id || null;
+    payload.substitute_note = substitute_note;
+  }
 
   if (end_at_utc !== null) {
     payload.end_at_utc = end_at_utc;
@@ -2502,12 +2524,13 @@ export async function adminViewClientPortalAction(formData: FormData): Promise<v
   await ensureAdmin(token);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
+  const returnTo = String(formData.get("return_to") ?? "").trim() || `/admin/clients/${clientId}?tab=infos`;
   if (!clientId) {
     redirect("/admin/clients?error=Client%20invalide");
   }
 
-  const result = await backendRequest<{ access_token: string }>(
-    `/api/v1/admin/clients/${clientId}/portal-access`,
+  const result = await backendRequest<AdminImpersonationStartOut>(
+    `/api/v1/admin/impersonate/client/${clientId}`,
     {
       method: "POST",
     },
@@ -2518,8 +2541,69 @@ export async function adminViewClientPortalAction(formData: FormData): Promise<v
     redirect(`/admin/clients/${clientId}?tab=infos&error=${encodeURIComponent(result.message)}`);
   }
 
-  setToken(result.data.access_token);
-  redirect("/client?tab=home&ok=Connexion%20client%20activee");
+  setPortalSessionToken(result.data.access_token, result.data.expires_in_seconds);
+  setPortalReturnTo(returnTo);
+  const redirectPath = appendQueryParam(
+    appendQueryParam(result.data.redirect_path, "imp", "1"),
+    "imp_name",
+    result.data.target_display_name,
+  );
+  redirect(redirectPath);
+}
+
+export async function adminViewTeacherPortalAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const teacherId = String(formData.get("teacher_id") ?? "").trim();
+  const returnTo = String(formData.get("return_to") ?? "").trim() || `/admin/professors/${teacherId}?tab=profil`;
+  if (!teacherId) {
+    redirect("/admin/professors?error=Collaborateur%20invalide");
+  }
+
+  const result = await backendRequest<AdminImpersonationStartOut>(
+    `/api/v1/admin/impersonate/teacher/${teacherId}`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/professors/${teacherId}?tab=profil&error=${encodeURIComponent(result.message)}`);
+  }
+
+  setPortalSessionToken(result.data.access_token, result.data.expires_in_seconds);
+  setPortalReturnTo(returnTo);
+  const redirectPath = appendQueryParam(
+    appendQueryParam(result.data.redirect_path, "imp", "1"),
+    "imp_name",
+    result.data.target_display_name,
+  );
+  redirect(redirectPath);
+}
+
+export async function endPortalImpersonationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (token) {
+    await backendRequest<{ message: string }>(
+      "/api/v1/impersonation/end",
+      {
+        method: "POST",
+      },
+      token,
+    );
+  }
+
+  const returnToRaw = String(formData.get("return_to") ?? "").trim() || getPortalReturnTo() || "/admin";
+  const returnTo = returnToRaw.startsWith("/admin") ? returnToRaw : "/admin";
+  clearPortalToken();
+  clearPortalReturnTo();
+  redirect(returnTo);
 }
 
 export async function adminPurchasePlanForClientAction(formData: FormData): Promise<void> {
