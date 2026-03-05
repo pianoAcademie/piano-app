@@ -420,7 +420,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     redirect("/admin");
   }
   if (meResult.data.role !== "prof") {
-    redirect("/dashboard");
+    redirect("/client?tab=home");
   }
 
   const currentTab = parseTab(readParam(searchParams, "tab"));
@@ -497,6 +497,8 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         title: session.title,
         start_at_utc: session.start_at_utc,
         end_at_utc: session.end_at_utc,
+        capacity_max: session.capacity_max,
+        booked_count: Math.max(session.booked_count, reservedStudentsCountFromRoster(session)),
         teacher_display_name: fullName || profile.email,
         location_label: shortLocationLabel(session.location.name),
         type_label: professorTypeLabel(session),

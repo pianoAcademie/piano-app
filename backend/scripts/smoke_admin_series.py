@@ -93,6 +93,13 @@ def promote_admin(email: str) -> None:
         db.commit()
 
 
+def user_id_by_email(email: str) -> str:
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == email))
+        ensure(user is not None, f"user not found: {email}")
+        return str(user.id)
+
+
 def catalog_ids() -> tuple[str, str, str, str]:
     with SessionLocal() as db:
         row = db.execute(
@@ -129,7 +136,7 @@ def create_series(
         "end_at_utc": (start_at_utc + timedelta(hours=1)).isoformat(),
         "capacity_max": 3,
         "auto_cancel_deadline_utc": (start_at_utc - timedelta(hours=6)).isoformat(),
-        "recurrence": {"frequency": "WEEKLY", "occurrences": 3},
+        "recurrence": {"frequency": "WEEKLY", "until_date": (start_at_utc.date() + timedelta(days=14)).isoformat()},
     }
     status, data = call("POST", "/api/v1/admin/sessions", payload, token=admin_token)
     ensure(status == 201 and isinstance(data, dict), f"series create failed: {status} {data}")
@@ -146,6 +153,12 @@ def list_series_sessions(admin_token: str, recurrence_group_id: str) -> list[dic
     return rows
 
 
+def list_session_bookings(admin_token: str, session_id: str) -> list[dict[str, Any]]:
+    status, data = call("GET", f"/api/v1/admin/sessions/{session_id}/bookings", token=admin_token)
+    ensure(status == 200 and isinstance(data, list), f"list bookings failed: {status} {data}")
+    return data
+
+
 def main() -> None:
     ts = int(time.time())
 
@@ -158,6 +171,7 @@ def main() -> None:
 
     admin_token = login(admin_email)
     client_token = login(client_email)
+    client_id = user_id_by_email(client_email)
 
     plan_id, course_type_id, location_id, professor_id = catalog_ids()
 
@@ -199,6 +213,29 @@ def main() -> None:
     for idx in range(3):
         ensure(shifted_starts[idx] - old_starts[idx] == timedelta(hours=1), f"session {idx} not shifted by +1h")
 
+    status, add_scope = call(
+        "POST",
+        f"/api/v1/admin/sessions/{shifted[0]['id']}/bookings?scope=SERIES_FUTURE",
+        {"client_id": client_id},
+        token=admin_token,
+    )
+    ensure(status == 200 and isinstance(add_scope, dict), f"admin booking scope failed: {status} {add_scope}")
+    ensure(add_scope.get("processed_count") == 3, f"scope add should process 3 sessions: {add_scope}")
+
+    bookings_per_session = [list_session_bookings(admin_token, row["id"]) for row in shifted]
+    ensure(all(len(rows) == 1 for rows in bookings_per_session), "scope add should create one booking on each future session")
+    anchor_booking_id = bookings_per_session[0][0]["id"]
+
+    status, _ = call(
+        "DELETE",
+        f"/api/v1/admin/sessions/{shifted[0]['id']}/bookings/{anchor_booking_id}?scope=SERIES_FUTURE",
+        token=admin_token,
+    )
+    ensure(status == 204, f"admin booking removal with scope failed: {status}")
+
+    post_remove = [list_session_bookings(admin_token, row["id"]) for row in shifted]
+    ensure(all(len(rows) == 0 for rows in post_remove), "scope remove should cancel bookings on whole future series")
+
     status, purchased = call("POST", f"/api/v1/plans/{plan_id}/purchase", token=client_token)
     ensure(status == 201 and isinstance(purchased, dict), f"client purchase failed: {status} {purchased}")
 
@@ -237,6 +274,7 @@ def main() -> None:
                 "scenario": "admin_series_scope",
                 "checks": {
                     "series_shift_future": True,
+                    "booking_scope_series_future": True,
                     "delete_guard_with_booking": True,
                     "delete_clean_series": True,
                 },

@@ -54,6 +54,7 @@ import type {
 const ACCESS_TOKEN_COOKIE = "access_token";
 
 type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
+type BookingScope = "OCCURRENCE" | "SERIES_FUTURE";
 
 function currentToken(): string | null {
   return cookies().get(ACCESS_TOKEN_COOKIE)?.value ?? null;
@@ -121,6 +122,14 @@ function parseApplyScope(raw: string): ApplyScope {
     return value;
   }
   return "ONE";
+}
+
+function parseBookingScope(raw: string): BookingScope {
+  const value = raw.trim().toUpperCase();
+  if (value === "SERIES_FUTURE") {
+    return "SERIES_FUTURE";
+  }
+  return "OCCURRENCE";
 }
 
 function parseUtcFromLocalInput(raw: string): string | null {
@@ -1774,14 +1783,16 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
   const sessionId = String(formData.get("session_id") ?? "").trim();
   const clientId = String(formData.get("client_id") ?? "").trim();
   const clientPlanSubscriptionIdRaw = String(formData.get("client_plan_subscription_id") ?? "").trim();
+  const scopeRaw = String(formData.get("scope") ?? "").trim();
+  const scope = parseBookingScope(scopeRaw);
   const recurrenceChecked = checkboxField(formData, "apply_recurrence");
   const recurrenceEndDate = String(formData.get("recurrence_end_date") ?? "").trim();
-  const apply_scope = recurrenceChecked ? "SERIES_FUTURE" : "ONE";
+  const shouldApplyFuture = scope === "SERIES_FUTURE" || recurrenceChecked;
 
   if (!sessionId || !clientId) {
     redirect(appendQueryMessage(returnTo, "error", "Session ou client invalide"));
   }
-  if (recurrenceChecked && !recurrenceEndDate) {
+  if (shouldApplyFuture && recurrenceChecked && !recurrenceEndDate) {
     redirect(appendQueryMessage(returnTo, "error", "Date de fin de recurrence requise"));
   }
 
@@ -1791,7 +1802,7 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
   if (clientPlanSubscriptionIdRaw) {
     payload.client_plan_subscription_id = clientPlanSubscriptionIdRaw;
   }
-  if (recurrenceChecked && recurrenceEndDate) {
+  if (shouldApplyFuture && recurrenceEndDate) {
     payload.recurrence_end_date = recurrenceEndDate;
   }
 
@@ -1802,7 +1813,7 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
     skipped_count: number;
     details: string[];
   }>(
-    `/api/v1/admin/sessions/${sessionId}/bookings?apply_scope=${apply_scope}`,
+    `/api/v1/admin/sessions/${sessionId}/bookings?scope=${shouldApplyFuture ? "SERIES_FUTURE" : "OCCURRENCE"}`,
     {
       method: "POST",
       body: JSON.stringify(payload),
@@ -1834,12 +1845,13 @@ export async function adminRemoveClientFromSessionAction(formData: FormData): Pr
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
+  const scope = parseBookingScope(String(formData.get("scope") ?? "").trim());
   if (!sessionId || !bookingId) {
     redirect(appendQueryMessage(returnTo, "error", "Reservation invalide"));
   }
 
   const result = await backendRequest<Record<string, never>>(
-    `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}`,
+    `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}?scope=${scope}`,
     {
       method: "DELETE",
     },

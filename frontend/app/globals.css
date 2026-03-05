@@ -566,6 +566,25 @@ button.danger {
   color: #1d4d7a;
 }
 
+.month-badge-capacity {
+  min-width: 42px;
+}
+
+.month-badge-capacity-neutral {
+  background: #edf2f7;
+  color: #2f4157;
+}
+
+.month-badge-capacity-warning {
+  background: #fff0d6;
+  color: #8e5a10;
+}
+
+.month-badge-capacity-danger {
+  background: #fde9e7;
+  color: #7a1d17;
+}
+
 .month-badge-status-completed {
   background: #ecf0f5;
   color: #304257;
@@ -2197,13 +2216,142 @@ button.danger {
   content: "▾";
 }
 
-.session-edit-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.session-edit-modal-shell {
+  width: min(920px, 96vw);
+  max-height: 86vh;
+  padding: 0;
+  background: #ffffff;
+  border: 1px solid #e6e8ee;
+  border-radius: 16px;
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
+  gap: 0;
+}
+
+.session-edit-shell-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid #e6e8ee;
+  background: #ffffff;
+}
+
+.session-edit-shell-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-edit-shell-form {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.session-edit-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e6e8ee;
+  background: #fbfcff;
+}
+
+.session-edit-tab {
+  display: grid;
+  gap: 2px;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  text-decoration: none;
+  color: #24354a;
+  background: #ffffff;
+}
+
+.session-edit-tab span {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.session-edit-tab small {
+  font-size: 11px;
+  color: #5d6b7f;
+}
+
+.session-edit-tab.active {
+  border-color: #d4af37;
+  background: #fff8ea;
+  color: #1d2b3a;
+}
+
+.session-edit-shell-body {
+  overflow: auto;
+  padding: 14px 16px;
+}
+
+.session-edit-panel {
+  display: none;
+  gap: 12px;
+}
+
+.session-edit-panel.active {
+  display: grid;
+}
+
+.session-edit-panel .grid {
+  gap: 12px;
 }
 
 .session-edit-span {
   grid-column: 1 / -1;
+}
+
+.session-edit-alert {
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  background: #f9fafc;
+  color: #384b61;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.session-edit-collapsible {
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 10px 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.session-edit-collapsible > summary {
+  list-style: none;
+  cursor: pointer;
+  font-weight: 700;
+  color: #2a3c50;
+}
+
+.session-edit-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-edit-shell-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid #e6e8ee;
+  background: #ffffff;
 }
 
 .recurrence-panel {
@@ -2539,6 +2687,38 @@ button.danger {
   padding: 6px 10px;
 }
 
+.session-slot-scope-panel {
+  min-width: 220px;
+  display: grid;
+  gap: 8px;
+}
+
+.session-slot-inline-confirm-panel .scope-inline {
+  min-width: 0;
+}
+
+.session-slot-add-confirm {
+  width: 100%;
+}
+
+.session-slot-add-confirm > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.session-slot-add-confirm > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-slot-add-confirm .session-slot-inline-confirm-panel {
+  position: static;
+  margin-top: 8px;
+  width: 100%;
+  box-shadow: none;
+}
+
 .session-enroll-form {
   display: grid;
   gap: 10px;
@@ -2752,7 +2932,11 @@ button.danger {
     max-height: 200px;
   }
 
-  .session-edit-form {
+  .session-edit-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .session-edit-panel .grid.cols-2 {
     grid-template-columns: 1fr;
   }
 
@@ -2848,6 +3032,44 @@ button.danger {
 
   .session-enroll-submit button {
     width: 100%;
+  }
+
+  .session-edit-modal-shell {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .session-edit-shell-header {
+    padding: 10px 12px;
+  }
+
+  .session-edit-tabs {
+    display: flex;
+    overflow: auto;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .session-edit-tab {
+    min-width: 180px;
+    padding: 8px;
+  }
+
+  .session-edit-shell-body {
+    padding: 10px 12px;
+  }
+
+  .session-edit-shell-footer {
+    padding: 10px 12px;
+  }
+
+  .session-edit-shell-footer .reset-link,
+  .session-edit-shell-footer button {
+    flex: 1 1 0;
+    justify-content: center;
   }
 }
 

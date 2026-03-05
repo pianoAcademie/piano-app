@@ -177,7 +177,7 @@ def main() -> None:
             "capacity_max": 2,
             "auto_cancel_deadline_utc": deadline.isoformat(),
             "is_private": True,
-            "recurrence": {"frequency": "WEEKLY", "occurrences": 3},
+            "recurrence": {"frequency": "WEEKLY", "until_date": (start.date() + timedelta(days=14)).isoformat()},
         },
         token=admin_token,
     )

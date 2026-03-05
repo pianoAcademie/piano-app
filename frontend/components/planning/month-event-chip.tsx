@@ -3,6 +3,10 @@ export type PlanningEventChipData = {
   title: string;
   start_at_utc: string;
   end_at_utc: string;
+  capacity_max: number;
+  booked_count?: number;
+  enrolled_count?: number;
+  capacity_label?: string;
   teacher_display_name: string;
   location_label: string;
   type_label: string;
@@ -108,6 +112,30 @@ function shouldShowStatusBadge(status: string): boolean {
   return !(normalized === "SCHEDULED" || normalized === "PLANNED");
 }
 
+function resolveCapacityUsed(event: PlanningEventChipData): number {
+  if (typeof event.enrolled_count === "number" && Number.isFinite(event.enrolled_count)) {
+    return Math.max(0, Math.floor(event.enrolled_count));
+  }
+  if (typeof event.booked_count === "number" && Number.isFinite(event.booked_count)) {
+    return Math.max(0, Math.floor(event.booked_count));
+  }
+  return 0;
+}
+
+function capacityBadgeClass(used: number, max: number): string {
+  if (max <= 0) {
+    return "month-badge-capacity-neutral";
+  }
+  const ratio = used / max;
+  if (ratio >= 1) {
+    return "month-badge-capacity-danger";
+  }
+  if (ratio >= 0.5) {
+    return "month-badge-capacity-warning";
+  }
+  return "month-badge-capacity-neutral";
+}
+
 export default function MonthEventChip({ event, href, expanded = false }: MonthEventChipProps): JSX.Element {
   const teacherFullName = (event.teacher_display_name || "").trim();
   const teacherMissing = teacherFullName.length === 0;
@@ -119,12 +147,16 @@ export default function MonthEventChip({ event, href, expanded = false }: MonthE
   const endTime = formatEventTime(event.end_at_utc);
   const tooltip = `${startTime}-${endTime}\n${event.title}\nProf: ${teacherMissing ? "(non renseigne)" : teacherFullName}\nLieu: ${locationLabel}\nType: ${typeLabel}\nStatut: ${event.status_label}`;
   const showStatusBadge = shouldShowStatusBadge(event.status);
+  const capacityUsed = resolveCapacityUsed(event);
+  const capacityMax = Math.max(0, Math.floor(event.capacity_max || 0));
+  const capacityLabel = event.capacity_label?.trim() || `${capacityUsed}/${capacityMax}`;
 
   return (
     <a className={`month-event-chip ${expanded ? "expanded" : ""}`} href={href} title={tooltip}>
       <div className="month-event-chip-meta">
         <span className="month-event-chip-time">{startTime}</span>
         <span className="month-event-chip-badges">
+          <span className={`month-badge month-badge-capacity ${capacityBadgeClass(capacityUsed, capacityMax)}`}>{capacityLabel}</span>
           <span className="month-badge month-badge-type">{typeLabel}</span>
           {showStatusBadge ? <span className={`month-badge ${statusBadgeClass(event.status)}`}>{event.status_label}</span> : null}
         </span>

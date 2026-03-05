@@ -121,6 +121,7 @@ BOOKING_STATUSES_ACTIVE = (
 VACATION_COURSE_TYPE_CODE = "VACATION_DAY"
 
 ApplyScope = Literal["ONE", "SERIES_FUTURE", "SERIES_ALL"]
+BookingScope = Literal["OCCURRENCE", "SERIES_FUTURE"]
 EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 
@@ -816,6 +817,20 @@ def _target_sessions_for_admin_booking(
     if not filtered:
         return [session_obj]
     return filtered
+
+
+def _resolve_booking_scope(
+    *,
+    scope: BookingScope | None,
+    apply_scope: ApplyScope | None,
+) -> ApplyScope:
+    if scope is not None:
+        return "SERIES_FUTURE" if scope == "SERIES_FUTURE" else "ONE"
+    if apply_scope is not None:
+        if apply_scope == "SERIES_ALL":
+            return "SERIES_FUTURE"
+        return apply_scope
+    return "ONE"
 
 
 def _is_retryable_lock_error(exc: OperationalError) -> bool:
@@ -1911,18 +1926,20 @@ def update_admin_session_booking_note(
 def add_admin_session_booking(
     session_id: UUID,
     payload: AdminSessionBookingCreateRequest,
-    apply_scope: ApplyScope = Query(default="ONE"),
+    scope: BookingScope | None = Query(default=None),
+    apply_scope: ApplyScope | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminSessionBookingOperationOut:
     try:
+        resolved_scope = _resolve_booking_scope(scope=scope, apply_scope=apply_scope)
         anchor_session = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
         if anchor_session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
         client = _require_client(db, payload.client_id)
-        targets = _target_sessions_for_admin_booking(db, session_obj=anchor_session, apply_scope=apply_scope)
-        if apply_scope != "ONE" and payload.recurrence_end_date is not None:
+        targets = _target_sessions_for_admin_booking(db, session_obj=anchor_session, apply_scope=resolved_scope)
+        if resolved_scope != "ONE" and payload.recurrence_end_date is not None:
             targets = [target for target in targets if target.start_at_utc.date() <= payload.recurrence_end_date]
 
         now = _utcnow()
@@ -2091,6 +2108,8 @@ def add_admin_session_booking(
 def cancel_admin_session_booking(
     session_id: UUID,
     booking_id: UUID,
+    scope: BookingScope | None = Query(default=None),
+    apply_scope: ApplyScope | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
@@ -2113,38 +2132,64 @@ def cancel_admin_session_booking(
     if booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
-    if booking.status == BookingStatus.CANCELLED:
+    resolved_scope = _resolve_booking_scope(scope=scope, apply_scope=apply_scope)
+    now = _utcnow()
+    locked_statuses = (BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE)
+    refundable_statuses = (BookingStatus.BOOKED, BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE)
+
+    target_bookings: list[tuple[CourseSession, Booking]] = []
+    if resolved_scope == "ONE" or session_obj.recurrence_group_id is None:
+        target_bookings = [(session_obj, booking)]
+    else:
+        target_sessions = _target_sessions_for_scope(db, session_obj=session_obj, apply_scope="SERIES_FUTURE")
+        target_session_ids = [target.id for target in target_sessions]
+        if target_session_ids:
+            rows = db.execute(
+                select(CourseSession, Booking)
+                .join(Booking, Booking.session_id == CourseSession.id)
+                .where(
+                    CourseSession.id.in_(target_session_ids),
+                    Booking.user_id == booking.user_id,
+                )
+                .with_for_update()
+            ).all()
+            target_bookings = [(row[0], row[1]) for row in rows]
+
+    if not target_bookings:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    now = _utcnow()
-    previous_status = booking.status
-    locked_statuses = (BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE)
-    is_future_scheduled_session = session_obj.status == SessionStatus.SCHEDULED and session_obj.start_at_utc > now
-    if previous_status in locked_statuses and not is_future_scheduled_session:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Closed booking cannot be removed")
+    for target_session, target_booking in target_bookings:
+        if target_booking.status == BookingStatus.CANCELLED:
+            continue
 
-    refundable_statuses = (BookingStatus.BOOKED, BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE)
-    if previous_status in refundable_statuses and booking.client_plan_subscription_id is not None and session_obj.start_at_utc > now:
-        sub_and_plan = _load_subscription_with_plan_for_update(
+        previous_status = target_booking.status
+        is_future_scheduled_session = target_session.status == SessionStatus.SCHEDULED and target_session.start_at_utc > now
+        if previous_status in locked_statuses and not is_future_scheduled_session:
+            if resolved_scope == "ONE":
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Closed booking cannot be removed")
+            continue
+
+        if previous_status in refundable_statuses and target_booking.client_plan_subscription_id is not None and target_session.start_at_utc > now:
+            sub_and_plan = _load_subscription_with_plan_for_update(
+                db,
+                subscription_id=target_booking.client_plan_subscription_id,
+            )
+            if sub_and_plan is not None:
+                subscription, plan = sub_and_plan
+                if subscription.user_id == target_booking.user_id:
+                    _restore_pack_credit(subscription, plan)
+
+        target_booking.status = BookingStatus.CANCELLED
+        target_booking.cancelled_at = now
+        target_booking.cancellation_reason = "ADMIN_REMOVED"
+
+        skip_pending_reminders_for_booking(
             db,
-            subscription_id=booking.client_plan_subscription_id,
+            booking_id=target_booking.id,
+            reason="Booking cancelled by admin",
+            now=now,
         )
-        if sub_and_plan is not None:
-            subscription, plan = sub_and_plan
-            if subscription.user_id == booking.user_id:
-                _restore_pack_credit(subscription, plan)
-
-    booking.status = BookingStatus.CANCELLED
-    booking.cancelled_at = now
-    booking.cancellation_reason = "ADMIN_REMOVED"
-
-    skip_pending_reminders_for_booking(
-        db,
-        booking_id=booking.id,
-        reason="Booking cancelled by admin",
-        now=now,
-    )
-    _promote_waitlist_if_possible(db, session_obj, now)
+        _promote_waitlist_if_possible(db, target_session, now)
 
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
