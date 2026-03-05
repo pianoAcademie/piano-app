@@ -88,6 +88,10 @@ export type SessionOut = {
   seats_remaining: number;
   online_booking_enabled: boolean;
   zoom_link: string | null;
+  substitute_teacher_id: string | null;
+  substitute_teacher_display_name: string | null;
+  effective_teacher_id: string | null;
+  effective_teacher_display_name: string | null;
   course_type: {
     id: string;
     code: string;
@@ -254,6 +258,15 @@ export type AdminClientSubscriptionOut = {
   estimated_vat_amount: string | null;
   estimated_total_incl_vat: string | null;
   estimated_currency: string | null;
+};
+
+export type AdminImpersonationStartOut = {
+  target_user_id: string;
+  target_role: "client" | "teacher";
+  target_display_name: string;
+  access_token: string;
+  expires_in_seconds: number;
+  redirect_path: string;
 };
 
 export type AdminClientBookingOut = {
@@ -818,6 +831,12 @@ export type ProfessorSessionOut = {
   capacity_max: number;
   booked_count: number;
   zoom_link: string | null;
+  habitual_teacher_id: string | null;
+  habitual_teacher_display_name: string | null;
+  substitute_teacher_id: string | null;
+  substitute_teacher_display_name: string | null;
+  effective_teacher_id: string | null;
+  effective_teacher_display_name: string | null;
   students: ProfessorSessionStudentOut[];
   course_type: {
     id: string;
@@ -984,8 +1003,17 @@ export type AdminSessionOut = {
   course_type_id: string;
   location_id: string;
   professor_id: string | null;
+  substitute_teacher_id: string | null;
+  substitute_set_at: string | null;
+  substitute_set_by: string | null;
+  substitute_note: string | null;
   teacher_id: string | null;
   teacher_display_name: string;
+  habitual_teacher_id: string | null;
+  habitual_teacher_display_name: string;
+  substitute_teacher_display_name: string | null;
+  effective_teacher_id: string | null;
+  effective_teacher_display_name: string;
   location_label: string;
   type_label: string;
   status_label: string;
