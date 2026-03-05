@@ -9,6 +9,13 @@ export const PORTAL_RETURN_TO_COOKIE = "portal_return_to";
 const EIGHT_HOURS_IN_SECONDS = 60 * 60 * 8;
 
 function isSecureCookie(): boolean {
+  const cookieSecureOverride = (process.env.COOKIE_SECURE ?? "").trim().toLowerCase();
+  if (cookieSecureOverride === "true" || cookieSecureOverride === "1") {
+    return true;
+  }
+  if (cookieSecureOverride === "false" || cookieSecureOverride === "0") {
+    return false;
+  }
   const nodeEnv = (process.env.NODE_ENV ?? "").trim().toLowerCase();
   const deployEnv = (process.env.DEPLOY_ENV ?? "").trim().toLowerCase();
   return nodeEnv === "production" || deployEnv === "production";

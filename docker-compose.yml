@@ -61,6 +61,7 @@ services:
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
       BACKEND_TIMEOUT_MS: ${BACKEND_TIMEOUT_MS:-30000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     ports:
       - "3000:3000"
     depends_on:
