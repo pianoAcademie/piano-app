@@ -78,7 +78,7 @@ jobs:
             set -euo pipefail
             cd '${VPS_PATH}'
             docker compose up -d --build db
-            docker compose run --rm -T backend alembic upgrade head
+            docker compose run --rm -T --build backend alembic upgrade head
             docker compose up -d --build backend frontend
             docker compose ps
           "
