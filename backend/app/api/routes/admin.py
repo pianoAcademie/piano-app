@@ -172,6 +172,36 @@ def _session_type_label(session_obj: CourseSession, *, course_type: CourseType |
     return "Collectif"
 
 
+def _is_online_session_context(*, course_type: CourseType | None, location: Location | None) -> bool:
+    location_code = (location.code if location is not None else "").upper()
+    if location is not None and (location.is_online or location_code == "ONLINE"):
+        return True
+    if course_type is not None and course_type.mode == DeliveryMode.ONLINE:
+        return True
+    return False
+
+
+def _resolve_session_zoom_link(
+    *,
+    requested_zoom_link: str | None,
+    course_type: CourseType | None,
+    location: Location | None,
+    professor: Professor | None,
+) -> str | None:
+    if requested_zoom_link is not None:
+        normalized = requested_zoom_link.strip()
+        if normalized:
+            return normalized
+
+    if _is_online_session_context(course_type=course_type, location=location):
+        teacher_zoom = (professor.zoom_link if professor is not None else None) or ""
+        teacher_zoom = teacher_zoom.strip()
+        if teacher_zoom:
+            return teacher_zoom
+
+    return None
+
+
 def _to_admin_session_out(
     session_obj: CourseSession,
     *,
@@ -1134,6 +1164,7 @@ def list_admin_professors(
             first_name=prof.first_name,
             last_name=prof.last_name,
             email=prof.email,
+            zoom_link=prof.zoom_link,
             active=prof.active,
         )
         for prof in professors
@@ -1318,7 +1349,7 @@ def create_session(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminSessionOut:
-    course_type, location, _ = _validate_and_load_refs(
+    course_type, location, professor = _validate_and_load_refs(
         db,
         course_type_id=payload.course_type_id,
         location_id=payload.location_id,
@@ -1431,7 +1462,12 @@ def create_session(
                 status=SessionStatus.SCHEDULED,
                 auto_cancel_deadline_utc=deadline_at,
                 cancel_reason=None,
-                zoom_link=payload.zoom_link,
+                zoom_link=_resolve_session_zoom_link(
+                    requested_zoom_link=payload.zoom_link,
+                    course_type=course_type,
+                    location=location,
+                    professor=professor,
+                ),
                 is_private=payload.is_private,
                 allow_online_booking=(not payload.is_private) and bool(payload.allow_online_booking),
                 timezone=session_timezone,
@@ -2228,7 +2264,7 @@ def update_session(
     professor_id = updates.get("professor_id", session_obj.professor_id)
     enforce_planning_allowed = "course_type_id" in updates or "location_id" in updates
 
-    course_type, location, _ = _validate_and_load_refs(
+    course_type, location, professor = _validate_and_load_refs(
         db,
         course_type_id=course_type_id,
         location_id=location_id,
@@ -2341,7 +2377,22 @@ def update_session(
         if "professor_reminder_note" in updates:
             target.professor_reminder_note = _normalize_message_field(updates["professor_reminder_note"])
         if "zoom_link" in updates:
-            target.zoom_link = updates["zoom_link"]
+            target.zoom_link = _resolve_session_zoom_link(
+                requested_zoom_link=updates["zoom_link"],
+                course_type=course_type,
+                location=location,
+                professor=professor,
+            )
+        elif (
+            ("course_type_id" in updates or "location_id" in updates or "professor_id" in updates)
+            and not (target.zoom_link or "").strip()
+        ):
+            target.zoom_link = _resolve_session_zoom_link(
+                requested_zoom_link=None,
+                course_type=course_type,
+                location=location,
+                professor=professor,
+            )
         if is_vacation:
             target.capacity_max = 0
         elif "capacity_max" in updates:

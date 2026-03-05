@@ -2698,6 +2698,7 @@ button.danger {
 }
 
 .session-slot-add-confirm {
+  position: relative;
   width: 100%;
 }
 
@@ -2706,6 +2707,21 @@ button.danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: auto;
+  height: 42px;
+  min-width: 110px;
+  padding: 0 14px;
+  border: 1px solid #d2b184;
+  border-radius: 10px;
+  background: #d58a2d;
+  color: #ffffff;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
 }
 
 .session-slot-add-confirm > summary::-webkit-details-marker {

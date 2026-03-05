@@ -982,11 +982,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedLocationName = selectedSession ? locationById.get(selectedSession.location_id)?.name ?? "Lieu non defini" : "";
   const selectedProfessorDetail =
     selectedSession && selectedSession.professor_id ? professorById.get(selectedSession.professor_id) : null;
+  const selectedSessionIsOnline = selectedSession
+    ? (locationById.get(selectedSession.location_id)?.is_online ?? false) || selectedSession.type_label.toLowerCase().includes("online")
+    : false;
   const selectedProfessorName = selectedSession
     ? selectedProfessorDetail
       ? `${selectedProfessorDetail.first_name} ${selectedProfessorDetail.last_name}`.trim()
       : "Professeur non defini"
     : "";
+  const selectedProfessorZoomLink = (selectedProfessorDetail?.zoom_link ?? "").trim();
+  const selectedSessionZoomLink =
+    selectedSession && ((selectedSession.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedProfessorZoomLink : ""))
+      ? ((selectedSession?.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedProfessorZoomLink : ""))
+      : null;
   const selectedSessionTypeName = selectedSession ? sessionTypeLabel(selectedSession, selectedLocationName) : "";
   const selectedSessionHeaderTitle = selectedSession ? `${selectedCourseTypeName} - ${selectedLocationName}` : "";
   const selectedSessionSubtitle = selectedSession
@@ -1642,8 +1650,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                       <div className="session-enroll-submit">
                         {selectedSession.recurrence_group_id ? (
-                          <details className="session-slot-inline-confirm session-slot-add-confirm">
-                            <summary className="mode-link">Ajouter</summary>
+                          <details className="session-slot-add-confirm">
+                            <summary>Ajouter</summary>
                             <div className="session-slot-inline-confirm-panel session-slot-scope-panel">
                               <p className="muted">Inscrire l eleve sur cette seance ou sur la serie future ?</p>
                               <label className="checkline">
@@ -1680,9 +1688,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <p className="muted">
                       <strong>Lieu:</strong> {selectedLocationName}
                     </p>
-                    {selectedSession.zoom_link ? (
+                    {selectedSessionZoomLink ? (
                       <p>
-                        <a href={selectedSession.zoom_link} target="_blank" rel="noreferrer">
+                        <a href={selectedSessionZoomLink} target="_blank" rel="noreferrer">
                           Lien Zoom
                         </a>
                       </p>
@@ -1730,8 +1738,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <a className="danger-link" href={deleteConfirmHref}>
                       Supprimer le creneau
                     </a>
-                    {selectedSession.zoom_link ? (
-                      <a className="mode-link" href={selectedSession.zoom_link} target="_blank" rel="noreferrer">
+                    {selectedSessionZoomLink ? (
+                      <a className="mode-link" href={selectedSessionZoomLink} target="_blank" rel="noreferrer">
                         Copier lien Zoom
                       </a>
                     ) : null}

@@ -1830,7 +1830,8 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
     const detail = result.data.details?.[0] ?? "Inscription impossible pour ce creneau";
     redirect(appendQueryMessage(returnTo, "error", detail));
   }
-  const summary = `Inscription: ${result.data.booked_count} reserve(s), ${result.data.waitlisted_count} en attente, ${result.data.skipped_count} ignore(s)`;
+  const scopeLabel = shouldApplyFuture ? "Serie future" : "Cette seance";
+  const summary = `${scopeLabel}: +${result.data.booked_count} reserve(s), ${result.data.waitlisted_count} en attente, ${result.data.skipped_count} ignore(s)`;
   redirect(appendQueryMessage(returnTo, "ok", summary));
 }
 
