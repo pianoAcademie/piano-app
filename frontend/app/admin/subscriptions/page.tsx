@@ -286,7 +286,7 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                     ) : (
                       detailData.cycles.map((row) => (
                         <tr key={row.id}>
-                          <td>{formatDate(row.period_start)} -> {formatDate(row.period_end)}</td>
+                          <td>{`${formatDate(row.period_start)} -> ${formatDate(row.period_end)}`}</td>
                           <td>{formatDate(row.billing_date)}</td>
                           <td><span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span></td>
                           <td>{row.attempt_count}</td>
