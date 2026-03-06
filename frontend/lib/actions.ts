@@ -473,10 +473,12 @@ type CatalogKitItemPayload = {
 
 type CatalogKitPriceMode = "calculated" | "forced";
 
-function parseCatalogKitItemsFromFormData(formData: FormData, maxRows = 10): CatalogKitItemPayload[] | null {
+function parseCatalogKitItemsFromFormData(formData: FormData, maxRows = 50): CatalogKitItemPayload[] | null {
   const out: CatalogKitItemPayload[] = [];
   const seen = new Set<string>();
-  for (let i = 0; i < maxRows; i += 1) {
+  const requestedCount = parseNonNegativeInt(String(formData.get("item_count") ?? ""));
+  const totalRows = requestedCount === null ? maxRows : Math.min(maxRows, requestedCount);
+  for (let i = 0; i < totalRows; i += 1) {
     const productIdRaw = String(formData.get(`item_product_id_${i}`) ?? "");
     const productId = parseUuid(productIdRaw);
     if (!productId) {
@@ -7143,9 +7145,11 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
   const currency = parseCurrencyCode(String(formData.get("currency") ?? "EUR"));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const statusValue = String(formData.get("status") ?? "").trim().toLowerCase();
-  const visibilityValue = String(formData.get("visibility") ?? "").trim().toLowerCase();
   const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
-  const isPublic = visibilityValue ? visibilityValue === "public" : checkboxFieldWithDefault(formData, "is_public", true);
+  const isPublic = parseCheckboxFlag(formData, "is_public", true);
+  const useInManualBilling = parseCheckboxFlag(formData, "use_in_manual_billing", true);
+  const useInEnrollments = parseCheckboxFlag(formData, "use_in_enrollments", true);
+  const purchasableOnline = parseCheckboxFlag(formData, "purchasable_online", false);
   const items = parseCatalogKitItemsFromFormData(formData);
   if (!title || vatRate === null || items === null || (priceMode === "forced" && effectiveForcedPrice === null)) {
     redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
@@ -7163,7 +7167,9 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
     currency,
     price_incl_vat: effectiveForcedPrice ?? 0,
     vat_rate: vatRate,
-    purchasable_online: checkboxField(formData, "purchasable_online"),
+    use_in_manual_billing: useInManualBilling,
+    use_in_enrollments: useInEnrollments,
+    purchasable_online: purchasableOnline,
     is_public: isPublic,
     active,
     items,
@@ -7204,9 +7210,11 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
   const currency = parseCurrencyCode(String(formData.get("currency") ?? "EUR"));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const statusValue = String(formData.get("status") ?? "").trim().toLowerCase();
-  const visibilityValue = String(formData.get("visibility") ?? "").trim().toLowerCase();
   const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
-  const isPublic = visibilityValue ? visibilityValue === "public" : checkboxFieldWithDefault(formData, "is_public", true);
+  const isPublic = parseCheckboxFlag(formData, "is_public", true);
+  const useInManualBilling = parseCheckboxFlag(formData, "use_in_manual_billing", true);
+  const useInEnrollments = parseCheckboxFlag(formData, "use_in_enrollments", true);
+  const purchasableOnline = parseCheckboxFlag(formData, "purchasable_online", false);
   const items = parseCatalogKitItemsFromFormData(formData);
   if (!kitId || !title || vatRate === null || items === null || (priceMode === "forced" && effectiveForcedPrice === null)) {
     redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
@@ -7224,7 +7232,9 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
     currency,
     price_incl_vat: effectiveForcedPrice ?? 0,
     vat_rate: vatRate,
-    purchasable_online: checkboxField(formData, "purchasable_online"),
+    use_in_manual_billing: useInManualBilling,
+    use_in_enrollments: useInEnrollments,
+    purchasable_online: purchasableOnline,
     is_public: isPublic,
     active,
     items,
@@ -7332,6 +7342,8 @@ export async function duplicateAdminCatalogKitAction(formData: FormData): Promis
     currency: parseCurrencyCode(sourceKit.currency || "EUR"),
     price_incl_vat: Number(sourceKit.price_effective_incl_vat || sourceKit.price_incl_vat),
     vat_rate: Number(sourceKit.vat_rate),
+    use_in_manual_billing: sourceKit.use_in_manual_billing,
+    use_in_enrollments: sourceKit.use_in_enrollments,
     purchasable_online: sourceKit.purchasable_online,
     is_public: sourceKit.is_public,
     active: sourceKit.active,
@@ -7404,6 +7416,8 @@ export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Pr
         currency: parseCurrencyCode(current.currency || "EUR"),
         price_incl_vat: Number(current.price_effective_incl_vat || current.price_incl_vat),
         vat_rate: Number(current.vat_rate),
+        use_in_manual_billing: current.use_in_manual_billing,
+        use_in_enrollments: current.use_in_enrollments,
         purchasable_online: current.purchasable_online,
         is_public: current.is_public,
         active: !shouldArchive,

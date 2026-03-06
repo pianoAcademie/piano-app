@@ -5853,6 +5853,29 @@ button.danger {
   grid-template-columns: minmax(0, 1fr) 110px 110px;
 }
 
+.catalog-kit-empty-state {
+  border: 1px dashed #d8dfe8;
+  border-radius: 12px;
+  padding: 14px;
+  background: #f9fbff;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.catalog-kit-composition-wrap {
+  margin-top: 8px;
+}
+
+.catalog-kit-composition-table td {
+  vertical-align: middle;
+}
+
+.catalog-kit-composition-table td select,
+.catalog-kit-composition-table td input {
+  width: 100%;
+}
+
 .catalog-kit-price-readonly {
   display: grid;
   gap: 4px;
@@ -5874,6 +5897,15 @@ button.danger {
 .catalog-kit-price-mode-group legend {
   font-weight: 700;
   padding: 0 4px;
+}
+
+.catalog-kit-price-summary {
+  border: 1px solid #e6e8ee;
+  border-radius: 10px;
+  background: #fafbfd;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
 }
 
 .catalog-stock-form {
@@ -6130,6 +6162,9 @@ button.danger {
 }
 
 .catalog-admin-drawer-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   border-top: 1px solid #ece7de;
   padding: 12px 16px;
   display: flex;

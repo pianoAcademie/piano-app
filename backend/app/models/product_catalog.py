@@ -200,6 +200,8 @@ class CatalogKit(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     price_incl_vat: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     vat_rate: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False, server_default=text("20"))
+    use_in_manual_billing: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    use_in_enrollments: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     purchasable_online: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))

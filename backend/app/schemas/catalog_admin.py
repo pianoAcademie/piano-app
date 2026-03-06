@@ -129,6 +129,8 @@ class AdminCatalogKitOut(BaseModel):
     price_incl_vat: Decimal
     vat_rate: Decimal
     computed_price_incl_vat: Decimal
+    use_in_manual_billing: bool
+    use_in_enrollments: bool
     purchasable_online: bool
     is_public: bool
     active: bool
@@ -149,6 +151,8 @@ class AdminCatalogKitCreateRequest(BaseModel):
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     price_incl_vat: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
     vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
+    use_in_manual_billing: bool = True
+    use_in_enrollments: bool = True
     purchasable_online: bool = False
     is_public: bool = True
     active: bool = True

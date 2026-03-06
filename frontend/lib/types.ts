@@ -1288,6 +1288,8 @@ export type AdminCatalogKitOut = {
   price_incl_vat: string;
   vat_rate: string;
   computed_price_incl_vat: string;
+  use_in_manual_billing: boolean;
+  use_in_enrollments: boolean;
   purchasable_online: boolean;
   is_public: boolean;
   active: boolean;

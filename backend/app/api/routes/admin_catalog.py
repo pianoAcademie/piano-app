@@ -359,6 +359,8 @@ def _kit_out(
         price_incl_vat=price_effective,
         vat_rate=Decimal(row.vat_rate),
         computed_price_incl_vat=computed,
+        use_in_manual_billing=bool(row.use_in_manual_billing),
+        use_in_enrollments=bool(row.use_in_enrollments),
         purchasable_online=bool(row.purchasable_online),
         is_public=bool(row.is_public),
         active=bool(row.active),
@@ -825,6 +827,8 @@ def create_admin_catalog_kit(
         currency=currency,
         price_incl_vat=price_effective,
         vat_rate=vat_rate,
+        use_in_manual_billing=payload.use_in_manual_billing,
+        use_in_enrollments=payload.use_in_enrollments,
         purchasable_online=payload.purchasable_online,
         is_public=payload.is_public,
         active=payload.active,
@@ -907,6 +911,8 @@ def update_admin_catalog_kit(
     row.currency = currency
     row.price_incl_vat = price_effective
     row.vat_rate = vat_rate
+    row.use_in_manual_billing = payload.use_in_manual_billing
+    row.use_in_enrollments = payload.use_in_enrollments
     row.purchasable_online = payload.purchasable_online
     row.is_public = payload.is_public
     row.active = payload.active

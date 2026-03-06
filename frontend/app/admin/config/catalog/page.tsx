@@ -15,7 +15,7 @@ import {
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import AdminKitActionsMenu from "../../../../components/admin-kit-actions-menu";
-import CatalogKitPriceFields from "../../../../components/catalog-kit-price-fields";
+import CatalogKitCompositionPricing from "../../../../components/catalog-kit-composition-pricing";
 import type { AdminCatalogCategoryOut, AdminCatalogKitOut, AdminCatalogProductOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -119,7 +119,6 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
   const kitDrawerModeRaw = readParam(params, "kit_drawer").trim().toLowerCase();
   const kitDrawerMode = kitDrawerModeRaw === "edit" ? "edit" : kitDrawerModeRaw === "create" ? "create" : "";
   const kitId = readParam(params, "kit_id").trim();
-  const requestedKitLines = Number.parseInt(readParam(params, "kit_lines"), 10);
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
 
@@ -157,9 +156,6 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
   const selectedKitItems = selectedKit
     ? [...selectedKit.items].sort((left, right) => left.display_order - right.display_order)
     : [];
-  const defaultKitLines = Math.max(3, selectedKitItems.length || 0);
-  const kitLines = Number.isFinite(requestedKitLines) ? requestedKitLines : defaultKitLines;
-  const clampedKitLines = Math.max(1, Math.min(10, kitLines));
 
   const linkedProductsByCategory = new Map<string, number>();
   for (const product of products) {
@@ -212,26 +208,13 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
     tab: "kits",
     kit_drawer: undefined,
     kit_id: undefined,
-    kit_lines: undefined,
   });
-  const categoriesTabHref = buildCatalogConfigHref(params, { tab: "categories", kit_drawer: undefined, kit_id: undefined, kit_lines: undefined });
+  const categoriesTabHref = buildCatalogConfigHref(params, { tab: "categories", kit_drawer: undefined, kit_id: undefined });
   const kitsTabHref = buildCatalogConfigHref(params, { tab: "kits", category_drawer: undefined, category_id: undefined });
   const createCategoryHref = buildCatalogConfigHref(params, { tab: "categories", category_drawer: "create", category_id: undefined });
   const createKitHref = buildCatalogConfigHref(params, { tab: "kits", kit_drawer: "create", kit_id: undefined });
   const categoryCloseHref = buildCatalogConfigHref(params, { category_drawer: undefined, category_id: undefined });
-  const kitCloseHref = buildCatalogConfigHref(params, { kit_drawer: undefined, kit_id: undefined, kit_lines: undefined });
-  const canAddKitLine = showKitDrawer && clampedKitLines < 10;
-  const canRemoveKitLine = showKitDrawer && clampedKitLines > 1;
-  const addKitLineHref = buildCatalogConfigHref(params, {
-    tab: "kits",
-    kit_drawer: kitDrawerMode || "create",
-    kit_lines: String(Math.min(clampedKitLines + 1, 10)),
-  });
-  const removeKitLineHref = buildCatalogConfigHref(params, {
-    tab: "kits",
-    kit_drawer: kitDrawerMode || "create",
-    kit_lines: String(Math.max(clampedKitLines - 1, 1)),
-  });
+  const kitCloseHref = buildCatalogConfigHref(params, { kit_drawer: undefined, kit_id: undefined });
 
   return (
     <main className="stack catalog-admin-page">
@@ -403,10 +386,11 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                 <thead>
                   <tr>
                     <th>Nom</th>
+                    <th>Categorie</th>
                     <th>Elements</th>
                     <th>Prix calcule</th>
                     <th>Prix facture</th>
-                    <th>Mode</th>
+                    <th>Mode de prix</th>
                     <th>Statut</th>
                     <th>Visibilite</th>
                     <th>Actions</th>
@@ -428,6 +412,7 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                           <br />
                           <span className="muted">{kit.code || "-"}</span>
                         </td>
+                        <td>{kit.category_name || "-"}</td>
                         <td>{kit.items.length}</td>
                         <td>{formatMoney(kit.computed_price_incl_vat, kit.currency || "EUR")}</td>
                         <td>{formatMoney(kit.price_effective_incl_vat || kit.price_incl_vat, kit.currency || "EUR")}</td>
@@ -567,18 +552,6 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                         <option value="archived">Archive</option>
                       </select>
                     </label>
-                    <label>
-                      Visibilite
-                      <select name="visibility" defaultValue={selectedKit?.is_public === false ? "private" : "public"}>
-                        <option value="public">Visible</option>
-                        <option value="private">Masque</option>
-                      </select>
-                    </label>
-                    <label className="checkline">
-                      <input type="hidden" name="purchasable_online" value="false" />
-                      <input type="checkbox" name="purchasable_online" value="true" defaultChecked={selectedKit?.purchasable_online ?? false} />
-                      Achetable en ligne
-                    </label>
                     <label className="span-2">
                       Description courte
                       <input type="text" name="short_description" maxLength={500} defaultValue={selectedKit?.short_description || ""} />
@@ -594,50 +567,20 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                   </div>
                 </article>
 
-                <article className="card">
-                  <div className="row spread">
-                    <h4>Composition</h4>
-                    <div className="row">
-                      {canAddKitLine ? (
-                        <Link className="ghost" href={addKitLineHref}>
-                          Ajouter une ligne
-                        </Link>
-                      ) : null}
-                      {canRemoveKitLine ? (
-                        <Link className="ghost" href={removeKitLineHref}>
-                          Retirer une ligne
-                        </Link>
-                      ) : null}
-                    </div>
-                  </div>
-                  <p className="muted">Laissez le produit vide pour ignorer une ligne.</p>
-                  <div className="catalog-kit-grid">
-                    {Array.from({ length: clampedKitLines }).map((_, index) => {
-                      const item = selectedKitItems[index];
-                      return (
-                        <div key={`kit-line-${index}`} className="catalog-kit-grid-row">
-                          <select name={`item_product_id_${index}`} defaultValue={item?.product_id ?? ""}>
-                            <option value="">Aucun produit</option>
-                            {kitSelectableProducts.map((product) => (
-                              <option key={product.id} value={product.id}>
-                                {product.title}
-                              </option>
-                            ))}
-                          </select>
-                          <input type="number" name={`item_quantity_${index}`} min={1} step={1} defaultValue={item?.quantity ?? 1} />
-                          <input type="number" name={`item_order_${index}`} min={0} step={1} defaultValue={item?.display_order ?? index} />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </article>
-
-                <CatalogKitPriceFields
-                  computedPrice={selectedKit?.computed_price_incl_vat || "0.00"}
-                  effectivePrice={selectedKit?.price_effective_incl_vat || selectedKit?.price_incl_vat || "0.00"}
-                  currency={selectedKit?.currency || "EUR"}
+                <CatalogKitCompositionPricing
+                  products={kitSelectableProducts.map((product) => ({
+                    id: product.id,
+                    title: product.title,
+                    priceInclVat: product.price_incl_vat,
+                  }))}
+                  initialItems={selectedKitItems.map((item) => ({
+                    productId: item.product_id,
+                    quantity: item.quantity,
+                    displayOrder: item.display_order,
+                  }))}
                   initialPriceMode={selectedKit?.price_mode || "calculated"}
                   initialForcedPrice={selectedKit?.forced_price || ""}
+                  initialCurrency={selectedKit?.currency || "EUR"}
                 />
 
                 <article className="card">
@@ -646,6 +589,47 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                     <label>
                       TVA (%)
                       <input type="number" name="vat_rate" min={0} max={100} step="0.001" required defaultValue={selectedKit?.vat_rate || "20.000"} />
+                    </label>
+                  </div>
+                </article>
+
+                <article className="card">
+                  <h4>Usage</h4>
+                  <div className="grid cols-2 config-form-grid">
+                    <label className="checkline">
+                      <input type="hidden" name="use_in_manual_billing" value="false" />
+                      <input
+                        type="checkbox"
+                        name="use_in_manual_billing"
+                        value="true"
+                        defaultChecked={selectedKit?.use_in_manual_billing ?? true}
+                      />
+                      Utilisable en facturation manuelle
+                    </label>
+                    <label className="checkline">
+                      <input type="hidden" name="use_in_enrollments" value="false" />
+                      <input
+                        type="checkbox"
+                        name="use_in_enrollments"
+                        value="true"
+                        defaultChecked={selectedKit?.use_in_enrollments ?? true}
+                      />
+                      Utilisable en inscriptions
+                    </label>
+                    <label className="checkline">
+                      <input type="hidden" name="is_public" value="false" />
+                      <input type="checkbox" name="is_public" value="true" defaultChecked={selectedKit?.is_public ?? true} />
+                      Visible dans le catalogue
+                    </label>
+                    <label className="checkline">
+                      <input type="hidden" name="purchasable_online" value="false" />
+                      <input
+                        type="checkbox"
+                        name="purchasable_online"
+                        value="true"
+                        defaultChecked={selectedKit?.purchasable_online ?? false}
+                      />
+                      Achetable en ligne
                     </label>
                   </div>
                 </article>
