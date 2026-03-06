@@ -4544,6 +4544,21 @@ button.danger {
   padding: 10px;
 }
 
+.config-subsection {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fffdf9;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.config-subsection legend {
+  font-weight: 700;
+  padding: 0 6px;
+}
+
 .config-payment-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -849,6 +849,36 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       defaultValue={subscriptions.direct_debit_day === null ? "" : String(subscriptions.direct_debit_day)}
                     />
                   </label>
+                  <label>
+                    Delai avant 1ere relance auto (jours)
+                    <input
+                      type="number"
+                      name="retry_first_delay_days"
+                      min={1}
+                      max={30}
+                      defaultValue={String(subscriptions.retry_first_delay_days)}
+                    />
+                  </label>
+                  <label>
+                    Nombre max de tentatives auto
+                    <input
+                      type="number"
+                      name="retry_max_auto_attempts"
+                      min={1}
+                      max={10}
+                      defaultValue={String(subscriptions.retry_max_auto_attempts)}
+                    />
+                  </label>
+                  <label>
+                    Passage en pre-resiliation apres echec #
+                    <input
+                      type="number"
+                      name="retry_move_to_pre_termination_after_failed_attempts"
+                      min={1}
+                      max={10}
+                      defaultValue={String(subscriptions.retry_move_to_pre_termination_after_failed_attempts)}
+                    />
+                  </label>
 
                   <div className="config-note-box">
                     <strong>Note</strong>
@@ -895,6 +925,66 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     />
                     Resiliation en ligne active
                   </label>
+                  <label className="checkline span-2">
+                    <input
+                      type="checkbox"
+                      name="allow_booking_during_payment_alert"
+                      defaultChecked={subscriptions.allow_booking_during_payment_alert}
+                    />
+                    Autoriser les reservations pendant le statut payment_alert
+                  </label>
+
+                  <fieldset className="span-2 config-subsection">
+                    <legend>Notifications abonnement</legend>
+                    <label className="checkline">
+                      <input
+                        type="checkbox"
+                        name="notify_success_customer_enabled"
+                        defaultChecked={subscriptions.notify_success_customer_enabled}
+                      />
+                      Succes paiement: mail client
+                    </label>
+                    <label className="checkline">
+                      <input
+                        type="checkbox"
+                        name="notify_success_admin_enabled"
+                        defaultChecked={subscriptions.notify_success_admin_enabled}
+                      />
+                      Succes paiement: mail admin
+                    </label>
+                    <label className="checkline">
+                      <input
+                        type="checkbox"
+                        name="notify_first_failure_customer_enabled"
+                        defaultChecked={subscriptions.notify_first_failure_customer_enabled}
+                      />
+                      1er echec: mail client
+                    </label>
+                    <label className="checkline">
+                      <input
+                        type="checkbox"
+                        name="notify_first_failure_admin_enabled"
+                        defaultChecked={subscriptions.notify_first_failure_admin_enabled}
+                      />
+                      1er echec: mail admin
+                    </label>
+                    <label className="checkline">
+                      <input
+                        type="checkbox"
+                        name="notify_final_failure_customer_enabled"
+                        defaultChecked={subscriptions.notify_final_failure_customer_enabled}
+                      />
+                      Echec final: mail client
+                    </label>
+                    <label className="checkline">
+                      <input
+                        type="checkbox"
+                        name="notify_final_failure_admin_enabled"
+                        defaultChecked={subscriptions.notify_final_failure_admin_enabled}
+                      />
+                      Echec final: mail admin
+                    </label>
+                  </fieldset>
 
                   <div className="row span-2">
                     <button type="submit">Enregistrer</button>

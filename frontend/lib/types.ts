@@ -1152,6 +1152,16 @@ export type AdminSubscriptionSettingsOut = {
   allow_prorata_card: boolean;
   allow_prorata_sepa: boolean;
   online_resiliation_enabled: boolean;
+  allow_booking_during_payment_alert: boolean;
+  retry_first_delay_days: number;
+  retry_max_auto_attempts: number;
+  retry_move_to_pre_termination_after_failed_attempts: number;
+  notify_success_customer_enabled: boolean;
+  notify_success_admin_enabled: boolean;
+  notify_first_failure_customer_enabled: boolean;
+  notify_first_failure_admin_enabled: boolean;
+  notify_final_failure_customer_enabled: boolean;
+  notify_final_failure_admin_enabled: boolean;
 };
 
 export type AdminPaymentMethodOptionOut = {

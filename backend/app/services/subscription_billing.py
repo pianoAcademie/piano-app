@@ -177,6 +177,12 @@ def _resolve_retry_policy(db: Session, *, plan: Plan) -> _RetryPolicyConfig:
         )
     if policy is None:
         policy = db.scalar(
+            select(SubscriptionRetryPolicy).where(
+                SubscriptionRetryPolicy.code == "DEFAULT_MONTHLY"
+            )
+        )
+    if policy is None:
+        policy = db.scalar(
             select(SubscriptionRetryPolicy)
             .where(SubscriptionRetryPolicy.active.is_(True))
             .order_by(SubscriptionRetryPolicy.created_at.asc())
@@ -204,6 +210,12 @@ def _resolve_notification_policy(db: Session, *, plan: Plan) -> _NotificationPol
             select(SubscriptionNotificationPolicy).where(
                 SubscriptionNotificationPolicy.id == plan.notification_policy_id,
                 SubscriptionNotificationPolicy.active.is_(True),
+            )
+        )
+    if policy is None:
+        policy = db.scalar(
+            select(SubscriptionNotificationPolicy).where(
+                SubscriptionNotificationPolicy.code == "DEFAULT_SUBSCRIPTION_NOTIFICATIONS"
             )
         )
     if policy is None:

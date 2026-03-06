@@ -6259,6 +6259,29 @@ export async function updateAdminConfigSubscriptionsAction(formData: FormData): 
   if (directDebitDay !== null && (directDebitDay < 1 || directDebitDay > 28)) {
     redirect("/admin/config?section=params-subscriptions&error=Jour%20de%20prelevement%20invalide");
   }
+  const retryFirstDelayDays = parsePositiveInt(String(formData.get("retry_first_delay_days") ?? ""));
+  const retryMaxAutoAttempts = parsePositiveInt(String(formData.get("retry_max_auto_attempts") ?? ""));
+  const retryMoveToPreTerminationAfterFailedAttempts = parsePositiveInt(
+    String(formData.get("retry_move_to_pre_termination_after_failed_attempts") ?? ""),
+  );
+  if (
+    retryFirstDelayDays === null ||
+    retryMaxAutoAttempts === null ||
+    retryMoveToPreTerminationAfterFailedAttempts === null ||
+    retryFirstDelayDays < 1 ||
+    retryFirstDelayDays > 30 ||
+    retryMaxAutoAttempts < 1 ||
+    retryMaxAutoAttempts > 10 ||
+    retryMoveToPreTerminationAfterFailedAttempts < 1 ||
+    retryMoveToPreTerminationAfterFailedAttempts > 10
+  ) {
+    redirect("/admin/config?section=params-subscriptions&error=Parametres%20de%20retry%20invalides");
+  }
+  if (retryMoveToPreTerminationAfterFailedAttempts > retryMaxAutoAttempts) {
+    redirect(
+      "/admin/config?section=params-subscriptions&error=Le%20seuil%20de%20pre-resiliation%20ne%20peut%20pas%20depasser%20le%20max%20de%20tentatives",
+    );
+  }
 
   const payload = {
     direct_debit_day: directDebitDay,
@@ -6269,6 +6292,16 @@ export async function updateAdminConfigSubscriptionsAction(formData: FormData): 
     allow_prorata_card: checkboxField(formData, "allow_prorata_card"),
     allow_prorata_sepa: checkboxField(formData, "allow_prorata_sepa"),
     online_resiliation_enabled: checkboxField(formData, "online_resiliation_enabled"),
+    allow_booking_during_payment_alert: checkboxField(formData, "allow_booking_during_payment_alert"),
+    retry_first_delay_days: retryFirstDelayDays,
+    retry_max_auto_attempts: retryMaxAutoAttempts,
+    retry_move_to_pre_termination_after_failed_attempts: retryMoveToPreTerminationAfterFailedAttempts,
+    notify_success_customer_enabled: checkboxField(formData, "notify_success_customer_enabled"),
+    notify_success_admin_enabled: checkboxField(formData, "notify_success_admin_enabled"),
+    notify_first_failure_customer_enabled: checkboxField(formData, "notify_first_failure_customer_enabled"),
+    notify_first_failure_admin_enabled: checkboxField(formData, "notify_first_failure_admin_enabled"),
+    notify_final_failure_customer_enabled: checkboxField(formData, "notify_final_failure_customer_enabled"),
+    notify_final_failure_admin_enabled: checkboxField(formData, "notify_final_failure_admin_enabled"),
   };
 
   const result = await backendRequest<AdminSubscriptionSettingsOut>(

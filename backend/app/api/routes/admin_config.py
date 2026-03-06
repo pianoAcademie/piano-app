@@ -24,6 +24,7 @@ from app.models.plan import (
     PlanPriceTaxMode,
     PlanRestrictionPeriod,
 )
+from app.models.subscription_engine import SubscriptionNotificationPolicy, SubscriptionRetryPolicy
 from app.models.user import User, UserRole
 from app.schemas.admin import (
     AdminActivityOut,
@@ -175,7 +176,10 @@ SUBSCRIPTION_SETTING_DEFAULTS = {
     "config_subscription_allow_prorata_card": "false",
     "config_subscription_allow_prorata_sepa": "false",
     "config_subscription_online_resiliation_enabled": "true",
+    "config_subscription_allow_booking_during_payment_alert": "true",
 }
+DEFAULT_SUBSCRIPTION_RETRY_POLICY_CODE = "DEFAULT_MONTHLY"
+DEFAULT_SUBSCRIPTION_NOTIFICATION_POLICY_CODE = "DEFAULT_SUBSCRIPTION_NOTIFICATIONS"
 
 PAYMENT_METHODS_SETTING_KEY = "config_payment_methods_enabled"
 PAYMENT_METHODS_LEGAL_ENTITY_MAP_SETTING_KEY = "config_payment_methods_legal_entity_map_v1"
@@ -492,6 +496,59 @@ def _as_int_or_none(value: str | None) -> int | None:
     except ValueError:
         return None
     return parsed
+
+
+def _default_subscription_retry_policy(db: Session) -> SubscriptionRetryPolicy:
+    row = db.scalar(
+        select(SubscriptionRetryPolicy).where(
+            SubscriptionRetryPolicy.code == DEFAULT_SUBSCRIPTION_RETRY_POLICY_CODE
+        )
+    )
+    if row is not None:
+        return row
+
+    now = _utcnow()
+    row = SubscriptionRetryPolicy(
+        code=DEFAULT_SUBSCRIPTION_RETRY_POLICY_CODE,
+        name="Default monthly retry policy",
+        first_retry_delay_days=1,
+        max_auto_attempts=2,
+        move_to_pre_termination_after_failed_attempts=2,
+        active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _default_subscription_notification_policy(db: Session) -> SubscriptionNotificationPolicy:
+    row = db.scalar(
+        select(SubscriptionNotificationPolicy).where(
+            SubscriptionNotificationPolicy.code == DEFAULT_SUBSCRIPTION_NOTIFICATION_POLICY_CODE
+        )
+    )
+    if row is not None:
+        return row
+
+    now = _utcnow()
+    row = SubscriptionNotificationPolicy(
+        code=DEFAULT_SUBSCRIPTION_NOTIFICATION_POLICY_CODE,
+        name="Default subscription notifications",
+        on_success_customer_enabled=True,
+        on_success_admin_enabled=True,
+        on_first_failure_customer_enabled=True,
+        on_first_failure_admin_enabled=True,
+        on_final_failure_customer_enabled=True,
+        on_final_failure_admin_enabled=True,
+        active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
 
 
 def _normalize_methods(codes: list[str]) -> list[str]:
@@ -1720,6 +1777,8 @@ def get_admin_subscription_settings(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminSubscriptionSettingsOut:
+    retry_policy = _default_subscription_retry_policy(db)
+    notification_policy = _default_subscription_notification_policy(db)
     return AdminSubscriptionSettingsOut(
         direct_debit_day=_as_int_or_none(_get_setting_value(db, "config_subscription_direct_debit_day", SUBSCRIPTION_SETTING_DEFAULTS["config_subscription_direct_debit_day"])),
         allow_card_subscriptions=_as_bool(_get_setting_value(db, "config_subscription_allow_card_subscriptions", SUBSCRIPTION_SETTING_DEFAULTS["config_subscription_allow_card_subscriptions"]), True),
@@ -1729,6 +1788,25 @@ def get_admin_subscription_settings(
         allow_prorata_card=_as_bool(_get_setting_value(db, "config_subscription_allow_prorata_card", SUBSCRIPTION_SETTING_DEFAULTS["config_subscription_allow_prorata_card"]), False),
         allow_prorata_sepa=_as_bool(_get_setting_value(db, "config_subscription_allow_prorata_sepa", SUBSCRIPTION_SETTING_DEFAULTS["config_subscription_allow_prorata_sepa"]), False),
         online_resiliation_enabled=_as_bool(_get_setting_value(db, "config_subscription_online_resiliation_enabled", SUBSCRIPTION_SETTING_DEFAULTS["config_subscription_online_resiliation_enabled"]), True),
+        allow_booking_during_payment_alert=_as_bool(
+            _get_setting_value(
+                db,
+                "config_subscription_allow_booking_during_payment_alert",
+                SUBSCRIPTION_SETTING_DEFAULTS["config_subscription_allow_booking_during_payment_alert"],
+            ),
+            True,
+        ),
+        retry_first_delay_days=int(retry_policy.first_retry_delay_days or 1),
+        retry_max_auto_attempts=int(retry_policy.max_auto_attempts or 2),
+        retry_move_to_pre_termination_after_failed_attempts=int(
+            retry_policy.move_to_pre_termination_after_failed_attempts or retry_policy.max_auto_attempts or 2
+        ),
+        notify_success_customer_enabled=bool(notification_policy.on_success_customer_enabled),
+        notify_success_admin_enabled=bool(notification_policy.on_success_admin_enabled),
+        notify_first_failure_customer_enabled=bool(notification_policy.on_first_failure_customer_enabled),
+        notify_first_failure_admin_enabled=bool(notification_policy.on_first_failure_admin_enabled),
+        notify_final_failure_customer_enabled=bool(notification_policy.on_final_failure_customer_enabled),
+        notify_final_failure_admin_enabled=bool(notification_policy.on_final_failure_admin_enabled),
     )
 
 
@@ -1738,6 +1816,12 @@ def update_admin_subscription_settings(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminSubscriptionSettingsOut:
+    if payload.retry_move_to_pre_termination_after_failed_attempts > payload.retry_max_auto_attempts:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le seuil pre-resiliation ne peut pas depasser le nombre max de tentatives",
+        )
+
     _set_setting(db, "config_subscription_direct_debit_day", str(payload.direct_debit_day or ""))
     _set_setting(db, "config_subscription_allow_card_subscriptions", "true" if payload.allow_card_subscriptions else "false")
     _set_setting(db, "config_subscription_add_contract_signature", "true" if payload.add_contract_signature else "false")
@@ -1746,6 +1830,33 @@ def update_admin_subscription_settings(
     _set_setting(db, "config_subscription_allow_prorata_card", "true" if payload.allow_prorata_card else "false")
     _set_setting(db, "config_subscription_allow_prorata_sepa", "true" if payload.allow_prorata_sepa else "false")
     _set_setting(db, "config_subscription_online_resiliation_enabled", "true" if payload.online_resiliation_enabled else "false")
+    _set_setting(
+        db,
+        "config_subscription_allow_booking_during_payment_alert",
+        "true" if payload.allow_booking_during_payment_alert else "false",
+    )
+
+    retry_policy = _default_subscription_retry_policy(db)
+    retry_policy.first_retry_delay_days = int(payload.retry_first_delay_days)
+    retry_policy.max_auto_attempts = int(payload.retry_max_auto_attempts)
+    retry_policy.move_to_pre_termination_after_failed_attempts = int(
+        payload.retry_move_to_pre_termination_after_failed_attempts
+    )
+    retry_policy.active = True
+    retry_policy.updated_at = _utcnow()
+    db.add(retry_policy)
+
+    notification_policy = _default_subscription_notification_policy(db)
+    notification_policy.on_success_customer_enabled = bool(payload.notify_success_customer_enabled)
+    notification_policy.on_success_admin_enabled = bool(payload.notify_success_admin_enabled)
+    notification_policy.on_first_failure_customer_enabled = bool(payload.notify_first_failure_customer_enabled)
+    notification_policy.on_first_failure_admin_enabled = bool(payload.notify_first_failure_admin_enabled)
+    notification_policy.on_final_failure_customer_enabled = bool(payload.notify_final_failure_customer_enabled)
+    notification_policy.on_final_failure_admin_enabled = bool(payload.notify_final_failure_admin_enabled)
+    notification_policy.active = True
+    notification_policy.updated_at = _utcnow()
+    db.add(notification_policy)
+
     db.commit()
     return get_admin_subscription_settings(db=db)
 

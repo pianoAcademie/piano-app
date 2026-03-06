@@ -77,6 +77,16 @@ class AdminSubscriptionSettingsOut(BaseModel):
     allow_prorata_card: bool
     allow_prorata_sepa: bool
     online_resiliation_enabled: bool
+    allow_booking_during_payment_alert: bool
+    retry_first_delay_days: int
+    retry_max_auto_attempts: int
+    retry_move_to_pre_termination_after_failed_attempts: int
+    notify_success_customer_enabled: bool
+    notify_success_admin_enabled: bool
+    notify_first_failure_customer_enabled: bool
+    notify_first_failure_admin_enabled: bool
+    notify_final_failure_customer_enabled: bool
+    notify_final_failure_admin_enabled: bool
 
 
 class AdminSubscriptionSettingsUpdateRequest(BaseModel):
@@ -88,6 +98,16 @@ class AdminSubscriptionSettingsUpdateRequest(BaseModel):
     allow_prorata_card: bool
     allow_prorata_sepa: bool
     online_resiliation_enabled: bool
+    allow_booking_during_payment_alert: bool = True
+    retry_first_delay_days: int = Field(default=1, ge=1, le=30)
+    retry_max_auto_attempts: int = Field(default=2, ge=1, le=10)
+    retry_move_to_pre_termination_after_failed_attempts: int = Field(default=2, ge=1, le=10)
+    notify_success_customer_enabled: bool = True
+    notify_success_admin_enabled: bool = True
+    notify_first_failure_customer_enabled: bool = True
+    notify_first_failure_admin_enabled: bool = True
+    notify_final_failure_customer_enabled: bool = True
+    notify_final_failure_admin_enabled: bool = True
 
 
 class AdminPaymentMethodOptionOut(BaseModel):
