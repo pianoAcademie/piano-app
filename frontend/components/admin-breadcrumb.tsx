@@ -112,7 +112,7 @@ function hrefForSegment(segments: string[], index: number): string {
     return "/admin";
   }
   if (segment === "formulas" && previous === "config") {
-    return "/admin/config?section=formulas";
+    return "/admin/config/formulas";
   }
 
   return `/${segments.slice(0, index + 1).join("/")}`;

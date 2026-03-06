@@ -17,6 +17,8 @@ from app.core.config import settings
 from app.models.ops import AppSetting, PasswordResetToken
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.auth import (
+    EmailLookupRequest,
+    EmailLookupResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -202,6 +204,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     )
 
     return TokenResponse(access_token=access_token)
+
+
+@router.post("/email-lookup", response_model=EmailLookupResponse)
+def email_lookup(payload: EmailLookupRequest, db: Session = Depends(get_db)) -> EmailLookupResponse:
+    normalized_email = payload.email.strip().lower()
+    user = db.scalar(select(User.id).where(User.email == normalized_email))
+    return EmailLookupResponse(email=normalized_email, exists=user is not None)
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)

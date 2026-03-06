@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -24,12 +25,166 @@ from app.models.plan import (
     SubscriptionStatus,
 )
 from app.models.user import ClientKind, User, UserRole
-from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut, PlanOut, PlanPricePreviewOut, PlanPurchaseRequest
+from app.schemas.plan import (
+    ClientSubscriptionOut,
+    PlanMiniOut,
+    PlanOut,
+    PlanPricePreviewOut,
+    PlanPurchaseRequest,
+    PublicFormulaPurchaseContextOut,
+    PublicFormulaPurchaseStartOut,
+    PublicFormulaPurchaseStartRequest,
+    PublicFormulaPurchaseSummaryOut,
+)
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
 
 router = APIRouter()
+
+PURCHASE_CONTEXT_SCOPE = "PUBLIC_FORMULA_PURCHASE_CONTEXT"
+PURCHASE_LINK_OPTION_ENABLED = {
+    "achat_par_lien",
+    "purchase_link_enabled",
+    "buy_link_enabled",
+}
+PURCHASE_LINK_OPTION_DISABLED = {
+    "achat_par_lien_desactive",
+    "purchase_link_disabled",
+    "buy_link_disabled",
+}
+
+
+def _formula_frequency_label(kind: PlanKind) -> str | None:
+    if kind == PlanKind.SUBSCRIPTION:
+        return "Mensuel"
+    return None
+
+
+def _normalize_formula_options(plan: Plan) -> set[str]:
+    raw = plan.options_json if isinstance(plan.options_json, list) else []
+    return {str(value or "").strip().lower() for value in raw if str(value or "").strip()}
+
+
+def _formula_purchase_link_allowed(plan: Plan) -> bool:
+    option_keys = _normalize_formula_options(plan)
+    if option_keys & PURCHASE_LINK_OPTION_DISABLED:
+        return False
+    if option_keys & PURCHASE_LINK_OPTION_ENABLED:
+        return True
+    return True
+
+
+def _formula_price_snapshot(plan: Plan) -> tuple[Decimal | None, str]:
+    if plan.monthly_price_value is not None:
+        return Decimal(plan.monthly_price_value).quantize(Decimal("0.01")), (plan.currency_code or "EUR").upper()
+    if plan.monthly_price_excl_vat is not None:
+        return Decimal(plan.monthly_price_excl_vat).quantize(Decimal("0.01")), (plan.currency_code or "EUR").upper()
+    return None, (plan.currency_code or "EUR").upper()
+
+
+def _restriction_period_label(raw: str) -> str:
+    value = raw.strip().upper()
+    if value == "DAY":
+        return "jour"
+    if value == "WEEK":
+        return "semaine"
+    if value == "MONTH":
+        return "mois"
+    if value == "ROLLING_MONTH":
+        return "mois glissant"
+    if value == "SEMESTER":
+        return "semestre"
+    return value or "-"
+
+
+def _formula_restriction_labels(plan: Plan, *, course_name_by_id: dict[UUID, str]) -> list[str]:
+    raw_restrictions = plan.restrictions_json if isinstance(plan.restrictions_json, list) else []
+    labels: list[str] = []
+    for raw in raw_restrictions:
+        if not isinstance(raw, dict):
+            continue
+        max_bookings = int(raw.get("max_bookings") or 1)
+        period = _restriction_period_label(str(raw.get("period") or ""))
+        raw_course_ids = raw.get("course_type_ids")
+        course_names: list[str] = []
+        if isinstance(raw_course_ids, list):
+            for raw_course_id in raw_course_ids:
+                try:
+                    parsed_course_id = UUID(str(raw_course_id))
+                except (TypeError, ValueError):
+                    continue
+                course_names.append(course_name_by_id.get(parsed_course_id, str(parsed_course_id)))
+        scope = ", ".join(course_names) if course_names else "toutes activites"
+        labels.append(f"{max_bookings} / {period} ({scope})")
+    return labels
+
+
+def _purchase_url_for_plan(plan_id: UUID) -> str:
+    return _frontend_url(path=f"/buy/formula/{plan_id}")
+
+
+def _serialize_public_formula_summary(db: Session, *, plan: Plan) -> PublicFormulaPurchaseSummaryOut:
+    entitlement_ids = db.scalars(select(PlanEntitlement.course_type_id).where(PlanEntitlement.plan_id == plan.id)).all()
+    unique_entitlement_ids = list(dict.fromkeys(entitlement_ids))
+    if unique_entitlement_ids:
+        rows = db.execute(select(CourseType.id, CourseType.name).where(CourseType.id.in_(unique_entitlement_ids))).all()
+        course_name_by_id = {course_id: name for course_id, name in rows}
+    else:
+        course_name_by_id = {}
+    includes = [course_name_by_id.get(course_id, str(course_id)) for course_id in unique_entitlement_ids]
+    restriction_labels = _formula_restriction_labels(plan, course_name_by_id=course_name_by_id)
+    price_snapshot, currency = _formula_price_snapshot(plan)
+    payment_methods = _plan_payment_methods(plan)
+    return PublicFormulaPurchaseSummaryOut(
+        formula_id=plan.id,
+        formula_code=plan.code,
+        formula_type=plan.kind,
+        name=plan.name,
+        description=plan.description,
+        active=bool(plan.active),
+        is_private=bool(plan.is_private),
+        purchase_link_allowed=_formula_purchase_link_allowed(plan),
+        purchase_url=_purchase_url_for_plan(plan.id),
+        price_ttc=price_snapshot,
+        currency=currency,
+        frequency_label=_formula_frequency_label(plan.kind),
+        includes=includes,
+        restriction_labels=restriction_labels,
+        payment_methods=payment_methods,
+    )
+
+
+def _encode_purchase_context(
+    *,
+    plan: Plan,
+    email: str,
+    price_snapshot: Decimal | None,
+    currency: str,
+) -> str:
+    now = datetime.now(timezone.utc)
+    payload: dict[str, object] = {
+        "scope": PURCHASE_CONTEXT_SCOPE,
+        "formula_id": str(plan.id),
+        "formula_code": plan.code,
+        "formula_type": plan.kind.value,
+        "email": email,
+        "price_snapshot": str(price_snapshot) if price_snapshot is not None else None,
+        "currency": currency,
+        "iat": now,
+        "exp": now + timedelta(hours=3),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def _decode_purchase_context(context_token: str) -> dict[str, object]:
+    try:
+        payload = jwt.decode(context_token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Purchase context invalide ou expire") from exc
+    if payload.get("scope") != PURCHASE_CONTEXT_SCOPE:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Purchase context invalide")
+    return payload
 
 
 def _entitlements_by_plan(
@@ -369,6 +524,86 @@ def plan_price_preview(
     )
 
 
+@router.get("/public/formulas/{plan_id}/purchase-summary", response_model=PublicFormulaPurchaseSummaryOut)
+def public_formula_purchase_summary(
+    plan_id: UUID,
+    db: Session = Depends(get_db),
+) -> PublicFormulaPurchaseSummaryOut:
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id))
+    if plan is None or not plan.active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Formule introuvable")
+    if not _formula_purchase_link_allowed(plan):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Achat par lien desactive pour cette formule")
+    return _serialize_public_formula_summary(db, plan=plan)
+
+
+@router.post("/public/formulas/{plan_id}/purchase-start", response_model=PublicFormulaPurchaseStartOut)
+def public_formula_purchase_start(
+    plan_id: UUID,
+    payload: PublicFormulaPurchaseStartRequest,
+    db: Session = Depends(get_db),
+) -> PublicFormulaPurchaseStartOut:
+    normalized_email = payload.email.strip().lower()
+    if "@" not in normalized_email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email invalide")
+
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id))
+    if plan is None or not plan.active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Formule introuvable")
+    if not _formula_purchase_link_allowed(plan):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Achat par lien desactive pour cette formule")
+
+    price_snapshot, currency = _formula_price_snapshot(plan)
+    purchase_context = _encode_purchase_context(
+        plan=plan,
+        email=normalized_email,
+        price_snapshot=price_snapshot,
+        currency=currency,
+    )
+    existing_user = db.scalar(select(User.id).where(User.email == normalized_email, User.role == UserRole.CLIENT)) is not None
+
+    return PublicFormulaPurchaseStartOut(
+        existing_user=existing_user,
+        redirect_mode="login" if existing_user else "signup",
+        purchase_context=purchase_context,
+    )
+
+
+@router.get("/public/formulas/purchase-context/{context_token}", response_model=PublicFormulaPurchaseContextOut)
+def public_formula_purchase_context(
+    context_token: str,
+    db: Session = Depends(get_db),
+) -> PublicFormulaPurchaseContextOut:
+    payload = _decode_purchase_context(context_token)
+    formula_id_raw = str(payload.get("formula_id") or "").strip()
+    try:
+        formula_id = UUID(formula_id_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Purchase context invalide") from exc
+    email = str(payload.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Purchase context invalide")
+
+    plan = db.scalar(select(Plan).where(Plan.id == formula_id))
+    if plan is None or not plan.active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Formule introuvable")
+    if not _formula_purchase_link_allowed(plan):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Achat par lien desactive pour cette formule")
+
+    summary = _serialize_public_formula_summary(db, plan=plan)
+    price_snapshot, currency = _formula_price_snapshot(plan)
+    return PublicFormulaPurchaseContextOut(
+        purchase_context=context_token,
+        email=email,
+        formula_id=plan.id,
+        formula_code=plan.code,
+        formula_type=plan.kind,
+        price_snapshot=price_snapshot,
+        currency=currency,
+        summary=summary,
+    )
+
+
 @router.post("/plans/{plan_id}/purchase", response_model=ClientSubscriptionOut, status_code=status.HTTP_201_CREATED)
 def purchase_plan(
     plan_id: UUID,
@@ -376,7 +611,7 @@ def purchase_plan(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CLIENT)),
 ) -> ClientSubscriptionOut:
-    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True), Plan.is_private.is_(False)))
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id, Plan.active.is_(True)))
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 

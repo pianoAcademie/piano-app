@@ -32,7 +32,7 @@ export default async function AdminFormulaCreatePage({ searchParams }: { searchP
   const params = searchParams ?? {};
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
-  const backHref = safeAdminHref(readParam(params, "back"), "/admin/config?section=formulas");
+  const backHref = safeAdminHref(readParam(params, "back"), "/admin/config/formulas");
 
   const [paymentMethodsResult, courseTypesResult, creditTypesResult, accountResult] = await Promise.all([
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),

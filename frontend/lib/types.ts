@@ -1569,6 +1569,41 @@ export type AdminFormulaOut = {
   updated_at: string;
 };
 
+export type PublicFormulaPurchaseSummaryOut = {
+  formula_id: string;
+  formula_code: string;
+  formula_type: "PACK" | "SUBSCRIPTION" | "FORFAIT";
+  name: string;
+  description: string | null;
+  active: boolean;
+  is_private: boolean;
+  purchase_link_allowed: boolean;
+  purchase_url: string;
+  price_ttc: string | null;
+  currency: string;
+  frequency_label: string | null;
+  includes: string[];
+  restriction_labels: string[];
+  payment_methods: string[];
+};
+
+export type PublicFormulaPurchaseStartOut = {
+  existing_user: boolean;
+  redirect_mode: "login" | "signup";
+  purchase_context: string;
+};
+
+export type PublicFormulaPurchaseContextOut = {
+  purchase_context: string;
+  email: string;
+  formula_id: string;
+  formula_code: string;
+  formula_type: "PACK" | "SUBSCRIPTION" | "FORFAIT";
+  price_snapshot: string | null;
+  currency: string;
+  summary: PublicFormulaPurchaseSummaryOut;
+};
+
 export type AdminActivityOut = {
   id: string;
   code: string;

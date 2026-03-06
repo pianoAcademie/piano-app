@@ -44,7 +44,7 @@ export default async function AdminFormulaEditPage({
   const query = searchParams ?? {};
   const okMessage = readParam(query, "ok");
   const errorMessage = readParam(query, "error");
-  const backHref = safeAdminHref(readParam(query, "back"), "/admin/config?section=formulas");
+  const backHref = safeAdminHref(readParam(query, "back"), "/admin/config/formulas");
 
   const [formulaResult, paymentMethodsResult, courseTypesResult, creditTypesResult, accountResult] = await Promise.all([
     backendRequest<AdminFormulaOut>(`/api/v1/admin/formulas/${formulaId}`, {}, token),

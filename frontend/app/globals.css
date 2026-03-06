@@ -4627,6 +4627,54 @@ button.danger {
   justify-items: start;
 }
 
+.admin-formulas-page {
+  gap: 14px;
+}
+
+.formulas-admin-filters {
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+
+.formulas-admin-filters label {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+}
+
+.formulas-admin-table-wrap {
+  overflow-x: auto;
+}
+
+.formulas-admin-table td {
+  vertical-align: top;
+}
+
+.formula-meta-code {
+  margin-top: 4px;
+  color: #637287;
+  font-size: 12px;
+}
+
+.formula-diffusion-block {
+  display: grid;
+  gap: 6px;
+}
+
+.formula-diffusion-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.text-ok {
+  color: #0f8b40;
+}
+
+.text-danger {
+  color: #a12f2f;
+}
+
 .config-payment-fieldset,
 .config-restrictions-fieldset {
   margin: 0;
@@ -9241,6 +9289,76 @@ button.danger {
 .auth-step-card h3 {
   margin: 0;
   font-size: 16px;
+}
+
+.public-buy-page {
+  min-height: 100vh;
+  background: linear-gradient(160deg, #f4f7fb 0%, #f9f2e5 100%);
+}
+
+.public-buy-shell {
+  width: min(560px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.public-buy-card {
+  display: grid;
+  gap: 14px;
+}
+
+.public-buy-header {
+  display: grid;
+  gap: 6px;
+}
+
+.public-buy-header h1 {
+  margin: 0;
+}
+
+.public-buy-summary {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fffdf8;
+}
+
+.public-buy-badges {
+  gap: 8px;
+}
+
+.public-buy-price {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: #1f2a3d;
+}
+
+.public-buy-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.public-buy-form {
+  gap: 10px;
+}
+
+.public-buy-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.public-buy-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 14px;
 }
 
 .prof-pay-editor {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,45 @@ class PlanOut(BaseModel):
     monthly_price_excl_vat: Decimal | None
     currency_code: str | None
     active: bool
+
+
+class PublicFormulaPurchaseSummaryOut(BaseModel):
+    formula_id: UUID
+    formula_code: str
+    formula_type: PlanKind
+    name: str
+    description: str | None = None
+    active: bool
+    is_private: bool
+    purchase_link_allowed: bool
+    purchase_url: str
+    price_ttc: Decimal | None = None
+    currency: str
+    frequency_label: str | None = None
+    includes: list[str] = Field(default_factory=list)
+    restriction_labels: list[str] = Field(default_factory=list)
+    payment_methods: list[str] = Field(default_factory=list)
+
+
+class PublicFormulaPurchaseStartRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class PublicFormulaPurchaseStartOut(BaseModel):
+    existing_user: bool
+    redirect_mode: Literal["login", "signup"]
+    purchase_context: str
+
+
+class PublicFormulaPurchaseContextOut(BaseModel):
+    purchase_context: str
+    email: str
+    formula_id: UUID
+    formula_code: str
+    formula_type: PlanKind
+    price_snapshot: Decimal | None = None
+    currency: str
+    summary: PublicFormulaPurchaseSummaryOut
 
 
 class PlanPricePreviewOut(BaseModel):

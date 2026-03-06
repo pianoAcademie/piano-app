@@ -60,6 +60,8 @@ import type {
   AdminProfessorPayGridPeriodOut,
   AuthLoginResponse,
   ClientPaymentCheckoutOut,
+  PublicFormulaPurchaseContextOut,
+  PublicFormulaPurchaseStartOut,
   ProfessorPermissionOut,
   ProfessorCatalogStudentOut,
   TeacherApproveStatementsOut,
@@ -342,6 +344,14 @@ function safeClientReturnPath(formData: FormData, fallback = "/client"): string 
   const raw = String(formData.get("return_to") ?? "").trim();
   if (raw.startsWith("/dashboard") || raw.startsWith("/client")) {
     return raw;
+  }
+  return fallback;
+}
+
+function safePublicBuyPath(raw: string, fallback: string): string {
+  const value = raw.trim();
+  if (value.startsWith("/buy/") || value.startsWith("/login")) {
+    return value;
   }
   return fallback;
 }
@@ -729,6 +739,10 @@ export async function loginAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
   const mode = String(formData.get("auth_mode") ?? "login").trim().toLowerCase() || "login";
+  const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const loginPathBase = `/login?mode=${encodeURIComponent(mode)}${email ? `&email=${encodeURIComponent(email)}` : ""}${
+    purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
+  }`;
 
   const result = await backendRequest<AuthLoginResponse>("/api/v1/auth/login", {
     method: "POST",
@@ -736,7 +750,7 @@ export async function loginAction(formData: FormData): Promise<void> {
   });
 
   if (!result.ok) {
-    redirect(`/login?mode=${encodeURIComponent(mode)}&error=${encodeURIComponent(result.message)}`);
+    redirect(`${loginPathBase}&error=${encodeURIComponent(result.message)}`);
   }
 
   const me = await fetchCurrentUser(result.data.access_token);
@@ -755,6 +769,9 @@ export async function loginAction(formData: FormData): Promise<void> {
   }
 
   if (me.role === "client") {
+    if (purchaseContext) {
+      redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Connexion%20reussie`);
+    }
     redirect("/client?tab=home&ok=Connexion%20reussie");
   }
 
@@ -764,6 +781,7 @@ export async function loginAction(formData: FormData): Promise<void> {
 export async function registerAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
+  const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const first_name = String(formData.get("first_name") ?? "").trim();
   const last_name = String(formData.get("last_name") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -781,33 +799,36 @@ export async function registerAction(formData: FormData): Promise<void> {
   const residence_country = String(formData.get("residence_country") ?? "FR").trim().toUpperCase();
   const preferred_currency = "EUR";
   const timezone = "Europe/Paris";
+  const signupPathBase = `/login?mode=signup${email ? `&email=${encodeURIComponent(email)}` : ""}${
+    purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
+  }`;
 
   if (!first_name) {
-    redirect("/login?mode=signup&error=Veuillez%20renseigner%20votre%20prenom.");
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20prenom.`);
   }
   if (!last_name) {
-    redirect("/login?mode=signup&error=Veuillez%20renseigner%20votre%20nom.");
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20nom.`);
   }
   if (!email.includes("@")) {
-    redirect("/login?mode=signup&error=Veuillez%20saisir%20une%20adresse%20email%20valide.");
+    redirect(`${signupPathBase}&error=Veuillez%20saisir%20une%20adresse%20email%20valide.`);
   }
   if (!phone) {
-    redirect("/login?mode=signup&error=Veuillez%20renseigner%20votre%20telephone.");
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20telephone.`);
   }
   if (!residence_country || residence_country.length !== 2) {
-    redirect("/login?mode=signup&error=Veuillez%20selectionner%20votre%20pays%20de%20residence.");
+    redirect(`${signupPathBase}&error=Veuillez%20selectionner%20votre%20pays%20de%20residence.`);
   }
   if (password.length < 8) {
-    redirect("/login?mode=signup&error=Veuillez%20choisir%20un%20mot%20de%20passe%20de%208%20caracteres%20minimum.");
+    redirect(`${signupPathBase}&error=Veuillez%20choisir%20un%20mot%20de%20passe%20de%208%20caracteres%20minimum.`);
   }
   if (!studentPhotoFile) {
-    redirect("/login?mode=signup&error=Veuillez%20ajouter%20une%20photo%20de%20l%27eleve.");
+    redirect(`${signupPathBase}&error=Veuillez%20ajouter%20une%20photo%20de%20l%27eleve.`);
   }
   if (!confirmAccuracy) {
-    redirect("/login?mode=signup&error=Veuillez%20confirmer%20l%27exactitude%20des%20informations.");
+    redirect(`${signupPathBase}&error=Veuillez%20confirmer%20l%27exactitude%20des%20informations.`);
   }
   if (!acceptAccountTerms) {
-    redirect("/login?mode=signup&error=Veuillez%20accepter%20les%20conditions%20de%20creation%20de%20compte.");
+    redirect(`${signupPathBase}&error=Veuillez%20accepter%20les%20conditions%20de%20creation%20de%20compte.`);
   }
 
   const registerResult = await backendRequest<{ id: string }>("/api/v1/auth/register", {
@@ -832,7 +853,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   });
 
   if (!registerResult.ok) {
-    redirect(`/login?mode=signup&error=${encodeURIComponent(registerResult.message)}`);
+    redirect(`${signupPathBase}&error=${encodeURIComponent(registerResult.message)}`);
   }
 
   const loginResult = await backendRequest<AuthLoginResponse>("/api/v1/auth/login", {
@@ -841,17 +862,28 @@ export async function registerAction(formData: FormData): Promise<void> {
   });
 
   if (!loginResult.ok) {
-    redirect(`/login?mode=login&error=${encodeURIComponent(loginResult.message)}`);
+    redirect(
+      `/login?mode=login${email ? `&email=${encodeURIComponent(email)}` : ""}${
+        purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
+      }&error=${encodeURIComponent(loginResult.message)}`,
+    );
   }
 
   setPortalSessionToken(loginResult.data.access_token);
+  if (purchaseContext) {
+    redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Compte%20cree`);
+  }
   redirect("/client?tab=home&ok=Compte%20cree");
 }
 
 export async function forgotPasswordAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const forgotPathBase = `/login?mode=forgot${email ? `&email=${encodeURIComponent(email)}` : ""}${
+    purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
+  }`;
   if (!email) {
-    redirect("/login?mode=forgot&error=Email%20obligatoire");
+    redirect(`${forgotPathBase}&error=Email%20obligatoire`);
   }
 
   const result = await backendRequest<{ message: string }>("/api/v1/auth/forgot-password", {
@@ -860,10 +892,10 @@ export async function forgotPasswordAction(formData: FormData): Promise<void> {
   });
 
   if (!result.ok) {
-    redirect(`/login?mode=forgot&error=${encodeURIComponent(result.message)}`);
+    redirect(`${forgotPathBase}&error=${encodeURIComponent(result.message)}`);
   }
 
-  redirect(`/login?mode=forgot&ok=${encodeURIComponent(result.data.message)}`);
+  redirect(`${forgotPathBase}&ok=${encodeURIComponent(result.data.message)}`);
 }
 
 export async function resetPasswordAction(formData: FormData): Promise<void> {
@@ -991,6 +1023,84 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
     redirect(result.data.checkout_url);
   }
   redirect("/client?tab=offers&ok=Offre%20souscrite");
+}
+
+export async function startFormulaPurchaseLinkAction(formData: FormData): Promise<void> {
+  const formulaIdRaw = String(formData.get("formula_id") ?? "").trim();
+  const formulaId = parseUuid(formulaIdRaw);
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const fallbackReturnTo = formulaId ? `/buy/formula/${formulaId}` : "/buy/formula";
+  const returnTo = safePublicBuyPath(String(formData.get("return_to") ?? ""), fallbackReturnTo);
+
+  if (!formulaId) {
+    redirect(appendQueryMessage(returnTo, "error", "Formule invalide"));
+  }
+  if (!email || !email.includes("@")) {
+    const pathWithEmail = setQueryParam(returnTo, "email", email);
+    redirect(appendQueryMessage(pathWithEmail, "error", "Veuillez saisir une adresse email valide"));
+  }
+
+  const result = await backendRequest<PublicFormulaPurchaseStartOut>(
+    `/api/v1/public/formulas/${formulaId}/purchase-start`,
+    {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    },
+  );
+  if (!result.ok) {
+    const pathWithEmail = setQueryParam(returnTo, "email", email);
+    redirect(appendQueryMessage(pathWithEmail, "error", result.message));
+  }
+
+  const mode = result.data.existing_user ? "login" : "signup";
+  redirect(
+    `/login?mode=${mode}&email=${encodeURIComponent(email)}&purchase_context=${encodeURIComponent(result.data.purchase_context)}`,
+  );
+}
+
+export async function submitFormulaCheckoutAction(formData: FormData): Promise<void> {
+  const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const returnTo = safePublicBuyPath(String(formData.get("return_to") ?? ""), "/buy/checkout");
+
+  if (!purchaseContext) {
+    redirect(appendQueryMessage(returnTo, "error", "Contexte d achat invalide"));
+  }
+
+  const token = currentPortalToken();
+  if (!token) {
+    redirect(
+      `/login?mode=login&purchase_context=${encodeURIComponent(purchaseContext)}&error=${encodeURIComponent(
+        "Connectez-vous pour poursuivre le paiement",
+      )}`,
+    );
+  }
+
+  const contextResult = await backendRequest<PublicFormulaPurchaseContextOut>(
+    `/api/v1/public/formulas/purchase-context/${encodeURIComponent(purchaseContext)}`,
+  );
+  if (!contextResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", contextResult.message));
+  }
+
+  const purchaseResult = await backendRequest<{ id: string; checkout_url?: string | null }>(
+    `/api/v1/plans/${contextResult.data.formula_id}/purchase`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+    token,
+  );
+  if (!purchaseResult.ok) {
+    const withContext = setQueryParam(returnTo, "purchase_context", purchaseContext);
+    redirect(appendQueryMessage(withContext, "error", purchaseResult.message));
+  }
+
+  revalidatePath("/client");
+  revalidatePath("/dashboard");
+  if (purchaseResult.data.checkout_url) {
+    redirect(purchaseResult.data.checkout_url);
+  }
+  redirect("/client?tab=finance&ok=Achat%20de%20la%20formule%20confirme");
 }
 
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
@@ -8292,7 +8402,7 @@ export async function createAdminFormulaAction(formData: FormData): Promise<void
     redirect(appendQueryMessage(`/admin/config/formulas/${result.data.id}`, "ok", "Formule cree"));
   }
 
-  redirect(appendQueryMessage(`/admin/config?section=formulas&formula_id=${result.data.id}`, "ok", "Formule cree"));
+  redirect(appendQueryMessage("/admin/config/formulas", "ok", "Formule cree"));
 }
 
 export async function updateAdminFormulaAction(formData: FormData): Promise<void> {
@@ -8304,7 +8414,7 @@ export async function updateAdminFormulaAction(formData: FormData): Promise<void
 
   const formulaId = String(formData.get("formula_id") ?? "").trim();
   if (!formulaId) {
-    redirect("/admin/config?section=formulas&error=Formule%20invalide");
+    redirect("/admin/config/formulas?error=Formule%20invalide");
   }
   const returnTo = safeAdminReturnPath(formData, `/admin/config/formulas/${formulaId}`);
 
@@ -8343,9 +8453,9 @@ export async function duplicateAdminFormulaAction(formData: FormData): Promise<v
 
   const formulaId = String(formData.get("formula_id") ?? "").trim();
   if (!formulaId) {
-    redirect("/admin/config?section=formulas&error=Formule%20invalide");
+    redirect("/admin/config/formulas?error=Formule%20invalide");
   }
-  const returnTo = safeAdminReturnPath(formData, "/admin/config?section=formulas");
+  const returnTo = safeAdminReturnPath(formData, "/admin/config/formulas");
 
   const result = await backendRequest<AdminFormulaOut>(
     `/api/v1/admin/formulas/${formulaId}/duplicate`,
@@ -8367,7 +8477,7 @@ export async function duplicateAdminFormulaAction(formData: FormData): Promise<v
     redirect(appendQueryMessage(`/admin/config/formulas/${result.data.id}`, "ok", "Formule dupliquee"));
   }
 
-  redirect(appendQueryMessage(`/admin/config?section=formulas&formula_id=${result.data.id}`, "ok", "Formule dupliquee"));
+  redirect(appendQueryMessage("/admin/config/formulas", "ok", "Formule dupliquee"));
 }
 
 export async function disableAdminFormulaAction(formData: FormData): Promise<void> {
@@ -8379,9 +8489,9 @@ export async function disableAdminFormulaAction(formData: FormData): Promise<voi
 
   const formulaId = String(formData.get("formula_id") ?? "").trim();
   if (!formulaId) {
-    redirect("/admin/config?section=formulas&error=Formule%20invalide");
+    redirect("/admin/config/formulas?error=Formule%20invalide");
   }
-  const returnTo = safeAdminReturnPath(formData, "/admin/config?section=formulas");
+  const returnTo = safeAdminReturnPath(formData, "/admin/config/formulas");
 
   const result = await backendRequest<AdminFormulaOut>(
     `/api/v1/admin/formulas/${formulaId}/disable`,

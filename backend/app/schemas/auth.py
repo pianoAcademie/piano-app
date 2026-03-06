@@ -49,3 +49,12 @@ class ResetPasswordRequest(BaseModel):
 
 class ResetPasswordResponse(BaseModel):
     message: str
+
+
+class EmailLookupRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class EmailLookupResponse(BaseModel):
+    email: str
+    exists: bool

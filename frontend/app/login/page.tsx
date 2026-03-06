@@ -32,7 +32,13 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
   const errorMessage = readParam(searchParams, "error");
   const resetToken = readParam(searchParams, "reset_token");
   const emailHint = readParam(searchParams, "email");
+  const purchaseContext = readParam(searchParams, "purchase_context");
   const mode = resolveMode(readParam(searchParams, "mode").trim().toLowerCase(), resetToken);
+  const preservedPurchaseContext = purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : "";
+  const preservedEmail = emailHint ? `&email=${encodeURIComponent(emailHint)}` : "";
+  const loginHref = `/login?mode=login${preservedEmail}${preservedPurchaseContext}`;
+  const signupHref = `/login?mode=signup${preservedEmail}${preservedPurchaseContext}`;
+  const forgotHref = `/login?mode=forgot${preservedEmail}${preservedPurchaseContext}`;
 
   return (
     <main className="page auth-page">
@@ -47,10 +53,10 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
 
         <article className="card auth-card">
           <nav className="auth-tabs" aria-label="Navigation authentification">
-            <Link className={`auth-tab ${mode === "login" ? "active" : ""}`} href="/login?mode=login">
+            <Link className={`auth-tab ${mode === "login" ? "active" : ""}`} href={loginHref}>
               Se connecter
             </Link>
-            <Link className={`auth-tab ${mode === "signup" ? "active" : ""}`} href="/login?mode=signup">
+            <Link className={`auth-tab ${mode === "signup" ? "active" : ""}`} href={signupHref}>
               Creer un compte
             </Link>
           </nav>
@@ -61,6 +67,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
               <p className="muted">Utilisez votre compte existant pour acceder a votre espace client.</p>
               <form action={loginAction} className="grid auth-form">
                 <input type="hidden" name="auth_mode" value="login" />
+                <input type="hidden" name="purchase_context" value={purchaseContext} />
                 <label>
                   Email
                   <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
@@ -72,8 +79,8 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                 <button type="submit">Se connecter</button>
               </form>
               <div className="auth-links">
-                <Link href={`/login?mode=forgot${emailHint ? `&email=${encodeURIComponent(emailHint)}` : ""}`}>Mot de passe oublie ?</Link>
-                <Link href="/login?mode=signup">Creer un compte</Link>
+                <Link href={forgotHref}>Mot de passe oublie ?</Link>
+                <Link href={signupHref}>Creer un compte</Link>
               </div>
             </section>
           ) : null}
@@ -103,6 +110,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                   <p className="muted">Saisissez votre adresse email pour recevoir un lien de reinitialisation.</p>
                   <form action={forgotPasswordAction} className="grid auth-form">
                     <input type="hidden" name="auth_mode" value="forgot" />
+                    <input type="hidden" name="purchase_context" value={purchaseContext} />
                     <label>
                       Email
                       <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
@@ -112,7 +120,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                 </>
               )}
               <div className="auth-links">
-                <Link href="/login?mode=login">Retour a la connexion</Link>
+                <Link href={loginHref}>Retour a la connexion</Link>
               </div>
             </section>
           ) : null}
@@ -130,6 +138,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
 
               <form action={registerAction} className="grid auth-form" encType="multipart/form-data">
                 <input type="hidden" name="auth_mode" value="signup" />
+                <input type="hidden" name="purchase_context" value={purchaseContext} />
 
                 <section className="auth-step-card">
                   <h3>Etape 1 - Informations obligatoires</h3>
@@ -150,7 +159,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                   </label>
                   <label>
                     Email
-                    <input type="email" name="email" required autoComplete="email" />
+                    <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
                   </label>
                   <label>
                     Telephone
@@ -213,7 +222,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
               </form>
 
               <div className="auth-links">
-                <Link href="/login?mode=login">J ai deja un compte</Link>
+                <Link href={loginHref}>J ai deja un compte</Link>
               </div>
             </section>
           ) : null}

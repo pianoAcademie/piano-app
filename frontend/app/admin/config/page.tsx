@@ -16,8 +16,6 @@ import {
   deleteAdminCatalogProductAction,
   deleteAdminCreditTypeAction,
   disableAdminLegalEntityAction,
-  disableAdminFormulaAction,
-  duplicateAdminFormulaAction,
   updateAdminCatalogCategoryAction,
   updateAdminCatalogKitAction,
   updateAdminCatalogProductAction,
@@ -45,7 +43,6 @@ import type {
   AdminCreditTypeOut,
   AdminLegalEntityOut,
   AdminConfigAccountOut,
-  AdminFormulaOut,
   AdminMessagingSettingsOut,
   AdminMessagingTemplateOut,
   AdminInvoiceTemplateOut,
@@ -231,36 +228,6 @@ function parseMessagingTab(raw: string): MessagingTab {
   return "settings";
 }
 
-function restrictionPeriodLabel(period: "DAY" | "WEEK" | "MONTH" | "ROLLING_MONTH" | "SEMESTER"): string {
-  if (period === "DAY") {
-    return "jour";
-  }
-  if (period === "WEEK") {
-    return "semaine";
-  }
-  if (period === "MONTH") {
-    return "mois";
-  }
-  if (period === "ROLLING_MONTH") {
-    return "mois glissant";
-  }
-  return "semestre";
-}
-
-function formulaKindLabel(kind: "PACK" | "SUBSCRIPTION" | "FORFAIT"): string {
-  if (kind === "PACK") {
-    return "Carnet";
-  }
-  if (kind === "FORFAIT") {
-    return "Forfait";
-  }
-  return "Abonnement";
-}
-
-function formulaPriceModeLabel(mode: "HT" | "TTC"): string {
-  return mode === "TTC" ? "TTC" : "HT";
-}
-
 function activityModeLabel(mode: string): string {
   const normalized = mode.toUpperCase();
   if (normalized === "ONLINE") {
@@ -365,12 +332,20 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   if (section === "products") {
     redirect("/admin/products");
   }
+  if (section === "formulas") {
+    const redirectParams = new URLSearchParams();
+    const ok = readParam(params, "ok").trim();
+    const error = readParam(params, "error").trim();
+    if (ok) {
+      redirectParams.set("ok", ok);
+    }
+    if (error) {
+      redirectParams.set("error", error);
+    }
+    const suffix = redirectParams.toString();
+    redirect(suffix ? `/admin/config/formulas?${suffix}` : "/admin/config/formulas");
+  }
   const mainSection = toMainSection(section);
-  const showInactiveFormulas = readParam(params, "show_inactive") === "1";
-
-  const formulasEndpoint = showInactiveFormulas
-    ? "/api/v1/admin/formulas?include_inactive=true"
-    : "/api/v1/admin/formulas";
 
   const [
     accountResult,
@@ -384,7 +359,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     emailPredefinedTemplatesResult,
     smsPredefinedTemplatesResult,
     customTemplatesResult,
-    formulasResult,
     activitiesResult,
     legalEntitiesResult,
     creditTypesResult,
@@ -412,7 +386,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       token,
     ),
     backendRequest<AdminMessagingTemplateOut[]>("/api/v1/admin/config/messaging-templates?kind=CUSTOM", {}, token),
-    backendRequest<AdminFormulaOut[]>(formulasEndpoint, {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=true", {}, token),
     backendRequest<AdminCreditTypeOut[]>("/api/v1/admin/credit-types?include_inactive=true", {}, token),
@@ -493,13 +466,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
         return [] as AdminMessagingTemplateOut[];
       })();
 
-  const formulas = formulasResult.ok
-    ? formulasResult.data
-    : (() => {
-        loadErrors.push(`Formules: ${formulasResult.message}`);
-        return [] as AdminFormulaOut[];
-      })();
-
   const activities = activitiesResult.ok
     ? activitiesResult.data
     : (() => {
@@ -576,17 +542,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const customSmsTemplates = customTemplates.filter((template) => template.channel === "SMS");
   const customGroupNoteTemplates = customTemplates.filter((template) => template.channel === "GROUP_NOTE");
 
-  const paymentMethodLabelByCode = new Map(paymentMethods.map((method) => [method.code, method.label]));
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
 
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
 
-  const formulaBaseParams: Record<string, string> = {};
-  if (showInactiveFormulas) {
-    formulaBaseParams.show_inactive = "1";
-  }
-  const formulasListPath = buildConfigHref("formulas", formulaBaseParams);
   const messagingListPath = buildConfigHref("params-messaging", { messaging_tab: messagingTab });
 
   const placeholderTitleBySection: Record<
@@ -637,7 +597,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           <nav className="config-main-nav">
             {MAIN_NAV_ITEMS.map((item) => {
               const isActive = mainSection === item.key;
-              const href = item.key === "formulas" ? buildConfigHref(item.section, formulaBaseParams) : buildConfigHref(item.section);
+              const href = item.key === "formulas" ? "/admin/config/formulas" : buildConfigHref(item.section);
 
               return (
                 <Link key={item.key} className={`config-main-link ${isActive ? "active" : ""}`} href={href}>
@@ -2227,172 +2187,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
             </>
           ) : null}
 
-          {section === "formulas" ? (
-            <>
-              <section className="card">
-                <div className="row spread">
-                  <div>
-                    <h3>Formules et carnets</h3>
-                    <p className="muted">Le bouton Modifier ouvre une fenetre d'edition dediee.</p>
-                  </div>
-
-                  <div className="row quick-actions-row">
-                    <form method="get" className="row quick-actions-row">
-                      <input type="hidden" name="section" value="formulas" />
-                      <label className="checkline">
-                        <input type="checkbox" name="show_inactive" value="1" defaultChecked={showInactiveFormulas} />
-                        Afficher les offres desactivees
-                      </label>
-                      <button className="ghost small-btn" type="submit">
-                        Appliquer
-                      </button>
-                    </form>
-
-                    <Link className="mode-link" href={`/admin/config/formulas/new?back=${encodeURIComponent(formulasListPath)}`}>
-                      Nouvelle formule
-                    </Link>
-                  </div>
-                </div>
-              </section>
-
-              <section className="card">
-                <h3>Liste des formules</h3>
-                {formulas.length === 0 ? (
-                  <p className="muted">Aucune formule pour ce filtre.</p>
-                ) : (
-                  <div className="table-wrap">
-                    <table className="data-table config-formula-table">
-                      <thead>
-                        <tr>
-                          <th>#</th>
-                          <th>Offre</th>
-                          <th>Type</th>
-                          <th>Informations</th>
-                          <th>Paiements</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {formulas.map((formula, index) => {
-                          const editHref = `/admin/config/formulas/${formula.id}?back=${encodeURIComponent(formulasListPath)}`;
-                          return (
-                            <tr key={formula.id}>
-                              <td>{index + 1}</td>
-                              <td>
-                                <strong>{formula.name}</strong>
-                                <div className="row formula-tag-row">
-                                  <span className={`status-pill ${formula.active ? "status-ok" : "status-off"}`}>
-                                    {formula.active ? "Active" : "Desactivee"}
-                                  </span>
-                                  {formula.is_private ? <span className="status-pill status-warn">Privee</span> : null}
-                                  <span className="badge">{formula.code}</span>
-                                </div>
-                                {formula.description ? <p className="muted">{formula.description}</p> : null}
-                              </td>
-                              <td>
-                                <p>{formulaKindLabel(formula.kind)}</p>
-                                {formula.kind === "PACK" ? (
-                                  <div className="formula-info-col">
-                                    <small className="muted">Credits totaux: {formula.credits_count ?? 0}</small>
-                                    <small className="muted">Validite: {formula.pack_validity_months ?? 12} mois</small>
-                                    {formula.credit_grants.length > 0 ? (
-                                      <small className="muted">
-                                        {formula.credit_grants
-                                          .map(
-                                            (grant) =>
-                                              `${grant.credit_type_name || grant.credit_type_code || grant.credit_type_id}: ${grant.credits_count}`,
-                                          )
-                                          .join(" | ")}
-                                      </small>
-                                    ) : (
-                                      <small className="muted">Aucun type de credit associe</small>
-                                    )}
-                                  </div>
-                                ) : formula.kind === "FORFAIT" ? (
-                                  <small className="muted">Facturation au reel sur les cours planifies</small>
-                                ) : (
-                                  <small className="muted">Illimite mensuel</small>
-                                )}
-                              </td>
-                              <td>
-                                <div className="formula-info-col">
-                                  <small className="muted">
-                                    Cours accessibles: {formula.entitlement_course_type_names.join(", ") || "Aucun"}
-                                  </small>
-                                  <small className="muted">
-                                    Restrictions: {formula.restrictions.length === 0 ? "Aucune" : ""}
-                                  </small>
-                                  {formula.restrictions.length > 0 ? (
-                                    <ul className="formula-restrictions-list">
-                                      {formula.restrictions.map((restriction) => (
-                                        <li key={restriction.id}>
-                                          {restriction.max_bookings} cours / {restrictionPeriodLabel(restriction.period)}
-                                          {restriction.course_type_names.length > 0
-                                            ? ` (${restriction.course_type_names.join(", ")})`
-                                            : " (tous types)"}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  ) : null}
-                                </div>
-                              </td>
-                              <td>
-                                <div className="formula-info-col">
-                                  <small>
-                                    Tarif {formulaPriceModeLabel(formula.price_tax_mode)}:{" "}
-                                    {formula.kind === "FORFAIT" && formula.monthly_price_value == null && formula.monthly_price_excl_vat == null
-                                      ? "Calcule au reel"
-                                      : formatMoney(
-                                          formula.monthly_price_value ?? formula.monthly_price_excl_vat,
-                                          formula.currency_code ?? "EUR",
-                                        )}
-                                  </small>
-                                  <small>
-                                    Frais de dossier {formulaPriceModeLabel(formula.price_tax_mode)}:{" "}
-                                    {formatMoney(
-                                      formula.signup_fee_value ?? formula.signup_fee_excl_vat,
-                                      formula.currency_code ?? "EUR",
-                                    )}
-                                  </small>
-                                  <small>
-                                    Moyens: {formula.payment_methods.map((code) => paymentMethodLabelByCode.get(code) ?? code).join(", ") || "-"}
-                                  </small>
-                                </div>
-                              </td>
-                              <td>
-                                <div className="formula-actions-cell">
-                                  <Link className="mode-link" href={editHref} target="_blank" rel="noreferrer">
-                                    Modifier
-                                  </Link>
-
-                                  <form action={duplicateAdminFormulaAction}>
-                                    <input type="hidden" name="formula_id" value={formula.id} />
-                                    <input type="hidden" name="return_to" value={formulasListPath} />
-                                    <button type="submit" className="ghost small-btn">
-                                      Dupliquer
-                                    </button>
-                                  </form>
-
-                                  <form action={disableAdminFormulaAction}>
-                                    <input type="hidden" name="formula_id" value={formula.id} />
-                                    <input type="hidden" name="return_to" value={formulasListPath} />
-                                    <button type="submit" className="danger small-btn" disabled={!formula.active}>
-                                      Desactiver
-                                    </button>
-                                  </form>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-            </>
-          ) : null}
-
           {section === "activities" ? (
             <>
               <section className="card">
@@ -3391,7 +3185,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           section !== "params-subscriptions" &&
           section !== "params-payments" &&
           section !== "params-messaging" &&
-          section !== "formulas" &&
           section !== "activities" &&
           section !== "legal-entities" &&
           section !== "credit-types" ? (
