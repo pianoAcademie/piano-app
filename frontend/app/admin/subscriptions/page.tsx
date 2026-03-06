@@ -129,6 +129,10 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
       token,
     );
   }
+  const detailData = detailResult && detailResult.ok ? detailResult.data : null;
+  const detailPeriodLabel = detailData
+    ? `${formatDate(detailData.subscription.current_period_start)} -> ${formatDate(detailData.subscription.current_period_end)}`
+    : "-";
 
   const baseParams = new URLSearchParams();
   if (status) baseParams.set("status", status);
@@ -234,7 +238,7 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
         </div>
       </section>
 
-      {detailResult?.ok ? (
+      {detailData ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-panel-wide">
             <a className="modal-close-x" href={baseHref} aria-label="Fermer">
@@ -243,21 +247,21 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
             <header className="activity-modal-header">
               <h2 className="modal-title">Detail abonnement</h2>
               <p className="muted">
-                {detailResult.data.subscription.customer_name} - {detailResult.data.subscription.plan_name}
+                {detailData.subscription.customer_name} - {detailData.subscription.plan_name}
               </p>
             </header>
 
             <section className="card modal-card">
               <h3>Resume</h3>
               <div className="list">
-                <article className="item row spread"><span>Statut</span><strong>{detailResult.data.subscription.status}</strong></article>
-                <article className="item row spread"><span>Periode courante</span><strong>{formatDate(detailResult.data.subscription.current_period_start)} -> {formatDate(detailResult.data.subscription.current_period_end)}</strong></article>
-                <article className="item row spread"><span>Prochaine echeance</span><strong>{formatDate(detailResult.data.subscription.next_billing_date)}</strong></article>
-                <article className="item row spread"><span>Reservations bloquees</span><strong>{detailResult.data.subscription.bookings_blocked ? "Oui" : "Non"}</strong></article>
-                <article className="item row spread"><span>Lien regularisation</span><strong>{detailResult.data.subscription.recovery_url ? "Disponible" : "Non"}</strong></article>
+                <article className="item row spread"><span>Statut</span><strong>{detailData.subscription.status}</strong></article>
+                <article className="item row spread"><span>Periode courante</span><strong>{detailPeriodLabel}</strong></article>
+                <article className="item row spread"><span>Prochaine echeance</span><strong>{formatDate(detailData.subscription.next_billing_date)}</strong></article>
+                <article className="item row spread"><span>Reservations bloquees</span><strong>{detailData.subscription.bookings_blocked ? "Oui" : "Non"}</strong></article>
+                <article className="item row spread"><span>Lien regularisation</span><strong>{detailData.subscription.recovery_url ? "Disponible" : "Non"}</strong></article>
               </div>
               <form action={retryNowAction} className="top-gap-sm">
-                <input type="hidden" name="subscription_id" value={detailResult.data.subscription.id} />
+                <input type="hidden" name="subscription_id" value={detailData.subscription.id} />
                 <button type="submit">Relancer maintenant</button>
               </form>
             </section>
@@ -277,10 +281,10 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                     </tr>
                   </thead>
                   <tbody>
-                    {detailResult.data.cycles.length === 0 ? (
+                    {detailData.cycles.length === 0 ? (
                       <tr><td colSpan={6}>Aucun cycle</td></tr>
                     ) : (
-                      detailResult.data.cycles.map((row) => (
+                      detailData.cycles.map((row) => (
                         <tr key={row.id}>
                           <td>{formatDate(row.period_start)} -> {formatDate(row.period_end)}</td>
                           <td>{formatDate(row.billing_date)}</td>
@@ -311,10 +315,10 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                     </tr>
                   </thead>
                   <tbody>
-                    {detailResult.data.attempts.length === 0 ? (
+                    {detailData.attempts.length === 0 ? (
                       <tr><td colSpan={6}>Aucune tentative</td></tr>
                     ) : (
-                      detailResult.data.attempts.map((row) => (
+                      detailData.attempts.map((row) => (
                         <tr key={row.id}>
                           <td>{formatDate(row.attempted_at)}</td>
                           <td>{row.attempt_number}</td>
