@@ -27,6 +27,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check Alembic revision chain
+        run: python3 backend/scripts/check_alembic_chain.py
+
       - name: Validate required secrets
         run: |
           set -euo pipefail
