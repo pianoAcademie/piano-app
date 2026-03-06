@@ -1575,8 +1575,9 @@ def update_collaborator_rates(
     professor = _load_professor_or_404(db, professor_id)
     allowed_currencies, default_currency = _currency_settings(db)
     effective_from = payload.effective_from or date.today()
+    clear_course_type_ids = {course_type_id for course_type_id in payload.clear_course_type_ids}
 
-    if not payload.rates:
+    if not payload.rates and not clear_course_type_ids:
         return list_collaborator_rates(professor_id=professor_id, db=db, _=_)
 
     unique_rates: dict[str, tuple[UUID | None, Decimal | None, str, list[dict[str, object]]]] = {}
@@ -1599,16 +1600,22 @@ def update_collaborator_rates(
         unique_rates[dedupe_key] = (row.course_type_id, hourly_rate, currency, normalized_rules)
 
     if not unique_rates:
-        return list_collaborator_rates(professor_id=professor_id, db=db, _=_)
+        unique_rate_course_type_ids = set()
+    else:
+        unique_rate_course_type_ids = {
+            course_type_id for course_type_id, _, _, _ in unique_rates.values() if course_type_id is not None
+        }
 
     course_type_ids = [course_type_id for course_type_id, _, _, _ in unique_rates.values() if course_type_id is not None]
+    course_type_ids.extend(clear_course_type_ids)
+    course_type_ids = list(dict.fromkeys(course_type_ids))
     course_types = db.scalars(select(CourseType).where(CourseType.id.in_(course_type_ids))).all() if course_type_ids else []
     found_ids = {row.id for row in course_types}
     missing = [str(course_type_id) for course_type_id in course_type_ids if course_type_id not in found_ids]
     if missing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Course type(s) not found: {', '.join(missing)}")
 
-    for course_type_id, hourly_rate, currency_code, normalized_rules in unique_rates.values():
+    def _truncate_overlapping_rows(*, course_type_id: UUID | None) -> None:
         overlapping_rows = db.scalars(
             select(ProfessorHourlyRate)
             .where(
@@ -1628,6 +1635,13 @@ def update_collaborator_rates(
                     row.valid_to = cutoff
             else:
                 db.delete(row)
+
+    clear_only_course_type_ids = clear_course_type_ids - unique_rate_course_type_ids
+    for course_type_id in clear_only_course_type_ids:
+        _truncate_overlapping_rows(course_type_id=course_type_id)
+
+    for course_type_id, hourly_rate, currency_code, normalized_rules in unique_rates.values():
+        _truncate_overlapping_rows(course_type_id=course_type_id)
 
         db.add(
             ProfessorHourlyRate(

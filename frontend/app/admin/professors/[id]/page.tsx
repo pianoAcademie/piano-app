@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import AdminProfessorPayrollEditor from "../../../../components/admin-professor-payroll-editor";
 import {
   adminViewTeacherPortalAction,
   deleteAdminCollaboratorContractAction,
@@ -16,6 +17,7 @@ import { backendRequest } from "../../../../lib/backend";
 import CollaboratorClientChunkAnchor from "./_client-chunk-anchor";
 import type {
   AdminConfigAccountOut,
+  AdminProfessorDefaultGridOut,
   AdminProfessorContractGridOut,
   AdminProfessorContractLocationOptionOut,
   AdminProfessorDetailOut,
@@ -373,6 +375,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     sessionsResult,
     locationsResult,
     accountResult,
+    defaultProfessorGridResult,
     contractGridsResult,
     contractLocationsResult,
     payoutLedgerResult,
@@ -384,6 +387,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     backendRequest<AdminSessionOut[]>(`/api/v1/admin/sessions?${sessionsQuery.toString()}`, {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
+    backendRequest<AdminProfessorDefaultGridOut>("/api/v1/admin/config/professor-default-grid", {}, token),
     contractGridsRequest,
     contractLocationsRequest,
     payoutLedgerRequest,
@@ -402,6 +406,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const sessions = sessionsResult.ok ? sessionsResult.data : [];
   const locations = locationsResult.ok ? locationsResult.data : [];
   const accountConfig = accountResult.ok ? accountResult.data : null;
+  const defaultProfessorGrid = defaultProfessorGridResult.ok ? defaultProfessorGridResult.data : { lines: [], updated_at: null };
   const contractGrids = contractGridsResult.ok ? contractGridsResult.data : [];
   const contractLocationOptions = contractLocationsResult.ok ? contractLocationsResult.data : [];
   const payoutLedger = payoutLedgerResult.ok ? payoutLedgerResult.data : null;
@@ -431,6 +436,63 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const editableCourseTypes = [...courseTypes]
     .filter((courseType) => courseType.active)
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  const defaultGridByCourseTypeId = new Map(defaultProfessorGrid.lines.map((line) => [line.course_type_id, line]));
+  const professorReferenceLine =
+    defaultProfessorGrid.lines.find((line) => line.rules.length > 0)
+    ?? defaultProfessorGrid.lines.find((line) => line.default_hourly_rate !== null)
+    ?? null;
+  const professorReferenceGrid = professorReferenceLine
+    ? {
+        default_hourly_rate: professorReferenceLine.default_hourly_rate,
+        rules: professorReferenceLine.rules.map((rule) => ({
+          min_students: rule.min_students,
+          max_students: rule.max_students,
+          hourly_rate: rule.hourly_rate,
+        })),
+      }
+    : null;
+  const professorHasHeadcountOverride = Boolean(activeBaseRate && activeBaseRate.rules.length > 0);
+  const payrollActivities = editableCourseTypes.map((courseType) => {
+    const activeRate = activeRatesByKey.get(courseType.id) ?? null;
+    const defaultGridLine = defaultGridByCourseTypeId.get(courseType.id) ?? null;
+    const generalGrid = defaultGridLine
+      ? {
+          default_hourly_rate: defaultGridLine.default_hourly_rate,
+          rules: defaultGridLine.rules.map((rule) => ({
+            min_students: rule.min_students,
+            max_students: rule.max_students,
+            hourly_rate: rule.hourly_rate,
+          })),
+        }
+      : {
+          default_hourly_rate: courseType.default_hourly_rate,
+          rules: [],
+        };
+    const specificGrid = activeRate
+      ? {
+          default_hourly_rate: activeRate.hourly_rate,
+          rules: activeRate.rules.map((rule) => ({
+            min_students: rule.min_students,
+            max_students: rule.max_students,
+            hourly_rate: rule.hourly_rate,
+          })),
+        }
+      : null;
+    const hasSpecific = Boolean(activeRate && (activeRate.hourly_rate !== null || activeRate.rules.length > 0));
+    const initialMode: "GENERAL" | "PROFESSOR" | "SPECIFIC" = hasSpecific
+      ? "SPECIFIC"
+      : (activeBaseRate ? "PROFESSOR" : "GENERAL");
+
+    return {
+      course_type_id: courseType.id,
+      course_type_name: courseType.name,
+      mode_label: activityModeLabel(courseType.mode),
+      reference_duration_minutes: courseType.duration_minutes,
+      initial_mode: initialMode,
+      general_grid: generalGrid,
+      specific_grid: specificGrid,
+    };
+  });
 
   const locationNameById = new Map(locations.map((loc) => [loc.id, loc.name]));
   const courseTypeNameById = new Map(courseTypes.map((ct) => [ct.id, ct.name]));
@@ -512,6 +574,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
       {!ratesResult.ok ? <section className="flash-err">Erreur rates: {ratesResult.message}</section> : null}
       {!sessionsResult.ok ? <section className="flash-err">Erreur planning: {sessionsResult.message}</section> : null}
       {!accountResult.ok ? <section className="flash-err">Erreur devises: {accountResult.message}</section> : null}
+      {!defaultProfessorGridResult.ok ? <section className="flash-err">Erreur grille generale: {defaultProfessorGridResult.message}</section> : null}
       {showLegacyContractGrid && !contractGridsResult.ok ? <section className="flash-err">Erreur grilles contractuelles: {contractGridsResult.message}</section> : null}
       {showLegacyContractGrid && !contractLocationsResult.ok ? <section className="flash-err">Erreur lieux contractuels: {contractLocationsResult.message}</section> : null}
       {currentTab === "solde" && !payoutLedgerResult.ok ? <section className="flash-err">Erreur solde paie: {payoutLedgerResult.message}</section> : null}
@@ -855,113 +918,30 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
       {currentTab === "tarifs" ? (
         <section className="grid cols-2">
-          <article className="card">
-            <h3>Parametres de paie de base</h3>
-            <p className="muted">
-              Ce taux sert de base lorsqu aucune surcharge par activite et aucune grille contractuelle plus specifique ne s applique.
-            </p>
-            <form action={updateAdminCollaboratorRatesAction} className="grid top-gap-sm">
-              <input type="hidden" name="professor_id" value={professor.id} />
-              <label>
-                Date de prise d effet
-                <input type="date" name="effective_from" defaultValue={payoutAsOf} required />
-              </label>
-              <label>
-                Devise
-                <select name="currency_code" defaultValue={activeBaseRate?.currency_code ?? defaultRateCurrency}>
-                  {availableCurrencies.map((code) => (
-                    <option key={`base-rate-currency-${code}`} value={code}>
-                      {code}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Taux de remuneration (par heure)
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  name="rate_GLOBAL"
-                  defaultValue={activeBaseRate?.hourly_rate ?? ""}
-                  placeholder="Ex: 32.00"
-                />
-              </label>
-              <div className="row">
-                <button type="submit">Enregistrer la paie de base</button>
-              </div>
-            </form>
-          </article>
-
-          <article className="card">
-            <div className="row spread">
-              <h3>Parametres de paie de categorie</h3>
-              <span className="badge">{editableCourseTypes.length} activite(s)</span>
-            </div>
-            <p className="muted">
-              Surchargez le taux par activite. La duree de reference est derivee de l activite BackOffice.
-            </p>
-            <form action={updateAdminCollaboratorRatesAction} className="grid top-gap-sm">
-              <input type="hidden" name="professor_id" value={professor.id} />
-              <label>
-                Date de prise d effet
-                <input type="date" name="effective_from" defaultValue={payoutAsOf} required />
-              </label>
-              <label>
-                Devise
-                <select name="currency_code" defaultValue={defaultRateCurrency}>
-                  {availableCurrencies.map((code) => (
-                    <option key={`override-rate-currency-${code}`} value={code}>
-                      {code}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Activite</th>
-                      <th>Mode</th>
-                      <th>Duree ref</th>
-                      <th>Regle taux horaire</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {editableCourseTypes.map((courseType) => {
-                      const activeRate = activeRatesByKey.get(courseType.id) ?? null;
-                      const activeRateValue =
-                        activeRate && activeRate.rules.length > 0
-                          ? encodeHeadcountRules(activeRate.rules)
-                          : (activeRate?.hourly_rate ?? "");
-                      const ratePlaceholder = courseType.default_hourly_rate
-                        ? `Ex: 0-3:${courseType.default_hourly_rate}`
-                        : "Ex: 0-3:44;4-8:50;9+:60";
-                      return (
-                        <tr key={`rate-by-activity-${courseType.id}`}>
-                          <td>
-                            <strong>{courseType.name}</strong>
-                          </td>
-                          <td>{activityModeLabel(courseType.mode)}</td>
-                          <td>{courseType.duration_minutes} min</td>
-                          <td>
-                            <input
-                              type="text"
-                              name={`rate_${courseType.id}`}
-                              defaultValue={activeRateValue}
-                              placeholder={ratePlaceholder}
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="muted">Format: 0-3:44;4-8:50;9+:60, ou un taux simple 44.</p>
-              <div className="row">
-                <button type="submit">Enregistrer les surcharges</button>
-              </div>
+          <article className="card span-2">
+            <form action={updateAdminCollaboratorRatesAction} className="grid">
+              <AdminProfessorPayrollEditor
+                professorId={professor.id}
+                effectiveFrom={payoutAsOf}
+                currencyCode={activeBaseRate?.currency_code ?? defaultRateCurrency}
+                availableCurrencies={availableCurrencies}
+                baseHourlyRate={activeBaseRate?.hourly_rate ?? ""}
+                professorHasOverride={professorHasHeadcountOverride}
+                professorGrid={
+                  activeBaseRate
+                    ? {
+                        default_hourly_rate: activeBaseRate.hourly_rate,
+                        rules: activeBaseRate.rules.map((rule) => ({
+                          min_students: rule.min_students,
+                          max_students: rule.max_students,
+                          hourly_rate: rule.hourly_rate,
+                        })),
+                      }
+                    : null
+                }
+                professorReferenceGrid={professorReferenceGrid}
+                activities={payrollActivities}
+              />
             </form>
           </article>
 

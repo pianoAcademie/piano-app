@@ -9110,3 +9110,95 @@ button.danger {
   margin: 0;
   font-size: 16px;
 }
+
+.prof-pay-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.prof-pay-base-card,
+.prof-pay-prof-grid-card,
+.prof-pay-activities-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  background: #fffdf9;
+}
+
+.prof-pay-preview {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fffdfa;
+  padding: 10px;
+}
+
+.prof-pay-preview-title {
+  margin: 0 0 6px 0;
+  font-weight: 700;
+}
+
+.prof-pay-rule-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.prof-pay-grid-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.prof-pay-simulation {
+  border-radius: 10px;
+  border: 1px dashed #d7c4a2;
+  background: #fdf7ed;
+  padding: 10px;
+}
+
+.prof-pay-simulation p {
+  margin: 4px 0 0;
+}
+
+.prof-pay-search {
+  min-width: 260px;
+  flex: 1;
+}
+
+.prof-pay-activity-list {
+  display: grid;
+  gap: 10px;
+}
+
+.prof-pay-activity-card {
+  display: grid;
+  gap: 10px;
+}
+
+.prof-pay-submit-row {
+  justify-content: flex-end;
+}
+
+@media (max-width: 980px) {
+  .prof-pay-base-card .grid.cols-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .prof-pay-prof-grid-card .grid.cols-2,
+  .prof-pay-activity-card .grid.cols-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .prof-pay-search {
+    min-width: 100%;
+  }
+
+  .prof-pay-submit-row {
+    justify-content: stretch;
+  }
+
+  .prof-pay-submit-row button {
+    width: 100%;
+  }
+}

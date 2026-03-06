@@ -533,6 +533,12 @@ class AdminClientOut(BaseModel):
     sms_opt_in: bool = True
     lesson_reminder_email_opt_in: bool = True
     lesson_reminder_sms_opt_in: bool = False
+    email_delivery_status: str = "active"
+    email_suspended_at: datetime | None = None
+    email_suspension_reason: str | None = None
+    phone_delivery_status: str = "active"
+    phone_suspended_at: datetime | None = None
+    phone_suspension_reason: str | None = None
     client_status: ClientStatus = ClientStatus.ACTIVE
     family_name: str | None = None
     group_ids: list[UUID] = Field(default_factory=list)
@@ -747,6 +753,19 @@ class AdminClientPortalAccessOut(BaseModel):
     expires_in_seconds: int
 
 
+class AdminImpersonationStartOut(BaseModel):
+    target_user_id: UUID
+    target_role: Literal["client", "teacher"]
+    target_display_name: str
+    access_token: str
+    expires_in_seconds: int
+    redirect_path: str
+
+
+class AdminImpersonationEndOut(BaseModel):
+    message: str
+
+
 class AdminClientFamilyLinkOut(BaseModel):
     id: UUID
     adult: AdminFamilyMemberOut
@@ -924,7 +943,7 @@ class AdminRangeInvoiceCreateRequest(BaseModel):
     auto_cycle_start_date: date | None = None
     auto_period_scope: Literal["FUTURE", "PAST"] = "PAST"
     auto_frequency: Literal["WEEKLY", "MONTHLY"] = "MONTHLY"
-    auto_repeat_every: int = Field(default=1, ge=1, le=6)
+    auto_repeat_every: int = Field(default=1, ge=1, le=12)
     auto_layout_style: Literal["NORMAL", "CONDENSED"] = "NORMAL"
     auto_include_previous_balance: bool = True
     auto_send_email: bool = False
@@ -933,6 +952,39 @@ class AdminRangeInvoiceCreateRequest(BaseModel):
     invoice_number: str | None = Field(default=None, max_length=120)
     public_note: str | None = Field(default=None, max_length=2000)
     private_note: str | None = Field(default=None, max_length=2000)
+
+
+class AdminClientAutoInvoiceRuleUpsertRequest(BaseModel):
+    cycle_start_date: date
+    frequency: Literal["MONTHLY", "QUARTERLY", "YEARLY"] = "MONTHLY"
+    billing_timing: Literal["UPCOMING_LESSONS", "PREVIOUS_LESSONS"] = "UPCOMING_LESSONS"
+    due_date_rule_type: Literal["SAME_DAY_ISSUE", "X_DAYS_AFTER_ISSUE"] = "SAME_DAY_ISSUE"
+    due_date_days_offset: int | None = Field(default=None, ge=0, le=365)
+    include_pending_lines: bool = True
+    include_cancelled_lines: bool = False
+    legal_entity_id: UUID
+    status: Literal["ACTIVE", "PAUSED"] = "ACTIVE"
+
+
+class AdminClientAutoInvoiceRuleOut(BaseModel):
+    id: UUID
+    client_id: UUID
+    legal_entity_id: UUID
+    cycle_start_date: date
+    frequency: Literal["MONTHLY", "QUARTERLY", "YEARLY"]
+    billing_timing: Literal["UPCOMING_LESSONS", "PREVIOUS_LESSONS"]
+    due_date_rule_type: Literal["SAME_DAY_ISSUE", "X_DAYS_AFTER_ISSUE"]
+    due_date_days_offset: int | None = None
+    include_pending_lines: bool
+    include_cancelled_lines: bool
+    next_run_date: date
+    preview_period_start_date: date
+    preview_period_end_date: date
+    preview_due_date: date
+    last_generated_at: datetime | None = None
+    status: Literal["ACTIVE", "PAUSED", "ARCHIVED"]
+    created_at: datetime
+    updated_at: datetime
 
 
 class AdminRangeInvoiceReferenceOut(BaseModel):
@@ -960,7 +1012,7 @@ class AdminRangeInvoiceOut(BaseModel):
     auto_cycle_start_date: date | None = None
     auto_period_scope: Literal["FUTURE", "PAST"] = "PAST"
     auto_frequency: Literal["WEEKLY", "MONTHLY"] = "MONTHLY"
-    auto_repeat_every: int = Field(default=1, ge=1, le=6)
+    auto_repeat_every: int = Field(default=1, ge=1, le=12)
     auto_layout_style: Literal["NORMAL", "CONDENSED"] = "NORMAL"
     auto_include_previous_balance: bool = True
     auto_send_email: bool = False
@@ -1393,6 +1445,7 @@ class AdminProfessorRateInput(BaseModel):
 class AdminProfessorRatesUpdateRequest(BaseModel):
     rates: list[AdminProfessorRateInput] = Field(default_factory=list)
     effective_from: date | None = None
+    clear_course_type_ids: list[UUID] = Field(default_factory=list)
 
 
 class AdminProfessorPayoutLedgerRowOut(BaseModel):
@@ -1535,6 +1588,8 @@ class AdminSessionUpdateRequest(BaseModel):
     course_type_id: UUID | None = None
     location_id: UUID | None = None
     professor_id: UUID | None = None
+    substitute_teacher_id: UUID | None = None
+    substitute_note: str | None = Field(default=None, max_length=12000)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     public_description: str | None = None
@@ -1559,8 +1614,17 @@ class AdminSessionOut(BaseModel):
     course_type_id: UUID
     location_id: UUID
     professor_id: UUID | None
+    substitute_teacher_id: UUID | None
+    substitute_set_at: datetime | None
+    substitute_set_by: UUID | None
+    substitute_note: str | None
     teacher_id: UUID | None
     teacher_display_name: str
+    habitual_teacher_id: UUID | None
+    habitual_teacher_display_name: str
+    substitute_teacher_display_name: str | None
+    effective_teacher_id: UUID | None
+    effective_teacher_display_name: str
     location_label: str
     type_label: str
     status_label: str

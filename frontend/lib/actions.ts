@@ -5149,6 +5149,179 @@ export async function updateAdminCollaboratorRatesAction(formData: FormData): Pr
     redirect(`/admin/professors/${professorId}?tab=tarifs&error=Date%20d%27effet%20invalide`);
   }
 
+  const uiVersion = String(formData.get("pay_ui_version") ?? "").trim();
+  if (uiVersion === "2") {
+    const parseStructuredRules = (
+      minValuesRaw: FormDataEntryValue[],
+      maxValuesRaw: FormDataEntryValue[],
+      rateValuesRaw: FormDataEntryValue[],
+      label: string,
+    ): Array<{ min_students: number; max_students: number | null; hourly_rate: number }> => {
+      const minValues = minValuesRaw.map((value) => String(value ?? "").trim());
+      const maxValues = maxValuesRaw.map((value) => String(value ?? "").trim());
+      const rateValues = rateValuesRaw.map((value) => String(value ?? "").trim().replace(",", "."));
+      const rowCount = Math.max(minValues.length, maxValues.length, rateValues.length);
+
+      const rows: Array<{ min_students: number; max_students: number | null; hourly_rate: number }> = [];
+      for (let index = 0; index < rowCount; index += 1) {
+        const minRaw = minValues[index] ?? "";
+        const maxRaw = maxValues[index] ?? "";
+        const rateRaw = rateValues[index] ?? "";
+
+        if (!minRaw && !maxRaw && !rateRaw) {
+          continue;
+        }
+
+        const minStudents = parseNonNegativeInt(minRaw);
+        if (minStudents === null) {
+          redirect(
+            `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`${label}: minimum eleves invalide ligne ${index + 1}`)}`,
+          );
+        }
+
+        let maxStudents: number | null = null;
+        if (maxRaw) {
+          maxStudents = parseNonNegativeInt(maxRaw);
+          if (maxStudents === null) {
+            redirect(
+              `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`${label}: maximum eleves invalide ligne ${index + 1}`)}`,
+            );
+          }
+          if (maxStudents < minStudents) {
+            redirect(
+              `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`${label}: min > max ligne ${index + 1}`)}`,
+            );
+          }
+        }
+
+        const hourlyRate = parseNonNegativeDecimal(rateRaw);
+        if (hourlyRate === null) {
+          redirect(
+            `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`${label}: taux horaire invalide ligne ${index + 1}`)}`,
+          );
+        }
+
+        rows.push({
+          min_students: minStudents,
+          max_students: maxStudents,
+          hourly_rate: hourlyRate,
+        });
+      }
+
+      rows.sort((a, b) => (a.min_students - b.min_students) || ((a.max_students ?? Number.MAX_SAFE_INTEGER) - (b.max_students ?? Number.MAX_SAFE_INTEGER)));
+      for (let index = 1; index < rows.length; index += 1) {
+        const previous = rows[index - 1];
+        const current = rows[index];
+        if (previous.max_students === null || current.min_students <= previous.max_students) {
+          redirect(
+            `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`${label}: plages chevauchantes`)}`,
+          );
+        }
+      }
+
+      return rows;
+    };
+
+    const baseHourlyRateRaw = String(formData.get("base_hourly_rate") ?? "").trim().replace(",", ".");
+    const baseHourlyRate = parseNonNegativeDecimal(baseHourlyRateRaw);
+    if (baseHourlyRate === null) {
+      redirect(`/admin/professors/${professorId}?tab=tarifs&error=Taux%20horaire%20de%20base%20invalide`);
+    }
+
+    const profGridMode = String(formData.get("prof_grid_mode") ?? "inherit").trim().toLowerCase();
+    const professorRules =
+      profGridMode === "override"
+        ? parseStructuredRules(
+            formData.getAll("prof_grid_min"),
+            formData.getAll("prof_grid_max"),
+            formData.getAll("prof_grid_rate"),
+            "Grille professeur",
+          )
+        : [];
+
+    const rates: Array<{
+      course_type_id: string | null;
+      hourly_rate: number | null;
+      rules: Array<{ min_students: number; max_students: number | null; hourly_rate: number }>;
+      currency_code: string | null;
+    }> = [
+      {
+        course_type_id: null,
+        hourly_rate: baseHourlyRate,
+        rules: professorRules,
+        currency_code: currency,
+      },
+    ];
+
+    const clearCourseTypeIds: string[] = [];
+    const courseTypeIds = parseStringList(formData.getAll("activity_course_type_id"));
+    for (const courseTypeId of courseTypeIds) {
+      const mode = String(formData.get(`activity_rate_mode_${courseTypeId}`) ?? "PROFESSOR")
+        .trim()
+        .toUpperCase();
+      if (mode !== "SPECIFIC") {
+        clearCourseTypeIds.push(courseTypeId);
+        continue;
+      }
+
+      const activityRules = parseStructuredRules(
+        formData.getAll(`activity_rule_min_${courseTypeId}`),
+        formData.getAll(`activity_rule_max_${courseTypeId}`),
+        formData.getAll(`activity_rule_rate_${courseTypeId}`),
+        `Activite ${courseTypeId}`,
+      );
+      const activityDefaultRateRaw = String(formData.get(`activity_default_rate_${courseTypeId}`) ?? "")
+        .trim()
+        .replace(",", ".");
+      const activityDefaultRate = activityDefaultRateRaw ? parseNonNegativeDecimal(activityDefaultRateRaw) : null;
+      if (activityDefaultRateRaw && activityDefaultRate === null) {
+        redirect(
+          `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`Activite ${courseTypeId}: taux de base invalide`)}`,
+        );
+      }
+      if (activityDefaultRate === null && activityRules.length === 0) {
+        redirect(
+          `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`Activite ${courseTypeId}: definir au moins une tranche`)}`,
+        );
+      }
+
+      rates.push({
+        course_type_id: courseTypeId,
+        hourly_rate: activityDefaultRate,
+        rules: activityRules,
+        currency_code: currency,
+      });
+    }
+
+    const specificCourseTypeIds = new Set(
+      rates
+        .map((row) => row.course_type_id)
+        .filter((row): row is string => typeof row === "string"),
+    );
+    const dedupClearCourseTypeIds = [...new Set(clearCourseTypeIds)].filter((courseTypeId) => !specificCourseTypeIds.has(courseTypeId));
+
+    const result = await backendRequest<AdminProfessorRateOut[]>(
+      `/api/v1/admin/collaborators/${professorId}/rates`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          rates,
+          effective_from: effectiveFrom,
+          clear_course_type_ids: dedupClearCourseTypeIds,
+        }),
+      },
+      token,
+    );
+
+    if (!result.ok) {
+      redirect(`/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(result.message)}`);
+    }
+
+    revalidatePath("/admin/professors");
+    revalidatePath(`/admin/professors/${professorId}`);
+    redirect(`/admin/professors/${professorId}?tab=tarifs&ok=Taux%20horaires%20mis%20a%20jour`);
+  }
+
   const rates: Array<{
     course_type_id: string | null;
     hourly_rate: number | null;
