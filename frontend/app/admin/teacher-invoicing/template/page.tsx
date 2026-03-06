@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import AdminTeacherInvoicingNav from "../../../../components/admin-teacher-invoicing-nav";
 import { updateAdminTeacherInvoiceTemplateAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import type { AdminTeacherInvoiceTemplateOut } from "../../../../lib/types";
@@ -41,11 +42,13 @@ export default async function AdminTeacherInvoiceTemplatePage({
 
   return (
     <section className="admin-page-grid">
+      <AdminTeacherInvoicingNav activeTab="template" />
+
       <article className="card">
         <div className="row spread">
-          <h2>Facturation professeurs - Modele facture</h2>
-          <Link className="reset-link" href="/admin/config">
-            Retour configuration
+          <h3>Template de facture</h3>
+          <Link className="reset-link" href="/admin/teacher-invoicing">
+            Retour facturation professeurs
           </Link>
         </div>
         <p className="muted">

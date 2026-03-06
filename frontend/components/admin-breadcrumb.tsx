@@ -39,6 +39,21 @@ function labelForSegment(segment: string, previous: string): string | null {
   if (segment === "salary-payments") {
     return "Paiement des salaires";
   }
+  if (segment === "teacher-invoicing") {
+    return "Facturation professeurs";
+  }
+  if (segment === "statements" && previous === "teacher-invoicing") {
+    return "Releves";
+  }
+  if (segment === "invoices" && previous === "teacher-invoicing") {
+    return "Factures";
+  }
+  if (segment === "template" && previous === "teacher-invoicing") {
+    return "Template de facture";
+  }
+  if (segment === "salary-grid" && previous === "teacher-invoicing") {
+    return "Grille de salaire";
+  }
   if (segment === "subscriptions") {
     return "Abonnements";
   }

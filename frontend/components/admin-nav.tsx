@@ -27,7 +27,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "Finance",
     items: [
       { href: "/admin/salary-payments", label: "Paiement des salaires", icon: "💶" },
-      { href: "/admin/teacher-invoicing/template", label: "Facturation professeurs", icon: "🧾" },
+      { href: "/admin/teacher-invoicing", label: "Facturation professeurs", icon: "🧾" },
       { href: "/admin/subscriptions", label: "Abonnements", icon: "🔁" },
       { href: "/admin/products", label: "Produits", icon: "📦" },
     ],

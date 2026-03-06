@@ -33,6 +33,7 @@ type Props = {
   archivePeriodAction: (formData: FormData) => Promise<void>;
   updatePeriodRulesAction: (formData: FormData) => Promise<void>;
   defaultCurrency: string;
+  sectionPath?: string;
 };
 
 function formatPeriodLabel(period: AdminProfessorPayGridPeriodOut): string {
@@ -95,7 +96,24 @@ export default function AdminProfessorDefaultGridManager({
   archivePeriodAction,
   updatePeriodRulesAction,
   defaultCurrency,
+  sectionPath = "/admin/config?section=params-professor-default-grid",
 }: Props): JSX.Element {
+  const buildSectionHref = (params: Record<string, string> = {}): string => {
+    const query = new URLSearchParams();
+    const separator = sectionPath.includes("?") ? "&" : "?";
+    const hasQuery = sectionPath.includes("?");
+    for (const [key, value] of Object.entries(params)) {
+      if (!value) {
+        continue;
+      }
+      query.set(key, value);
+    }
+    if ([...query.keys()].length === 0) {
+      return sectionPath;
+    }
+    return `${sectionPath}${hasQuery ? "&" : separator}${query.toString()}`;
+  };
+
   const sortedActivities = useMemo(
     () => [...activities].filter((row) => row.active).sort((a, b) => a.name.localeCompare(b.name, "fr")),
     [activities],
@@ -165,6 +183,7 @@ export default function AdminProfessorDefaultGridManager({
       <article className="item top-gap-sm">
         <strong>Creer une nouvelle periode</strong>
         <form action={createPeriodAction} className="grid cols-4 top-gap-sm">
+          <input type="hidden" name="return_to" value={sectionPath} />
           <label>
             Date debut
             <input type="date" name="start_date" required />
@@ -209,7 +228,7 @@ export default function AdminProfessorDefaultGridManager({
                   <div className="row">
                     <span className="badge">{periodBadgeLabel(period)}</span>
                     <span className="badge">{period.rules_count} regle(s)</span>
-                    <Link className="mode-link" href={`/admin/config?section=params-professor-default-grid&grid_period=${period.id}`}>
+                    <Link className="mode-link" href={buildSectionHref({ grid_period: period.id })}>
                       Ouvrir
                     </Link>
                   </div>
@@ -229,6 +248,7 @@ export default function AdminProfessorDefaultGridManager({
             </div>
             <form action={updatePeriodAction} className="grid cols-4 top-gap-sm">
               <input type="hidden" name="period_id" value={selectedPeriod.id} />
+              <input type="hidden" name="return_to" value={buildSectionHref({ grid_period: selectedPeriod.id })} />
               <label>
                 Date debut
                 <input type="date" name="start_date" defaultValue={selectedPeriod.start_date} required />
@@ -256,6 +276,7 @@ export default function AdminProfessorDefaultGridManager({
             {!selectedPeriod.is_archived ? (
               <form action={archivePeriodAction} className="top-gap-sm">
                 <input type="hidden" name="period_id" value={selectedPeriod.id} />
+                <input type="hidden" name="return_to" value={buildSectionHref({ grid_period: selectedPeriod.id })} />
                 <button type="submit" className="danger">Archiver la periode</button>
               </form>
             ) : null}
@@ -269,6 +290,7 @@ export default function AdminProfessorDefaultGridManager({
 
             <form action={updatePeriodRulesAction} className="grid top-gap-sm">
               <input type="hidden" name="period_id" value={selectedPeriod.id} />
+              <input type="hidden" name="return_to" value={buildSectionHref({ grid_period: selectedPeriod.id })} />
               <input type="hidden" name="default_grid_ui_version" value="2" />
               <div className="row">
                 <label>

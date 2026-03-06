@@ -5980,6 +5980,49 @@ button.danger {
   gap: 14px;
 }
 
+.teacher-invoicing-header-card {
+  display: grid;
+  gap: 14px;
+}
+
+.teacher-invoicing-header-top {
+  align-items: flex-start;
+}
+
+.teacher-invoicing-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.teacher-invoicing-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #d8be97;
+  border-radius: 999px;
+  background: #fffdf8;
+  color: #5a4322;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.teacher-invoicing-tab.active {
+  background: #f0d7b2;
+  border-color: #d7ba8f;
+}
+
+.teacher-invoicing-hub-grid {
+  gap: 12px;
+}
+
+.teacher-invoicing-hub-card {
+  display: grid;
+  gap: 8px;
+}
+
 .catalog-admin-tabs {
   display: flex;
   gap: 8px;
@@ -6084,6 +6127,16 @@ button.danger {
 }
 
 @media (max-width: 760px) {
+  .teacher-invoicing-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 2px;
+  }
+
+  .teacher-invoicing-tab {
+    white-space: nowrap;
+  }
+
   .catalog-admin-tabs {
     overflow-x: auto;
   }

@@ -361,6 +361,20 @@ function removeQueryParam(path: string, key: string): string {
   }
 }
 
+function setQueryParam(path: string, key: string, value: string | null): string {
+  try {
+    const url = new URL(path, "http://localhost");
+    if (value === null || value === "") {
+      url.searchParams.delete(key);
+    } else {
+      url.searchParams.set(key, value);
+    }
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return path;
+  }
+}
+
 function parsePositiveInt(raw: string): number | null {
   const value = raw.trim();
   if (!value) {
@@ -6460,19 +6474,21 @@ export async function createAdminConfigProfessorDefaultGridPeriodAction(formData
     redirect("/login?error=Session%20expiree");
   }
   await ensureAdmin(token);
+  const returnToBase = safeAdminReturnPath(formData, "/admin/config?section=params-professor-default-grid");
+  const cleanReturnTo = removeQueryParam(removeQueryParam(returnToBase, "ok"), "error");
 
   const startDate = String(formData.get("start_date") ?? "").trim();
   const endDate = String(formData.get("end_date") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
   const cloneFromPeriodId = String(formData.get("clone_from_period_id") ?? "").trim() || null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20debut%20invalide");
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Date de debut invalide"));
   }
   if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20invalide");
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Date de fin invalide"));
   }
   if (endDate && endDate < startDate) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20avant%20debut");
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Date de fin avant debut"));
   }
 
   const result = await backendRequest<AdminProfessorPayGridPeriodOut>(
@@ -6489,10 +6505,13 @@ export async function createAdminConfigProfessorDefaultGridPeriodAction(formData
     token,
   );
   if (!result.ok) {
-    redirect(`/admin/config?section=params-professor-default-grid&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(cleanReturnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
-  redirect(`/admin/config?section=params-professor-default-grid&grid_period=${result.data.id}&ok=Nouvelle%20periode%20cree`);
+  revalidatePath("/admin/teacher-invoicing");
+  revalidatePath("/admin/teacher-invoicing/salary-grid");
+  const scopedReturnTo = setQueryParam(cleanReturnTo, "grid_period", result.data.id);
+  redirect(appendQueryMessage(scopedReturnTo, "ok", "Nouvelle periode cree"));
 }
 
 export async function updateAdminConfigProfessorDefaultGridPeriodAction(formData: FormData): Promise<void> {
@@ -6503,21 +6522,24 @@ export async function updateAdminConfigProfessorDefaultGridPeriodAction(formData
   await ensureAdmin(token);
 
   const periodId = String(formData.get("period_id") ?? "").trim();
+  const returnToBase = safeAdminReturnPath(formData, "/admin/config?section=params-professor-default-grid");
+  const cleanReturnTo = removeQueryParam(removeQueryParam(returnToBase, "ok"), "error");
+  const scopedReturnTo = setQueryParam(cleanReturnTo, "grid_period", periodId || null);
   if (!periodId) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Periode%20invalide");
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Periode invalide"));
   }
   const startDate = String(formData.get("start_date") ?? "").trim();
   const endDate = String(formData.get("end_date") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
   const statusValue = String(formData.get("status") ?? "").trim().toUpperCase();
   if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20debut%20invalide");
+    redirect(appendQueryMessage(scopedReturnTo, "error", "Date de debut invalide"));
   }
   if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20invalide");
+    redirect(appendQueryMessage(scopedReturnTo, "error", "Date de fin invalide"));
   }
   if (startDate && endDate && endDate < startDate) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20avant%20debut");
+    redirect(appendQueryMessage(scopedReturnTo, "error", "Date de fin avant debut"));
   }
   const result = await backendRequest<AdminProfessorPayGridPeriodOut>(
     `/api/v1/admin/config/professor-default-grid/periods/${periodId}`,
@@ -6533,10 +6555,12 @@ export async function updateAdminConfigProfessorDefaultGridPeriodAction(formData
     token,
   );
   if (!result.ok) {
-    redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(scopedReturnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
-  redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&ok=Periode%20mise%20a%20jour`);
+  revalidatePath("/admin/teacher-invoicing");
+  revalidatePath("/admin/teacher-invoicing/salary-grid");
+  redirect(appendQueryMessage(scopedReturnTo, "ok", "Periode mise a jour"));
 }
 
 export async function archiveAdminConfigProfessorDefaultGridPeriodAction(formData: FormData): Promise<void> {
@@ -6547,8 +6571,11 @@ export async function archiveAdminConfigProfessorDefaultGridPeriodAction(formDat
   await ensureAdmin(token);
 
   const periodId = String(formData.get("period_id") ?? "").trim();
+  const returnToBase = safeAdminReturnPath(formData, "/admin/config?section=params-professor-default-grid");
+  const cleanReturnTo = removeQueryParam(removeQueryParam(returnToBase, "ok"), "error");
+  const scopedReturnTo = setQueryParam(cleanReturnTo, "grid_period", periodId || null);
   if (!periodId) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Periode%20invalide");
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Periode invalide"));
   }
   const result = await backendRequest<AdminProfessorPayGridPeriodOut>(
     `/api/v1/admin/config/professor-default-grid/periods/${periodId}/archive`,
@@ -6556,10 +6583,13 @@ export async function archiveAdminConfigProfessorDefaultGridPeriodAction(formDat
     token,
   );
   if (!result.ok) {
-    redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(scopedReturnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
-  redirect("/admin/config?section=params-professor-default-grid&ok=Periode%20archivee");
+  revalidatePath("/admin/teacher-invoicing");
+  revalidatePath("/admin/teacher-invoicing/salary-grid");
+  const archivedReturnTo = setQueryParam(cleanReturnTo, "grid_period", null);
+  redirect(appendQueryMessage(archivedReturnTo, "ok", "Periode archivee"));
 }
 
 export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(formData: FormData): Promise<void> {
@@ -6570,8 +6600,11 @@ export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(for
   await ensureAdmin(token);
 
   const periodId = String(formData.get("period_id") ?? "").trim();
+  const returnToBase = safeAdminReturnPath(formData, "/admin/config?section=params-professor-default-grid");
+  const cleanReturnTo = removeQueryParam(removeQueryParam(returnToBase, "ok"), "error");
+  const scopedReturnTo = setQueryParam(cleanReturnTo, "grid_period", periodId || null);
   if (!periodId) {
-    redirect("/admin/config?section=params-professor-default-grid&error=Periode%20invalide");
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Periode invalide"));
   }
   const currencyCode = String(formData.get("currency_code") ?? "").trim().toUpperCase() || "EUR";
 
@@ -6595,18 +6628,18 @@ export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(for
       }
       const minStudents = parseNonNegativeInt(minRaw);
       if (minStudents === null) {
-        redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`${label}: minimum invalide`)}`);
+        redirect(appendQueryMessage(scopedReturnTo, "error", `${label}: minimum invalide`));
       }
       let maxStudents: number | null = null;
       if (maxRaw) {
         maxStudents = parseNonNegativeInt(maxRaw);
         if (maxStudents === null || maxStudents < minStudents) {
-          redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`${label}: maximum invalide`)}`);
+          redirect(appendQueryMessage(scopedReturnTo, "error", `${label}: maximum invalide`));
         }
       }
       const hourlyRate = parseNonNegativeDecimal(rateRaw);
       if (hourlyRate === null) {
-        redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`${label}: taux invalide`)}`);
+        redirect(appendQueryMessage(scopedReturnTo, "error", `${label}: taux invalide`));
       }
       rows.push({ min_students: minStudents, max_students: maxStudents, hourly_rate: hourlyRate });
     }
@@ -6615,7 +6648,7 @@ export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(for
       const previous = rows[index - 1];
       const current = rows[index];
       if (previous.max_students === null || current.min_students <= previous.max_students) {
-        redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`${label}: plages chevauchantes`)}`);
+        redirect(appendQueryMessage(scopedReturnTo, "error", `${label}: plages chevauchantes`));
       }
     }
     return rows;
@@ -6637,7 +6670,7 @@ export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(for
     );
     const defaultRate = defaultRateRaw ? parseNonNegativeDecimal(defaultRateRaw) : null;
     if (defaultRateRaw && defaultRate === null) {
-      redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`Activite ${courseTypeId}: taux invalide`)}`);
+      redirect(appendQueryMessage(scopedReturnTo, "error", `Activite ${courseTypeId}: taux invalide`));
     }
     if (defaultRate === null && rules.length === 0) {
       continue;
@@ -6661,12 +6694,14 @@ export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(for
     token,
   );
   if (!result.ok) {
-    redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(scopedReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin/professors");
-  redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&ok=Grille%20de%20periode%20mise%20a%20jour`);
+  revalidatePath("/admin/teacher-invoicing");
+  revalidatePath("/admin/teacher-invoicing/salary-grid");
+  redirect(appendQueryMessage(scopedReturnTo, "ok", "Grille de periode mise a jour"));
 }
 
 export async function updateAdminConfigPaymentMethodsAction(formData: FormData): Promise<void> {

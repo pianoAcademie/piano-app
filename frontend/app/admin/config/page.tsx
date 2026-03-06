@@ -3,11 +3,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import ColorHexInput from "../../../components/color-hex-input";
-import AdminProfessorDefaultGridManager from "../../../components/admin-professor-default-grid-manager";
 import RichMessageEditor from "../../../components/rich-message-editor";
 import {
-  archiveAdminConfigProfessorDefaultGridPeriodAction,
-  createAdminConfigProfessorDefaultGridPeriodAction,
   createAdminCatalogCategoryAction,
   createAdminCatalogKitAction,
   createAdminCatalogProductAction,
@@ -31,8 +28,6 @@ import {
   updateAdminConfigMessagingSettingsAction,
   updateAdminConfigInvoiceNumberingAction,
   updateAdminConfigInvoiceTemplateAction,
-  updateAdminConfigProfessorDefaultGridPeriodAction,
-  updateAdminConfigProfessorDefaultGridPeriodRulesAction,
   updateAdminConfigProductCategoriesAction,
   updateAdminConfigPaymentMethodsAction,
   updateAdminConfigPaymentProviderAction,
@@ -58,8 +53,6 @@ import type {
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
-  AdminProfessorPayGridPeriodDetailOut,
-  AdminProfessorPayGridPeriodOut,
   AdminSubscriptionSettingsOut,
 } from "../../../lib/types";
 
@@ -81,7 +74,6 @@ type ConfigSection =
   | "params-account"
   | "params-subscriptions"
   | "params-payments"
-  | "params-professor-default-grid"
   | "params-messaging"
   | "formulas"
   | "activities"
@@ -104,7 +96,6 @@ type SubNavItem = {
     | "params-account"
     | "params-subscriptions"
     | "params-payments"
-    | "params-professor-default-grid"
     | "params-messaging";
   label: string;
 };
@@ -137,7 +128,6 @@ const MAIN_NAV_ITEMS: MainNavItem[] = [
 const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
   { key: "params-account", label: "Informations du compte" },
   { key: "params-subscriptions", label: "Parametrage des abonnements" },
-  { key: "params-professor-default-grid", label: "Grille salaire professeurs" },
   { key: "params-payments", label: "Moyens de paiement" },
   { key: "params-messaging", label: "Messagerie" },
 ];
@@ -178,7 +168,6 @@ function parseSection(raw: string): ConfigSection {
     value === "params-account" ||
     value === "params-subscriptions" ||
     value === "params-payments" ||
-    value === "params-professor-default-grid" ||
     value === "params-messaging" ||
     value === "formulas" ||
     value === "activities" ||
@@ -200,7 +189,6 @@ function toMainSection(section: ConfigSection): ConfigMainSection {
     case "params-account":
     case "params-subscriptions":
     case "params-payments":
-    case "params-professor-default-grid":
     case "params-messaging":
       return "params";
     case "formulas":
@@ -356,22 +344,33 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const params = searchParams ?? {};
   const requestedSection = readParam(params, "section").trim();
+  if (requestedSection === "params-professor-default-grid") {
+    const redirectParams = new URLSearchParams();
+    const gridPeriod = readParam(params, "grid_period").trim();
+    const ok = readParam(params, "ok").trim();
+    const error = readParam(params, "error").trim();
+    if (gridPeriod) {
+      redirectParams.set("grid_period", gridPeriod);
+    }
+    if (ok) {
+      redirectParams.set("ok", ok);
+    }
+    if (error) {
+      redirectParams.set("error", error);
+    }
+    const suffix = redirectParams.toString();
+    redirect(suffix ? `/admin/teacher-invoicing/salary-grid?${suffix}` : "/admin/teacher-invoicing/salary-grid");
+  }
   const section = parseSection(requestedSection);
   if (section === "products") {
     redirect("/admin/products");
   }
-  const selectedGridPeriodIdParam = readParam(params, "grid_period").trim();
   const mainSection = toMainSection(section);
   const showInactiveFormulas = readParam(params, "show_inactive") === "1";
 
   const formulasEndpoint = showInactiveFormulas
     ? "/api/v1/admin/formulas?include_inactive=true"
     : "/api/v1/admin/formulas";
-  const gridPeriodsRequest = backendRequest<AdminProfessorPayGridPeriodOut[]>(
-    "/api/v1/admin/config/professor-default-grid/periods",
-    {},
-    token,
-  );
 
   const [
     accountResult,
@@ -385,8 +384,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     emailPredefinedTemplatesResult,
     smsPredefinedTemplatesResult,
     customTemplatesResult,
-    defaultProfessorGridPeriodsResult,
-    selectedProfessorGridPeriodDetailResult,
     formulasResult,
     activitiesResult,
     legalEntitiesResult,
@@ -415,22 +412,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       token,
     ),
     backendRequest<AdminMessagingTemplateOut[]>("/api/v1/admin/config/messaging-templates?kind=CUSTOM", {}, token),
-    gridPeriodsRequest,
-    (async () => {
-      const periods = await gridPeriodsRequest;
-      if (!periods.ok || periods.data.length === 0) {
-        return { ok: true as const, status: 200, data: null as AdminProfessorPayGridPeriodDetailOut | null };
-      }
-      const selectedPeriodId = selectedGridPeriodIdParam || periods.data.find((period) => period.is_active)?.id || periods.data[0]?.id || "";
-      if (!selectedPeriodId) {
-        return { ok: true as const, status: 200, data: null as AdminProfessorPayGridPeriodDetailOut | null };
-      }
-      return backendRequest<AdminProfessorPayGridPeriodDetailOut>(
-        `/api/v1/admin/config/professor-default-grid/periods/${selectedPeriodId}`,
-        {},
-        token,
-      );
-    })(),
     backendRequest<AdminFormulaOut[]>(formulasEndpoint, {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=true", {}, token),
@@ -510,20 +491,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     : (() => {
         loadErrors.push(`Modeles personnalises: ${customTemplatesResult.message}`);
         return [] as AdminMessagingTemplateOut[];
-      })();
-  const defaultProfessorGridPeriods = defaultProfessorGridPeriodsResult.ok
-    ? defaultProfessorGridPeriodsResult.data
-    : (() => {
-        loadErrors.push(`Periodes grille salaire: ${defaultProfessorGridPeriodsResult.message}`);
-        return [] as AdminProfessorPayGridPeriodOut[];
-      })();
-  const selectedProfessorGridPeriodDetail = selectedProfessorGridPeriodDetailResult.ok
-    ? selectedProfessorGridPeriodDetailResult.data
-    : (() => {
-        if (!selectedProfessorGridPeriodDetailResult.ok) {
-          loadErrors.push(`Detail periode grille salaire: ${selectedProfessorGridPeriodDetailResult.message}`);
-        }
-        return null as AdminProfessorPayGridPeriodDetailOut | null;
       })();
 
   const formulas = formulasResult.ok
@@ -628,7 +595,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       | "params-account"
       | "params-subscriptions"
       | "params-payments"
-      | "params-professor-default-grid"
       | "params-messaging"
       | "formulas"
       | "activities"
@@ -992,21 +958,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 </form>
               )}
             </section>
-          ) : null}
-
-          {section === "params-professor-default-grid" ? (
-            <AdminProfessorDefaultGridManager
-              activities={activities}
-              periods={defaultProfessorGridPeriods}
-              selectedPeriod={selectedProfessorGridPeriodDetail?.period ?? null}
-              selectedLines={selectedProfessorGridPeriodDetail?.lines ?? []}
-              selectedPeriodId={selectedProfessorGridPeriodDetail?.period.id ?? null}
-              createPeriodAction={createAdminConfigProfessorDefaultGridPeriodAction}
-              updatePeriodAction={updateAdminConfigProfessorDefaultGridPeriodAction}
-              archivePeriodAction={archiveAdminConfigProfessorDefaultGridPeriodAction}
-              updatePeriodRulesAction={updateAdminConfigProfessorDefaultGridPeriodRulesAction}
-              defaultCurrency={accountDefaultCurrency}
-            />
           ) : null}
 
           {section === "params-payments" ? (
@@ -3439,7 +3390,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           {section !== "params-account" &&
           section !== "params-subscriptions" &&
           section !== "params-payments" &&
-          section !== "params-professor-default-grid" &&
           section !== "params-messaging" &&
           section !== "formulas" &&
           section !== "activities" &&
