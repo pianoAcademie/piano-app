@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 import jwt
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
@@ -302,6 +302,34 @@ def _parse_optional_uuid(raw_value: object) -> UUID | None:
         return UUID(value)
     except ValueError:
         return None
+
+
+def _normalize_invoice_range_payment_keys(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        candidate = str(item or "").strip()
+        if not candidate:
+            continue
+        parts = candidate.split(":", 1)
+        if len(parts) != 2:
+            continue
+        source = parts[0].strip().upper()
+        payment_id_raw = parts[1].strip()
+        if not source or not payment_id_raw:
+            continue
+        try:
+            payment_id = UUID(payment_id_raw)
+        except ValueError:
+            continue
+        normalized = f"{source}:{payment_id}"
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
 
 
 def _first_currency_total(metadata: dict[str, object]) -> tuple[Decimal, str]:
@@ -823,6 +851,7 @@ def list_client_visible_sessions(
         .group_by(Booking.session_id)
         .subquery()
     )
+    substitute_professor = aliased(Professor, name="substitute_professor")
 
     stmt = (
         select(
@@ -830,11 +859,13 @@ def list_client_visible_sessions(
             CourseType,
             Location,
             Professor,
+            substitute_professor,
             func.coalesce(booked_counts.c.booked_count, 0).label("booked_count"),
         )
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
         .where(
             CourseSession.status == SessionStatus.SCHEDULED,
@@ -858,7 +889,18 @@ def list_client_visible_sessions(
     rows = db.execute(stmt).all()
 
     payload: list[SessionOut] = []
-    for session, course_type, location, professor, booked_count in rows:
+    for session, course_type, location, professor, substitute, booked_count in rows:
+        effective_professor = substitute or professor
+        substitute_display_name = (
+            f"{(substitute.first_name or '').strip()} {(substitute.last_name or '').strip()}".strip()
+            if substitute is not None
+            else None
+        )
+        effective_display_name = (
+            f"{(effective_professor.first_name or '').strip()} {(effective_professor.last_name or '').strip()}".strip()
+            if effective_professor is not None
+            else None
+        )
         booked = int(booked_count or 0)
         seats_remaining = max(session.capacity_max - booked, 0)
         payload.append(
@@ -878,6 +920,10 @@ def list_client_visible_sessions(
                 seats_remaining=seats_remaining,
                 online_booking_enabled=(not session.is_private) and bool(session.allow_online_booking),
                 zoom_link=session.zoom_link,
+                substitute_teacher_id=session.substitute_teacher_id,
+                substitute_teacher_display_name=substitute_display_name,
+                effective_teacher_id=effective_professor.id if effective_professor is not None else None,
+                effective_teacher_display_name=effective_display_name,
                 course_type=SessionCourseTypeOut(
                     id=course_type.id,
                     code=course_type.code,
@@ -891,11 +937,11 @@ def list_client_visible_sessions(
                 ),
                 professor=(
                     SessionProfessorOut(
-                        id=professor.id,
-                        first_name=professor.first_name,
-                        last_name=professor.last_name,
+                        id=effective_professor.id,
+                        first_name=effective_professor.first_name,
+                        last_name=effective_professor.last_name,
                     )
-                    if professor is not None
+                    if effective_professor is not None
                     else None
                 ),
             )
@@ -1157,27 +1203,40 @@ def list_client_messages(
     owners = db.scalars(select(User).where(User.id.in_(managed_client_ids))).all()
     owners_by_id = {owner.id: owner for owner in owners}
     since = _message_scope_since(scope)
+    now = _utcnow()
 
     stmt = (
-        select(EmailReminder, Booking, CourseSession, CourseType, User)
+        select(EmailReminder, Booking, CourseSession, CourseType, Location, User)
         .join(Booking, Booking.id == EmailReminder.booking_id)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
         .join(User, User.id == Booking.user_id)
         .where(Booking.user_id.in_(managed_client_ids))
-        .order_by(EmailReminder.created_at.desc())
+        .where(EmailReminder.sent_at.is_not(None))
+        .where(EmailReminder.sent_at <= now)
+        .order_by(EmailReminder.sent_at.desc())
         .limit(limit)
     )
     if since is not None:
-        stmt = stmt.where(EmailReminder.created_at >= since)
+        stmt = stmt.where(EmailReminder.sent_at >= since)
 
     rows = db.execute(stmt).all()
     payload: list[ClientMessageOut] = []
 
-    for reminder, booking, session_obj, course_type, owner in rows:
+    for reminder, booking, session_obj, course_type, location, owner in rows:
         owner_display = _display_name(owners_by_id.get(owner.id, owner))
         start_human = _format_session_datetime(session_obj, owner.timezone)
         subject_preview = f"Rappel cours: {course_type.name} - {start_human}"
+        content_preview = ""
+        if not content_preview:
+            content_preview = (
+                f"Bonjour {owner_display},\n\n"
+                f"Rappel cours: {course_type.name}\n"
+                f"Date: {start_human}\n"
+                f"Lieu: {location.name}\n\n"
+                "Ce message est genere automatiquement selon vos preferences de rappel."
+            )
         payload.append(
             ClientMessageOut(
                 id=reminder.id,
@@ -1193,6 +1252,7 @@ def list_client_messages(
                 provider_message_id=reminder.provider_message_id,
                 error_message=reminder.error_message,
                 subject_preview=subject_preview,
+                content_preview=content_preview,
             )
         )
 
@@ -1608,6 +1668,22 @@ def list_client_invoices(
         .where(ClientNoteEntry.user_id.in_(managed_client_ids))
         .order_by(ClientNoteEntry.created_at.desc())
     ).all()
+    range_note_ids = [note.id for note in range_notes]
+    payment_keys_by_note_id: dict[UUID, list[str]] = defaultdict(list)
+    if range_note_ids:
+        line_rows = db.execute(
+            select(ClientInvoiceLine.note_id, ClientInvoiceLine.source, ClientInvoiceLine.source_payment_id).where(
+                ClientInvoiceLine.note_id.in_(range_note_ids)
+            )
+        ).all()
+        for note_id, source, source_payment_id in line_rows:
+            source_code = str(source or "").strip().upper()
+            if not source_code or source_payment_id is None:
+                continue
+            normalized_key = f"{source_code}:{source_payment_id}"
+            bucket = payment_keys_by_note_id[note_id]
+            if normalized_key not in bucket:
+                bucket.append(normalized_key)
     for note in range_notes:
         metadata = _parse_invoice_range_note_entry(note)
         if metadata is None:
@@ -1626,6 +1702,14 @@ def list_client_invoices(
             continue
         owner = users_by_id.get(note.user_id)
         owner_display_name = _display_name(owner) if owner is not None else str(note.user_id)
+        payment_keys = _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys"))
+        if note.id in payment_keys_by_note_id:
+            existing = set(payment_keys)
+            for key in payment_keys_by_note_id[note.id]:
+                if key in existing:
+                    continue
+                existing.add(key)
+                payment_keys.append(key)
         invoices.append(
             ClientInvoiceOut(
                 id=f"invoice-range:{note.id}",
@@ -1640,6 +1724,9 @@ def list_client_invoices(
                 currency=currency_code,
                 reference=str(note.id),
                 download_url=f"/client/invoices/invoice-range:{note.id}/download",
+                payment_url=str(metadata.get("payment_url") or "").strip()
+                or _invoice_range_public_payment_url(client_id=note.user_id, note_id=note.id, metadata=metadata),
+                included_payment_keys=payment_keys,
             )
         )
 
@@ -1672,6 +1759,8 @@ def list_client_invoices(
                 currency=payment.currency,
                 reference=payment.reference,
                 download_url=f"/client/invoices/{payment.id}/download",
+                payment_url=payment.payment_url,
+                included_payment_keys=[f"{(payment.source or '').strip().upper()}:{raw_id}"],
             )
         )
 

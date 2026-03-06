@@ -56,7 +56,6 @@ import type {
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProfessorDefaultGridOut,
-  ContactDeliveryStatusOut,
   AuthLoginResponse,
   ClientPaymentCheckoutOut,
   ProfessorPermissionOut,
@@ -2611,7 +2610,7 @@ export async function reactivateAdminClientDeliveryAction(formData: FormData): P
   const reactivateEmail = checkboxFieldWithDefault(formData, "reactivate_email", true);
   const reactivatePhone = checkboxFieldWithDefault(formData, "reactivate_phone", true);
 
-  const result = await backendRequest<ContactDeliveryStatusOut>(
+  const result = await backendRequest<Record<string, unknown>>(
     `/api/v1/admin/notifications/contacts/USER/${clientId}/reactivate`,
     {
       method: "POST",
