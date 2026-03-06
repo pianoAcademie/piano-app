@@ -135,10 +135,17 @@ export type SubscriptionOut = {
   started_at: string;
   ends_at: string | null;
   next_payment_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
   credits_initial: number | null;
   credits_remaining: number | null;
   auto_renew: boolean;
+  bookings_blocked: boolean;
   billing_method_code: string | null;
+  last_successful_charge_at: string | null;
+  payment_alert_started_at: string | null;
+  pre_termination_at: string | null;
+  direct_payment_recovery_url: string | null;
   suspension_starts_at: string | null;
   suspension_ends_at: string | null;
   cancellation_requested_at: string | null;
@@ -508,10 +515,17 @@ export type ClientFamilyOverviewOut = {
     started_at: string;
     ends_at: string | null;
     next_payment_at: string | null;
+    current_period_start: string | null;
+    current_period_end: string | null;
     credits_initial: number | null;
     credits_remaining: number | null;
     auto_renew: boolean;
+    bookings_blocked: boolean;
     billing_method_code: string | null;
+    last_successful_charge_at: string | null;
+    payment_alert_started_at: string | null;
+    pre_termination_at: string | null;
+    direct_payment_recovery_url: string | null;
     suspension_starts_at: string | null;
     suspension_ends_at: string | null;
     cancellation_requested_at: string | null;
@@ -1816,4 +1830,78 @@ export type ContactDeliveryStatusOut = {
   phone_status: string;
   phone_suspended_at: string | null;
   phone_suspension_reason: string | null;
+};
+
+export type AdminSubscriptionEngineRowOut = {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  customer_email: string;
+  plan_id: string;
+  plan_name: string;
+  status: string;
+  bookings_blocked: boolean;
+  next_billing_date: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  last_attempt_at: string | null;
+  last_successful_charge_at: string | null;
+  last_cycle_status: string | null;
+  recovery_url: string | null;
+  amount: string | null;
+  currency: string | null;
+};
+
+export type AdminSubscriptionEngineListOut = {
+  items: AdminSubscriptionEngineRowOut[];
+  total: number;
+};
+
+export type AdminSubscriptionCycleOut = {
+  id: string;
+  period_start: string;
+  period_end: string;
+  billing_date: string;
+  status: string;
+  attempt_count: number;
+  first_attempt_at: string | null;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
+  paid_at: string | null;
+  amount: string;
+  currency: string;
+  payment_recovery_url: string | null;
+};
+
+export type AdminSubscriptionAttemptOut = {
+  id: string;
+  billing_cycle_id: string;
+  attempt_number: number;
+  attempted_at: string;
+  amount: string;
+  currency: string;
+  status: string;
+  provider_name: string | null;
+  provider_payment_id: string | null;
+  provider_status: string | null;
+  failure_code: string | null;
+  failure_reason: string | null;
+};
+
+export type AdminSubscriptionNotificationOut = {
+  id: string;
+  notification_type: string;
+  status: string;
+  recipient_email: string | null;
+  scheduled_for: string;
+  sent_at: string | null;
+  failed_at: string | null;
+  failure_reason: string | null;
+};
+
+export type AdminSubscriptionEngineDetailOut = {
+  subscription: AdminSubscriptionEngineRowOut;
+  cycles: AdminSubscriptionCycleOut[];
+  attempts: AdminSubscriptionAttemptOut[];
+  notifications: AdminSubscriptionNotificationOut[];
 };

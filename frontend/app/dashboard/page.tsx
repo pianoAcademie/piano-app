@@ -535,10 +535,15 @@ function toMoney(amountRaw: string | null | undefined, currencyRaw: string | nul
 }
 
 function isSubscriptionActiveNow(
-  sub: { status: string; started_at: string; ends_at: string | null },
+  sub: { status: string; started_at: string; ends_at: string | null; bookings_blocked?: boolean | null },
   now: Date,
 ): boolean {
-  if (normalizeStatus(sub.status) !== "ACTIVE") {
+  const normalized = normalizeStatus(sub.status);
+  if (normalized === "PAYMENT_ALERT") {
+    if (Boolean(sub.bookings_blocked)) {
+      return false;
+    }
+  } else if (normalized !== "ACTIVE") {
     return false;
   }
   const startedAt = safeDate(sub.started_at);
@@ -1277,6 +1282,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
     .filter((sub) => isSubscriptionActiveNow(sub, now) || isPendingSubscription(sub))
     .sort((a, b) => b.started_at.localeCompare(a.started_at));
+  const subscriptionAlerts = subscriptions
+    .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
+    .filter((sub) => {
+      const normalized = normalizeStatus(sub.status);
+      return normalized === "PAYMENT_ALERT" || normalized === "PRE_TERMINATION";
+    })
+    .sort((a, b) => b.started_at.localeCompare(a.started_at));
+  const hasPreTerminationAlert = subscriptionAlerts.some((sub) => normalizeStatus(sub.status) === "PRE_TERMINATION");
+  const primaryRecoveryUrl = subscriptionAlerts.find((sub) => Boolean(sub.direct_payment_recovery_url))?.direct_payment_recovery_url ?? null;
   const homeSubscriptionsPreview = homeSubscriptions.slice(0, 2);
   const upcomingBookings14 = upcomingBookings.filter((booking) => {
     const start = safeDate(booking.session.start_at_utc);
@@ -1616,6 +1630,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           {globalOkMessage ? <Toast message={globalOkMessage} tone="ok" /> : null}
           {globalErrorMessage ? <section className="flash-err">{globalErrorMessage}</section> : null}
           {errors.length > 0 ? <section className="flash-err">Erreur backend: {errors.join(" | ")}</section> : null}
+          {subscriptionAlerts.length > 0 ? (
+            <section className={hasPreTerminationAlert ? "flash-err" : "flash-warn"}>
+              {hasPreTerminationAlert
+                ? "Votre abonnement est en attente de regularisation. Les nouvelles reservations sont temporairement indisponibles jusqu au paiement."
+                : "Le renouvellement de votre abonnement n a pas pu etre finalise. Vous pouvez regulariser votre paiement des maintenant."}
+              {primaryRecoveryUrl ? (
+                <>
+                  {" "}
+                  <a className="mode-link" href={primaryRecoveryUrl} target="_blank" rel="noreferrer">
+                    Regulariser mon paiement
+                  </a>
+                </>
+              ) : null}
+            </section>
+          ) : null}
 
           {tab === "home" ? (
             <>

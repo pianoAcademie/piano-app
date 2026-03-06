@@ -82,6 +82,18 @@ class Plan(Base):
     monthly_price_excl_vat: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     currency_code: Mapped[str | None] = mapped_column(String(3), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    billing_frequency: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'monthly'"))
+    booking_rights_policy: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    retry_policy_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("subscription_retry_policies.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    notification_policy_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("subscription_notification_policies.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     signup_fee_value: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     signup_fee_excl_vat: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     credit_grants_relation: Mapped[PlanCreditGrantsRelation] = mapped_column(
@@ -176,6 +188,9 @@ class PlanCreditGrant(Base):
 class SubscriptionStatus(str, enum.Enum):
     PENDING = "PENDING"
     ACTIVE = "ACTIVE"
+    PAYMENT_ALERT = "PAYMENT_ALERT"
+    PRE_TERMINATION = "PRE_TERMINATION"
+    TERMINATED = "TERMINATED"
     PAUSED = "PAUSED"
     CANCELLED = "CANCELLED"
     EXPIRED = "EXPIRED"
@@ -200,6 +215,11 @@ class ClientPlanSubscription(Base):
         ForeignKey("plans.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    payer_contact_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status: Mapped[SubscriptionStatus] = mapped_column(
         Enum(
             SubscriptionStatus,
@@ -217,13 +237,20 @@ class ClientPlanSubscription(Base):
     credits_initial: Mapped[int | None] = mapped_column(Integer, nullable=True)
     credits_remaining: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auto_renew: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    bookings_blocked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     billing_method_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     next_payment_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_payment_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_successful_charge_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_payment_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
     payment_provider_subscription_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     payment_provider_customer_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     payment_provider_mandate_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payment_alert_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pre_termination_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    direct_payment_recovery_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     forfait_loyalty_discount_per_hour_ttc: Mapped[float] = mapped_column(
         Numeric(12, 2),
         nullable=False,

@@ -71,6 +71,12 @@ from app.models.plan import (
     PlanRestrictionPeriod,
     SubscriptionStatus,
 )
+from app.models.subscription_engine import (
+    SubscriptionBillingCycle,
+    SubscriptionNotificationPolicy,
+    SubscriptionPaymentAttempt,
+    SubscriptionRetryPolicy,
+)
 from app.models.pricing import CourseTypePrice, PlanPrice, VatRule
 from app.models.professor_access import ProfessorPermission
 from app.models.teacher_invoicing import (
@@ -180,6 +186,10 @@ __all__ = [
     "SessionStatus",
     "SalaryPaymentMethod",
     "SubscriptionStatus",
+    "SubscriptionBillingCycle",
+    "SubscriptionPaymentAttempt",
+    "SubscriptionRetryPolicy",
+    "SubscriptionNotificationPolicy",
     "TeacherInvoice",
     "TeacherInvoiceAuditEvent",
     "TeacherInvoiceLine",

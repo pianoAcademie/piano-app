@@ -1144,10 +1144,17 @@ def get_client_family_overview(
                 started_at=sub.started_at,
                 ends_at=sub.ends_at,
                 next_payment_at=sub.next_payment_at,
+                current_period_start=sub.current_period_start,
+                current_period_end=sub.current_period_end,
                 credits_initial=sub.credits_initial,
                 credits_remaining=sub.credits_remaining,
                 auto_renew=sub.auto_renew,
+                bookings_blocked=bool(sub.bookings_blocked),
                 billing_method_code=sub.billing_method_code,
+                last_successful_charge_at=sub.last_successful_charge_at,
+                payment_alert_started_at=sub.payment_alert_started_at,
+                pre_termination_at=sub.pre_termination_at,
+                direct_payment_recovery_url=sub.direct_payment_recovery_url,
                 suspension_starts_at=sub.suspension_starts_at,
                 suspension_ends_at=sub.suspension_ends_at,
                 cancellation_requested_at=sub.cancellation_requested_at,
@@ -1491,6 +1498,7 @@ def create_client_payment_checkout(
     if subscription.status != SubscriptionStatus.ACTIVE:
         subscription.status = SubscriptionStatus.PENDING
         subscription.auto_renew = False
+        subscription.bookings_blocked = False
     db.add(subscription)
     db.commit()
 
@@ -1557,10 +1565,30 @@ def confirm_client_payment(
         if subscription.last_payment_at is None:
             subscription.last_payment_at = _utcnow()
             changed = True
-        if subscription.status in {SubscriptionStatus.PENDING, SubscriptionStatus.PAUSED, SubscriptionStatus.ACTIVE}:
+        subscription.last_successful_charge_at = subscription.last_payment_at
+        if subscription.status in {
+            SubscriptionStatus.PENDING,
+            SubscriptionStatus.PAUSED,
+            SubscriptionStatus.ACTIVE,
+            SubscriptionStatus.PAYMENT_ALERT,
+            SubscriptionStatus.PRE_TERMINATION,
+            SubscriptionStatus.TERMINATED,
+        }:
             if subscription.status != SubscriptionStatus.ACTIVE:
                 subscription.status = SubscriptionStatus.ACTIVE
                 changed = True
+        if subscription.bookings_blocked:
+            subscription.bookings_blocked = False
+            changed = True
+        if subscription.payment_alert_started_at is not None:
+            subscription.payment_alert_started_at = None
+            changed = True
+        if subscription.pre_termination_at is not None:
+            subscription.pre_termination_at = None
+            changed = True
+        if subscription.direct_payment_recovery_url is not None:
+            subscription.direct_payment_recovery_url = None
+            changed = True
         if plan.kind == PlanKind.SUBSCRIPTION:
             billing_method_code = (subscription.billing_method_code or "").strip().upper()
             has_customer_ref = bool((subscription.payment_provider_customer_ref or "").strip())

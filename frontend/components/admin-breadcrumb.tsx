@@ -39,6 +39,9 @@ function labelForSegment(segment: string, previous: string): string | null {
   if (segment === "salary-payments") {
     return "Paiement des salaires";
   }
+  if (segment === "subscriptions") {
+    return "Abonnements";
+  }
   if (segment === "communications") {
     return "Communications";
   }

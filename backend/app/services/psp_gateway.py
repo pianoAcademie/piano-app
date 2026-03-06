@@ -16,6 +16,7 @@ class RecurringChargeRequest:
     description: str
     customer_reference: str | None
     mandate_reference: str | None
+    idempotency_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,7 @@ class MollieGateway(PaymentGateway):
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
+                **({"Idempotency-Key": payload.idempotency_key} if payload.idempotency_key else {}),
             },
         )
         try:

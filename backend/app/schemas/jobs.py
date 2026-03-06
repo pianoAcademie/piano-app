@@ -37,6 +37,36 @@ class SubscriptionBillingJobResponse(BaseModel):
     charged: int
     skipped: int
     failed: int
+    processed: int | None = None
+    first_failures: int | None = None
+    final_failures: int | None = None
+    job_run_id: str | None = None
+
+
+class SubscriptionCycleGenerationJobResponse(BaseModel):
+    checked: int
+    created: int
+    skipped: int
+    failed: int
+    job_run_id: str
+
+
+class SubscriptionRetryJobResponse(BaseModel):
+    checked: int
+    recovered: int
+    skipped: int
+    failed: int
+    final_failures: int
+    processed: int
+    job_run_id: str
+
+
+class SubscriptionRecoveryReconciliationJobResponse(BaseModel):
+    checked: int
+    reconciled: int
+    skipped: int
+    failed: int
+    job_run_id: str
 
 
 class AutoInvoiceBillingJobResponse(BaseModel):

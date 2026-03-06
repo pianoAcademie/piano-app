@@ -15,6 +15,9 @@ from app.schemas.jobs import (
     ProfessorDailyDigestJobResponse,
     ReminderJobResponse,
     SubscriptionBillingJobResponse,
+    SubscriptionCycleGenerationJobResponse,
+    SubscriptionRecoveryReconciliationJobResponse,
+    SubscriptionRetryJobResponse,
 )
 from app.services.auto_invoice_billing import run_auto_invoice_billing_job
 from app.services.jobs.application.notification_jobs import (
@@ -25,7 +28,12 @@ from app.services.jobs.application.notification_jobs import (
 )
 from app.services.professor_daily_digest import run_send_professor_daily_digest_job
 from app.services.payouts import run_calc_professor_payouts_job
-from app.services.subscription_billing import run_subscription_billing_job
+from app.services.subscription_billing import (
+    run_subscription_billing_job,
+    run_subscription_cycle_generation_job,
+    run_subscription_recovery_reconciliation_job,
+    run_subscription_retry_job,
+)
 from app.services.session_automation import run_auto_cancel_empty_sessions_job
 
 router = APIRouter(prefix="/internal/jobs")
@@ -121,6 +129,66 @@ def run_subscription_billing(
         charged=result.charged,
         skipped=result.skipped,
         failed=result.failed,
+        processed=result.processed,
+        first_failures=result.first_failures,
+        final_failures=result.final_failures,
+        job_run_id=str(result.job_run_id),
+    )
+
+
+@router.post("/run-subscription-cycle-generation", response_model=SubscriptionCycleGenerationJobResponse)
+def run_subscription_cycle_generation(
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> SubscriptionCycleGenerationJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_subscription_cycle_generation_job(db, now=now, limit=limit)
+    db.commit()
+    return SubscriptionCycleGenerationJobResponse(
+        checked=result.checked,
+        created=result.created,
+        skipped=result.skipped,
+        failed=result.failed,
+        job_run_id=str(result.job_run_id),
+    )
+
+
+@router.post("/run-subscription-retry", response_model=SubscriptionRetryJobResponse)
+def run_subscription_retry(
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> SubscriptionRetryJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_subscription_retry_job(db, now=now, limit=limit)
+    db.commit()
+    return SubscriptionRetryJobResponse(
+        checked=result.checked,
+        recovered=result.recovered,
+        skipped=result.skipped,
+        failed=result.failed,
+        final_failures=result.final_failures,
+        processed=result.processed,
+        job_run_id=str(result.job_run_id),
+    )
+
+
+@router.post("/run-subscription-recovery-reconciliation", response_model=SubscriptionRecoveryReconciliationJobResponse)
+def run_subscription_recovery_reconciliation(
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> SubscriptionRecoveryReconciliationJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_subscription_recovery_reconciliation_job(db, now=now, limit=limit)
+    db.commit()
+    return SubscriptionRecoveryReconciliationJobResponse(
+        checked=result.checked,
+        reconciled=result.reconciled,
+        skipped=result.skipped,
+        failed=result.failed,
+        job_run_id=str(result.job_run_id),
     )
 
 

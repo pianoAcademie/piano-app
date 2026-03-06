@@ -45,10 +45,17 @@ class ClientSubscriptionOut(BaseModel):
     started_at: datetime
     ends_at: datetime | None
     next_payment_at: datetime | None = None
+    current_period_start: datetime | None = None
+    current_period_end: datetime | None = None
     credits_initial: int | None
     credits_remaining: int | None
     auto_renew: bool
+    bookings_blocked: bool = False
     billing_method_code: str | None = None
+    last_successful_charge_at: datetime | None = None
+    payment_alert_started_at: datetime | None = None
+    pre_termination_at: datetime | None = None
+    direct_payment_recovery_url: str | None = None
     suspension_starts_at: datetime | None = None
     suspension_ends_at: datetime | None = None
     cancellation_requested_at: datetime | None = None

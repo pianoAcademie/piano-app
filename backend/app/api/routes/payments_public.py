@@ -108,8 +108,20 @@ async def payment_webhook(
             if mandate_reference:
                 sub.payment_provider_mandate_ref = mandate_reference
             sub.last_payment_at = _utcnow()
-            if sub.status in {SubscriptionStatus.PENDING, SubscriptionStatus.PAUSED, SubscriptionStatus.ACTIVE}:
+            sub.last_successful_charge_at = sub.last_payment_at
+            if sub.status in {
+                SubscriptionStatus.PENDING,
+                SubscriptionStatus.PAUSED,
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.PAYMENT_ALERT,
+                SubscriptionStatus.PRE_TERMINATION,
+                SubscriptionStatus.TERMINATED,
+            }:
                 sub.status = SubscriptionStatus.ACTIVE
+            sub.bookings_blocked = False
+            sub.payment_alert_started_at = None
+            sub.pre_termination_at = None
+            sub.direct_payment_recovery_url = None
             if plan.kind == PlanKind.SUBSCRIPTION:
                 billing_method_code = (sub.billing_method_code or "").strip().upper()
                 has_customer_ref = bool((sub.payment_provider_customer_ref or "").strip())

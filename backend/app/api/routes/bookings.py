@@ -31,7 +31,7 @@ from app.services.notifications.application.orchestrator import (
 )
 from app.services.pricing import resolve_vat_rate
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
-from app.services.subscriptions import reconcile_subscription_status
+from app.services.subscriptions import can_book_with_subscription, reconcile_subscription_status
 
 router = APIRouter()
 
@@ -168,7 +168,7 @@ def _waitlist_position(db: Session, booking: Booking) -> int | None:
 def _is_subscription_active(subscription: ClientPlanSubscription, plan: Plan, now: datetime) -> bool:
     if not plan.active:
         return False
-    if subscription.status != SubscriptionStatus.ACTIVE:
+    if not can_book_with_subscription(subscription, allow_booking_during_payment_alert=True):
         return False
     if subscription.cancellation_effective_at is not None and now >= subscription.cancellation_effective_at:
         return False
@@ -567,7 +567,11 @@ def _select_eligible_subscription(
         )
         .where(
             ClientPlanSubscription.user_id == user_id,
-            ClientPlanSubscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED]),
+            ClientPlanSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.PAYMENT_ALERT,
+                SubscriptionStatus.PAUSED,
+            ]),
             ClientPlanSubscription.started_at <= now,
             or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
             Plan.active.is_(True),

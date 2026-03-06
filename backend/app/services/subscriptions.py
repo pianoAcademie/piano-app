@@ -14,7 +14,7 @@ def utcnow() -> datetime:
 
 
 def add_months_utc(value: datetime, months: int) -> datetime:
-    if months <= 0:
+    if months == 0:
         return value
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
@@ -34,6 +34,31 @@ def add_duration(value: datetime, *, unit: SuspensionUnit, amount: int) -> datet
 
 def default_next_payment_at(started_at: datetime) -> datetime:
     return add_months_utc(started_at, 1)
+
+
+def can_book_with_subscription(
+    subscription: ClientPlanSubscription,
+    *,
+    allow_booking_during_payment_alert: bool = True,
+) -> bool:
+    if bool(subscription.bookings_blocked):
+        return False
+
+    status = subscription.status
+    if status == SubscriptionStatus.ACTIVE:
+        return True
+    if status == SubscriptionStatus.PAYMENT_ALERT:
+        return bool(allow_booking_during_payment_alert)
+    if status in {
+        SubscriptionStatus.PRE_TERMINATION,
+        SubscriptionStatus.TERMINATED,
+        SubscriptionStatus.PAUSED,
+        SubscriptionStatus.CANCELLED,
+        SubscriptionStatus.EXPIRED,
+        SubscriptionStatus.PENDING,
+    }:
+        return False
+    return False
 
 
 def compute_suspension_end(start_at: datetime, *, unit: SuspensionUnit, amount: int) -> datetime:
@@ -123,6 +148,10 @@ def reconcile_subscription_status(subscription: ClientPlanSubscription, *, now: 
         if plan_kind == PlanKind.SUBSCRIPTION:
             subscription.status = SubscriptionStatus.ACTIVE
             changed = True
+
+    if subscription.status == SubscriptionStatus.PRE_TERMINATION and not subscription.bookings_blocked:
+        subscription.bookings_blocked = True
+        changed = True
 
     if (
         plan_kind == PlanKind.SUBSCRIPTION
