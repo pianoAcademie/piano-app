@@ -132,8 +132,8 @@ jobs:
                 echo \"Skip optional service check: \$svc (not defined)\"
                 continue
               fi
-              running=\$(docker compose ps --format json \"\$svc\" | python3 -c 'import json,sys; rows=json.load(sys.stdin); print("ok" if rows and rows[0].get("State")=="running" else "ko")')
-              [ \"\$running\" = \"ok\" ] || { echo \"Service not running: \$svc\"; docker compose ps \"\$svc\"; exit 1; }
+              running=\$(docker compose ps --services --status running | grep -x \"\$svc\" || true)
+              [ -n \"\$running\" ] || { echo \"Service not running: \$svc\"; docker compose ps \"\$svc\"; exit 1; }
             done
           "
 
