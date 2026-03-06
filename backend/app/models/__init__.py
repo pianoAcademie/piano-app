@@ -1,6 +1,8 @@
 from app.models.family import ClientFamilyLink
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
+    ClientAutoInvoiceOccurrence,
+    ClientAutoInvoiceRule,
     ClientInvoiceLine,
     ClientManualCreditBalance,
     ClientManualTransaction,
@@ -33,7 +35,27 @@ from app.models.ops import (
     ProfessorSessionMessage,
     ReminderStatus,
 )
-from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSalaryPayment, ProfessorSessionPayout, SalaryPaymentMethod
+from app.models.notification_engine import (
+    AdminNotificationSetting,
+    ContactDeliveryIncident,
+    ContactDeliveryStatus,
+    DomainEvent,
+    JobCursor,
+    JobRun,
+    JobRunLog,
+    Notification,
+    NotificationRule,
+)
+from app.models.payout import (
+    PayoutStatus,
+    ProfessorHourlyRate,
+    ProfessorPayGridBracket,
+    ProfessorPayGridPeriod,
+    ProfessorPayGridRule,
+    ProfessorSalaryPayment,
+    ProfessorSessionPayout,
+    SalaryPaymentMethod,
+)
 from app.models.professor_contract import (
     ProfessorContractGrid,
     ProfessorContractGridLine,
@@ -87,6 +109,8 @@ __all__ = [
     "CommunicationSenderCategory",
     "CreditType",
     "ClientFamilyLink",
+    "ClientAutoInvoiceOccurrence",
+    "ClientAutoInvoiceRule",
     "ClientGroup",
     "ClientGroupMembership",
     "ClientKind",
@@ -102,6 +126,7 @@ __all__ = [
     "CourseType",
     "CourseTypePrice",
     "DeliveryMode",
+    "DomainEvent",
     "DocumentTemplate",
     "EmailReminder",
     "Location",
@@ -115,8 +140,13 @@ __all__ = [
     "PlanRestrictionPeriod",
     "PlanPrice",
     "PasswordResetToken",
+    "Notification",
+    "NotificationRule",
     "Professor",
     "ProfessorHourlyRate",
+    "ProfessorPayGridPeriod",
+    "ProfessorPayGridRule",
+    "ProfessorPayGridBracket",
     "ProfessorContractGrid",
     "ProfessorContractGridLine",
     "ProfessorContractGridLineRule",
@@ -139,6 +169,12 @@ __all__ = [
     "StockMovementSourceType",
     "StockMovementType",
     "ProductTransferStatus",
+    "ContactDeliveryStatus",
+    "ContactDeliveryIncident",
+    "JobRun",
+    "JobRunLog",
+    "JobCursor",
+    "AdminNotificationSetting",
     "MessageFormat",
     "ReminderStatus",
     "SessionStatus",

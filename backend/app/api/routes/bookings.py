@@ -24,6 +24,11 @@ from app.models.plan import (
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.booking import BookingCreateRequest, BookingOut, ClientBookingOut, SessionMiniOut
 from app.services.family_billing import resolve_billing_profile
+from app.services.notifications.application.orchestrator import (
+    enqueue_notifications,
+    schedule_booking_cancelled_notifications,
+    schedule_booking_created_notifications,
+)
 from app.services.pricing import resolve_vat_rate
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.subscriptions import reconcile_subscription_status
@@ -776,6 +781,7 @@ def book_session(
     current_user: User = Depends(require_roles(UserRole.CLIENT)),
 ) -> BookingOut:
     now = _utcnow()
+    orchestrated_notifications = []
     payload = payload or BookingCreateRequest()
     booking_owner = _resolve_family_booking_owner(
         db,
@@ -887,6 +893,14 @@ def book_session(
                 session_obj=session_obj,
                 now=now,
             )
+            orchestrated_notifications.extend(
+                schedule_booking_created_notifications(
+                    db,
+                    booking=existing,
+                    actor_user_id=current_user.id,
+                    occurred_at=now,
+                )
+            )
         else:
             skip_pending_reminders_for_booking(
                 db,
@@ -896,6 +910,8 @@ def book_session(
             )
 
         db.commit()
+        if orchestrated_notifications:
+            enqueue_notifications(orchestrated_notifications)
         db.refresh(existing)
 
         return BookingOut(
@@ -952,8 +968,18 @@ def book_session(
             session_obj=session_obj,
             now=now,
         )
+        orchestrated_notifications.extend(
+            schedule_booking_created_notifications(
+                db,
+                booking=booking,
+                actor_user_id=current_user.id,
+                occurred_at=now,
+            )
+        )
 
     db.commit()
+    if orchestrated_notifications:
+        enqueue_notifications(orchestrated_notifications)
     db.refresh(booking)
 
     return BookingOut(
@@ -1040,8 +1066,15 @@ def cancel_booking(
         reason="Booking cancelled by client",
         now=now,
     )
-
+    orchestrated_notifications = schedule_booking_cancelled_notifications(
+        db,
+        booking=booking,
+        actor_user_id=current_user.id,
+        occurred_at=now,
+    )
     db.commit()
+    if orchestrated_notifications:
+        enqueue_notifications(orchestrated_notifications)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

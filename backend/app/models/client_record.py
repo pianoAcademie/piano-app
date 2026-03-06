@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -207,6 +207,90 @@ class ClientInvoiceLine(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
+class ClientAutoInvoiceRule(Base):
+    __tablename__ = "client_auto_invoice_rules"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    legal_entity_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    cycle_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    frequency: Mapped[str] = mapped_column(String(20), nullable=False)
+    billing_timing: Mapped[str] = mapped_column(String(30), nullable=False)
+    due_date_rule_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    due_date_days_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    include_pending_lines: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    include_cancelled_lines: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    next_run_date: Mapped[date] = mapped_column(Date, nullable=False)
+    last_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'ACTIVE'"))
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    updated_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+
+class ClientAutoInvoiceOccurrence(Base):
+    __tablename__ = "client_auto_invoice_occurrences"
+    __table_args__ = (
+        UniqueConstraint("rule_id", "cycle_key", name="uq_client_auto_invoice_occurrence_rule_cycle"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    rule_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("client_auto_invoice_rules.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    cycle_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    period_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'GENERATED'"))
+    note_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("client_note_entries.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),

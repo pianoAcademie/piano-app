@@ -181,6 +181,7 @@ class ClientMessageOut(BaseModel):
     provider_message_id: str | None
     error_message: str | None
     subject_preview: str
+    content_preview: str | None = None
 
 
 class ClientPaymentOut(BaseModel):
@@ -215,6 +216,8 @@ class ClientInvoiceOut(BaseModel):
     currency: str
     reference: str | None
     download_url: str | None = None
+    payment_url: str | None = None
+    included_payment_keys: list[str] = Field(default_factory=list)
 
 
 class ClientPaymentCheckoutOut(BaseModel):

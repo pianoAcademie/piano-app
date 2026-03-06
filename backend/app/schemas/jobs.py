@@ -37,3 +37,20 @@ class SubscriptionBillingJobResponse(BaseModel):
     charged: int
     skipped: int
     failed: int
+
+
+class AutoInvoiceBillingJobResponse(BaseModel):
+    checked: int
+    generated: int
+    skipped_empty: int
+    skipped_duplicate: int
+    failed: int
+
+
+class NotificationEngineJobResponse(BaseModel):
+    checked: int
+    processed: int
+    sent: int
+    skipped: int
+    failed: int
+    job_run_id: str

@@ -24,6 +24,7 @@ import {
   sendAdminClientPasswordAction,
   setFamilyBillingRecipientAction,
   setupAdminClientSubscriptionBillingAction,
+  reactivateAdminClientDeliveryAction,
   suspendAdminClientSubscriptionAction,
   unlinkFamilyMembersAction,
   updateAdminClientForfaitPricingAction,
@@ -46,6 +47,7 @@ import {
 import ManualTransactionNonCashFlowFields from "../../../../components/manual-transaction-noncashflow-fields";
 import ManualTransactionLegalEntityFields from "../../../../components/manual-transaction-legal-entity-fields";
 import RichMessageEditor from "../../../../components/rich-message-editor";
+import ModalFirstErrorFocus from "../../../../components/modal-first-error-focus";
 import type {
   AdminClientBookingOut,
   AdminClientFamilyOut,
@@ -96,6 +98,27 @@ function parseToggleParam(value: string, fallback: boolean): boolean {
     return false;
   }
   return fallback;
+}
+
+function parseInvoiceFieldErrors(raw: string): Record<string, string> {
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const normalizedKey = String(key || "").trim();
+      const normalizedValue = String(value || "").trim();
+      if (!normalizedKey || !normalizedValue) {
+        continue;
+      }
+      out[normalizedKey] = normalizedValue;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 function cloneSearchParams(params: SearchParams): URLSearchParams {
@@ -165,6 +188,30 @@ function addMonths(value: Date, months: number): Date {
   const daysInMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
   next.setDate(Math.min(sourceDay, daysInMonth));
   return next;
+}
+
+function addYears(value: Date, years: number): Date {
+  return addMonths(value, years * 12);
+}
+
+function addFrequency(value: Date, frequency: "MONTHLY" | "QUARTERLY" | "YEARLY"): Date {
+  if (frequency === "QUARTERLY") {
+    return addMonths(value, 3);
+  }
+  if (frequency === "YEARLY") {
+    return addYears(value, 1);
+  }
+  return addMonths(value, 1);
+}
+
+function subtractFrequency(value: Date, frequency: "MONTHLY" | "QUARTERLY" | "YEARLY"): Date {
+  if (frequency === "QUARTERLY") {
+    return addMonths(value, -3);
+  }
+  if (frequency === "YEARLY") {
+    return addYears(value, -1);
+  }
+  return addMonths(value, -1);
 }
 
 function formatDateForInput(value: string | null | undefined, fallback: string): string {
@@ -548,7 +595,7 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
           : "MONTHLY",
       auto_repeat_every:
         typeof payload.auto_repeat_every === "number" && Number.isFinite(payload.auto_repeat_every)
-          ? Math.max(1, Math.min(6, Math.trunc(payload.auto_repeat_every)))
+          ? Math.max(1, Math.min(12, Math.trunc(payload.auto_repeat_every)))
           : 1,
       auto_layout_style:
         typeof payload.auto_layout_style === "string" && payload.auto_layout_style.trim().toUpperCase() === "CONDENSED"
@@ -857,14 +904,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceIncludeDiscountRaw = readParam(searchParams, "include_discount_adjustments");
   const invoiceIncludeSupplementRaw = readParam(searchParams, "include_supplement_adjustments");
   const invoiceAutoCycleStartRaw = readParam(searchParams, "auto_cycle_start_date").trim();
-  const invoiceAutoPeriodScopeRaw = readParam(searchParams, "auto_period_scope").trim().toUpperCase();
   const invoiceAutoFrequencyRaw = readParam(searchParams, "auto_frequency").trim().toUpperCase();
-  const invoiceAutoRepeatEveryRaw = readParam(searchParams, "auto_repeat_every").trim();
-  const invoiceAutoLayoutStyleRaw = readParam(searchParams, "auto_layout_style").trim().toUpperCase();
-  const invoiceAutoIncludePreviousBalanceRaw = readParam(searchParams, "auto_include_previous_balance");
-  const invoiceAutoSendEmailRaw = readParam(searchParams, "auto_send_email");
-  const invoiceAutoExcludePackRaw = readParam(searchParams, "auto_exclude_pack_subscription_lines");
-  const invoiceAutoFooterNoteRaw = readParam(searchParams, "auto_footer_note");
+  const invoiceAutoBillingTimingRaw = readParam(searchParams, "auto_billing_timing").trim().toUpperCase();
+  const invoiceAutoDueDateRuleTypeRaw = readParam(searchParams, "auto_due_date_rule_type").trim().toUpperCase();
+  const invoiceAutoDueDateDaysOffsetRaw = readParam(searchParams, "auto_due_date_days_offset").trim();
+  const invoiceAutoLegalEntityIdRaw = readParam(searchParams, "auto_legal_entity_id").trim();
   const invoicePublicNoteRaw = readParam(searchParams, "public_note");
   const invoicePrivateNoteRaw = readParam(searchParams, "private_note");
   const manualTransactionModalTypeRaw = readParam(searchParams, "manual_type").toLowerCase();
@@ -979,18 +1023,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceAutoCycleStartDateInputValue = isDateInput(invoiceAutoCycleStartRaw)
     ? invoiceAutoCycleStartRaw
     : nextMonthCycleStartInputValue;
-  const invoiceAutoPeriodScope = invoiceAutoPeriodScopeRaw === "FUTURE" ? "FUTURE" : "PAST";
-  const invoiceAutoFrequency = invoiceAutoFrequencyRaw === "WEEKLY" ? "WEEKLY" : "MONTHLY";
-  const invoiceAutoRepeatEveryParsed = Number.parseInt(invoiceAutoRepeatEveryRaw, 10);
-  const invoiceAutoRepeatEvery =
-    Number.isFinite(invoiceAutoRepeatEveryParsed) && invoiceAutoRepeatEveryParsed >= 1 && invoiceAutoRepeatEveryParsed <= 6
-      ? invoiceAutoRepeatEveryParsed
-      : 1;
-  const invoiceAutoLayoutStyle = invoiceAutoLayoutStyleRaw === "CONDENSED" ? "CONDENSED" : "NORMAL";
-  const invoiceAutoIncludePreviousBalance = parseToggleParam(invoiceAutoIncludePreviousBalanceRaw, true);
-  const invoiceAutoSendEmail = parseToggleParam(invoiceAutoSendEmailRaw, false);
-  const invoiceAutoExcludePackSubscriptionLines = parseToggleParam(invoiceAutoExcludePackRaw, true);
-  const invoiceAutoFooterNote = invoiceAutoFooterNoteRaw;
+  const invoiceAutoFrequency: "MONTHLY" | "QUARTERLY" | "YEARLY" =
+    invoiceAutoFrequencyRaw === "QUARTERLY" || invoiceAutoFrequencyRaw === "YEARLY" ? invoiceAutoFrequencyRaw : "MONTHLY";
+  const invoiceAutoBillingTiming: "UPCOMING_LESSONS" | "PREVIOUS_LESSONS" =
+    invoiceAutoBillingTimingRaw === "PREVIOUS_LESSONS" ? "PREVIOUS_LESSONS" : "UPCOMING_LESSONS";
+  const invoiceAutoDueDateRuleType: "SAME_DAY_ISSUE" | "X_DAYS_AFTER_ISSUE" =
+    invoiceAutoDueDateRuleTypeRaw === "X_DAYS_AFTER_ISSUE" ? "X_DAYS_AFTER_ISSUE" : "SAME_DAY_ISSUE";
+  const invoiceAutoDueDateDaysOffsetParsed = Number.parseInt(invoiceAutoDueDateDaysOffsetRaw, 10);
+  const invoiceAutoDueDateDaysOffset =
+    Number.isFinite(invoiceAutoDueDateDaysOffsetParsed) && invoiceAutoDueDateDaysOffsetParsed >= 0
+      ? invoiceAutoDueDateDaysOffsetParsed
+      : 10;
+  const invoiceAutoLegalEntityId = invoiceAutoLegalEntityIdRaw;
   const invoicePublicNote = invoicePublicNoteRaw;
   const invoicePrivateNote = invoicePrivateNoteRaw;
   const manualAmountParsed = Number(manualAmountRaw);
@@ -1464,8 +1508,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .join(", ");
   const openManualTransactionWizard = paymentModalAction === "manual";
   const openInvoiceRangeWizard = paymentModalAction === "invoice_range" && (currentTab === "paiements" || currentTab === "factures");
-  const openInvoiceRangeStepOne = openInvoiceRangeWizard && invoiceWizardStep === 1;
-  const openInvoiceRangeStepTwo = openInvoiceRangeWizard && invoiceWizardStep === 2;
   const manualTransactionSelectedType = manualTransactionModalType ?? "payment";
   const manualWizardStep = manualStepRaw === "2" && manualTransactionModalType !== null ? 2 : 1;
   const openManualTransactionStepOne = openManualTransactionWizard && manualWizardStep === 1;
@@ -1652,6 +1694,58 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
+  const invoiceErrorGlobal = readParam(searchParams, "invoice_error_global");
+  const invoiceErrorFieldPayload = readParam(searchParams, "invoice_error_fields");
+  const invoiceQueryFieldErrors = parseInvoiceFieldErrors(invoiceErrorFieldPayload);
+  const invoiceStepValidationErrors: Record<string, string> = {};
+  if (openInvoiceRangeWizard && invoiceGenerationMode === "MANUAL" && invoiceWizardStep === 2) {
+    const issuedDateForValidation = invoiceIssuedDateRaw.trim();
+    const startDateForValidation = invoiceStartDateRaw.trim();
+    const endDateForValidation = invoiceEndDateRaw.trim();
+    const dueDateForValidation = invoiceDueDateRaw.trim();
+    if (!isDateInput(issuedDateForValidation)) {
+      invoiceStepValidationErrors.issued_date = "Date d emission obligatoire.";
+    }
+    if (!isDateInput(startDateForValidation)) {
+      invoiceStepValidationErrors.start_date = "Date de debut obligatoire.";
+    }
+    if (!isDateInput(endDateForValidation)) {
+      invoiceStepValidationErrors.end_date = "Date de fin obligatoire.";
+    }
+    if (!invoiceNoDueDate && !isDateInput(dueDateForValidation)) {
+      invoiceStepValidationErrors.due_date = "Date d echeance obligatoire.";
+    }
+    if (isDateInput(startDateForValidation) && isDateInput(endDateForValidation)) {
+      const startMs = Date.parse(`${startDateForValidation}T00:00:00.000Z`);
+      const endMs = Date.parse(`${endDateForValidation}T00:00:00.000Z`);
+      if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs < startMs) {
+        invoiceStepValidationErrors.end_date = "La date de fin doit etre apres la date de debut.";
+      }
+    }
+    const dueInputForCheck = invoiceNoDueDate ? issuedDateForValidation : dueDateForValidation;
+    if (isDateInput(issuedDateForValidation) && isDateInput(dueInputForCheck)) {
+      const issuedMs = Date.parse(`${issuedDateForValidation}T00:00:00.000Z`);
+      const dueMs = Date.parse(`${dueInputForCheck}T00:00:00.000Z`);
+      if (Number.isFinite(issuedMs) && Number.isFinite(dueMs) && dueMs < issuedMs) {
+        invoiceStepValidationErrors.due_date = "La date d echeance doit etre apres la date d emission.";
+      }
+    }
+  }
+  const invoiceErrorFieldMap = { ...invoiceStepValidationErrors, ...invoiceQueryFieldErrors };
+  const hasInvoiceStepValidationErrors = Object.keys(invoiceStepValidationErrors).length > 0;
+  const invoiceLegacyGlobalError = openInvoiceRangeWizard ? errorMessage : "";
+  const invoiceModalGlobalError =
+    invoiceErrorGlobal ||
+    invoiceLegacyGlobalError ||
+    (hasInvoiceStepValidationErrors ? "Veuillez corriger les champs en erreur." : "");
+  const pageLevelErrorMessage = openInvoiceRangeWizard ? "" : errorMessage;
+  const invoiceErrorFields = Object.keys(invoiceErrorFieldMap);
+  const invoiceFirstInvalidField = invoiceErrorFields.length > 0 ? invoiceErrorFields[0] : null;
+  const openInvoiceRangeStepOne =
+    openInvoiceRangeWizard &&
+    (invoiceGenerationMode === "AUTO" || invoiceWizardStep === 1 || hasInvoiceStepValidationErrors);
+  const openInvoiceRangeStepTwo =
+    openInvoiceRangeWizard && invoiceGenerationMode === "MANUAL" && invoiceWizardStep === 2 && !hasInvoiceStepValidationErrors;
 
   const linkedChildren = family.links_as_adult;
   const linkedAdults = family.links_as_child;
@@ -1754,6 +1848,92 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         payment_filter_amount: paymentFilterAmountRaw,
       })
     : tabHref(client.id, "factures");
+  const invoiceAutoLegalEntityIdInputValue =
+    legalEntities.some((entity) => entity.id === invoiceAutoLegalEntityId) ? invoiceAutoLegalEntityId : legalEntities[0]?.id ?? "";
+  const invoiceAutoNextRunInputValue = (() => {
+    const cycleStartDate = new Date(`${invoiceAutoCycleStartDateInputValue}T00:00:00.000Z`);
+    const todayDate = new Date(`${todayInputValue}T00:00:00.000Z`);
+    if (Number.isNaN(cycleStartDate.getTime())) {
+      return invoiceAutoCycleStartDateInputValue;
+    }
+    let nextRun = cycleStartDate;
+    let guard = 0;
+    while (nextRun.getTime() < todayDate.getTime() && guard < 240) {
+      nextRun = addFrequency(nextRun, invoiceAutoFrequency);
+      guard += 1;
+    }
+    return formatDateInput(nextRun);
+  })();
+  const invoiceAutoPreviewPeriodInputValues = (() => {
+    const nextRunDate = new Date(`${invoiceAutoNextRunInputValue}T00:00:00.000Z`);
+    if (Number.isNaN(nextRunDate.getTime())) {
+      return {
+        startDate: invoiceAutoCycleStartDateInputValue,
+        endDate: invoiceAutoCycleStartDateInputValue,
+      };
+    }
+    if (invoiceAutoBillingTiming === "PREVIOUS_LESSONS") {
+      const startDate = subtractFrequency(nextRunDate, invoiceAutoFrequency);
+      const endDate = nextRunDate;
+      return {
+        startDate: formatDateInput(startDate),
+        endDate: formatDateInput(endDate),
+      };
+    }
+    const endDate = addFrequency(nextRunDate, invoiceAutoFrequency);
+    return {
+      startDate: formatDateInput(nextRunDate),
+      endDate: formatDateInput(endDate),
+    };
+  })();
+  const invoiceAutoPreviewDueDateInputValue = (() => {
+    const issueDate = new Date(`${invoiceAutoNextRunInputValue}T00:00:00.000Z`);
+    if (Number.isNaN(issueDate.getTime())) {
+      return invoiceAutoNextRunInputValue;
+    }
+    if (invoiceAutoDueDateRuleType === "X_DAYS_AFTER_ISSUE") {
+      return formatDateInput(addDays(issueDate, invoiceAutoDueDateDaysOffset));
+    }
+    return formatDateInput(issueDate);
+  })();
+  const invoiceWizardModeHref = (mode: "MANUAL" | "AUTO"): string => {
+    const params: Record<string, string> = {
+      payment_modal: "invoice_range",
+      payment_return_tab: paymentReturnTab,
+      invoice_step: "1",
+      generation_mode: mode,
+      issued_date: invoiceIssuedDateInputValue,
+      start_date: invoiceStartDateInputValue,
+      end_date: invoiceEndDateInputValue,
+      due_date: invoiceDueDateInputValue,
+      no_due_date: invoiceNoDueDate ? "true" : "false",
+      include_pending: invoiceIncludePending ? "true" : "false",
+      include_cancelled: invoiceIncludeCancelled ? "true" : "false",
+      layout: invoiceLayout,
+      group_adjustments_by_type: invoiceGroupAdjustmentsByType ? "true" : "false",
+      include_discount_adjustments: invoiceIncludeDiscountAdjustments ? "true" : "false",
+      include_supplement_adjustments: invoiceIncludeSupplementAdjustments ? "true" : "false",
+      auto_cycle_start_date: invoiceAutoCycleStartDateInputValue,
+      auto_frequency: invoiceAutoFrequency,
+      auto_billing_timing: invoiceAutoBillingTiming,
+      auto_due_date_rule_type: invoiceAutoDueDateRuleType,
+      auto_due_date_days_offset: String(invoiceAutoDueDateDaysOffset),
+      auto_legal_entity_id: invoiceAutoLegalEntityIdInputValue,
+      public_note: invoicePublicNote,
+      private_note: invoicePrivateNote,
+    };
+    if (paymentReturnTab === "paiements") {
+      params.balance_date = selectedBalanceDate;
+      if (paymentFilterQuery) {
+        params.payment_filter_q = paymentFilterQuery;
+      }
+      if (paymentFilterAmountRaw) {
+        params.payment_filter_amount = paymentFilterAmountRaw;
+      }
+      return paymentsHref(client.id, params);
+    }
+    return invoicesHref(client.id, params);
+  };
   const invoiceWizardBackToStepOneHref = (() => {
     const params: Record<string, string> = {
       payment_modal: "invoice_range",
@@ -1772,14 +1952,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       include_discount_adjustments: invoiceIncludeDiscountAdjustments ? "true" : "false",
       include_supplement_adjustments: invoiceIncludeSupplementAdjustments ? "true" : "false",
       auto_cycle_start_date: invoiceAutoCycleStartDateInputValue,
-      auto_period_scope: invoiceAutoPeriodScope,
       auto_frequency: invoiceAutoFrequency,
-      auto_repeat_every: String(invoiceAutoRepeatEvery),
-      auto_layout_style: invoiceAutoLayoutStyle,
-      auto_include_previous_balance: invoiceAutoIncludePreviousBalance ? "true" : "false",
-      auto_send_email: invoiceAutoSendEmail ? "true" : "false",
-      auto_exclude_pack_subscription_lines: invoiceAutoExcludePackSubscriptionLines ? "true" : "false",
-      auto_footer_note: invoiceAutoFooterNote,
+      auto_billing_timing: invoiceAutoBillingTiming,
+      auto_due_date_rule_type: invoiceAutoDueDateRuleType,
+      auto_due_date_days_offset: String(invoiceAutoDueDateDaysOffset),
+      auto_legal_entity_id: invoiceAutoLegalEntityIdInputValue,
       public_note: invoicePublicNote,
       private_note: invoicePrivateNote,
     };
@@ -1808,6 +1985,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const editManualOccurredAt = selectedManualTransactionForEdit
     ? formatDateForInput(selectedManualTransactionForEdit.occurred_at, todayInputValue)
     : todayInputValue;
+  const invoiceFieldError = (fieldName: string): string | null => invoiceErrorFieldMap[fieldName] ?? null;
+  const invoiceFieldInvalid = (fieldName: string): boolean => invoiceFieldError(fieldName) !== null;
+  const invoiceFieldAutoFocus = (fieldName: string): boolean => invoiceFirstInvalidField === fieldName;
 
   return (
     <section className="admin-page-grid client-detail-page">
@@ -1856,7 +2036,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       </section>
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
-      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
+      {pageLevelErrorMessage ? <section className="flash-err">{pageLevelErrorMessage}</section> : null}
       {errors.length > 0 ? <section className="flash-err">Erreur backend: {errors.join(" | ")}</section> : null}
 
       {currentTab === "fiche" ? (
@@ -2924,6 +3104,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           <section className="grid cols-2">
             <article className="card">
               <h3>Preferences de communication (opt-in)</h3>
+              {client.email_delivery_status.toLowerCase() === "suspended" ? (
+                <p className="flash-err">
+                  Email en suspens: bounce detecte le {client.email_suspended_at ? formatDate(client.email_suspended_at) : "-"}.
+                </p>
+              ) : null}
+              {client.phone_delivery_status.toLowerCase() === "suspended" ? (
+                <p className="flash-err">
+                  Telephone en suspens: echec permanent detecte le {client.phone_suspended_at ? formatDate(client.phone_suspended_at) : "-"}.
+                </p>
+              ) : null}
               <div className="list">
                 <article className="item row spread">
                   <span>Afficher dans les contacts du portail etudiant</span>
@@ -2955,7 +3145,37 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     {client.lesson_reminder_sms_opt_in ? "Opt-in" : "Opt-out"}
                   </span>
                 </article>
+                <article className="item row spread">
+                  <span>Statut email</span>
+                  <span className={`status-pill ${client.email_delivery_status.toLowerCase() === "suspended" ? "status-cancelled" : "status-ok"}`}>
+                    {client.email_delivery_status}
+                  </span>
+                </article>
+                <article className="item row spread">
+                  <span>Statut telephone</span>
+                  <span className={`status-pill ${client.phone_delivery_status.toLowerCase() === "suspended" ? "status-cancelled" : "status-ok"}`}>
+                    {client.phone_delivery_status}
+                  </span>
+                </article>
               </div>
+              <form action={reactivateAdminClientDeliveryAction} className="grid top-gap-sm">
+                <input type="hidden" name="client_id" value={client.id} />
+                <input type="hidden" name="return_tab" value="infos" />
+                <label className="row">
+                  <input type="checkbox" name="reactivate_email" defaultChecked={client.email_delivery_status.toLowerCase() === "suspended"} />
+                  <span>Reactiver email</span>
+                </label>
+                <label className="row">
+                  <input type="checkbox" name="reactivate_phone" defaultChecked={client.phone_delivery_status.toLowerCase() === "suspended"} />
+                  <span>Reactiver telephone</span>
+                </label>
+                <div className="row top-gap-sm">
+                  <button type="submit" className="ghost">Reactiver coordonnees</button>
+                  <Link className="ghost" href="/admin/notifications/incidents">
+                    Voir historique incidents
+                  </Link>
+                </div>
+              </form>
             </article>
 
             <article className="card">
@@ -4605,291 +4825,411 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </Link>
             <header className="invoice-wizard-header">
               <h3 className="modal-title">Nouvelle facture</h3>
-              <div className="purchase-wizard-stepper" aria-label="Progression de la facture">
-                <span className={openInvoiceRangeStepOne ? "active" : ""}>1. Details de la facture</span>
-                <span className={openInvoiceRangeStepTwo ? "active" : ""}>2. Preferences</span>
-              </div>
-            </header>
-
-            {openInvoiceRangeStepOne ? (
-              <form method="get" action={`/admin/clients/${client.id}`} className="grid top-gap-sm invoice-wizard-form">
-                <input type="hidden" name="tab" value={paymentReturnTab} />
-                <input type="hidden" name="payment_modal" value="invoice_range" />
-                <input type="hidden" name="payment_return_tab" value={paymentReturnTab} />
-                <input type="hidden" name="invoice_step" value="2" />
-                {paymentReturnTab === "paiements" ? <input type="hidden" name="balance_date" value={selectedBalanceDate} /> : null}
-                {paymentFilterQuery ? <input type="hidden" name="payment_filter_q" value={paymentFilterQuery} /> : null}
-                {paymentFilterAmountRaw ? <input type="hidden" name="payment_filter_amount" value={paymentFilterAmountRaw} /> : null}
-                <input type="hidden" name="layout" value={invoiceLayout} />
-                <input type="hidden" name="group_adjustments_by_type" value={invoiceGroupAdjustmentsByType ? "true" : "false"} />
-                <input type="hidden" name="include_discount_adjustments" value={invoiceIncludeDiscountAdjustments ? "true" : "false"} />
-                <input type="hidden" name="include_supplement_adjustments" value={invoiceIncludeSupplementAdjustments ? "true" : "false"} />
-                <input type="hidden" name="auto_layout_style" value={invoiceAutoLayoutStyle} />
-                <input type="hidden" name="auto_include_previous_balance" value={invoiceAutoIncludePreviousBalance ? "true" : "false"} />
-                <input type="hidden" name="auto_send_email" value={invoiceAutoSendEmail ? "true" : "false"} />
-                <input type="hidden" name="auto_exclude_pack_subscription_lines" value={invoiceAutoExcludePackSubscriptionLines ? "true" : "false"} />
-                <input type="hidden" name="auto_footer_note" value={invoiceAutoFooterNote} />
-                <input type="hidden" name="public_note" value={invoicePublicNote} />
-                <input type="hidden" name="private_note" value={invoicePrivateNote} />
-
-                <div className="invoice-mode-segmented span-2">
-                  <label className={`invoice-mode-chip ${invoiceGenerationMode === "MANUAL" ? "active" : ""}`}>
-                    <input type="radio" name="generation_mode" value="MANUAL" defaultChecked={invoiceGenerationMode === "MANUAL"} />
-                    <strong>Facture manuelle</strong>
-                    <small className="muted">Facture sur une plage de dates.</small>
-                  </label>
-                  <label className={`invoice-mode-chip ${invoiceGenerationMode === "AUTO" ? "active" : ""}`}>
-                    <input type="radio" name="generation_mode" value="AUTO" defaultChecked={invoiceGenerationMode === "AUTO"} />
-                    <strong>Facturation automatique</strong>
-                    <small className="muted">Factures recurrentes selon un cycle.</small>
-                  </label>
+              {invoiceGenerationMode === "MANUAL" ? (
+                <div className="purchase-wizard-stepper" aria-label="Progression de la facture">
+                  <span className={openInvoiceRangeStepOne ? "active" : ""}>1. Details de la facture</span>
+                  <span className={openInvoiceRangeStepTwo ? "active" : ""}>2. Preferences</span>
                 </div>
+              ) : (
+                <p className="muted">Configuration d une regle de facturation recurrente.</p>
+              )}
+            </header>
+            <div className="invoice-wizard-body">
+              {invoiceErrorFields.length > 0 ? <ModalFirstErrorFocus modalBodySelector=".invoice-wizard-body" /> : null}
 
-                <article className="card modal-card invoice-wizard-card span-2">
-                  <h4>Date de la facture</h4>
-                  <label>
-                    Date d emission (obligatoire)
-                    <input type="date" name="issued_date" defaultValue={invoiceIssuedDateInputValue} required />
-                  </label>
-                </article>
+              <div className="invoice-mode-segmented span-2">
+                <Link className={`invoice-mode-chip ${invoiceGenerationMode === "MANUAL" ? "active" : ""}`} href={invoiceWizardModeHref("MANUAL")}>
+                  <strong>Facture manuelle</strong>
+                  <small className="muted">Saisie unique sur une plage de dates.</small>
+                </Link>
+                <Link className={`invoice-mode-chip ${invoiceGenerationMode === "AUTO" ? "active" : ""}`} href={invoiceWizardModeHref("AUTO")}>
+                  <strong>Facturation automatique</strong>
+                  <small className="muted">Configuration d une regle de cycle.</small>
+                </Link>
+              </div>
 
-                <article className="card modal-card invoice-wizard-card span-2">
-                  <h4>Contenu et periode</h4>
-                  <div className="grid cols-2">
-                    <label>
-                      Date de debut
-                      <input type="date" name="start_date" defaultValue={invoiceStartDateInputValue} required />
-                    </label>
-                    <label>
-                      Date de fin
-                      <input type="date" name="end_date" defaultValue={invoiceEndDateInputValue} required />
-                    </label>
-                    <label>
-                      Date d echeance
-                      <input type="date" name="due_date" defaultValue={invoiceDueDateInputValue} />
-                    </label>
-                    <label className="checkbox">
-                      <input type="checkbox" name="no_due_date" value="true" defaultChecked={invoiceNoDueDate} />
-                      Pas de date d echeance (meme date que l emission)
-                    </label>
-                    <label>
-                      Lignes en attente
-                      <select name="include_pending" defaultValue={invoiceIncludePending ? "true" : "false"}>
-                        <option value="true">Inclure</option>
-                        <option value="false">Exclure</option>
-                      </select>
-                    </label>
-                    <label>
-                      Lignes annulees
-                      <select name="include_cancelled" defaultValue={invoiceIncludeCancelled ? "true" : "false"}>
-                        <option value="false">Exclure</option>
-                        <option value="true">Inclure</option>
-                      </select>
-                    </label>
-                  </div>
-                </article>
+              {invoiceModalGlobalError ? (
+                <section className="flash-err invoice-modal-error" role="alert">
+                  {invoiceModalGlobalError}
+                </section>
+              ) : invoiceErrorFields.length > 0 ? (
+                <section className="flash-err invoice-modal-error" role="alert">
+                  Veuillez corriger les champs en erreur.
+                </section>
+              ) : null}
 
-                {invoiceGenerationMode === "AUTO" ? (
+              {invoiceGenerationMode === "AUTO" ? (
+                <form action={createAdminClientRangeInvoiceAction} id="invoice-wizard-form-main" className="grid top-gap-sm invoice-wizard-form">
+                  <input type="hidden" name="client_id" value={client.id} />
+                  <input type="hidden" name="return_tab" value={paymentReturnTab} />
+                  <input type="hidden" name="invoice_step" value="1" />
+                  <input type="hidden" name="generation_mode" value="AUTO" />
+                  <input type="hidden" name="layout" value={invoiceLayout} />
+                  <input type="hidden" name="group_adjustments_by_type" value={invoiceGroupAdjustmentsByType ? "true" : "false"} />
+                  <input type="hidden" name="include_discount_adjustments" value={invoiceIncludeDiscountAdjustments ? "true" : "false"} />
+                  <input type="hidden" name="include_supplement_adjustments" value={invoiceIncludeSupplementAdjustments ? "true" : "false"} />
+                  <input type="hidden" name="issued_date" value={invoiceAutoNextRunInputValue} />
+                  <input type="hidden" name="start_date" value={invoiceAutoPreviewPeriodInputValues.startDate} />
+                  <input type="hidden" name="end_date" value={invoiceAutoPreviewPeriodInputValues.endDate} />
+                  <input type="hidden" name="due_date" value={invoiceAutoPreviewDueDateInputValue} />
+                  <input type="hidden" name="no_due_date" value="false" />
+                  <input type="hidden" name="public_note" value={invoicePublicNote} />
+                  <input type="hidden" name="private_note" value={invoicePrivateNote} />
+
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Calendrier de facturation automatique</h4>
+                    <h4>Cycle</h4>
                     <div className="grid cols-2">
                       <label>
-                        Date de debut du cycle
-                        <input type="date" name="auto_cycle_start_date" defaultValue={invoiceAutoCycleStartDateInputValue} />
+                        Date de debut du cycle (obligatoire)
+                        <input
+                          type="date"
+                          name="auto_cycle_start_date"
+                          defaultValue={invoiceAutoCycleStartDateInputValue}
+                          aria-invalid={invoiceFieldInvalid("auto_cycle_start_date")}
+                          data-invalid={invoiceFieldInvalid("auto_cycle_start_date") ? "true" : undefined}
+                          autoFocus={invoiceFieldAutoFocus("auto_cycle_start_date")}
+                        />
+                        {invoiceFieldError("auto_cycle_start_date") ? (
+                          <small className="invoice-field-error" role="alert">
+                            {invoiceFieldError("auto_cycle_start_date")}
+                          </small>
+                        ) : null}
                       </label>
                       <label>
-                        Facturer les prestations
-                        <select name="auto_period_scope" defaultValue={invoiceAutoPeriodScope}>
-                          <option value="PAST">Lecons precedentes (postpayees)</option>
-                          <option value="FUTURE">Lecons a venir (prepayees)</option>
-                        </select>
-                      </label>
-                      <label>
-                        Frequence
+                        Frequence (obligatoire)
                         <select name="auto_frequency" defaultValue={invoiceAutoFrequency}>
                           <option value="MONTHLY">Mensuelle</option>
-                          <option value="WEEKLY">Hebdomadaire</option>
+                          <option value="QUARTERLY">Trimestrielle</option>
+                          <option value="YEARLY">Annuelle</option>
                         </select>
                       </label>
                       <label>
-                        Se repete chaque (1-6)
-                        <input type="number" name="auto_repeat_every" min={1} max={6} step={1} defaultValue={invoiceAutoRepeatEvery} />
+                        Mode de facturation (obligatoire)
+                        <select name="auto_billing_timing" defaultValue={invoiceAutoBillingTiming}>
+                          <option value="UPCOMING_LESSONS">Lecons a venir</option>
+                          <option value="PREVIOUS_LESSONS">Lecons passees</option>
+                        </select>
+                      </label>
+                      <label>
+                        Entite legale emettrice (obligatoire)
+                        <select
+                          name="auto_legal_entity_id"
+                          defaultValue={invoiceAutoLegalEntityIdInputValue}
+                          aria-invalid={invoiceFieldInvalid("auto_legal_entity_id")}
+                          data-invalid={invoiceFieldInvalid("auto_legal_entity_id") ? "true" : undefined}
+                          autoFocus={invoiceFieldAutoFocus("auto_legal_entity_id")}
+                        >
+                          <option value="">Selectionner</option>
+                          {legalEntities.map((entity) => (
+                            <option key={entity.id} value={entity.id}>
+                              {entity.name}
+                            </option>
+                          ))}
+                        </select>
+                        {invoiceFieldError("auto_legal_entity_id") ? (
+                          <small className="invoice-field-error" role="alert">
+                            {invoiceFieldError("auto_legal_entity_id")}
+                          </small>
+                        ) : null}
                       </label>
                     </div>
                   </article>
-                ) : (
-                  <>
-                    <input type="hidden" name="auto_cycle_start_date" value={invoiceAutoCycleStartDateInputValue} />
-                    <input type="hidden" name="auto_period_scope" value={invoiceAutoPeriodScope} />
-                    <input type="hidden" name="auto_frequency" value={invoiceAutoFrequency} />
-                    <input type="hidden" name="auto_repeat_every" value={String(invoiceAutoRepeatEvery)} />
-                  </>
-                )}
 
-                <footer className="row spread invoice-wizard-footer span-2">
-                  <Link className="reset-link" href={invoiceWizardCloseHref}>
-                    Annuler
-                  </Link>
-                  <button type="submit">Suivant</button>
-                </footer>
-              </form>
-            ) : null}
-
-            {openInvoiceRangeStepTwo ? (
-              <form action={createAdminClientRangeInvoiceAction} className="grid top-gap-sm invoice-wizard-form">
-                <input type="hidden" name="client_id" value={client.id} />
-                <input type="hidden" name="return_tab" value={paymentReturnTab} />
-                <input type="hidden" name="generation_mode" value={invoiceGenerationMode} />
-                <input type="hidden" name="issued_date" value={invoiceIssuedDateInputValue} />
-                <input type="hidden" name="start_date" value={invoiceStartDateInputValue} />
-                <input type="hidden" name="end_date" value={invoiceEndDateInputValue} />
-                <input type="hidden" name="due_date" value={invoiceNoDueDate ? invoiceIssuedDateInputValue : invoiceDueDateInputValue} />
-                <input type="hidden" name="no_due_date" value={invoiceNoDueDate ? "on" : "off"} />
-                <input type="hidden" name="include_pending" value={invoiceIncludePending ? "true" : "false"} />
-                <input type="hidden" name="include_cancelled" value={invoiceIncludeCancelled ? "true" : "false"} />
-                <input type="hidden" name="auto_cycle_start_date" value={invoiceAutoCycleStartDateInputValue} />
-                <input type="hidden" name="auto_period_scope" value={invoiceAutoPeriodScope} />
-                <input type="hidden" name="auto_frequency" value={invoiceAutoFrequency} />
-                <input type="hidden" name="auto_repeat_every" value={String(invoiceAutoRepeatEvery)} />
-
-                <article className="card modal-card invoice-wizard-card span-2">
-                  <h4>Style d affichage</h4>
-                  <label>
-                    Style de facture
-                    <select name="layout" defaultValue={invoiceLayout}>
-                      <option value="DETAILED">Normal: chaque prestation sur sa propre ligne</option>
-                      <option value="COMPILED">Condense: prestations identiques regroupees</option>
-                    </select>
-                  </label>
-                  {invoiceGenerationMode === "AUTO" ? (
-                    <label>
-                      Style automatique
-                      <select name="auto_layout_style" defaultValue={invoiceAutoLayoutStyle}>
-                        <option value="NORMAL">Normal (chaque element sur sa ligne)</option>
-                        <option value="CONDENSED">Condense (elements identiques regroupes)</option>
-                      </select>
-                    </label>
-                  ) : (
-                    <input type="hidden" name="auto_layout_style" value={invoiceAutoLayoutStyle} />
-                  )}
-                </article>
-
-                <article className="card modal-card invoice-wizard-card span-2">
-                  <h4>Preferences</h4>
-                  <input type="hidden" name="group_adjustments_by_type" value="off" />
-                  <label className="checkbox">
-                    <input type="checkbox" name="group_adjustments_by_type" value="on" defaultChecked={invoiceGroupAdjustmentsByType} />
-                    Regrouper les remises/supplements par type
-                  </label>
-                  <input type="hidden" name="include_discount_adjustments" value="off" />
-                  <label className="checkbox">
-                    <input type="checkbox" name="include_discount_adjustments" value="on" defaultChecked={invoiceIncludeDiscountAdjustments} />
-                    Inclure les remises (fidelite, famille)
-                  </label>
-                  <input type="hidden" name="include_supplement_adjustments" value="off" />
-                  <label className="checkbox">
-                    <input
-                      type="checkbox"
-                      name="include_supplement_adjustments"
-                      value="on"
-                      defaultChecked={invoiceIncludeSupplementAdjustments}
-                    />
-                    Inclure les supplements
-                  </label>
-
-                  {invoiceGenerationMode === "AUTO" ? (
-                    <>
-                      <input type="hidden" name="auto_include_previous_balance" value="off" />
-                      <label className="checkbox">
-                        <input
-                          type="checkbox"
-                          name="auto_include_previous_balance"
-                          value="on"
-                          defaultChecked={invoiceAutoIncludePreviousBalance}
-                        />
-                        Inclure le solde precedent et paiements
-                      </label>
-                      <label className="checkbox">
-                        <input type="checkbox" name="auto_send_email" value="on" defaultChecked={invoiceAutoSendEmail} />
-                        Envoi automatique de la facture par courriel
-                      </label>
-                      <input type="hidden" name="auto_exclude_pack_subscription_lines" value="off" />
-                      <label className="checkbox">
-                        <input
-                          type="checkbox"
-                          name="auto_exclude_pack_subscription_lines"
-                          value="on"
-                          defaultChecked={invoiceAutoExcludePackSubscriptionLines}
-                        />
-                        Exclure les lignes carnet / abonnement
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <h4>Echeance</h4>
+                    <div className="grid cols-2">
+                      <label>
+                        Regle d echeance (obligatoire)
+                        <select name="auto_due_date_rule_type" defaultValue={invoiceAutoDueDateRuleType}>
+                          <option value="SAME_DAY_ISSUE">Meme jour que l emission</option>
+                          <option value="X_DAYS_AFTER_ISSUE">X jours apres l emission</option>
+                        </select>
                       </label>
                       <label>
-                        Note de bas de page (auto)
-                        <textarea
-                          name="auto_footer_note"
-                          rows={2}
-                          maxLength={2000}
-                          defaultValue={invoiceAutoFooterNote}
-                          placeholder="Cette note apparaitra en bas de la facture automatique."
+                        Nombre de jours (si regle X jours)
+                        <input
+                          type="number"
+                          name="auto_due_date_days_offset"
+                          min={0}
+                          max={365}
+                          step={1}
+                          defaultValue={String(invoiceAutoDueDateDaysOffset)}
+                          aria-invalid={invoiceFieldInvalid("auto_due_date_days_offset")}
+                          data-invalid={invoiceFieldInvalid("auto_due_date_days_offset") ? "true" : undefined}
+                          autoFocus={invoiceFieldAutoFocus("auto_due_date_days_offset")}
                         />
+                        {invoiceFieldError("auto_due_date_days_offset") ? (
+                          <small className="invoice-field-error" role="alert">
+                            {invoiceFieldError("auto_due_date_days_offset")}
+                          </small>
+                        ) : null}
                       </label>
-                    </>
-                  ) : (
-                    <>
-                      <input type="hidden" name="auto_include_previous_balance" value={invoiceAutoIncludePreviousBalance ? "on" : "off"} />
-                      <input type="hidden" name="auto_send_email" value={invoiceAutoSendEmail ? "on" : "off"} />
+                    </div>
+                  </article>
+
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <h4>Contenu</h4>
+                    <div className="grid cols-2">
+                      <label>
+                        Lignes en attente
+                        <select name="include_pending" defaultValue={invoiceIncludePending ? "true" : "false"}>
+                          <option value="true">Inclure</option>
+                          <option value="false">Exclure</option>
+                        </select>
+                      </label>
+                      <label>
+                        Lignes annulees
+                        <select name="include_cancelled" defaultValue={invoiceIncludeCancelled ? "true" : "false"}>
+                          <option value="false">Exclure</option>
+                          <option value="true">Inclure</option>
+                        </select>
+                      </label>
+                    </div>
+                  </article>
+
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <h4>Apercu</h4>
+                    <div className="grid cols-2">
+                      <p>Prochaine date de generation: <strong>{formatDateInputLabel(invoiceAutoNextRunInputValue)}</strong></p>
+                      <p>
+                        Periode couverte:{" "}
+                        <strong>
+                          {formatDateInputLabel(invoiceAutoPreviewPeriodInputValues.startDate)} -{" "}
+                          {formatDateInputLabel(invoiceAutoPreviewPeriodInputValues.endDate)}
+                        </strong>
+                      </p>
+                      <p>Date d echeance calculee: <strong>{formatDateInputLabel(invoiceAutoPreviewDueDateInputValue)}</strong></p>
+                      <p>
+                        Mode:{" "}
+                        <strong>{invoiceAutoBillingTiming === "PREVIOUS_LESSONS" ? "Lecons passees" : "Lecons a venir"}</strong>
+                      </p>
+                    </div>
+                  </article>
+                </form>
+              ) : null}
+
+              {invoiceGenerationMode === "MANUAL" && openInvoiceRangeStepOne ? (
+                <form method="get" action={`/admin/clients/${client.id}`} id="invoice-wizard-form-main" className="grid top-gap-sm invoice-wizard-form">
+                  <input type="hidden" name="tab" value={paymentReturnTab} />
+                  <input type="hidden" name="payment_modal" value="invoice_range" />
+                  <input type="hidden" name="payment_return_tab" value={paymentReturnTab} />
+                  <input type="hidden" name="invoice_step" value="2" />
+                  <input type="hidden" name="generation_mode" value="MANUAL" />
+                  {paymentReturnTab === "paiements" ? <input type="hidden" name="balance_date" value={selectedBalanceDate} /> : null}
+                  {paymentFilterQuery ? <input type="hidden" name="payment_filter_q" value={paymentFilterQuery} /> : null}
+                  {paymentFilterAmountRaw ? <input type="hidden" name="payment_filter_amount" value={paymentFilterAmountRaw} /> : null}
+                  <input type="hidden" name="layout" value={invoiceLayout} />
+                  <input type="hidden" name="group_adjustments_by_type" value={invoiceGroupAdjustmentsByType ? "true" : "false"} />
+                  <input type="hidden" name="include_discount_adjustments" value={invoiceIncludeDiscountAdjustments ? "true" : "false"} />
+                  <input type="hidden" name="include_supplement_adjustments" value={invoiceIncludeSupplementAdjustments ? "true" : "false"} />
+                  <input type="hidden" name="auto_cycle_start_date" value={invoiceAutoCycleStartDateInputValue} />
+                  <input type="hidden" name="auto_frequency" value={invoiceAutoFrequency} />
+                  <input type="hidden" name="auto_billing_timing" value={invoiceAutoBillingTiming} />
+                  <input type="hidden" name="auto_due_date_rule_type" value={invoiceAutoDueDateRuleType} />
+                  <input type="hidden" name="auto_due_date_days_offset" value={String(invoiceAutoDueDateDaysOffset)} />
+                  <input type="hidden" name="auto_legal_entity_id" value={invoiceAutoLegalEntityIdInputValue} />
+                  <input type="hidden" name="public_note" value={invoicePublicNote} />
+                  <input type="hidden" name="private_note" value={invoicePrivateNote} />
+
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <h4>Date de la facture</h4>
+                    <label>
+                      Date d emission (obligatoire)
                       <input
-                        type="hidden"
-                        name="auto_exclude_pack_subscription_lines"
-                        value={invoiceAutoExcludePackSubscriptionLines ? "on" : "off"}
+                        type="date"
+                        name="issued_date"
+                        defaultValue={invoiceIssuedDateInputValue}
+                        aria-invalid={invoiceFieldInvalid("issued_date")}
+                        data-invalid={invoiceFieldInvalid("issued_date") ? "true" : undefined}
+                        autoFocus={invoiceFieldAutoFocus("issued_date")}
                       />
-                      <input type="hidden" name="auto_footer_note" value={invoiceAutoFooterNote} />
-                    </>
-                  )}
-                </article>
+                      {invoiceFieldError("issued_date") ? (
+                        <small className="invoice-field-error" role="alert">
+                          {invoiceFieldError("issued_date")}
+                        </small>
+                      ) : null}
+                    </label>
+                  </article>
 
-                <article className="card modal-card invoice-wizard-card span-2">
-                  <h4>Notes</h4>
-                  <label>
-                    Note publique (optionnel)
-                    <textarea
-                      name="public_note"
-                      rows={3}
-                      maxLength={2000}
-                      defaultValue={invoicePublicNote}
-                      placeholder="Cette note apparaitra en bas de la facture."
-                    />
-                  </label>
-                  <label>
-                    Note privee (optionnel)
-                    <textarea
-                      name="private_note"
-                      rows={3}
-                      maxLength={2000}
-                      defaultValue={invoicePrivateNote}
-                      placeholder="Visible uniquement dans le back-office (admin/comptable)."
-                    />
-                  </label>
-                  <p className="muted">
-                    Vous pouvez personnaliser d autres reglages dans la configuration de l entreprise.
-                  </p>
-                </article>
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <h4>Contenu et periode</h4>
+                    <div className="grid cols-2">
+                      <label>
+                        Date de debut
+                        <input
+                          type="date"
+                          name="start_date"
+                          defaultValue={invoiceStartDateInputValue}
+                          aria-invalid={invoiceFieldInvalid("start_date")}
+                          data-invalid={invoiceFieldInvalid("start_date") ? "true" : undefined}
+                          autoFocus={invoiceFieldAutoFocus("start_date")}
+                        />
+                        {invoiceFieldError("start_date") ? (
+                          <small className="invoice-field-error" role="alert">
+                            {invoiceFieldError("start_date")}
+                          </small>
+                        ) : null}
+                      </label>
+                      <label>
+                        Date de fin
+                        <input
+                          type="date"
+                          name="end_date"
+                          defaultValue={invoiceEndDateInputValue}
+                          aria-invalid={invoiceFieldInvalid("end_date")}
+                          data-invalid={invoiceFieldInvalid("end_date") ? "true" : undefined}
+                          autoFocus={invoiceFieldAutoFocus("end_date")}
+                        />
+                        {invoiceFieldError("end_date") ? (
+                          <small className="invoice-field-error" role="alert">
+                            {invoiceFieldError("end_date")}
+                          </small>
+                        ) : null}
+                      </label>
+                      <label>
+                        Date d echeance
+                        <input
+                          type="date"
+                          name="due_date"
+                          defaultValue={invoiceDueDateInputValue}
+                          aria-invalid={invoiceFieldInvalid("due_date")}
+                          data-invalid={invoiceFieldInvalid("due_date") ? "true" : undefined}
+                          autoFocus={invoiceFieldAutoFocus("due_date")}
+                        />
+                        {invoiceFieldError("due_date") ? (
+                          <small className="invoice-field-error" role="alert">
+                            {invoiceFieldError("due_date")}
+                          </small>
+                        ) : null}
+                      </label>
+                      <label className="checkbox">
+                        <input type="checkbox" name="no_due_date" value="true" defaultChecked={invoiceNoDueDate} />
+                        Pas de date d echeance (meme date que l emission)
+                      </label>
+                      <label>
+                        Lignes en attente
+                        <select name="include_pending" defaultValue={invoiceIncludePending ? "true" : "false"}>
+                          <option value="true">Inclure</option>
+                          <option value="false">Exclure</option>
+                        </select>
+                      </label>
+                      <label>
+                        Lignes annulees
+                        <select name="include_cancelled" defaultValue={invoiceIncludeCancelled ? "true" : "false"}>
+                          <option value="false">Exclure</option>
+                          <option value="true">Inclure</option>
+                        </select>
+                      </label>
+                    </div>
+                  </article>
+                </form>
+              ) : null}
 
-                <footer className="row spread invoice-wizard-footer span-2">
-                  <Link className="reset-link" href={invoiceWizardCloseHref}>
-                    Annuler
+              {invoiceGenerationMode === "MANUAL" && openInvoiceRangeStepTwo ? (
+                <form action={createAdminClientRangeInvoiceAction} id="invoice-wizard-form-main" className="grid top-gap-sm invoice-wizard-form">
+                  <input type="hidden" name="client_id" value={client.id} />
+                  <input type="hidden" name="return_tab" value={paymentReturnTab} />
+                  <input type="hidden" name="invoice_step" value="2" />
+                  <input type="hidden" name="generation_mode" value="MANUAL" />
+                  <input type="hidden" name="issued_date" value={invoiceIssuedDateInputValue} />
+                  <input type="hidden" name="start_date" value={invoiceStartDateInputValue} />
+                  <input type="hidden" name="end_date" value={invoiceEndDateInputValue} />
+                  <input type="hidden" name="due_date" value={invoiceNoDueDate ? invoiceIssuedDateInputValue : invoiceDueDateInputValue} />
+                  <input type="hidden" name="no_due_date" value={invoiceNoDueDate ? "on" : "off"} />
+                  <input type="hidden" name="include_pending" value={invoiceIncludePending ? "true" : "false"} />
+                  <input type="hidden" name="include_cancelled" value={invoiceIncludeCancelled ? "true" : "false"} />
+                  <input type="hidden" name="auto_cycle_start_date" value={invoiceAutoCycleStartDateInputValue} />
+                  <input type="hidden" name="auto_frequency" value={invoiceAutoFrequency} />
+                  <input type="hidden" name="auto_billing_timing" value={invoiceAutoBillingTiming} />
+                  <input type="hidden" name="auto_due_date_rule_type" value={invoiceAutoDueDateRuleType} />
+                  <input type="hidden" name="auto_due_date_days_offset" value={String(invoiceAutoDueDateDaysOffset)} />
+                  <input type="hidden" name="auto_legal_entity_id" value={invoiceAutoLegalEntityIdInputValue} />
+
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <h4>Style d affichage</h4>
+                    <label>
+                      Style de facture
+                      <select name="layout" defaultValue={invoiceLayout}>
+                        <option value="DETAILED">Normal: chaque prestation sur sa propre ligne</option>
+                        <option value="COMPILED">Condense: prestations identiques regroupees</option>
+                      </select>
+                    </label>
+                  </article>
+
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <h4>Preferences</h4>
+                    <input type="hidden" name="group_adjustments_by_type" value="off" />
+                    <label className="checkbox">
+                      <input type="checkbox" name="group_adjustments_by_type" value="on" defaultChecked={invoiceGroupAdjustmentsByType} />
+                      Regrouper les remises/supplements par type
+                    </label>
+                    <input type="hidden" name="include_discount_adjustments" value="off" />
+                    <label className="checkbox">
+                      <input type="checkbox" name="include_discount_adjustments" value="on" defaultChecked={invoiceIncludeDiscountAdjustments} />
+                      Inclure les remises (fidelite, famille)
+                    </label>
+                    <input type="hidden" name="include_supplement_adjustments" value="off" />
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        name="include_supplement_adjustments"
+                        value="on"
+                        defaultChecked={invoiceIncludeSupplementAdjustments}
+                      />
+                      Inclure les supplements
+                    </label>
+                  </article>
+
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <h4>Notes</h4>
+                    <label>
+                      Note publique (optionnel)
+                      <textarea
+                        name="public_note"
+                        rows={3}
+                        maxLength={2000}
+                        defaultValue={invoicePublicNote}
+                        placeholder="Cette note apparaitra en bas de la facture."
+                      />
+                    </label>
+                    <label>
+                      Note privee (optionnel)
+                      <textarea
+                        name="private_note"
+                        rows={3}
+                        maxLength={2000}
+                        defaultValue={invoicePrivateNote}
+                        placeholder="Visible uniquement dans le back-office (admin/comptable)."
+                      />
+                    </label>
+                  </article>
+                </form>
+              ) : null}
+            </div>
+
+            <footer className="row spread invoice-wizard-footer">
+              <Link className="reset-link" href={invoiceWizardCloseHref}>
+                Annuler
+              </Link>
+              {invoiceGenerationMode === "AUTO" ? (
+                <button type="submit" form="invoice-wizard-form-main">
+                  Enregistrer la regle automatique
+                </button>
+              ) : openInvoiceRangeStepOne ? (
+                <button type="submit" form="invoice-wizard-form-main">
+                  Suivant
+                </button>
+              ) : (
+                <div className="row modal-actions-end">
+                  <Link className="reset-link" href={invoiceWizardBackToStepOneHref}>
+                    Precedent
                   </Link>
-                  <div className="row modal-actions-end">
-                    <Link className="reset-link" href={invoiceWizardBackToStepOneHref}>
-                      Precedent
-                    </Link>
-                    <button type="submit">
-                      {invoiceGenerationMode === "AUTO" ? "Sauvegarder la facturation automatique" : "Creer la facture"}
-                    </button>
-                  </div>
-                </footer>
-              </form>
-            ) : null}
+                  <button type="submit" form="invoice-wizard-form-main">
+                    Creer la facture
+                  </button>
+                </div>
+              )}
+            </footer>
           </article>
         </section>
       ) : null}

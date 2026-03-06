@@ -8,9 +8,9 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.routes.bookings import (
     _consume_pack_credit,
@@ -47,7 +47,12 @@ from app.models.ops import (
 from app.models.user import ClientStatus, User, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.invoice_documents import normalize_billing_entity
+from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_slot_cancelled_notifications
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
+from app.services.session_teachers import (
+    normalized_substitute_teacher_id,
+    professor_display_name,
+)
 from app.services.session_notifications import send_session_operation_email
 from app.schemas.admin import (
     AdminSessionBroadcastAudience,
@@ -139,10 +144,7 @@ def _session_status_label(status: SessionStatus) -> str:
 
 
 def _session_teacher_display_name(professor: Professor | None) -> str:
-    if professor is None:
-        return ""
-    full_name = f"{(professor.first_name or '').strip()} {(professor.last_name or '').strip()}".strip()
-    return full_name
+    return professor_display_name(professor)
 
 
 def _session_location_label(location: Location | None) -> str:
@@ -209,8 +211,12 @@ def _to_admin_session_out(
     course_type: CourseType | None = None,
     location: Location | None = None,
     professor: Professor | None = None,
+    substitute_professor: Professor | None = None,
 ) -> AdminSessionOut:
-    teacher_display_name = _session_teacher_display_name(professor)
+    habitual_teacher_display_name = _session_teacher_display_name(professor)
+    substitute_teacher_display_name = _session_teacher_display_name(substitute_professor) if substitute_professor is not None else None
+    effective_teacher_id = session_obj.substitute_teacher_id or session_obj.professor_id
+    effective_teacher_display_name = substitute_teacher_display_name or habitual_teacher_display_name
     location_label = _session_location_label(location)
     type_label = _session_type_label(session_obj, course_type=course_type, location=location)
     status_label = _session_status_label(session_obj.status)
@@ -220,8 +226,17 @@ def _to_admin_session_out(
         course_type_id=session_obj.course_type_id,
         location_id=session_obj.location_id,
         professor_id=session_obj.professor_id,
-        teacher_id=professor.id if professor is not None else session_obj.professor_id,
-        teacher_display_name=teacher_display_name,
+        substitute_teacher_id=session_obj.substitute_teacher_id,
+        substitute_set_at=session_obj.substitute_set_at,
+        substitute_set_by=session_obj.substitute_set_by,
+        substitute_note=session_obj.substitute_note,
+        teacher_id=effective_teacher_id,
+        teacher_display_name=effective_teacher_display_name,
+        habitual_teacher_id=session_obj.professor_id,
+        habitual_teacher_display_name=habitual_teacher_display_name,
+        substitute_teacher_display_name=substitute_teacher_display_name,
+        effective_teacher_id=effective_teacher_id,
+        effective_teacher_display_name=effective_teacher_display_name,
         location_label=location_label,
         type_label=type_label,
         status_label=status_label,
@@ -406,12 +421,14 @@ def _load_admin_session_with_refs(
     *,
     session_id: UUID,
     for_update: bool = False,
-) -> tuple[CourseSession, CourseType, Location, Professor | None] | None:
+) -> tuple[CourseSession, CourseType, Location, Professor | None, Professor | None] | None:
+    substitute_professor = aliased(Professor, name="substitute_professor")
     stmt = (
-        select(CourseSession, CourseType, Location, Professor)
+        select(CourseSession, CourseType, Location, Professor, substitute_professor)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
         .where(CourseSession.id == session_id)
     )
     if for_update:
@@ -419,7 +436,7 @@ def _load_admin_session_with_refs(
     row = db.execute(stmt).first()
     if row is None:
         return None
-    return row[0], row[1], row[2], row[3]
+    return row[0], row[1], row[2], row[3], row[4]
 
 
 def _require_client(db: Session, client_id: UUID) -> User:
@@ -1501,7 +1518,7 @@ def create_session(
     created_with_refs = _load_admin_session_with_refs(db, session_id=sessions_to_create[0].id)
     if created_with_refs is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    created_session, created_course_type, created_location, created_professor = created_with_refs
+    created_session, created_course_type, created_location, created_professor, created_substitute_professor = created_with_refs
 
     return _to_admin_session_out(
         created_session,
@@ -1509,6 +1526,7 @@ def create_session(
         course_type=created_course_type,
         location=created_location,
         professor=created_professor,
+        substitute_professor=created_substitute_professor,
     )
 
 
@@ -1525,11 +1543,13 @@ def list_admin_sessions(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminSessionOut]:
+    substitute_professor = aliased(Professor, name="substitute_professor")
     stmt = (
-        select(CourseSession, CourseType, Location, Professor)
+        select(CourseSession, CourseType, Location, Professor, substitute_professor)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
     )
 
     location_filter_ids = list(dict.fromkeys(location_ids or []))
@@ -1545,7 +1565,15 @@ def list_admin_sessions(
     if not professor_filter_ids and professor_id is not None:
         professor_filter_ids = [professor_id]
     if professor_filter_ids:
-        stmt = stmt.where(CourseSession.professor_id.in_(professor_filter_ids))
+        stmt = stmt.where(
+            or_(
+                CourseSession.substitute_teacher_id.in_(professor_filter_ids),
+                and_(
+                    CourseSession.substitute_teacher_id.is_(None),
+                    CourseSession.professor_id.in_(professor_filter_ids),
+                ),
+            )
+        )
 
     if status is not None:
         stmt = stmt.where(CourseSession.status == status)
@@ -1564,7 +1592,7 @@ def list_admin_sessions(
         stmt = stmt.distinct()
 
     rows = db.execute(stmt.order_by(CourseSession.start_at_utc.desc())).all()
-    session_ids = [session_obj.id for session_obj, _, _, _ in rows]
+    session_ids = [session_obj.id for session_obj, _, _, _, _ in rows]
     counts = _booked_counts_map(db, session_ids)
 
     return [
@@ -1574,8 +1602,9 @@ def list_admin_sessions(
             course_type=course_type,
             location=location,
             professor=professor,
+            substitute_professor=substitute_professor_row,
         )
-        for session_obj, course_type, location, professor in rows
+        for session_obj, course_type, location, professor, substitute_professor_row in rows
     ]
 
 
@@ -1588,7 +1617,7 @@ def get_admin_session(
     session_with_refs = _load_admin_session_with_refs(db, session_id=session_id)
     if session_with_refs is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    session_obj, course_type, location, professor = session_with_refs
+    session_obj, course_type, location, professor, substitute_professor = session_with_refs
 
     booked_count = _booked_count_by_session(db, session_id)
     return _to_admin_session_out(
@@ -1597,6 +1626,7 @@ def get_admin_session(
         course_type=course_type,
         location=location,
         professor=professor,
+        substitute_professor=substitute_professor,
     )
 
 
@@ -1731,13 +1761,14 @@ def update_admin_session_group_note(
     session_with_refs = _load_admin_session_with_refs(db, session_id=session_obj.id)
     if session_with_refs is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    session_ref, course_type, location, professor = session_with_refs
+    session_ref, course_type, location, professor, substitute_professor = session_with_refs
     return _to_admin_session_out(
         session_ref,
         booked_count=booked_count,
         course_type=course_type,
         location=location,
         professor=professor,
+        substitute_professor=substitute_professor,
     )
 
 
@@ -2237,7 +2268,7 @@ def update_session(
     payload: AdminSessionUpdateRequest,
     apply_scope: ApplyScope = Query(default="ONE"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminSessionOut:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
@@ -2245,6 +2276,15 @@ def update_session(
 
     updates = payload.model_dump(exclude_unset=True)
     recurrence_payload = updates.pop("recurrence", None)
+    has_substitute_teacher_update = "substitute_teacher_id" in updates
+    requested_substitute_teacher_id = updates.pop("substitute_teacher_id", None) if has_substitute_teacher_update else session_obj.substitute_teacher_id
+    has_substitute_note_update = "substitute_note" in updates
+    requested_substitute_note = updates.pop("substitute_note", None) if has_substitute_note_update else session_obj.substitute_note
+    if (has_substitute_teacher_update or has_substitute_note_update) and apply_scope != "ONE":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Substitute teacher can only be changed for this occurrence",
+        )
     if recurrence_payload is not None:
         if apply_scope != "ONE":
             raise HTTPException(
@@ -2262,6 +2302,23 @@ def update_session(
     course_type_id = updates.get("course_type_id", session_obj.course_type_id)
     location_id = updates.get("location_id", session_obj.location_id)
     professor_id = updates.get("professor_id", session_obj.professor_id)
+    substitute_teacher_id = normalized_substitute_teacher_id(
+        professor_id=professor_id,
+        substitute_teacher_id=requested_substitute_teacher_id,
+    )
+    substitute_professor: Professor | None = None
+    if substitute_teacher_id is not None:
+        substitute_professor = db.scalar(
+            select(Professor).where(
+                Professor.id == substitute_teacher_id,
+                Professor.active.is_(True),
+            )
+        )
+        if substitute_professor is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Substitute professor not found or inactive",
+            )
     enforce_planning_allowed = "course_type_id" in updates or "location_id" in updates
 
     course_type, location, professor = _validate_and_load_refs(
@@ -2271,6 +2328,7 @@ def update_session(
         professor_id=professor_id,
         enforce_planning_allowed=enforce_planning_allowed,
     )
+    session_zoom_professor = professor
     is_vacation = _is_vacation_course_type(course_type)
     anchor_timezone = _normalize_session_timezone(updates.get("timezone", session_obj.timezone or location.timezone))
 
@@ -2381,7 +2439,7 @@ def update_session(
                 requested_zoom_link=updates["zoom_link"],
                 course_type=course_type,
                 location=location,
-                professor=professor,
+                professor=session_zoom_professor,
             )
         elif (
             ("course_type_id" in updates or "location_id" in updates or "professor_id" in updates)
@@ -2391,7 +2449,7 @@ def update_session(
                 requested_zoom_link=None,
                 course_type=course_type,
                 location=location,
-                professor=professor,
+                professor=session_zoom_professor,
             )
         if is_vacation:
             target.capacity_max = 0
@@ -2495,6 +2553,36 @@ def update_session(
         ):
             _promote_waitlist_if_possible(db, target, now)
 
+    if has_substitute_teacher_update:
+        session_obj.substitute_teacher_id = substitute_teacher_id
+        if substitute_teacher_id is None:
+            session_obj.substitute_set_at = None
+            session_obj.substitute_set_by = None
+            if not has_substitute_note_update:
+                session_obj.substitute_note = None
+        else:
+            session_obj.substitute_set_at = now
+            session_obj.substitute_set_by = current_user.id
+            if "zoom_link" not in updates and not (session_obj.zoom_link or "").strip():
+                session_obj.zoom_link = _resolve_session_zoom_link(
+                    requested_zoom_link=None,
+                    course_type=course_type,
+                    location=location,
+                    professor=substitute_professor,
+                )
+    elif "professor_id" in updates and session_obj.substitute_teacher_id is not None:
+        normalized_existing_substitute = normalized_substitute_teacher_id(
+            professor_id=professor_id,
+            substitute_teacher_id=session_obj.substitute_teacher_id,
+        )
+        if normalized_existing_substitute is None:
+            session_obj.substitute_teacher_id = None
+            session_obj.substitute_set_at = None
+            session_obj.substitute_set_by = None
+            session_obj.substitute_note = None
+    if has_substitute_note_update:
+        session_obj.substitute_note = _normalize_message_field(requested_substitute_note)
+
     if recurrence_group_id is not None and recurrence_rule is not None:
         anchor_duration = session_obj.end_at_utc - session_obj.start_at_utc
         anchor_deadline_delta = session_obj.start_at_utc - session_obj.auto_cancel_deadline_utc
@@ -2572,13 +2660,14 @@ def update_session(
     session_with_refs = _load_admin_session_with_refs(db, session_id=session_id)
     if session_with_refs is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    session_ref, course_type, location, professor = session_with_refs
+    session_ref, course_type, location, professor, substitute_professor = session_with_refs
     return _to_admin_session_out(
         session_ref,
         booked_count=booked_count,
         course_type=course_type,
         location=location,
         professor=professor,
+        substitute_professor=substitute_professor,
     )
 
 
@@ -2751,7 +2840,7 @@ def cancel_session_operation(
     payload: AdminSessionCancelOperationRequest,
     apply_scope: ApplyScope = Query(default="ONE"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminSessionOperationOut:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
@@ -2763,13 +2852,25 @@ def cancel_session_operation(
     now = _utcnow()
     cancel_reason = _normalize_message_field(payload.cancel_reason) or "ADMIN_CANCELLED"
     target_ids = [target.id for target in targets]
+    orchestrated_notifications = []
 
     for target in targets:
         target.status = SessionStatus.CANCELLED
         target.cancel_reason = cancel_reason
         target.updated_at = now
+        orchestrated_notifications.extend(
+            schedule_slot_cancelled_notifications(
+                db,
+                slot=target,
+                actor_user_id=current_user.id,
+                occurred_at=now,
+                source="admin_bo",
+            )
+        )
 
     db.commit()
+    if orchestrated_notifications:
+        enqueue_notifications(orchestrated_notifications)
 
     notified_students, notified_professors = _send_operation_notifications(
         db,

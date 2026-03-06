@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import distinct, select
+from sqlalchemy import distinct, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
@@ -127,7 +127,11 @@ def list_professor_catalog_products(
     category_name_by_id = {category_id: name for category_id, name in category_rows}
     location_name_by_id = {location_id: name for location_id, name in db.execute(select(Location.id, Location.name)).all()}
 
-    stmt = select(CatalogProduct)
+    stmt = (
+        select(CatalogProduct)
+        .outerjoin(ProductCategory, ProductCategory.id == CatalogProduct.category_id)
+        .where(or_(CatalogProduct.category_id.is_(None), ProductCategory.can_be_requested_by_professor.is_(True)))
+    )
     if not include_inactive:
         stmt = stmt.where(CatalogProduct.active.is_(True))
     rows = db.scalars(stmt.order_by(CatalogProduct.title.asc())).all()

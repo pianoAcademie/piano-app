@@ -8,15 +8,23 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.models.user import User, UserRole
 from app.schemas.jobs import (
+    AutoInvoiceBillingJobResponse,
     AutoCancelJobResponse,
+    NotificationEngineJobResponse,
     PayoutJobResponse,
     ProfessorDailyDigestJobResponse,
     ReminderJobResponse,
     SubscriptionBillingJobResponse,
 )
+from app.services.auto_invoice_billing import run_auto_invoice_billing_job
+from app.services.jobs.application.notification_jobs import (
+    run_delivery_feedback_job,
+    run_immediate_notification_dispatch_job,
+    run_reminder_generation_job,
+    run_scheduled_notification_dispatch_job,
+)
 from app.services.professor_daily_digest import run_send_professor_daily_digest_job
 from app.services.payouts import run_calc_professor_payouts_job
-from app.services.reminders import run_send_reminders_job
 from app.services.subscription_billing import run_subscription_billing_job
 from app.services.session_automation import run_auto_cancel_empty_sessions_job
 
@@ -30,13 +38,14 @@ def send_reminders(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> ReminderJobResponse:
     now = datetime.now(timezone.utc)
-    result = run_send_reminders_job(db, now=now, limit=limit)
+    generation = run_reminder_generation_job(db, now=now, limit=limit)
+    dispatch = run_scheduled_notification_dispatch_job(db, now=now, limit=limit)
     db.commit()
     return ReminderJobResponse(
-        created=result.created,
-        sent=result.sent,
-        skipped=result.skipped,
-        failed=result.failed,
+        created=generation.sent,
+        sent=dispatch.sent,
+        skipped=generation.skipped + dispatch.skipped,
+        failed=generation.failed + dispatch.failed,
     )
 
 
@@ -112,4 +121,98 @@ def run_subscription_billing(
         charged=result.charged,
         skipped=result.skipped,
         failed=result.failed,
+    )
+
+
+@router.post("/run-auto-invoice-billing", response_model=AutoInvoiceBillingJobResponse)
+def run_auto_invoice_billing(
+    limit: int = Query(default=200, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AutoInvoiceBillingJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_auto_invoice_billing_job(db, now=now, limit=limit)
+    db.commit()
+    return AutoInvoiceBillingJobResponse(
+        checked=result.checked,
+        generated=result.generated,
+        skipped_empty=result.skipped_empty,
+        skipped_duplicate=result.skipped_duplicate,
+        failed=result.failed,
+    )
+
+
+@router.post("/notifications/reminder-generation", response_model=NotificationEngineJobResponse)
+def run_notifications_reminder_generation(
+    limit: int = Query(default=1000, ge=1, le=10000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> NotificationEngineJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_reminder_generation_job(db, now=now, limit=limit)
+    db.commit()
+    return NotificationEngineJobResponse(
+        checked=result.checked,
+        processed=result.processed,
+        sent=result.sent,
+        skipped=result.skipped,
+        failed=result.failed,
+        job_run_id=str(result.job_run_id),
+    )
+
+
+@router.post("/notifications/dispatch-scheduled", response_model=NotificationEngineJobResponse)
+def run_notifications_dispatch_scheduled(
+    limit: int = Query(default=500, ge=1, le=10000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> NotificationEngineJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_scheduled_notification_dispatch_job(db, now=now, limit=limit)
+    db.commit()
+    return NotificationEngineJobResponse(
+        checked=result.checked,
+        processed=result.processed,
+        sent=result.sent,
+        skipped=result.skipped,
+        failed=result.failed,
+        job_run_id=str(result.job_run_id),
+    )
+
+
+@router.post("/notifications/dispatch-immediate", response_model=NotificationEngineJobResponse)
+def run_notifications_dispatch_immediate(
+    limit: int = Query(default=500, ge=1, le=10000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> NotificationEngineJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_immediate_notification_dispatch_job(db, now=now, limit=limit)
+    db.commit()
+    return NotificationEngineJobResponse(
+        checked=result.checked,
+        processed=result.processed,
+        sent=result.sent,
+        skipped=result.skipped,
+        failed=result.failed,
+        job_run_id=str(result.job_run_id),
+    )
+
+
+@router.post("/notifications/delivery-feedback", response_model=NotificationEngineJobResponse)
+def run_notifications_delivery_feedback(
+    limit: int = Query(default=500, ge=1, le=10000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> NotificationEngineJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_delivery_feedback_job(db, now=now, limit=limit)
+    db.commit()
+    return NotificationEngineJobResponse(
+        checked=result.checked,
+        processed=result.processed,
+        sent=result.sent,
+        skipped=result.skipped,
+        failed=result.failed,
+        job_run_id=str(result.job_run_id),
     )

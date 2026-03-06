@@ -8,6 +8,9 @@ export type PlanningEventChipData = {
   enrolled_count?: number;
   capacity_label?: string;
   teacher_display_name: string;
+  habitual_teacher_display_name?: string;
+  substitute_teacher_display_name?: string | null;
+  effective_teacher_display_name?: string;
   location_label: string;
   type_label: string;
   status_label: string;
@@ -138,14 +141,30 @@ function capacityBadgeClass(used: number, max: number): string {
 
 export default function MonthEventChip({ event, href, expanded = false }: MonthEventChipProps): JSX.Element {
   const teacherFullName = (event.teacher_display_name || "").trim();
+  const habitualTeacherName = (event.habitual_teacher_display_name || "").trim();
+  const substituteTeacherName = (event.substitute_teacher_display_name || "").trim();
+  const effectiveTeacherName = (event.effective_teacher_display_name || teacherFullName).trim();
+  const isSubstituteActive = substituteTeacherName.length > 0 && effectiveTeacherName === substituteTeacherName;
   const teacherMissing = teacherFullName.length === 0;
-  const teacherCompact = teacherMissing ? "(non renseigne)" : compactTeacherName(teacherFullName);
+  const teacherCompactBase = teacherMissing ? "(non renseigne)" : compactTeacherName(effectiveTeacherName || teacherFullName);
+  const teacherCompact = isSubstituteActive && !teacherMissing ? `${teacherCompactBase} (rempl.)` : teacherCompactBase;
   const locationLabel = (event.location_label || "").trim() || "Lieu";
   const typeLabel = normalizedTypeLabel(event.type_label);
   const displayTitle = sanitizeTitle(event.title, typeLabel);
   const startTime = formatEventTime(event.start_at_utc);
   const endTime = formatEventTime(event.end_at_utc);
-  const tooltip = `${startTime}-${endTime}\n${event.title}\nProf: ${teacherMissing ? "(non renseigne)" : teacherFullName}\nLieu: ${locationLabel}\nType: ${typeLabel}\nStatut: ${event.status_label}`;
+  const tooltip = [
+    `${startTime}-${endTime}`,
+    event.title,
+    `Prof effectif: ${teacherMissing ? "(non renseigne)" : effectiveTeacherName}`,
+    isSubstituteActive && habitualTeacherName ? `Prof habituel: ${habitualTeacherName}` : null,
+    isSubstituteActive && substituteTeacherName ? `Remplacant: ${substituteTeacherName}` : null,
+    `Lieu: ${locationLabel}`,
+    `Type: ${typeLabel}`,
+    `Statut: ${event.status_label}`,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
   const showStatusBadge = shouldShowStatusBadge(event.status);
   const capacityUsed = resolveCapacityUsed(event);
   const capacityMax = Math.max(0, Math.floor(event.capacity_max || 0));

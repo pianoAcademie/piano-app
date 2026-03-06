@@ -289,6 +289,18 @@ class CourseSession(Base):
         ForeignKey("professors.id", ondelete="restrict"),
         nullable=True,
     )
+    substitute_teacher_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professors.id", ondelete="restrict"),
+        nullable=True,
+    )
+    substitute_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    substitute_set_by: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    substitute_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     private_description: Mapped[str | None] = mapped_column(Text, nullable=True)

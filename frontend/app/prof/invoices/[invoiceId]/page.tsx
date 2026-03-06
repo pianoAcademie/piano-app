@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -9,11 +8,13 @@ import {
   teacherUncancelInvoiceAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../../lib/auth-cookies";
 import ActionCard from "../../../../components/teacher-ui/action-card";
 import AlertCard from "../../../../components/teacher-ui/alert-card";
 import BottomTabs from "../../../../components/teacher-ui/bottom-tabs";
 import ListRow from "../../../../components/teacher-ui/list-row";
 import PageHeaderMobile from "../../../../components/teacher-ui/page-header-mobile";
+import PortalImpersonationBanner from "../../../../components/portal-impersonation-banner";
 import SectionAccordion from "../../../../components/teacher-ui/section-accordion";
 import StatChip from "../../../../components/teacher-ui/stat-chip";
 import type { TeacherInvoiceOut } from "../../../../lib/types";
@@ -29,19 +30,24 @@ export default async function TeacherInvoiceDetailPage({
   params: { invoiceId: string };
   searchParams: Record<string, string | string[] | undefined>;
 }): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = getPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const impersonationClaims = readPortalImpersonationClaims();
+  const isImpersonating = Boolean(impersonationClaims?.imp);
+  const impersonationReturnTo = getPortalReturnTo() ?? "/admin";
   const invoiceId = params.invoiceId;
   const ok = Array.isArray(searchParams.ok) ? searchParams.ok[0] : (searchParams.ok ?? "");
   const error = Array.isArray(searchParams.error) ? searchParams.error[0] : (searchParams.error ?? "");
+  const impersonationNameHint = Array.isArray(searchParams.imp_name) ? searchParams.imp_name[0] ?? "" : searchParams.imp_name ?? "";
 
   const result = await backendRequest<TeacherInvoiceOut>(`/api/v1/teacher/invoices/${invoiceId}`, {}, token);
   if (!result.ok) {
     return <section className="flash-err">Erreur facture professeur: {result.message}</section>;
   }
   const invoice = result.data;
+  const impersonationDisplayName = impersonationNameHint.trim() || "Portail professeur";
 
   return (
     <section className="page teacher-shell teacher-subpage">
@@ -80,6 +86,10 @@ export default async function TeacherInvoiceDetailPage({
           { id: "profile", label: "Profil", icon: "👤", href: profTabHref("profile") },
         ]}
       />
+
+      {isImpersonating ? (
+        <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} />
+      ) : null}
 
       {ok ? <AlertCard tone="ok">{ok}</AlertCard> : null}
       {error ? <AlertCard tone="error">{error}</AlertCard> : null}

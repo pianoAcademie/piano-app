@@ -4,7 +4,7 @@ from collections.abc import Callable, Generator
 from uuid import UUID
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
@@ -48,6 +49,12 @@ def get_current_user(
             detail="Invalid or expired token",
         ) from exc
 
+    if payload.get("imp") and request.url.path.startswith("/api/v1/admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Impersonation token cannot access admin endpoints",
+        )
+
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(
@@ -70,6 +77,7 @@ def get_current_user(
             detail="User not found or inactive",
         )
 
+    setattr(user, "_auth_claims", payload)
     return user
 
 

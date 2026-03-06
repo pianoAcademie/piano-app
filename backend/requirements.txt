@@ -7,3 +7,4 @@ PyJWT==2.10.1
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.20
 xhtml2pdf==0.2.15
+redis==5.0.8

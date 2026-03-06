@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db
 from app.models.catalog import (
@@ -145,6 +145,7 @@ def list_sessions(
         .group_by(Booking.session_id)
         .subquery()
     )
+    substitute_professor = aliased(Professor, name="substitute_professor")
 
     stmt = (
         select(
@@ -152,11 +153,13 @@ def list_sessions(
             CourseType,
             Location,
             Professor,
+            substitute_professor,
             func.coalesce(booked_counts.c.booked_count, 0).label("booked_count"),
         )
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
         .where(CourseSession.status == SessionStatus.SCHEDULED, CourseSession.is_private.is_(False))
     )
@@ -175,7 +178,18 @@ def list_sessions(
     rows = db.execute(stmt).all()
 
     result: list[SessionOut] = []
-    for session, course_type, location, professor, booked_count in rows:
+    for session, course_type, location, professor, substitute, booked_count in rows:
+        effective_professor = substitute or professor
+        substitute_display_name = (
+            f"{(substitute.first_name or '').strip()} {(substitute.last_name or '').strip()}".strip()
+            if substitute is not None
+            else None
+        )
+        effective_display_name = (
+            f"{(effective_professor.first_name or '').strip()} {(effective_professor.last_name or '').strip()}".strip()
+            if effective_professor is not None
+            else None
+        )
         booked = int(booked_count or 0)
         seats_remaining = max(session.capacity_max - booked, 0)
 
@@ -196,6 +210,10 @@ def list_sessions(
                 seats_remaining=seats_remaining,
                 online_booking_enabled=(not session.is_private) and bool(session.allow_online_booking),
                 zoom_link=session.zoom_link,
+                substitute_teacher_id=session.substitute_teacher_id,
+                substitute_teacher_display_name=substitute_display_name,
+                effective_teacher_id=effective_professor.id if effective_professor is not None else None,
+                effective_teacher_display_name=effective_display_name,
                 course_type=SessionCourseTypeOut(
                     id=course_type.id,
                     code=course_type.code,
@@ -209,11 +227,11 @@ def list_sessions(
                 ),
                 professor=(
                     SessionProfessorOut(
-                        id=professor.id,
-                        first_name=professor.first_name,
-                        last_name=professor.last_name,
+                        id=effective_professor.id,
+                        first_name=effective_professor.first_name,
+                        last_name=effective_professor.last_name,
                     )
-                    if professor is not None
+                    if effective_professor is not None
                     else None
                 ),
             )

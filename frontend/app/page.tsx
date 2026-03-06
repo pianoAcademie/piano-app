@@ -1,11 +1,11 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { getAdminToken, getPortalToken } from "../lib/auth-cookies";
 import { backendRequest } from "../lib/backend";
 import type { UserOut } from "../lib/types";
 
 export default async function HomePage(): Promise<never> {
-  const token = cookies().get("access_token")?.value;
+  const token = getAdminToken() ?? getPortalToken();
   if (!token) {
     redirect("/login");
   }
@@ -20,7 +20,7 @@ export default async function HomePage(): Promise<never> {
   }
 
   if (meResult.data.role === "client") {
-    redirect("/dashboard");
+    redirect("/client?tab=home");
   }
 
   redirect("/prof");

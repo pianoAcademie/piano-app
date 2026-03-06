@@ -1,6 +1,6 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
+import { getPortalToken } from "../../../../../lib/auth-cookies";
 import { backendUrl } from "../../../../../lib/backend";
 
 type RouteParams = {
@@ -10,7 +10,7 @@ type RouteParams = {
 };
 
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
-  const token = cookies().get("access_token")?.value;
+  const token = getPortalToken();
   if (!token) {
     const loginUrl = new URL("/login?error=Session%20expiree", request.url);
     return NextResponse.redirect(loginUrl, 302);

@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -16,8 +15,10 @@ import AlertCard from "../../../components/teacher-ui/alert-card";
 import BottomTabs from "../../../components/teacher-ui/bottom-tabs";
 import ListRow from "../../../components/teacher-ui/list-row";
 import PageHeaderMobile from "../../../components/teacher-ui/page-header-mobile";
+import PortalImpersonationBanner from "../../../components/portal-impersonation-banner";
 import SectionAccordion from "../../../components/teacher-ui/section-accordion";
 import StatChip from "../../../components/teacher-ui/stat-chip";
+import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../lib/auth-cookies";
 import type { TeacherInvoiceOut, TeacherStatementOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -49,15 +50,27 @@ function profTabHref(tab: string): string {
   return `/prof?tab=${encodeURIComponent(tab)}`;
 }
 
+function isPastOrStarted(isoValue: string): boolean {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return false;
+  }
+  return parsed.getTime() <= Date.now();
+}
+
 export default async function TeacherStatementsPage({
   searchParams,
 }: {
   searchParams: SearchParams;
 }): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = getPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const impersonationClaims = readPortalImpersonationClaims();
+  const isImpersonating = Boolean(impersonationClaims?.imp);
+  const impersonationReturnTo = getPortalReturnTo() ?? "/admin";
+  const impersonationNameHint = readParam(searchParams, "imp_name").trim();
   const now = new Date();
   const year = Number.parseInt(readParam(searchParams, "year"), 10) || now.getUTCFullYear();
   const parsedMonth = Number.parseInt(readParam(searchParams, "month"), 10);
@@ -70,15 +83,11 @@ export default async function TeacherStatementsPage({
     backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements?year=${year}&month=${month}`, {}, token),
     backendRequest<TeacherInvoiceOut[]>(`/api/v1/teacher/invoices?year=${year}&month=${month}`, {}, token),
   ]);
-  if (!statementsResult.ok) {
-    return <section className="flash-err">Erreur releves: {statementsResult.message}</section>;
-  }
-  if (!invoicesResult.ok) {
-    return <section className="flash-err">Erreur factures prof: {invoicesResult.message}</section>;
-  }
-
-  const statements = statementsResult.data;
-  const invoices = invoicesResult.data;
+  const statements = statementsResult.ok ? statementsResult.data : [];
+  const invoices = invoicesResult.ok ? invoicesResult.data : [];
+  const impersonationDisplayName =
+    impersonationNameHint
+    || "Portail professeur";
   const invoicesByPayor = new Map<string, TeacherInvoiceOut[]>();
   for (const invoice of invoices) {
     const bucket = invoicesByPayor.get(invoice.payor_legal_entity_id) ?? [];
@@ -121,6 +130,10 @@ export default async function TeacherStatementsPage({
         ]}
       />
 
+      {isImpersonating ? (
+        <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} />
+      ) : null}
+
       <article className="card teacher-filter-card">
         <form method="get" className="grid teacher-filter-form">
           <label>
@@ -145,6 +158,8 @@ export default async function TeacherStatementsPage({
 
       {ok ? <AlertCard tone="ok">{ok}</AlertCard> : null}
       {error ? <AlertCard tone="error">{error}</AlertCard> : null}
+      {!statementsResult.ok ? <AlertCard tone="error">Erreur releves: {statementsResult.message}</AlertCard> : null}
+      {!invoicesResult.ok ? <AlertCard tone="error">Erreur factures prof: {invoicesResult.message}</AlertCard> : null}
 
       <ActionCard title="Actions" subtitle="Validation ou litige pour la periode selectionnee.">
         <div className="row teacher-actions-wrap">
@@ -170,12 +185,15 @@ export default async function TeacherStatementsPage({
         <AlertCard tone="warn">Aucun releve trouve pour cette periode.</AlertCard>
       ) : (
         <div className="grid teacher-entity-grid">
-          {statements.map((statement) => (
+          {statements.map((statement) => {
+            const pendingMissingSessions = statement.missing_sessions.filter((row) => isPastOrStarted(row.start_at_utc));
+            const hasPendingPastAttendance = pendingMissingSessions.length > 0;
+            return (
             <article key={`${statement.payor_legal_entity_id}-${statement.year}-${statement.month}`} className="card">
               <div className="row spread">
                 <strong>{statement.payor_legal_entity_name}</strong>
-                <span className={`status-pill ${statement.attendance_complete ? "status-ok" : "status-warn"}`}>
-                  {statement.attendance_complete ? statement.status : "Presences a renseigner"}
+                <span className={`status-pill ${hasPendingPastAttendance ? "status-warn" : "status-ok"}`}>
+                  {hasPendingPastAttendance ? "Presences a renseigner" : statement.status}
                 </span>
               </div>
 
@@ -185,14 +203,14 @@ export default async function TeacherStatementsPage({
                 <StatChip label="TTC" value={`${statement.totals_ttc} ${statement.currency}`} tone="ok" />
               </div>
 
-              {!statement.attendance_complete ? (
+              {hasPendingPastAttendance ? (
                 <SectionAccordion
                   title="Presences a renseigner"
                   subtitle="Seances a completer avant approbation"
-                  badge={<span className="status-pill status-warn">{statement.missing_sessions.length}</span>}
+                  badge={<span className="status-pill status-warn">{pendingMissingSessions.length}</span>}
                 >
                   <div className="list teacher-list-compact">
-                    {statement.missing_sessions.map((missing) => (
+                    {pendingMissingSessions.map((missing) => (
                       <ListRow
                         key={missing.session_id}
                         left={missing.title}
@@ -253,7 +271,8 @@ export default async function TeacherStatementsPage({
                 </article>
               ))}
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>

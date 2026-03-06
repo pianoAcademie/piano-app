@@ -42,6 +42,15 @@ function labelForSegment(segment: string, previous: string): string | null {
   if (segment === "communications") {
     return "Communications";
   }
+  if (segment === "notifications") {
+    return "Notifications";
+  }
+  if (segment === "jobs" && previous === "notifications") {
+    return "Monitoring jobs";
+  }
+  if (segment === "incidents" && previous === "notifications") {
+    return "Incidents";
+  }
   if (segment === "products") {
     return "Produits";
   }

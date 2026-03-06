@@ -53,6 +53,7 @@ class Settings:
     smtp_timeout_seconds: int = int(os.getenv("SMTP_TIMEOUT_SECONDS", "15"))
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
     password_reset_token_expire_minutes: int = int(os.getenv("PASSWORD_RESET_TOKEN_EXPIRE_MINUTES", "60"))
+    redis_url: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 
 settings = Settings()

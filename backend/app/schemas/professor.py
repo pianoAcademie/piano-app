@@ -52,6 +52,12 @@ class ProfessorSessionOut(BaseModel):
     capacity_max: int
     booked_count: int
     zoom_link: str | None
+    habitual_teacher_id: UUID | None = None
+    habitual_teacher_display_name: str | None = None
+    substitute_teacher_id: UUID | None = None
+    substitute_teacher_display_name: str | None = None
+    effective_teacher_id: UUID | None = None
+    effective_teacher_display_name: str | None = None
     students: list[ProfessorSessionStudentOut] = Field(default_factory=list)
     course_type: ProfessorSessionCourseTypeOut
     location: ProfessorSessionLocationOut
@@ -260,6 +266,21 @@ class TeacherStatementOut(BaseModel):
 
 class TeacherStatementDisputeRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+
+
+class TeacherStatementDisputeLinesRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    selected_lines: list[str] = Field(default_factory=list)
+
+
+class TeacherStatementMissingServiceRequest(BaseModel):
+    service_date: date
+    service_label: str = Field(min_length=1, max_length=200)
+    student_or_group: str | None = Field(default=None, max_length=200)
+    duration_minutes: int = Field(ge=1, le=720)
+    modality: str | None = Field(default=None, max_length=80)
+    estimated_rate_ht: Decimal | None = None
+    comment: str = Field(min_length=1, max_length=4000)
 
 
 class TeacherInvoiceLineOut(BaseModel):

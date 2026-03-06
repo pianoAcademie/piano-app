@@ -61,6 +61,7 @@ def create_access_token(
     subject: str,
     role: str,
     expires_delta: timedelta | None = None,
+    extra_claims: dict[str, object] | None = None,
 ) -> str:
     expire = datetime.now(timezone.utc) + (
         expires_delta
@@ -68,9 +69,11 @@ def create_access_token(
         else timedelta(minutes=settings.access_token_expire_minutes)
     )
 
-    payload = {
+    payload: dict[str, object] = {
         "sub": subject,
         "role": role,
         "exp": expire,
     }
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)

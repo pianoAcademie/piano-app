@@ -22,6 +22,7 @@ from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
+    ClientAutoInvoiceRule,
     ClientInvoiceLine,
     ClientManualCreditBalance,
     ClientManualTransaction,
@@ -52,6 +53,7 @@ from app.models.plan import (
     SubscriptionStatus,
 )
 from app.models.product_catalog import ProductCategory
+from app.models.notification_engine import ContactDeliveryStatus
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.admin import (
     AdminClientBulkAction,
@@ -94,6 +96,8 @@ from app.schemas.admin import (
     AdminClientManualCreditUpdateRequest,
     AdminClientNoteOut,
     AdminClientNoteCreateRequest,
+    AdminClientAutoInvoiceRuleOut,
+    AdminClientAutoInvoiceRuleUpsertRequest,
     AdminRangeInvoiceCreateRequest,
     AdminRangeInvoiceEmailOut,
     AdminRangeInvoiceEmailPreviewOut,
@@ -194,6 +198,10 @@ INVOICE_RANGE_LAYOUT_ALIASES = {
     "GROUPED": "COMPILED",
 }
 INVOICE_RANGE_GENERATION_MODES = {"MANUAL", "AUTO"}
+AUTO_INVOICE_FREQUENCIES = {"MONTHLY", "QUARTERLY", "YEARLY"}
+AUTO_INVOICE_BILLING_TIMINGS = {"UPCOMING_LESSONS", "PREVIOUS_LESSONS"}
+AUTO_INVOICE_DUE_RULE_TYPES = {"SAME_DAY_ISSUE", "X_DAYS_AFTER_ISSUE"}
+AUTO_INVOICE_RULE_STATUSES = {"ACTIVE", "PAUSED", "ARCHIVED"}
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 SIMPLE_PLACEHOLDER_RE = re.compile(r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}")
 EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -358,6 +366,106 @@ def _subtract_months_utc(value: datetime, months: int) -> datetime:
         year -= 1
     day = min(value.day, monthrange(year, month)[1])
     return value.replace(year=year, month=month, day=day)
+
+
+def _months_for_auto_invoice_frequency(frequency: str) -> int:
+    normalized = (frequency or "").strip().upper()
+    if normalized == "QUARTERLY":
+        return 3
+    if normalized == "YEARLY":
+        return 12
+    return 1
+
+
+def _add_months_date(value: date, months: int) -> date:
+    month_index = (value.month - 1) + months
+    year = value.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    day = min(value.day, monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _normalize_auto_invoice_frequency(value: str | None) -> str:
+    normalized = (value or "").strip().upper()
+    return normalized if normalized in AUTO_INVOICE_FREQUENCIES else "MONTHLY"
+
+
+def _normalize_auto_invoice_billing_timing(value: str | None) -> str:
+    normalized = (value or "").strip().upper()
+    return normalized if normalized in AUTO_INVOICE_BILLING_TIMINGS else "UPCOMING_LESSONS"
+
+
+def _normalize_auto_invoice_due_rule_type(value: str | None) -> str:
+    normalized = (value or "").strip().upper()
+    return normalized if normalized in AUTO_INVOICE_DUE_RULE_TYPES else "SAME_DAY_ISSUE"
+
+
+def _compute_auto_invoice_next_run_date(*, cycle_start_date: date, frequency: str, today: date) -> date:
+    months = _months_for_auto_invoice_frequency(frequency)
+    next_run_date = cycle_start_date
+    guard = 0
+    while next_run_date < today and guard < 1200:
+        next_run_date = _add_months_date(next_run_date, months)
+        guard += 1
+    return next_run_date
+
+
+def _compute_auto_invoice_period(
+    *,
+    cycle_anchor: date,
+    frequency: str,
+    billing_timing: str,
+) -> tuple[date, date]:
+    months = _months_for_auto_invoice_frequency(frequency)
+    if billing_timing == "PREVIOUS_LESSONS":
+        period_start = _add_months_date(cycle_anchor, -months)
+        period_end = cycle_anchor
+        return period_start, period_end
+    period_start = cycle_anchor
+    period_end = _add_months_date(cycle_anchor, months)
+    return period_start, period_end
+
+
+def _compute_auto_invoice_due_date(*, issued_date: date, due_rule_type: str, due_days_offset: int | None) -> date:
+    if due_rule_type == "X_DAYS_AFTER_ISSUE":
+        return issued_date + timedelta(days=max(0, int(due_days_offset or 0)))
+    return issued_date
+
+
+def _auto_invoice_rule_out(rule: ClientAutoInvoiceRule) -> AdminClientAutoInvoiceRuleOut:
+    preview_period_start, preview_period_end = _compute_auto_invoice_period(
+        cycle_anchor=rule.next_run_date,
+        frequency=_normalize_auto_invoice_frequency(rule.frequency),
+        billing_timing=_normalize_auto_invoice_billing_timing(rule.billing_timing),
+    )
+    preview_due_date = _compute_auto_invoice_due_date(
+        issued_date=rule.next_run_date,
+        due_rule_type=_normalize_auto_invoice_due_rule_type(rule.due_date_rule_type),
+        due_days_offset=rule.due_date_days_offset,
+    )
+    normalized_status = (rule.status or "").strip().upper()
+    if normalized_status not in AUTO_INVOICE_RULE_STATUSES:
+        normalized_status = "ACTIVE"
+    return AdminClientAutoInvoiceRuleOut(
+        id=rule.id,
+        client_id=rule.user_id,
+        legal_entity_id=rule.legal_entity_id,
+        cycle_start_date=rule.cycle_start_date,
+        frequency=_normalize_auto_invoice_frequency(rule.frequency),
+        billing_timing=_normalize_auto_invoice_billing_timing(rule.billing_timing),
+        due_date_rule_type=_normalize_auto_invoice_due_rule_type(rule.due_date_rule_type),
+        due_date_days_offset=rule.due_date_days_offset,
+        include_pending_lines=bool(rule.include_pending_lines),
+        include_cancelled_lines=bool(rule.include_cancelled_lines),
+        next_run_date=rule.next_run_date,
+        preview_period_start_date=preview_period_start,
+        preview_period_end_date=preview_period_end,
+        preview_due_date=preview_due_date,
+        last_generated_at=rule.last_generated_at,
+        status=normalized_status,
+        created_at=rule.created_at,
+        updated_at=rule.updated_at,
+    )
 
 
 def _message_preview(value: str | None, *, max_length: int = 100) -> str | None:
@@ -845,7 +953,7 @@ def _invoice_range_download_url(
     params["auto_period_scope"] = "FUTURE" if str(metadata.get("auto_period_scope") or "").strip().upper() == "FUTURE" else "PAST"
     params["auto_frequency"] = "WEEKLY" if str(metadata.get("auto_frequency") or "").strip().upper() == "WEEKLY" else "MONTHLY"
     params["auto_repeat_every"] = str(
-        _parse_invoice_range_metadata_int(metadata, "auto_repeat_every", default=1, minimum=1, maximum=6)
+        _parse_invoice_range_metadata_int(metadata, "auto_repeat_every", default=1, minimum=1, maximum=12)
     )
     params["auto_layout_style"] = (
         "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
@@ -1421,7 +1529,7 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         auto_repeat_every = int(str(payload.get("auto_repeat_every") or "1").strip())
     except ValueError:
         auto_repeat_every = 1
-    normalized["auto_repeat_every"] = max(1, min(auto_repeat_every, 6))
+    normalized["auto_repeat_every"] = max(1, min(auto_repeat_every, 12))
     auto_layout_style = str(payload.get("auto_layout_style") or "NORMAL").strip().upper()
     normalized["auto_layout_style"] = auto_layout_style if auto_layout_style in {"NORMAL", "CONDENSED"} else "NORMAL"
     normalized["auto_include_previous_balance"] = (
@@ -1568,7 +1676,7 @@ def _invoice_range_out(
             "auto_repeat_every",
             default=1,
             minimum=1,
-            maximum=6,
+            maximum=12,
         ),
         auto_layout_style=(
             "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
@@ -2622,6 +2730,7 @@ def _client_out(
     family_name: str | None = None,
     group_ids: list[UUID] | None = None,
     group_names: list[str] | None = None,
+    delivery_status: ContactDeliveryStatus | None = None,
 ) -> AdminClientOut:
     return AdminClientOut(
         id=client.id,
@@ -2650,6 +2759,12 @@ def _client_out(
         sms_opt_in=client.sms_opt_in,
         lesson_reminder_email_opt_in=client.lesson_reminder_email_opt_in,
         lesson_reminder_sms_opt_in=client.lesson_reminder_sms_opt_in,
+        email_delivery_status=(delivery_status.email_status if delivery_status is not None else "active"),
+        email_suspended_at=(delivery_status.email_suspended_at if delivery_status is not None else None),
+        email_suspension_reason=(delivery_status.email_suspension_reason if delivery_status is not None else None),
+        phone_delivery_status=(delivery_status.phone_status if delivery_status is not None else "active"),
+        phone_suspended_at=(delivery_status.phone_suspended_at if delivery_status is not None else None),
+        phone_suspension_reason=(delivery_status.phone_suspension_reason if delivery_status is not None else None),
         client_status=client.client_status,
         family_name=family_name,
         group_ids=group_ids or [],
@@ -3566,6 +3681,12 @@ def get_admin_client(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientOut:
     client = _require_client(db, client_id)
+    delivery_status = db.scalar(
+        select(ContactDeliveryStatus).where(
+            ContactDeliveryStatus.contact_type == "USER",
+            ContactDeliveryStatus.contact_id == client.id,
+        )
+    )
     groups_by_client = _groups_for_client_ids(db, [client.id])
     group_pairs = groups_by_client.get(client.id, [])
 
@@ -3592,6 +3713,7 @@ def get_admin_client(
         family_name=family_name,
         group_ids=[group_item[0] for group_item in group_pairs],
         group_names=[group_item[1] for group_item in group_pairs],
+        delivery_status=delivery_status,
     )
 
 
@@ -6055,6 +6177,91 @@ def delete_admin_client_manual_transaction(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/{client_id}/invoice-auto-rules", response_model=AdminClientAutoInvoiceRuleOut, status_code=status.HTTP_201_CREATED)
+def upsert_admin_client_auto_invoice_rule(
+    client_id: UUID,
+    payload: AdminClientAutoInvoiceRuleUpsertRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientAutoInvoiceRuleOut:
+    _require_client(db, client_id)
+    _require_active_legal_entity(db, legal_entity_id=payload.legal_entity_id)
+
+    normalized_frequency = _normalize_auto_invoice_frequency(payload.frequency)
+    normalized_billing_timing = _normalize_auto_invoice_billing_timing(payload.billing_timing)
+    normalized_due_rule_type = _normalize_auto_invoice_due_rule_type(payload.due_date_rule_type)
+    due_date_days_offset = payload.due_date_days_offset
+    if normalized_due_rule_type == "X_DAYS_AFTER_ISSUE":
+        if due_date_days_offset is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="due_date_days_offset is required when due_date_rule_type is X_DAYS_AFTER_ISSUE",
+            )
+    else:
+        due_date_days_offset = None
+
+    normalized_status = "PAUSED" if payload.status == "PAUSED" else "ACTIVE"
+    today = _utcnow().date()
+    next_run_date = _compute_auto_invoice_next_run_date(
+        cycle_start_date=payload.cycle_start_date,
+        frequency=normalized_frequency,
+        today=today,
+    )
+
+    rule = db.scalar(
+        select(ClientAutoInvoiceRule)
+        .where(
+            ClientAutoInvoiceRule.user_id == client_id,
+            ClientAutoInvoiceRule.legal_entity_id == payload.legal_entity_id,
+            ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]),
+        )
+        .order_by(ClientAutoInvoiceRule.updated_at.desc(), ClientAutoInvoiceRule.created_at.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    if rule is None:
+        rule = ClientAutoInvoiceRule(
+            user_id=client_id,
+            legal_entity_id=payload.legal_entity_id,
+            created_by_user_id=actor.id,
+            updated_by_user_id=actor.id,
+        )
+        db.add(rule)
+
+    rule.cycle_start_date = payload.cycle_start_date
+    rule.frequency = normalized_frequency
+    rule.billing_timing = normalized_billing_timing
+    rule.due_date_rule_type = normalized_due_rule_type
+    rule.due_date_days_offset = due_date_days_offset
+    rule.include_pending_lines = bool(payload.include_pending_lines)
+    rule.include_cancelled_lines = bool(payload.include_cancelled_lines)
+    rule.next_run_date = next_run_date
+    rule.status = normalized_status
+    rule.updated_by_user_id = actor.id
+    rule.updated_at = _utcnow()
+
+    archived_rules = db.scalars(
+        select(ClientAutoInvoiceRule)
+        .where(
+            ClientAutoInvoiceRule.user_id == client_id,
+            ClientAutoInvoiceRule.legal_entity_id == payload.legal_entity_id,
+            ClientAutoInvoiceRule.id != rule.id,
+            ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]),
+        )
+        .with_for_update()
+    ).all()
+    for archived_rule in archived_rules:
+        archived_rule.status = "ARCHIVED"
+        archived_rule.updated_by_user_id = actor.id
+        archived_rule.updated_at = _utcnow()
+        db.add(archived_rule)
+
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _auto_invoice_rule_out(rule)
+
+
 @router.post("/{client_id}/payments/invoice-range", response_model=AdminRangeInvoiceOut, status_code=status.HTTP_201_CREATED)
 def create_admin_client_range_invoice(
     client_id: UUID,
@@ -6328,7 +6535,7 @@ def send_admin_client_range_invoice_email(
             "auto_repeat_every",
             default=1,
             minimum=1,
-            maximum=6,
+            maximum=12,
         ),
         auto_layout_style=(
             "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
@@ -6447,7 +6654,7 @@ def download_admin_client_range_invoice(
     auto_cycle_start_date: date | None = Query(default=None),
     auto_period_scope: str = Query(default="PAST"),
     auto_frequency: str = Query(default="MONTHLY"),
-    auto_repeat_every: int = Query(default=1, ge=1, le=6),
+    auto_repeat_every: int = Query(default=1, ge=1, le=12),
     auto_layout_style: str = Query(default="NORMAL"),
     auto_include_previous_balance: bool = Query(default=True),
     auto_send_email: bool = Query(default=False),
@@ -6813,7 +7020,7 @@ def download_admin_client_range_invoice(
             "auto_cycle_start_date": auto_cycle_start_date.isoformat() if auto_cycle_start_date is not None else None,
             "auto_period_scope": "FUTURE" if auto_period_scope.strip().upper() == "FUTURE" else "PAST",
             "auto_frequency": "WEEKLY" if auto_frequency.strip().upper() == "WEEKLY" else "MONTHLY",
-            "auto_repeat_every": max(1, min(int(auto_repeat_every), 6)),
+            "auto_repeat_every": max(1, min(int(auto_repeat_every), 12)),
             "auto_layout_style": normalized_auto_layout_style,
             "auto_include_previous_balance": bool(auto_include_previous_balance),
             "auto_send_email": bool(auto_send_email),
@@ -6955,7 +7162,7 @@ def download_admin_client_range_invoice_from_note(
             "auto_repeat_every",
             default=1,
             minimum=1,
-            maximum=6,
+            maximum=12,
         ),
         auto_layout_style=(
             "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"
@@ -7043,7 +7250,7 @@ def download_admin_client_range_invoice_public(
             "auto_repeat_every",
             default=1,
             minimum=1,
-            maximum=6,
+            maximum=12,
         ),
         auto_layout_style=(
             "CONDENSED" if str(metadata.get("auto_layout_style") or "").strip().upper() == "CONDENSED" else "NORMAL"

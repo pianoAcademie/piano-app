@@ -75,6 +75,10 @@ class SessionOut(BaseModel):
     seats_remaining: int
     online_booking_enabled: bool
     zoom_link: str | None
+    substitute_teacher_id: UUID | None = None
+    substitute_teacher_display_name: str | None = None
+    effective_teacher_id: UUID | None = None
+    effective_teacher_display_name: str | None = None
     course_type: SessionCourseTypeOut
     location: SessionLocationOut
     professor: SessionProfessorOut | None

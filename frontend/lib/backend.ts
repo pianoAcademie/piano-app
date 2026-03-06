@@ -1,3 +1,7 @@
+import "server-only";
+
+import { getTokenForPathname } from "./auth-cookies";
+
 const DEFAULT_BACKEND_URL = "http://localhost:8000";
 const DEFAULT_TIMEOUT_MS = 30000;
 
@@ -105,6 +109,15 @@ export async function backendRequest<T>(
     status: response.status,
     data: (payload as T) ?? ({} as T),
   };
+}
+
+export async function backendRequestForPath<T>(
+  pathname: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<BackendResult<T>> {
+  const token = getTokenForPathname(pathname) ?? undefined;
+  return backendRequest<T>(path, init, token);
 }
 
 function safeJsonParse(raw: string): unknown {

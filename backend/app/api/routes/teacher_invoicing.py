@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import csv
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from io import StringIO
 from typing import Any
 from uuid import UUID
 
@@ -23,9 +25,11 @@ from app.models.teacher_invoicing import (
 from app.models.user import User, UserRole
 from app.schemas.professor import (
     TeacherApproveStatementsOut,
+    TeacherStatementDisputeLinesRequest,
     TeacherInvoiceLineOut,
     TeacherInvoiceOut,
     TeacherStatementDisputeRequest,
+    TeacherStatementMissingServiceRequest,
     TeacherStatementMissingSessionOut,
     TeacherStatementOut,
 )
@@ -84,7 +88,7 @@ def _resolve_professor_profile(db: Session, *, current_user: User) -> Professor:
 
 
 def _statement_status_from_computed(computed: ComputedStatement) -> str:
-    return "ready" if computed.attendance_complete else "awaiting_attendance"
+    return "to_verify" if computed.attendance_complete else "awaiting_attendance"
 
 
 def _sync_monthly_statements(
@@ -124,7 +128,7 @@ def _sync_monthly_statements(
             )
             db.add(row)
         else:
-            if row.status not in {"approved", "closed", "disputed"}:
+            if row.status not in {"validated", "invoice_generated", "closed", "in_dispute", "awaiting_admin_feedback"}:
                 row.status = _statement_status_from_computed(computed)
             row.attendance_complete = computed.attendance_complete
             row.totals_snapshot = statement_to_snapshot_payload(computed)
@@ -323,78 +327,26 @@ def _resolve_accounting_email(db: Session, *, payor: LegalEntity) -> str:
     return "comptabilite@piano-academie.com"
 
 
-@router.get("/statements", response_model=list[TeacherStatementOut])
-def list_teacher_statements(
-    year: int | None = Query(default=None, ge=2000, le=2100),
-    month: int | None = Query(default=None, ge=1, le=12),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.PROF)),
-) -> list[TeacherStatementOut]:
-    professor = _resolve_professor_profile(db, current_user=current_user)
-    now = _utcnow()
-    resolved_year = year or now.year
-    resolved_month = month or now.month
-    rows = _sync_monthly_statements(db, professor=professor, year=resolved_year, month=resolved_month)
-    db.commit()
-    return [_statement_out(statement, computed) for statement, computed in rows]
-
-
-@router.get("/statements/{year}/{month}", response_model=list[TeacherStatementOut])
-def get_teacher_statement_month(
+def _send_statement_dispute_email(
+    db: Session,
+    *,
+    rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]],
+    professor: Professor,
+    current_user: User,
     year: int,
     month: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.PROF)),
-) -> list[TeacherStatementOut]:
-    professor = _resolve_professor_profile(db, current_user=current_user)
-    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
-    db.commit()
-    return [_statement_out(statement, computed) for statement, computed in rows]
-
-
-@router.post("/statements/{year}/{month}/dispute", response_model=list[TeacherStatementOut])
-def dispute_teacher_statement_month(
-    year: int,
-    month: int,
-    payload: TeacherStatementDisputeRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.PROF)),
-) -> list[TeacherStatementOut]:
-    professor = _resolve_professor_profile(db, current_user=current_user)
-    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
-    if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
-    now = _utcnow()
-    for statement, _ in rows:
-        statement.status = "disputed"
-        statement.dispute_message_last = payload.message.strip()
-        statement.updated_at = now
-        db.add(statement)
-        db.add(
-            TeacherStatementMessage(
-                statement_id=statement.id,
-                teacher_id=professor.id,
-                message=payload.message.strip(),
-                status="open",
-            )
-        )
-        _log_audit(
-            db,
-            event_type="teacher_statement_disputed",
-            actor_user_id=current_user.id,
-            teacher_id=professor.id,
-            statement_id=statement.id,
-            payload={"message": payload.message.strip()},
-        )
-
+    message: str,
+) -> None:
     payor_entity = db.scalar(select(LegalEntity).where(LegalEntity.id == rows[0][1].payor_legal_entity_id))
-    if payor_entity is not None:
-        to_email = _resolve_accounting_email(db, payor=payor_entity)
-        sender = resolve_sender_profile(db, sender_kind="TEACHER")
+    if payor_entity is None:
+        return
+    to_email = _resolve_accounting_email(db, payor=payor_entity)
+    sender = resolve_sender_profile(db, sender_kind="TEACHER")
+    try:
         send_email(
             to_email=to_email,
             subject=f"Litige releve professeur {professor.first_name} {professor.last_name} - {month:02d}/{year}",
-            body=payload.message.strip(),
+            body=message,
             context="TEACHER_STATEMENT_DISPUTE",
             from_email=sender.from_email,
             from_name=sender.from_name,
@@ -403,23 +355,50 @@ def dispute_teacher_statement_month(
             sender_user_id=current_user.id,
             professor_id=professor.id,
         )
+    except Exception:
+        # The dispute is already persisted; email failure must not block professor workflow.
+        return
 
+
+def _mark_statements_with_message(
+    db: Session,
+    *,
+    rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]],
+    professor: Professor,
+    current_user: User,
+    status_value: str,
+    message: str,
+    event_type: str,
+    payload: dict[str, Any],
+) -> list[TeacherStatementOut]:
+    now = _utcnow()
+    cleaned_message = message.strip()
+    for statement, _ in rows:
+        statement.status = status_value
+        statement.dispute_message_last = cleaned_message
+        statement.updated_at = now
+        db.add(statement)
+        db.add(
+            TeacherStatementMessage(
+                statement_id=statement.id,
+                teacher_id=professor.id,
+                message=cleaned_message,
+                status="open",
+            )
+        )
+        _log_audit(
+            db,
+            event_type=event_type,
+            actor_user_id=current_user.id,
+            teacher_id=professor.id,
+            statement_id=statement.id,
+            payload=payload,
+        )
     db.commit()
     return [_statement_out(statement, computed) for statement, computed in rows]
 
 
-@router.post("/statements/{year}/{month}/approve", response_model=TeacherApproveStatementsOut)
-def approve_teacher_statement_month(
-    year: int,
-    month: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.PROF)),
-) -> TeacherApproveStatementsOut:
-    professor = _resolve_professor_profile(db, current_user=current_user)
-    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
-    if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
-
+def _assert_no_missing_sessions(rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]]) -> None:
     missing_sessions = _missing_sessions_from_computed(rows)
     if missing_sessions:
         raise HTTPException(
@@ -429,6 +408,19 @@ def approve_teacher_statement_month(
                 "missing_sessions": [row.model_dump(mode="json") for row in missing_sessions],
             },
         )
+
+
+def _generate_invoices_for_period(
+    db: Session,
+    *,
+    current_user: User,
+    professor: Professor,
+    rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]],
+    year: int,
+    month: int,
+    require_validated_status: bool,
+) -> TeacherApproveStatementsOut:
+    _assert_no_missing_sessions(rows)
 
     locked_professor = db.scalar(select(Professor).where(Professor.id == professor.id).with_for_update())
     if locked_professor is None:
@@ -448,6 +440,12 @@ def approve_teacher_statement_month(
         if existing_invoice is not None:
             generated.append(existing_invoice)
             continue
+
+        if require_validated_status and statement.status not in {"validated", "invoice_generated", "approved"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Releve non approuve: validez d abord le releve avant generation de facture.",
+            )
 
         payor = db.scalar(select(LegalEntity).where(LegalEntity.id == computed.payor_legal_entity_id))
         if payor is None:
@@ -539,7 +537,7 @@ def approve_teacher_statement_month(
         invoice.pdf_storage_key = base64.b64encode(pdf_content).decode("ascii")
         db.add(invoice)
 
-        statement.status = "approved"
+        statement.status = "invoice_generated"
         statement.updated_at = now
         db.add(statement)
 
@@ -559,7 +557,12 @@ def approve_teacher_statement_month(
     db.add(locked_professor)
     db.commit()
 
-    payor_by_id = {row.id: row for row in db.scalars(select(LegalEntity).where(LegalEntity.id.in_([inv.payor_legal_entity_id for inv in generated]))).all()}
+    payor_by_id = {
+        row.id: row
+        for row in db.scalars(
+            select(LegalEntity).where(LegalEntity.id.in_([inv.payor_legal_entity_id for inv in generated]))
+        ).all()
+    }
     lines_by_invoice_id = _invoice_lines_for_invoice_ids(db, invoice_ids=[inv.id for inv in generated])
     return TeacherApproveStatementsOut(
         generated_invoices=[
@@ -571,6 +574,341 @@ def approve_teacher_statement_month(
             for invoice in generated
         ],
         blocked_missing_sessions=[],
+    )
+
+
+@router.get("/statements", response_model=list[TeacherStatementOut])
+def list_teacher_statements(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[TeacherStatementOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    now = _utcnow()
+    resolved_year = year or now.year
+    resolved_month = month or now.month
+    rows = _sync_monthly_statements(db, professor=professor, year=resolved_year, month=resolved_month)
+    db.commit()
+    return [_statement_out(statement, computed) for statement, computed in rows]
+
+
+@router.get("/statements/{year}/{month}", response_model=list[TeacherStatementOut])
+def get_teacher_statement_month(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[TeacherStatementOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    db.commit()
+    return [_statement_out(statement, computed) for statement, computed in rows]
+
+
+@router.post("/statements/{year}/{month}/dispute", response_model=list[TeacherStatementOut])
+def dispute_teacher_statement_month(
+    year: int,
+    month: int,
+    payload: TeacherStatementDisputeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[TeacherStatementOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+    message = payload.message.strip()
+    out = _mark_statements_with_message(
+        db,
+        rows=rows,
+        professor=professor,
+        current_user=current_user,
+        status_value="in_dispute",
+        message=message,
+        event_type="teacher_statement_disputed",
+        payload={"message": message},
+    )
+    _send_statement_dispute_email(
+        db,
+        rows=rows,
+        professor=professor,
+        current_user=current_user,
+        year=year,
+        month=month,
+        message=message,
+    )
+    return out
+
+
+@router.post("/statements/{year}/{month}/dispute-lines", response_model=list[TeacherStatementOut])
+def dispute_teacher_statement_selected_lines(
+    year: int,
+    month: int,
+    payload: TeacherStatementDisputeLinesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[TeacherStatementOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+    selected_lines = [row.strip() for row in payload.selected_lines if row.strip()]
+    selected_lines_text = "\n".join(f"- {label}" for label in selected_lines) if selected_lines else "- (aucune ligne precisee)"
+    message = (
+        "Probleme sur prestations selectionnees\n"
+        f"Lignes:\n{selected_lines_text}\n\n"
+        f"Commentaire professeur:\n{payload.message.strip()}"
+    )
+    out = _mark_statements_with_message(
+        db,
+        rows=rows,
+        professor=professor,
+        current_user=current_user,
+        status_value="in_dispute",
+        message=message,
+        event_type="teacher_statement_disputed_lines",
+        payload={"selected_lines": selected_lines, "message": payload.message.strip()},
+    )
+    _send_statement_dispute_email(
+        db,
+        rows=rows,
+        professor=professor,
+        current_user=current_user,
+        year=year,
+        month=month,
+        message=message,
+    )
+    return out
+
+
+@router.post("/statements/{year}/{month}/report-missing-service", response_model=list[TeacherStatementOut])
+def report_teacher_statement_missing_service(
+    year: int,
+    month: int,
+    payload: TeacherStatementMissingServiceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[TeacherStatementOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+    estimated_rate_text = "-" if payload.estimated_rate_ht is None else f"{_quantize(payload.estimated_rate_ht)}"
+    message = (
+        "Signalement prestation manquante\n"
+        f"Date: {payload.service_date.isoformat()}\n"
+        f"Prestation: {payload.service_label.strip()}\n"
+        f"Eleve/Groupe: {(payload.student_or_group or '-').strip()}\n"
+        f"Duree (min): {payload.duration_minutes}\n"
+        f"Modalite/Lieu: {(payload.modality or '-').strip()}\n"
+        f"Taux estime HT: {estimated_rate_text}\n\n"
+        f"Commentaire professeur:\n{payload.comment.strip()}"
+    )
+    out = _mark_statements_with_message(
+        db,
+        rows=rows,
+        professor=professor,
+        current_user=current_user,
+        status_value="awaiting_admin_feedback",
+        message=message,
+        event_type="teacher_statement_missing_service_reported",
+        payload={
+            "service_date": payload.service_date.isoformat(),
+            "service_label": payload.service_label.strip(),
+            "student_or_group": (payload.student_or_group or "").strip(),
+            "duration_minutes": payload.duration_minutes,
+            "modality": (payload.modality or "").strip(),
+            "estimated_rate_ht": estimated_rate_text,
+            "comment": payload.comment.strip(),
+        },
+    )
+    _send_statement_dispute_email(
+        db,
+        rows=rows,
+        professor=professor,
+        current_user=current_user,
+        year=year,
+        month=month,
+        message=message,
+    )
+    return out
+
+
+@router.post("/statements/{year}/{month}/approve-only", response_model=list[TeacherStatementOut])
+def approve_teacher_statement_month_only(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[TeacherStatementOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+    _assert_no_missing_sessions(rows)
+    now = _utcnow()
+    for statement, _ in rows:
+        if statement.status not in {"invoice_generated", "closed"}:
+            statement.status = "validated"
+            statement.updated_at = now
+            db.add(statement)
+            _log_audit(
+                db,
+                event_type="teacher_statement_validated",
+                actor_user_id=current_user.id,
+                teacher_id=professor.id,
+                statement_id=statement.id,
+            )
+    db.commit()
+    return [_statement_out(statement, computed) for statement, computed in rows]
+
+
+@router.post("/statements/{year}/{month}/generate-invoices", response_model=TeacherApproveStatementsOut)
+def generate_teacher_statement_invoices(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> TeacherApproveStatementsOut:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+    return _generate_invoices_for_period(
+        db,
+        current_user=current_user,
+        professor=professor,
+        rows=rows,
+        year=year,
+        month=month,
+        require_validated_status=True,
+    )
+
+
+@router.post("/statements/{year}/{month}/approve", response_model=TeacherApproveStatementsOut)
+def approve_teacher_statement_month(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> TeacherApproveStatementsOut:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+    return _generate_invoices_for_period(
+        db,
+        current_user=current_user,
+        professor=professor,
+        rows=rows,
+        year=year,
+        month=month,
+        require_validated_status=False,
+    )
+
+
+@router.get("/statements/{year}/{month}/export.csv")
+def export_teacher_statement_month_csv(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> Response:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+
+    output = StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(
+        [
+            "entite",
+            "periode",
+            "prestation",
+            "date",
+            "horaire",
+            "eleve_ou_groupe",
+            "lieu_modalite",
+            "duree_minutes",
+            "taux_ht",
+            "montant_ht",
+            "tva",
+            "total_ttc",
+            "devise",
+        ]
+    )
+
+    period_label = invoice_period_label(year=year, month=month)
+    now = _utcnow()
+    for statement, computed in rows:
+        for line in computed.lines:
+            session_items = line.meta.get("session_items") if isinstance(line.meta, dict) else None
+            if isinstance(session_items, list) and session_items:
+                for item in session_items:
+                    start_iso = str(item.get("start_at_utc") or "")
+                    end_iso = str(item.get("end_at_utc") or "")
+                    start_dt = datetime.fromisoformat(start_iso) if start_iso else None
+                    end_dt = datetime.fromisoformat(end_iso) if end_iso else None
+                    horaire = "-"
+                    if start_dt is not None and end_dt is not None:
+                        horaire = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+                    writer.writerow(
+                        [
+                            computed.payor_legal_entity_name,
+                            period_label,
+                            str(item.get("title") or line.course_type_label),
+                            str(item.get("date") or ""),
+                            horaire,
+                            str(item.get("student_or_group") or ""),
+                            f"{item.get('location_name') or '-'} / {item.get('modality') or '-'}",
+                            str(item.get("duration_minutes") or ""),
+                            str(item.get("unit_rate_ht") or line.unit_rate_ht),
+                            str(item.get("amount_ht") or line.amount_ht),
+                            str(item.get("vat_amount") or _quantize(Decimal(item.get("amount_ttc") or "0") - Decimal(item.get("amount_ht") or "0"))),
+                            str(item.get("amount_ttc") or line.amount_ttc),
+                            computed.currency,
+                        ]
+                    )
+            else:
+                writer.writerow(
+                    [
+                        computed.payor_legal_entity_name,
+                        period_label,
+                        line.course_type_label,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        f"{line.unit_rate_ht}",
+                        f"{line.amount_ht}",
+                        f"{_quantize(line.amount_ttc - line.amount_ht)}",
+                        f"{line.amount_ttc}",
+                        computed.currency,
+                    ]
+                )
+
+        if statement.status not in {"invoice_generated", "closed"}:
+            statement.status = "exported"
+            statement.updated_at = now
+            db.add(statement)
+            _log_audit(
+                db,
+                event_type="teacher_statement_exported",
+                actor_user_id=current_user.id,
+                teacher_id=professor.id,
+                statement_id=statement.id,
+                payload={"format": "csv", "period": f"{year}-{month:02d}"},
+            )
+
+    db.commit()
+    file_name = f"releve_prestations_{year}_{month:02d}.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
 
 
