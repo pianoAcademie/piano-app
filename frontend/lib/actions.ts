@@ -56,6 +56,7 @@ import type {
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProfessorDefaultGridOut,
+  ContactDeliveryStatusOut,
   AuthLoginResponse,
   ClientPaymentCheckoutOut,
   ProfessorPermissionOut,
@@ -696,6 +697,7 @@ async function ensureAdmin(token: string): Promise<void> {
 export async function loginAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
+  const mode = String(formData.get("auth_mode") ?? "login").trim().toLowerCase() || "login";
 
   const result = await backendRequest<AuthLoginResponse>("/api/v1/auth/login", {
     method: "POST",
@@ -703,7 +705,7 @@ export async function loginAction(formData: FormData): Promise<void> {
   });
 
   if (!result.ok) {
-    redirect(`/login?error=${encodeURIComponent(result.message)}`);
+    redirect(`/login?mode=${encodeURIComponent(mode)}&error=${encodeURIComponent(result.message)}`);
   }
 
   const me = await fetchCurrentUser(result.data.access_token);
@@ -731,13 +733,51 @@ export async function loginAction(formData: FormData): Promise<void> {
 export async function registerAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
-  const first_name = optionalField(formData, "first_name");
-  const last_name = optionalField(formData, "last_name");
-  const address_line = optionalField(formData, "address_line");
-  const phone = optionalField(formData, "phone");
+  const first_name = String(formData.get("first_name") ?? "").trim();
+  const last_name = String(formData.get("last_name") ?? "").trim();
+  const phone = String(formData.get("phone") ?? "").trim();
+  const registrationSubjectTypeRaw = String(formData.get("registration_subject_type") ?? "self").trim().toLowerCase();
+  const registration_subject_type = registrationSubjectTypeRaw === "child" ? "child" : "self";
+  const studentPhoto = formData.get("student_photo");
+  const studentPhotoFile =
+    typeof File !== "undefined" && studentPhoto instanceof File && studentPhoto.size > 0
+      ? studentPhoto
+      : null;
+  const confirmAccuracy = parseCheckboxFlag(formData, "confirm_accuracy", false);
+  const acceptAccountTerms = parseCheckboxFlag(formData, "accept_account_terms", false);
+  const marketingEmail = parseCheckboxFlag(formData, "marketing_email_opt_in", false);
+  const marketingSms = parseCheckboxFlag(formData, "marketing_sms_opt_in", false);
   const residence_country = String(formData.get("residence_country") ?? "FR").trim().toUpperCase();
-  const preferred_currency = String(formData.get("preferred_currency") ?? "EUR").trim().toUpperCase();
-  const timezone = String(formData.get("timezone") ?? "Europe/Paris").trim();
+  const preferred_currency = "EUR";
+  const timezone = "Europe/Paris";
+
+  if (!first_name) {
+    redirect("/login?mode=signup&error=Veuillez%20renseigner%20votre%20prenom.");
+  }
+  if (!last_name) {
+    redirect("/login?mode=signup&error=Veuillez%20renseigner%20votre%20nom.");
+  }
+  if (!email.includes("@")) {
+    redirect("/login?mode=signup&error=Veuillez%20saisir%20une%20adresse%20email%20valide.");
+  }
+  if (!phone) {
+    redirect("/login?mode=signup&error=Veuillez%20renseigner%20votre%20telephone.");
+  }
+  if (!residence_country || residence_country.length !== 2) {
+    redirect("/login?mode=signup&error=Veuillez%20selectionner%20votre%20pays%20de%20residence.");
+  }
+  if (password.length < 8) {
+    redirect("/login?mode=signup&error=Veuillez%20choisir%20un%20mot%20de%20passe%20de%208%20caracteres%20minimum.");
+  }
+  if (!studentPhotoFile) {
+    redirect("/login?mode=signup&error=Veuillez%20ajouter%20une%20photo%20de%20l%27eleve.");
+  }
+  if (!confirmAccuracy) {
+    redirect("/login?mode=signup&error=Veuillez%20confirmer%20l%27exactitude%20des%20informations.");
+  }
+  if (!acceptAccountTerms) {
+    redirect("/login?mode=signup&error=Veuillez%20accepter%20les%20conditions%20de%20creation%20de%20compte.");
+  }
 
   const registerResult = await backendRequest<{ id: string }>("/api/v1/auth/register", {
     method: "POST",
@@ -746,8 +786,14 @@ export async function registerAction(formData: FormData): Promise<void> {
       password,
       first_name,
       last_name,
-      address_line,
       phone,
+      registration_subject_type,
+      transactional_email_opt_in: true,
+      transactional_sms_opt_in: true,
+      marketing_email_opt_in: marketingEmail,
+      marketing_sms_opt_in: marketingSms,
+      student_photo_filename: studentPhotoFile.name || null,
+      student_photo_mime_type: studentPhotoFile.type || null,
       residence_country,
       preferred_currency,
       timezone,
@@ -755,7 +801,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   });
 
   if (!registerResult.ok) {
-    redirect(`/login?error=${encodeURIComponent(registerResult.message)}`);
+    redirect(`/login?mode=signup&error=${encodeURIComponent(registerResult.message)}`);
   }
 
   const loginResult = await backendRequest<AuthLoginResponse>("/api/v1/auth/login", {
@@ -764,7 +810,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   });
 
   if (!loginResult.ok) {
-    redirect(`/login?error=${encodeURIComponent(loginResult.message)}`);
+    redirect(`/login?mode=login&error=${encodeURIComponent(loginResult.message)}`);
   }
 
   setPortalSessionToken(loginResult.data.access_token);
@@ -774,7 +820,7 @@ export async function registerAction(formData: FormData): Promise<void> {
 export async function forgotPasswordAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   if (!email) {
-    redirect("/login?error=Email%20obligatoire");
+    redirect("/login?mode=forgot&error=Email%20obligatoire");
   }
 
   const result = await backendRequest<{ message: string }>("/api/v1/auth/forgot-password", {
@@ -783,10 +829,10 @@ export async function forgotPasswordAction(formData: FormData): Promise<void> {
   });
 
   if (!result.ok) {
-    redirect(`/login?error=${encodeURIComponent(result.message)}`);
+    redirect(`/login?mode=forgot&error=${encodeURIComponent(result.message)}`);
   }
 
-  redirect(`/login?ok=${encodeURIComponent(result.data.message)}`);
+  redirect(`/login?mode=forgot&ok=${encodeURIComponent(result.data.message)}`);
 }
 
 export async function resetPasswordAction(formData: FormData): Promise<void> {
@@ -798,10 +844,10 @@ export async function resetPasswordAction(formData: FormData): Promise<void> {
     redirect("/login?error=Lien%20de%20reinitialisation%20invalide");
   }
   if (password.length < 8) {
-    redirect(`/login?reset_token=${encodeURIComponent(token)}&error=Mot%20de%20passe%20trop%20court`);
+    redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error=Mot%20de%20passe%20trop%20court`);
   }
   if (password !== passwordConfirm) {
-    redirect(`/login?reset_token=${encodeURIComponent(token)}&error=Les%20mots%20de%20passe%20ne%20correspondent%20pas`);
+    redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error=Les%20mots%20de%20passe%20ne%20correspondent%20pas`);
   }
 
   const result = await backendRequest<{ message: string }>("/api/v1/auth/reset-password", {
@@ -810,10 +856,10 @@ export async function resetPasswordAction(formData: FormData): Promise<void> {
   });
 
   if (!result.ok) {
-    redirect(`/login?reset_token=${encodeURIComponent(token)}&error=${encodeURIComponent(result.message)}`);
+    redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error=${encodeURIComponent(result.message)}`);
   }
 
-  redirect(`/login?ok=${encodeURIComponent(result.data.message)}`);
+  redirect(`/login?mode=login&ok=${encodeURIComponent(result.data.message)}`);
 }
 
 export async function logoutAction(): Promise<void> {
@@ -1178,6 +1224,62 @@ export async function teacherApproveStatementsAction(formData: FormData): Promis
   redirect(appendQueryMessage(returnTo, "ok", `${result.data.generated_invoices.length} facture(s) generee(s)`));
 }
 
+export async function teacherApproveStatementsOnlyAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
+  const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    redirect(appendQueryMessage(returnTo, "error", "Periode invalide"));
+  }
+
+  const result = await backendRequest<TeacherStatementOut[]>(
+    `/api/v1/teacher/statements/${year}/${month}/approve-only`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/statements/${year}/${month}`);
+  revalidatePath("/prof");
+  redirect(appendQueryMessage(returnTo, "ok", "Releve approuve. Choisissez maintenant votre mode de facturation."));
+}
+
+export async function teacherGenerateStatementsInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
+  const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    redirect(appendQueryMessage(returnTo, "error", "Periode invalide"));
+  }
+
+  const result = await backendRequest<TeacherApproveStatementsOut>(
+    `/api/v1/teacher/statements/${year}/${month}/generate-invoices`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/statements/${year}/${month}`);
+  revalidatePath("/prof");
+  redirect(appendQueryMessage(returnTo, "ok", `${result.data.generated_invoices.length} facture(s) generee(s)`));
+}
+
 export async function teacherDisputeStatementsAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
@@ -1204,6 +1306,90 @@ export async function teacherDisputeStatementsAction(formData: FormData): Promis
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
   redirect(appendQueryMessage(returnTo, "ok", "Litige envoye a l administration"));
+}
+
+export async function teacherDisputeSelectedLinesAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
+  const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
+  const message = String(formData.get("message") ?? "").trim();
+  const selectedLines = formData
+    .getAll("selected_lines")
+    .map((value) => String(value).trim())
+    .filter((value) => value.length > 0);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !message) {
+    redirect(appendQueryMessage(returnTo, "error", "Commentaire obligatoire"));
+  }
+  if (selectedLines.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins une ligne"));
+  }
+  const result = await backendRequest<TeacherStatementOut[]>(
+    `/api/v1/teacher/statements/${year}/${month}/dispute-lines`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message, selected_lines: selectedLines }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/statements/${year}/${month}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Probleme envoye a l administration"));
+}
+
+export async function teacherReportMissingServiceAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
+  const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
+  const serviceDate = String(formData.get("service_date") ?? "").trim();
+  const serviceLabel = String(formData.get("service_label") ?? "").trim();
+  const studentOrGroup = optionalField(formData, "student_or_group");
+  const durationMinutes = Number.parseInt(String(formData.get("duration_minutes") ?? "").trim(), 10);
+  const modality = optionalField(formData, "modality");
+  const estimatedRateRaw = String(formData.get("estimated_rate_ht") ?? "").trim();
+  const comment = String(formData.get("comment") ?? "").trim();
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !serviceDate || !serviceLabel || !Number.isFinite(durationMinutes) || !comment) {
+    redirect(appendQueryMessage(returnTo, "error", "Tous les champs obligatoires doivent etre renseignes"));
+  }
+
+  const estimatedRate = estimatedRateRaw ? parseNonNegativeDecimal(estimatedRateRaw.replace(",", ".")) : null;
+  if (estimatedRateRaw && estimatedRate === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Taux estime invalide"));
+  }
+
+  const result = await backendRequest<TeacherStatementOut[]>(
+    `/api/v1/teacher/statements/${year}/${month}/report-missing-service`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        service_date: serviceDate,
+        service_label: serviceLabel,
+        student_or_group: studentOrGroup,
+        duration_minutes: durationMinutes,
+        modality,
+        estimated_rate_ht: estimatedRate,
+        comment,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/statements/${year}/${month}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Prestation manquante signalee a l administration"));
 }
 
 export async function teacherCancelInvoiceAction(formData: FormData): Promise<void> {
@@ -2406,6 +2592,44 @@ export async function updateAdminClientGroupsAction(formData: FormData): Promise
   revalidatePath("/admin/clients");
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Groupes%20mis%20a%20jour`);
+}
+
+export async function reactivateAdminClientDeliveryAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const returnTab = String(formData.get("return_tab") ?? "infos").trim() || "infos";
+  if (!clientId) {
+    redirect("/admin/clients?error=Client%20invalide");
+  }
+
+  const reactivateEmail = checkboxFieldWithDefault(formData, "reactivate_email", true);
+  const reactivatePhone = checkboxFieldWithDefault(formData, "reactivate_phone", true);
+
+  const result = await backendRequest<ContactDeliveryStatusOut>(
+    `/api/v1/admin/notifications/contacts/USER/${clientId}/reactivate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        reactivate_email: reactivateEmail,
+        reactivate_phone: reactivatePhone,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  revalidatePath("/admin/notifications/incidents");
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Coordonnees%20reactivees`);
 }
 
 export async function adminClientActionPlaceholder(formData: FormData): Promise<void> {

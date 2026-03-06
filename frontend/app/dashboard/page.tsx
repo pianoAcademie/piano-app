@@ -1,10 +1,13 @@
-import { cookies } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import PortalImpersonationBanner from "../../components/portal-impersonation-banner";
+import { getAdminToken, getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
 import { backendRequest } from "../../lib/backend";
 import {
   bookSessionAction,
   cancelBookingAction,
+  endPortalImpersonationAction,
   logoutAction,
   openClientPaymentCheckoutAction,
   purchasePlanAction,
@@ -56,6 +59,7 @@ type AgendaView = "agenda" | "week" | "day";
 type DashboardTab = "home" | "planning" | "reservations" | "offers" | "finance" | "messages" | "account";
 type MessageScope = "LAST_3_MONTHS" | "CURRENT_YEAR" | "ALL";
 type TimeBucket = "ALL" | "MORNING" | "AFTERNOON" | "EVENING";
+type PlanningSlotFilter = "ALL" | "AVAILABLE" | "ALREADY_BOOKED";
 type FinanceView = "transactions" | "invoices";
 type FinanceStatusFilter = "ALL" | "TO_PAY" | "PAID" | "CANCELLED" | "FAILED";
 type FinancePeriodFilter = "ALL" | "LAST_30_DAYS" | "LAST_90_DAYS" | "LAST_365_DAYS";
@@ -149,7 +153,7 @@ function parseTab(value: string): DashboardTab {
   if (value === "transactions") {
     return "finance";
   }
-  if (value === "reservations" || value === "offers" || value === "finance" || value === "messages" || value === "account") {
+  if (value === "planning" || value === "reservations" || value === "offers" || value === "finance" || value === "messages" || value === "account") {
     return value;
   }
   return "home";
@@ -171,6 +175,13 @@ function parseMessageScope(value: string): MessageScope {
 
 function parseTimeBucket(value: string): TimeBucket {
   if (value === "MORNING" || value === "AFTERNOON" || value === "EVENING") {
+    return value;
+  }
+  return "ALL";
+}
+
+function parsePlanningSlotFilter(value: string): PlanningSlotFilter {
+  if (value === "AVAILABLE" || value === "ALREADY_BOOKED") {
     return value;
   }
   return "ALL";
@@ -369,6 +380,32 @@ function financePeriodLabel(period: FinancePeriodFilter): string {
 
 function canPayNowForPayment(row: ClientPaymentOut): boolean {
   return normalizeStatus(row.source) === "PLAN_PURCHASE" && FINANCE_PENDING_STATUSES.has(normalizeStatus(row.status));
+}
+
+function normalizePaymentKey(raw: string | null | undefined): string | null {
+  const value = String(raw ?? "").trim();
+  if (!value) {
+    return null;
+  }
+  const parts = value.split(":", 2);
+  if (parts.length !== 2) {
+    return null;
+  }
+  const source = parts[0].trim().toUpperCase();
+  const paymentId = parts[1].trim().toLowerCase();
+  if (!source || !paymentId) {
+    return null;
+  }
+  return `${source}:${paymentId}`;
+}
+
+function paymentKeyFromPaymentRow(row: ClientPaymentOut): string | null {
+  const source = normalizeStatus(row.source);
+  const rawId = String(row.id || "").split(":", 2)[1] ?? "";
+  if (!source || !rawId) {
+    return null;
+  }
+  return normalizePaymentKey(`${source}:${rawId}`);
 }
 
 function parseMoneyValue(raw: string | null | undefined): number {
@@ -774,8 +811,11 @@ function withUpdatedQuery(base: URLSearchParams, updates: Record<string, string 
 }
 
 export default async function DashboardPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = getPortalToken();
   if (!token) {
+    if (getAdminToken()) {
+      redirect("/admin?error=Ouvrir%20la%20vue%20client%20depuis%20la%20fiche%20client");
+    }
     redirect("/login?error=Session%20expiree");
   }
 
@@ -786,12 +826,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   const me = meResult.data;
   const tab = parseTab(readParam(searchParams, "tab"));
+  const impersonationClaims = readPortalImpersonationClaims();
+  const isImpersonating = Boolean(impersonationClaims?.imp);
+  const impersonationReturnTo = getPortalReturnTo() ?? "/admin";
+  const impersonationNameHint = readParam(searchParams, "imp_name").trim();
   const rawParams = toSingleValueSearchParams(searchParams);
 
   const selectedCourseType = readParam(searchParams, "course_type_id");
   const selectedLocation = readParam(searchParams, "location_id");
   const selectedCoachId = readParam(searchParams, "coach_id");
   const selectedTimeBucket = parseTimeBucket(readParam(searchParams, "time_bucket"));
+  const planningSlotFilter = parsePlanningSlotFilter(readParam(searchParams, "planning_slot_filter"));
   const timezone = resolveTimezone(readParam(searchParams, "timezone") || me.timezone || DEFAULT_TIMEZONE);
   const agendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
   const inputAgendaDate = readParam(searchParams, "agenda_date");
@@ -1030,6 +1075,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const linkedMembers = members.filter((member) => member.id !== me.id);
   const validMemberIds = new Set(members.map((member) => member.id));
   const bookingOwnerId = validMemberIds.has(selectedBookingOwner) ? selectedBookingOwner : me.id;
+  const bookingOwnerMember = members.find((member) => member.id === bookingOwnerId) ?? members[0] ?? null;
 
   const allBookings: FamilyBookingRow[] = family
     ? [...family.bookings]
@@ -1112,7 +1158,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   const messageRows = messages
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
-    .sort((a, b) => (a.sent_at || a.scheduled_for_utc).localeCompare(b.sent_at || b.scheduled_for_utc));
+    .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc));
 
   const basePaymentRows = payments
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
@@ -1132,15 +1178,32 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .filter((row) => matchesFinancePeriod(row.issued_at, financePeriodFilter, now))
     .filter((row) => matchesFinanceAsOf(row.issued_at, financeAsOfUtcEnd));
   const invoiceByPaymentId = new Map<string, ClientInvoiceOut>();
+  const invoiceByPaymentKey = new Map<string, ClientInvoiceOut>();
   for (const invoice of baseInvoiceRows) {
     const paymentId = invoice.id.startsWith("invoice:") ? invoice.id.slice("invoice:".length) : invoice.id;
     invoiceByPaymentId.set(paymentId, invoice);
+    for (const rawKey of invoice.included_payment_keys ?? []) {
+      const normalizedKey = normalizePaymentKey(rawKey);
+      if (!normalizedKey) {
+        continue;
+      }
+      invoiceByPaymentKey.set(normalizedKey, invoice);
+    }
   }
   const paymentByInvoiceId = new Map<string, ClientPaymentOut>();
+  const paymentByPaymentKey = new Map<string, ClientPaymentOut>();
   for (const row of basePaymentRows) {
-    const linkedInvoice = invoiceByPaymentId.get(row.id);
-    if (linkedInvoice) {
-      paymentByInvoiceId.set(linkedInvoice.id, row);
+    const paymentKey = paymentKeyFromPaymentRow(row);
+    if (paymentKey) {
+      paymentByPaymentKey.set(paymentKey, row);
+      const linkedByKey = invoiceByPaymentKey.get(paymentKey);
+      if (linkedByKey && !paymentByInvoiceId.has(linkedByKey.id)) {
+        paymentByInvoiceId.set(linkedByKey.id, row);
+      }
+    }
+    const linkedById = invoiceByPaymentId.get(row.id);
+    if (linkedById && !paymentByInvoiceId.has(linkedById.id)) {
+      paymentByInvoiceId.set(linkedById.id, row);
     }
   }
   const financeTotalRows = financeView === "transactions" ? paymentRows.length : invoiceRows.length;
@@ -1232,6 +1295,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .map((invoice) => paymentByInvoiceId.get(invoice.id))
     .filter((row): row is ClientPaymentOut => row != null && canPayNowForPayment(row));
   const homePrimaryPayableRow = homeInvoicePaymentRows[0] ?? null;
+  const homePrimaryPayUrl = homeDueInvoices.find((invoice) => Boolean(invoice.payment_url))?.payment_url ?? null;
   const reminderRowsSource = messageRows.filter((row) =>
     `${row.subject_preview || ""} ${row.channel || ""}`.toLowerCase().includes("rappel"),
   );
@@ -1295,6 +1359,53 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     label: agendaDayLabel(key, agendaView),
     sessions: sessionsByDay.get(key) ?? [],
   }));
+  const selectedMemberUpcomingBookings = upcomingBookings.filter((booking) => booking.owner_client_id === bookingOwnerId);
+  const isAlreadyReservedByMember = (status: string): boolean => {
+    const normalized = normalizeStatus(status);
+    return (
+      normalized === "BOOKED"
+      || normalized === "WAITLISTED"
+      || normalized === "ATTENDED"
+      || normalized === "NO_SHOW"
+      || normalized === "EXCUSED_ABSENCE"
+    );
+  };
+  const canReserveSessionNow = (session: SessionOut, memberBooking: FamilyBookingRow | undefined): boolean => {
+    const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
+    const eligibleByPlan = activeEntitlementsByOwner.get(bookingOwnerId)?.has(session.course_type.id) ?? false;
+    const isFull = session.booked_count >= session.capacity_max;
+    return (
+      normalizeStatus(session.status) === "SCHEDULED"
+      && session.online_booking_enabled
+      && !sessionIsPastOrStarted
+      && !memberBooking
+      && !isFull
+      && eligibleByPlan
+    );
+  };
+  const agendaDaySummary = new Map<string, { reservedCount: number; availableCount: number }>();
+  for (const day of agendaDays) {
+    let reservedCount = 0;
+    let availableCount = 0;
+    for (const session of day.sessions) {
+      const memberBooking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
+      if (memberBooking && isAlreadyReservedByMember(memberBooking.status)) {
+        reservedCount += 1;
+      } else if (canReserveSessionNow(session, memberBooking)) {
+        availableCount += 1;
+      }
+    }
+    agendaDaySummary.set(day.key, { reservedCount, availableCount });
+  }
+  const availableSlotsCount = Array.from(agendaDaySummary.values()).reduce((sum, row) => sum + row.availableCount, 0);
+  const activeReservationsCount = selectedMemberUpcomingBookings.filter((booking) => isAlreadyReservedByMember(booking.status)).length;
+  const selectedAgendaDateLabel = new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(keyToUtcDate(agendaDate));
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
   const selectedSessionStart = selectedSession ? safeDate(selectedSession.start_at_utc) : null;
   const selectedSessionIsPastOrStarted = selectedSessionStart ? selectedSessionStart.getTime() <= now.getTime() : false;
@@ -1322,7 +1433,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     selectedSessionOnlineBookingEnabled &&
     !selectedSessionIsPastOrStarted &&
     selectedSessionBooking == null &&
-    selectedSessionEligibleByPlan;
+    selectedSessionEligibleByPlan &&
+    selectedSession.booked_count < selectedSession.capacity_max;
   const agendaSessionCount = agendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
   const stripStart = addUtcDays(keyToUtcDate(agendaDate), -2);
   const stripDayKeys = Array.from({ length: 7 }, (_, index) => utcDateToKey(addUtcDays(stripStart, index)));
@@ -1330,6 +1442,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     Boolean(selectedCourseType) ||
     Boolean(selectedCoachId) ||
     selectedTimeBucket !== "ALL" ||
+    planningSlotFilter !== "ALL" ||
     timezone !== (me.timezone || DEFAULT_TIMEZONE) ||
     bookingOwnerId !== me.id;
 
@@ -1369,6 +1482,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .map((invoice) => paymentByInvoiceId.get(invoice.id))
     .filter((row): row is ClientPaymentOut => row != null && canPayNowForPayment(row));
   const primaryDuePayableRow = financeDuePaymentRows[0] ?? null;
+  const primaryDuePaymentUrl = financePendingInvoices.find((invoice) => Boolean(invoice.payment_url))?.payment_url ?? null;
   const timezoneOptions = TIMEZONE_OPTIONS.some((item) => item.value === timezone)
     ? TIMEZONE_OPTIONS
     : [{ value: timezone, label: `${timezone} (personnalise)` }, ...TIMEZONE_OPTIONS];
@@ -1392,6 +1506,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab) ? tab : "home";
 
   const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email });
+  const impersonationDisplayName = impersonationNameHint || displayName;
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
   const sessionOkMessage = selectedSession ? readParam(searchParams, "session_ok") : "";
@@ -1399,6 +1514,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const globalOkMessage = sessionOkMessage ? "" : (okMessage || paymentResultMessage);
   const globalErrorMessage = sessionErrorMessage ? "" : (errorMessage || paymentResultError);
   const hasPhoneNumber = Boolean(me.mobile_phone_1 || me.mobile_phone_2 || me.home_phone || me.phone);
+  const selectedMessageId = readParam(searchParams, "message_id");
+  const selectedMessage = selectedMessageId ? messageRows.find((row) => row.id === selectedMessageId) ?? null : null;
   const communicationSummary = `Rappels: Email ${me.lesson_reminder_email_opt_in ? "ON" : "OFF"} / SMS ${
     me.lesson_reminder_sms_opt_in ? "ON" : "OFF"
   } · Communications: Email ${me.email_opt_in ? "ON" : "OFF"} / SMS ${me.sms_opt_in ? "ON" : "OFF"} · Confidentialite: ${
@@ -1418,14 +1535,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           <small>{me.email}</small>
         </article>
 
+        {isImpersonating ? (
+          <form action={endPortalImpersonationAction} className="client-admin-exit-form">
+            <input type="hidden" name="return_to" value={impersonationReturnTo} />
+            <button className="ghost client-admin-exit-btn" type="submit">
+              Retour BO
+            </button>
+          </form>
+        ) : null}
+
         <nav className="client-nav" aria-label="Navigation client">
           {tabLinks.map((item) => {
             const href = withUpdatedQuery(rawParams, { tab: item.id });
             return (
-              <a key={item.id} className={`client-nav-link ${tab === item.id ? "active" : ""}`} href={href}>
+              <Link key={item.id} className={`client-nav-link ${tab === item.id ? "active" : ""}`} href={href}>
                 <span aria-hidden="true">{item.icon}</span>
                 <span>{item.label}</span>
-              </a>
+              </Link>
             );
           })}
         </nav>
@@ -1453,6 +1579,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>
                 Compte
               </a>
+              {isImpersonating ? (
+                <form action={endPortalImpersonationAction}>
+                  <input type="hidden" name="return_to" value={impersonationReturnTo} />
+                  <button className="ghost client-mobile-menu-btn" type="submit">
+                    Retour BO
+                  </button>
+                </form>
+              ) : null}
               <form action={logoutAction}>
                 <button className="ghost client-mobile-menu-btn" type="submit">
                   Se deconnecter
@@ -1476,6 +1610,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         </header>
 
         <section className="client-content">
+          {isImpersonating ? (
+            <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} />
+          ) : null}
           {globalOkMessage ? <Toast message={globalOkMessage} tone="ok" /> : null}
           {globalErrorMessage ? <section className="flash-err">{globalErrorMessage}</section> : null}
           {errors.length > 0 ? <section className="flash-err">Erreur backend: {errors.join(" | ")}</section> : null}
@@ -1485,7 +1622,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <SectionCard
                 title="Accueil"
                 className="client-home-header-v2"
-                action={<a className="mode-link" href={homePlanningHref}>Voir le planning</a>}
+                action={<Link className="mode-link" href={homePlanningHref}>Voir le planning</Link>}
               >
                 <p className="muted">Bonjour {me.first_name || displayName}</p>
                 <FilterChipsBar className="client-member-chips">
@@ -1511,7 +1648,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <div className="client-home-due-list">
                         {homeDueInvoicePreview.map((invoice) => {
                           const linkedPayment = paymentByInvoiceId.get(invoice.id);
-                          const canPayInvoice = linkedPayment ? canPayNowForPayment(linkedPayment) : false;
+                          const canPayInvoice = (linkedPayment ? canPayNowForPayment(linkedPayment) : false) || Boolean(invoice.payment_url);
                           return (
                             <CompactInvoiceRow
                               key={`home-due-${invoice.id}`}
@@ -1521,9 +1658,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               subline={invoice.label}
                               actions={
                                 <div className="row client-home-due-actions">
-                                  {canPayInvoice && linkedPayment ? (
+                                  {canPayInvoice ? (
                                     <form action={openClientPaymentCheckoutAction}>
-                                      <input type="hidden" name="payment_id" value={linkedPayment.id} />
+                                      {linkedPayment ? <input type="hidden" name="payment_id" value={linkedPayment.id} /> : null}
+                                      {invoice.payment_url ? <input type="hidden" name="payment_url" value={invoice.payment_url} /> : null}
                                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
                                       <button type="submit" className="client-card-primary-action">Payer</button>
                                     </form>
@@ -1543,9 +1681,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         })}
                       </div>
                       <div className="row client-home-urgent-actions">
-                        {homePrimaryPayableRow ? (
+                        {homePrimaryPayableRow || homePrimaryPayUrl ? (
                           <form action={openClientPaymentCheckoutAction}>
-                            <input type="hidden" name="payment_id" value={homePrimaryPayableRow.id} />
+                            {homePrimaryPayableRow ? <input type="hidden" name="payment_id" value={homePrimaryPayableRow.id} /> : null}
+                            {homePrimaryPayUrl ? <input type="hidden" name="payment_url" value={homePrimaryPayUrl} /> : null}
                             <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
                             <button type="submit" className="client-pay-cta">
                               Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
@@ -1563,7 +1702,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </UrgentPayCard>
                   ) : null}
 
-                  <SectionCard title="À venir (14 jours)" action={<a className="mode-link" href={homePlanningHref}>Voir le planning</a>}>
+                  <SectionCard title="À venir (14 jours)" action={<Link className="mode-link" href={homePlanningHref}>Voir le planning</Link>}>
                     {upcomingBookings14.length === 0 ? (
                       <p className="muted">Aucun cours a venir sur 14 jours.</p>
                     ) : (
@@ -1762,9 +1901,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               {homeDueTotal > 0 ? (
                 <div className="client-home-sticky-pay">
-                  {homePrimaryPayableRow ? (
+                  {homePrimaryPayableRow || homePrimaryPayUrl ? (
                     <form action={openClientPaymentCheckoutAction}>
-                      <input type="hidden" name="payment_id" value={homePrimaryPayableRow.id} />
+                      {homePrimaryPayableRow ? <input type="hidden" name="payment_id" value={homePrimaryPayableRow.id} /> : null}
+                      {homePrimaryPayUrl ? <input type="hidden" name="payment_url" value={homePrimaryPayUrl} /> : null}
                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
                       <button type="submit" className="client-pay-cta">
                         Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
@@ -1826,6 +1966,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           location_id: null,
                           coach_id: null,
                           time_bucket: null,
+                          planning_slot_filter: null,
                           timezone: me.timezone || DEFAULT_TIMEZONE,
                           agenda_view: "agenda",
                           agenda_date: todayKeyInTimezone(timezone),
@@ -1904,9 +2045,37 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           ))}
                         </select>
                       </label>
+
+                      <label>
+                        Statut creneaux
+                        <select name="planning_slot_filter" defaultValue={planningSlotFilter}>
+                          <option value="ALL">Tous</option>
+                          <option value="AVAILABLE">Disponibles uniquement</option>
+                          <option value="ALREADY_BOOKED">Deja reserves</option>
+                        </select>
+                      </label>
                     </div>
                   </DrawerFilters>
                 </form>
+
+                <section className="client-planning-summary-banner">
+                  <article className="client-planning-summary-item">
+                    <small>Reservation pour</small>
+                    <strong>{bookingOwnerMember?.display_name ?? "-"}</strong>
+                  </article>
+                  <article className="client-planning-summary-item">
+                    <small>Reservations actives</small>
+                    <strong>{activeReservationsCount}</strong>
+                  </article>
+                  <article className="client-planning-summary-item">
+                    <small>Creneaux disponibles</small>
+                    <strong>{availableSlotsCount}</strong>
+                  </article>
+                  <article className="client-planning-summary-item">
+                    <small>Date selectionnee</small>
+                    <strong>{selectedAgendaDateLabel}</strong>
+                  </article>
+                </section>
 
                 <div className="client-planning-date-nav">
                   <a
@@ -1920,6 +2089,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {stripDayKeys.map((dayKey) => {
                       const token = agendaStripToken(dayKey);
                       const active = dayKey === agendaDate;
+                      const daySummary = agendaDaySummary.get(dayKey) ?? { reservedCount: 0, availableCount: 0 };
                       return (
                         <a
                           key={dayKey}
@@ -1929,6 +2099,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <span>{token.weekday}</span>
                           <strong>{token.day}</strong>
                           <small>{token.month}</small>
+                          <small className="client-date-pill-meta">
+                            R {daySummary.reservedCount} · D {daySummary.availableCount}
+                          </small>
                         </a>
                       );
                     })}
@@ -1963,31 +2136,101 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
               </Card>
 
-              <Card>
+              <Card className="client-reserved-section">
                 <div className="row spread">
-                  <h2>Reserver de nouveaux creneaux</h2>
+                  <h2>Mes creneaux reserves</h2>
+                  <span className="badge">{selectedMemberUpcomingBookings.length}</span>
+                </div>
+                <p className="muted">Creneaux deja reserves pour le membre selectionne.</p>
+                {selectedMemberUpcomingBookings.length === 0 ? (
+                  <p className="muted">Aucune reservation active pour ce membre.</p>
+                ) : (
+                  <div className="list client-mobile-list client-planning-reserved-list">
+                    {selectedMemberUpcomingBookings.map((booking) => (
+                      <article key={`reserved-${booking.id}`} className="item client-mobile-card client-planning-reserved-card">
+                        <div className="row spread">
+                          <strong>{booking.owner_display_name}</strong>
+                          <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
+                        </div>
+                        <p className="muted">{booking.session.title}</p>
+                        <p className="muted">{formatDateTime(booking.session.start_at_utc)}</p>
+                        <div className="row spread">
+                          <span className="badge">Deja reserve</span>
+                          <a
+                            className="mode-link"
+                            href={withUpdatedQuery(rawParams, {
+                              tab: "planning",
+                              agenda_view: "day",
+                              agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
+                              session_id: booking.session.id,
+                              booking_owner_id: booking.owner_client_id,
+                            })}
+                          >
+                            Voir la reservation
+                          </a>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              <Card className="client-available-section">
+                <div className="row spread">
+                  <h2>Creneaux disponibles a reserver</h2>
                   <span className="badge">{agendaSessionCount}</span>
                 </div>
-                <p className="muted">Touchez un creneau pour ouvrir le detail puis confirmez avec "Reserver maintenant".</p>
+                <p className="muted">Statuts explicites: Disponible, Deja reserve, Complet.</p>
+                <div className="row client-planning-quick-filters">
+                  <a
+                    className={`mode-link ${planningSlotFilter === "ALL" ? "mode-active" : ""}`}
+                    href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "ALL" })}
+                  >
+                    Tous
+                  </a>
+                  <a
+                    className={`mode-link ${planningSlotFilter === "AVAILABLE" ? "mode-active" : ""}`}
+                    href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "AVAILABLE" })}
+                  >
+                    Disponibles uniquement
+                  </a>
+                  <a
+                    className={`mode-link ${planningSlotFilter === "ALREADY_BOOKED" ? "mode-active" : ""}`}
+                    href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "ALREADY_BOOKED" })}
+                  >
+                    Deja reserves
+                  </a>
+                </div>
                 <div className={`agenda-grid client-agenda-grid agenda-grid-${agendaView}`}>
                   {agendaDays.map((day) => {
-                    const visibleSessions = agendaView === "day" ? day.sessions : day.sessions.slice(0, 4);
-                    const hiddenSessions = agendaView === "day" ? [] : day.sessions.slice(4);
+                    const daySessions = day.sessions.filter((session) => {
+                      const memberBooking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
+                      const alreadyReserved = Boolean(memberBooking && isAlreadyReservedByMember(memberBooking.status));
+                      const availableNow = canReserveSessionNow(session, memberBooking);
+                      if (planningSlotFilter === "AVAILABLE") {
+                        return availableNow;
+                      }
+                      if (planningSlotFilter === "ALREADY_BOOKED") {
+                        return alreadyReserved;
+                      }
+                      return true;
+                    });
+                    const visibleSessions = agendaView === "day" ? daySessions : daySessions.slice(0, 4);
+                    const hiddenSessions = agendaView === "day" ? [] : daySessions.slice(4);
 
                     return (
                       <article key={day.key} className={`agenda-day client-agenda-day client-agenda-day-${agendaView}`}>
                         <div className="row spread agenda-day-header">
                           <h3>{day.label}</h3>
-                          <span className="badge">{day.sessions.length}</span>
+                          <span className="badge">{daySessions.length}</span>
                         </div>
 
-                        {day.sessions.length === 0 ? <p className="muted agenda-empty">Aucun cours</p> : null}
+                        {daySessions.length === 0 ? <p className="muted agenda-empty">Aucun cours</p> : null}
 
                         <div className="agenda-events">
                           {visibleSessions.map((session) => {
                             const booking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
-                            const bookingStatus = booking ? normalizeStatus(booking.status) : "";
-                            const isReservedByMember = bookingStatus === "BOOKED";
+                            const isReservedByMember = Boolean(booking && isAlreadyReservedByMember(booking.status));
                             const eligibleByPlan = activeEntitlementsByOwner.get(bookingOwnerId)?.has(session.course_type.id) ?? false;
                             const compactAgendaCard = agendaView !== "day";
                             const accentColor = accentColorForId(session.course_type.id);
@@ -2009,17 +2252,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               session.online_booking_enabled &&
                               !sessionIsPastOrStarted &&
                               !booking &&
-                              eligibleByPlan;
+                              eligibleByPlan &&
+                              session.booked_count < session.capacity_max;
                             const isFull = session.booked_count >= session.capacity_max;
-                            const sessionCtaLabel = canReserveNow
-                              ? "Reserver"
-                              : booking
-                                ? isReservedByMember
-                                  ? "Deja reserve"
-                                  : "En attente"
+                            const cardStatusLabel = isReservedByMember ? "Deja reserve" : isFull ? "Complet" : canReserveNow ? "Disponible" : "Indisponible";
+                            const sessionCtaLabel = isReservedByMember
+                              ? "Voir la reservation"
+                              : canReserveNow
+                                ? "Reserver"
                                 : isFull
                                   ? "Complet"
                                   : "Voir details";
+                            const contextLine = isReservedByMember
+                              ? "Vous etes deja inscrit sur ce creneau"
+                              : canReserveNow
+                                ? "Disponible pour reservation"
+                                : isFull
+                                  ? "Creneau complet"
+                                  : `Reserve pour ${bookingOwnerMember?.display_name ?? "ce membre"}`;
 
                             return (
                               <a
@@ -2052,6 +2302,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     </div>
                                     <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small>
                                     <small className="event-meta event-meta-secondary">📍 {session.location.name}</small>
+                                    <small className="event-meta event-meta-secondary">{contextLine}</small>
 
                                     <div className="row client-event-footer">
                                       <span className={`status-badge ${statusClass(session.status)}`}>{statusLabel(session.status)}</span>
@@ -2061,6 +2312,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                         </span>
                                       ) : null}
                                       {!booking && sessionIsPastOrStarted ? <span className="status-badge status-completed">Passe</span> : null}
+                                      <span className={`status-badge ${isReservedByMember ? "status-booked" : canReserveNow ? "status-scheduled" : "status-waitlist"}`}>
+                                        {cardStatusLabel}
+                                      </span>
                                       <span className={`client-session-cta ${canReserveNow ? "ready" : ""}`}>{sessionCtaLabel}</span>
                                     </div>
                                   </div>
@@ -2250,40 +2504,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </section>
               ) : null}
 
-              <Card>
-                <div className="row spread">
-                  <h2>Reservations en cours</h2>
-                  <span className="badge">{upcomingBookings.length}</span>
-                </div>
-                {upcomingBookings.length === 0 ? (
-                  <p className="muted">Aucune reservation active.</p>
-                ) : (
-                  <div className="table-wrap">
-                    <table className="data-table client-data-table">
-                      <thead>
-                        <tr>
-                          <th>Membre</th>
-                          <th>Cours</th>
-                          <th>Date</th>
-                          <th>Statut</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {upcomingBookings.map((booking) => (
-                          <tr key={`up-${booking.id}`}>
-                            <td>{booking.owner_display_name}</td>
-                            <td>{booking.session.title}</td>
-                            <td>{formatDateTime(booking.session.start_at_utc)}</td>
-                            <td>
-                              <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </Card>
             </>
           ) : null}
 
@@ -2666,9 +2886,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 className="client-finance-shell"
                 action={
                   financeDueTotal > 0 ? (
-                    primaryDuePayableRow ? (
+                    primaryDuePayableRow || primaryDuePaymentUrl ? (
                       <form action={openClientPaymentCheckoutAction}>
-                        <input type="hidden" name="payment_id" value={primaryDuePayableRow.id} />
+                        {primaryDuePayableRow ? <input type="hidden" name="payment_id" value={primaryDuePayableRow.id} /> : null}
+                        {primaryDuePaymentUrl ? <input type="hidden" name="payment_url" value={primaryDuePaymentUrl} /> : null}
                         <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })} />
                         <button type="submit" className="client-pay-cta">
                           Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
@@ -2827,7 +3048,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   ) : (
                     <div className="client-finance-list">
                       {pagedPaymentRows.map((row) => {
-                        const linkedInvoice = invoiceByPaymentId.get(row.id);
+                        const paymentKey = paymentKeyFromPaymentRow(row);
+                        const linkedInvoice =
+                          invoiceByPaymentId.get(row.id) ??
+                          (paymentKey ? invoiceByPaymentKey.get(paymentKey) : undefined);
                         const canPayNow = canPayNowForPayment(row);
                         const isBilled = Boolean(linkedInvoice);
                         return (
@@ -2876,7 +3100,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-finance-list">
                       {pagedInvoiceRows.map((row) => {
                         const linkedPayment = paymentByInvoiceId.get(row.id);
-                        const canPayInvoice = linkedPayment ? canPayNowForPayment(linkedPayment) : false;
+                        const canPayInvoice = (linkedPayment ? canPayNowForPayment(linkedPayment) : false) || Boolean(row.payment_url);
                         return (
                           <CompactInvoiceRow
                             key={`inv-${row.id}`}
@@ -2886,9 +3110,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             subline={row.label}
                             actions={
                               <div className="row client-finance-card-actions">
-                                {canPayInvoice && linkedPayment ? (
+                                {canPayInvoice ? (
                                   <form action={openClientPaymentCheckoutAction}>
-                                    <input type="hidden" name="payment_id" value={linkedPayment.id} />
+                                    {linkedPayment ? <input type="hidden" name="payment_id" value={linkedPayment.id} /> : null}
+                                    {row.payment_url ? <input type="hidden" name="payment_url" value={row.payment_url} /> : null}
                                     <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices" })} />
                                     <button type="submit" className="client-card-primary-action">Payer</button>
                                   </form>
@@ -2976,9 +3201,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               {financeDueTotal > 0 ? (
                 <div className="client-finance-sticky-pay">
-                  {primaryDuePayableRow ? (
+                  {primaryDuePayableRow || primaryDuePaymentUrl ? (
                     <form action={openClientPaymentCheckoutAction}>
-                      <input type="hidden" name="payment_id" value={primaryDuePayableRow.id} />
+                      {primaryDuePayableRow ? <input type="hidden" name="payment_id" value={primaryDuePayableRow.id} /> : null}
+                      {primaryDuePaymentUrl ? <input type="hidden" name="payment_url" value={primaryDuePaymentUrl} /> : null}
                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })} />
                       <button type="submit" className="client-pay-cta">
                         Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
@@ -3006,6 +3232,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               <form method="get" className="client-filter-grid">
                 <input type="hidden" name="tab" value="messages" />
+                <input type="hidden" name="message_id" value="" />
                 <label>
                   Periode
                   <select name="message_scope" defaultValue={messageScope}>
@@ -3027,7 +3254,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </label>
                 <div className="row">
                   <button type="submit">🔎</button>
-                  <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "messages", message_scope: "LAST_3_MONTHS", member_id: null })}>
+                  <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "messages", message_scope: "LAST_3_MONTHS", member_id: null, message_id: null })}>
                     ↺
                   </a>
                 </div>
@@ -3047,6 +3274,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <th>Sujet</th>
                         <th>Statut</th>
                         <th>Creneau</th>
+                        <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3060,6 +3288,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status)}</span>
                           </td>
                           <td>{msg.session_title}</td>
+                          <td>
+                            <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages", message_id: msg.id })}>
+                              Lire
+                            </a>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -3067,19 +3300,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
                 <div className="list client-mobile-list client-inbox-list">
                   {messageRows.map((msg) => (
-                    <ListRow
-                      key={`${msg.id}-mobile`}
-                      title={msg.subject_preview || "Message sans sujet"}
-                      subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} | ${msg.owner_display_name}`}
-                      right={
-                        <div className="stack-xs">
-                          <span className="badge">{msg.channel}</span>
-                          <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status)}</span>
-                        </div>
-                      }
-                    />
+                    <a key={`${msg.id}-mobile`} href={withUpdatedQuery(rawParams, { tab: "messages", message_id: msg.id })} className="mode-link">
+                      <ListRow
+                        title={msg.subject_preview || "Message sans sujet"}
+                        subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} | ${msg.owner_display_name}`}
+                        right={
+                          <div className="stack-xs">
+                            <span className="badge">{msg.channel}</span>
+                            <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status)}</span>
+                          </div>
+                        }
+                      />
+                    </a>
                   ))}
                 </div>
+                {selectedMessage ? (
+                  <article className="item client-message-detail">
+                    <div className="row spread">
+                      <h4>{selectedMessage.subject_preview || "Message sans sujet"}</h4>
+                      <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "messages", message_id: null })}>
+                        Fermer
+                      </a>
+                    </div>
+                    <p className="muted">
+                      {formatDateTime(selectedMessage.sent_at ?? selectedMessage.scheduled_for_utc)} · {selectedMessage.owner_display_name} · {selectedMessage.channel}
+                    </p>
+                    <pre className="client-message-detail-content">
+                      {selectedMessage.content_preview || "Contenu indisponible"}
+                    </pre>
+                  </article>
+                ) : null}
                 </>
               )}
             </Card>

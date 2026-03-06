@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_db
 from app.core.config import settings
 from app.models.ops import AppSetting, PasswordResetToken
-from app.models.user import User, UserRole
+from app.models.user import ClientKind, User, UserRole
 from app.schemas.auth import (
     ForgotPasswordRequest,
     ForgotPasswordResponse,
@@ -120,6 +120,16 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
     residence_country = payload.residence_country.upper()
     preferred_currency = payload.preferred_currency.upper()
     timezone_name = _validate_timezone(payload.timezone)
+    first_name = _normalize_optional(payload.first_name)
+    last_name = _normalize_optional(payload.last_name)
+    phone = _normalize_optional(payload.phone)
+
+    if not first_name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="First name is required")
+    if not last_name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Last name is required")
+    if not phone:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Phone is required")
 
     existing = db.scalar(select(User).where(User.email == normalized_email))
     if existing is not None:
@@ -132,15 +142,20 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
         email=normalized_email,
         hashed_password=hash_password(payload.password),
         role=UserRole.CLIENT,
-        first_name=_normalize_optional(payload.first_name),
-        last_name=_normalize_optional(payload.last_name),
+        first_name=first_name,
+        last_name=last_name,
         address_line=_normalize_optional(payload.address_line),
         address_country=residence_country,
-        phone=_normalize_optional(payload.phone),
-        mobile_phone_1=_normalize_optional(payload.phone),
+        phone=phone,
+        mobile_phone_1=phone,
         residence_country=residence_country,
         preferred_currency=preferred_currency,
         timezone=timezone_name,
+        client_kind=ClientKind.CHILD if payload.registration_subject_type == "child" else ClientKind.ADULT,
+        email_opt_in=bool(payload.transactional_email_opt_in),
+        sms_opt_in=bool(payload.transactional_sms_opt_in),
+        lesson_reminder_email_opt_in=bool(payload.transactional_email_opt_in),
+        lesson_reminder_sms_opt_in=bool(payload.transactional_sms_opt_in),
     )
     db.add(user)
 

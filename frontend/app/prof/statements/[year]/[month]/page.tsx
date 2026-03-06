@@ -1,17 +1,36 @@
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { logoutAction, teacherApproveStatementsAction, teacherDisputeStatementsAction } from "../../../../../lib/actions";
+import {
+  logoutAction,
+  teacherApproveStatementsOnlyAction,
+  teacherDisputeSelectedLinesAction,
+  teacherGenerateStatementsInvoiceAction,
+  teacherReportMissingServiceAction,
+} from "../../../../../lib/actions";
 import { backendRequest } from "../../../../../lib/backend";
-import ActionCard from "../../../../../components/teacher-ui/action-card";
+import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../../../lib/auth-cookies";
 import AlertCard from "../../../../../components/teacher-ui/alert-card";
 import BottomTabs from "../../../../../components/teacher-ui/bottom-tabs";
-import ListRow from "../../../../../components/teacher-ui/list-row";
 import PageHeaderMobile from "../../../../../components/teacher-ui/page-header-mobile";
-import SectionAccordion from "../../../../../components/teacher-ui/section-accordion";
-import StatChip from "../../../../../components/teacher-ui/stat-chip";
+import PortalImpersonationBanner from "../../../../../components/portal-impersonation-banner";
 import type { TeacherStatementOut } from "../../../../../lib/types";
+
+type StatementServiceRow = {
+  rowId: string;
+  payorName: string;
+  courseLabel: string;
+  dateLabel: string;
+  timeLabel: string;
+  studentOrGroup: string;
+  locationOrMode: string;
+  durationMinutes: number;
+  rateHt: string;
+  amountHt: string;
+  vat: string;
+  totalTtc: string;
+  currency: string;
+};
 
 const MONTH_LABELS = [
   "Janvier",
@@ -32,6 +51,152 @@ function profTabHref(tab: string): string {
   return `/prof?tab=${encodeURIComponent(tab)}`;
 }
 
+function toDateFr(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString("fr-FR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function toTimeFr(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+  return parsed.toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function safeNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function safeMoney(value: unknown): string {
+  const parsed = safeNumber(value, 0);
+  return parsed.toFixed(2);
+}
+
+function statusLabel(rawStatus: string): string {
+  const normalized = rawStatus.trim().toLowerCase();
+  if (normalized === "to_verify" || normalized === "ready" || normalized === "draft") {
+    return "A verifier";
+  }
+  if (normalized === "in_dispute" || normalized === "disputed") {
+    return "En litige";
+  }
+  if (normalized === "awaiting_admin_feedback") {
+    return "En attente retour administration";
+  }
+  if (normalized === "validated" || normalized === "approved") {
+    return "Valide";
+  }
+  if (normalized === "invoice_generated" || normalized === "closed") {
+    return "Facture generee";
+  }
+  if (normalized === "exported") {
+    return "Exporte";
+  }
+  if (normalized === "awaiting_attendance") {
+    return "Presences a renseigner";
+  }
+  return rawStatus;
+}
+
+function statusTone(rawStatus: string): string {
+  const normalized = rawStatus.trim().toLowerCase();
+  if (normalized === "in_dispute" || normalized === "disputed" || normalized === "awaiting_admin_feedback") {
+    return "status-warn";
+  }
+  if (normalized === "validated" || normalized === "approved" || normalized === "invoice_generated" || normalized === "closed" || normalized === "exported") {
+    return "status-ok";
+  }
+  return "status-off";
+}
+
+function flattenServices(statements: TeacherStatementOut[]): StatementServiceRow[] {
+  const out: StatementServiceRow[] = [];
+  for (const statement of statements) {
+    for (const line of statement.lines) {
+      const sessionItemsRaw = (line.meta as Record<string, unknown> | null)?.session_items;
+      const sessionItems = Array.isArray(sessionItemsRaw) ? sessionItemsRaw : [];
+      if (sessionItems.length > 0) {
+        sessionItems.forEach((item, index) => {
+          const record = (item ?? {}) as Record<string, unknown>;
+          const startAt = String(record.start_at_utc ?? "").trim();
+          const endAt = String(record.end_at_utc ?? "").trim();
+          const dateLabel = String(record.date ?? "").trim() || (startAt ? toDateFr(startAt) : "-");
+          const timeLabel = startAt && endAt ? `${toTimeFr(startAt)} - ${toTimeFr(endAt)}` : "-";
+          const amountHt = safeMoney(record.amount_ht ?? line.amount_ht);
+          const totalTtc = safeMoney(record.amount_ttc ?? line.amount_ttc);
+          const vat = (safeNumber(totalTtc) - safeNumber(amountHt)).toFixed(2);
+          const rowId = `${statement.payor_legal_entity_id}:${String(record.session_id ?? "line")}:${index}`;
+          out.push({
+            rowId,
+            payorName: statement.payor_legal_entity_name,
+            courseLabel: String(record.title ?? line.course_type_label),
+            dateLabel,
+            timeLabel,
+            studentOrGroup: String(record.student_or_group ?? "").trim() || "-",
+            locationOrMode: `${String(record.location_name ?? "-")}` + (record.modality ? ` / ${String(record.modality)}` : ""),
+            durationMinutes: Math.max(1, safeNumber(record.duration_minutes, Math.round(safeNumber(line.hours, 0) * 60))),
+            rateHt: safeMoney(record.unit_rate_ht ?? line.unit_rate_ht),
+            amountHt,
+            vat,
+            totalTtc,
+            currency: statement.currency,
+          });
+        });
+      } else {
+        const amountHt = safeMoney(line.amount_ht);
+        const totalTtc = safeMoney(line.amount_ttc);
+        out.push({
+          rowId: `${statement.payor_legal_entity_id}:${line.course_type_id ?? line.course_type_label}`,
+          payorName: statement.payor_legal_entity_name,
+          courseLabel: line.course_type_label,
+          dateLabel: "-",
+          timeLabel: "-",
+          studentOrGroup: "-",
+          locationOrMode: "-",
+          durationMinutes: Math.max(1, Math.round(safeNumber(line.hours, 0) * 60)),
+          rateHt: safeMoney(line.unit_rate_ht),
+          amountHt,
+          vat: (safeNumber(totalTtc) - safeNumber(amountHt)).toFixed(2),
+          totalTtc,
+          currency: statement.currency,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function formatPeriodRange(year: number, month: number): { start: string; end: string } {
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 0));
+  return {
+    start: start.toLocaleDateString("fr-FR"),
+    end: end.toLocaleDateString("fr-FR"),
+  };
+}
+
+function isValidatedForBilling(statuses: string[]): boolean {
+  if (statuses.length === 0) {
+    return false;
+  }
+  return statuses.every((status) => {
+    const normalized = status.trim().toLowerCase();
+    return normalized === "validated" || normalized === "approved" || normalized === "invoice_generated" || normalized === "closed" || normalized === "exported";
+  });
+}
+
 export default async function TeacherStatementMonthDetailPage({
   params,
   searchParams,
@@ -39,10 +204,13 @@ export default async function TeacherStatementMonthDetailPage({
   params: { year: string; month: string };
   searchParams: Record<string, string | string[] | undefined>;
 }): Promise<JSX.Element> {
-  const token = cookies().get("access_token")?.value;
+  const token = getPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const impersonationClaims = readPortalImpersonationClaims();
+  const isImpersonating = Boolean(impersonationClaims?.imp);
+  const impersonationReturnTo = getPortalReturnTo() ?? "/admin";
   const year = Number.parseInt(params.year, 10);
   const month = Number.parseInt(params.month, 10);
   if (!Number.isFinite(year) || !Number.isFinite(month)) {
@@ -51,17 +219,33 @@ export default async function TeacherStatementMonthDetailPage({
 
   const ok = Array.isArray(searchParams.ok) ? searchParams.ok[0] : (searchParams.ok ?? "");
   const error = Array.isArray(searchParams.error) ? searchParams.error[0] : (searchParams.error ?? "");
+  const impersonationNameHint = Array.isArray(searchParams.imp_name) ? searchParams.imp_name[0] ?? "" : searchParams.imp_name ?? "";
   const statementsResult = await backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements/${year}/${month}`, {}, token);
-  if (!statementsResult.ok) {
-    return <section className="flash-err">Erreur releve detail: {statementsResult.message}</section>;
-  }
+  const statements = statementsResult.ok ? statementsResult.data : [];
 
   const monthLabel = MONTH_LABELS[Math.max(1, Math.min(12, month)) - 1] ?? String(month);
+  const impersonationDisplayName = impersonationNameHint.trim() || "Portail professeur";
+  const period = formatPeriodRange(year, month);
+  const services = flattenServices(statements);
+
+  const totalServices = services.length;
+  const totalMinutes = services.reduce((sum, row) => sum + row.durationMinutes, 0);
+  const totalHours = (totalMinutes / 60).toFixed(2);
+  const totalHt = statements.reduce((sum, row) => sum + safeNumber(row.totals_ht), 0).toFixed(2);
+  const totalVat = statements.reduce((sum, row) => sum + safeNumber(row.totals_vat), 0).toFixed(2);
+  const totalTtc = statements.reduce((sum, row) => sum + safeNumber(row.totals_ttc), 0).toFixed(2);
+  const statusValues = statements.map((row) => row.status);
+  const globalStatus = statusValues[0] ? statusLabel(statusValues[0]) : "A verifier";
+  const globalStatusTone = statusValues[0] ? statusTone(statusValues[0]) : "status-off";
+  const billingUnlocked = isValidatedForBilling(statusValues);
+  const monthPath = `/prof/statements/${year}/${month}`;
+  const disputePanelHref = "#statement-dispute-modal";
+  const missingPanelHref = "#statement-missing-modal";
 
   return (
     <section className="page teacher-shell teacher-subpage">
       <PageHeaderMobile
-        title="Detail des releves"
+        title="Releve de prestations"
         subtitle={`${monthLabel} ${year}`}
         trailing={
           <Link className="mode-link teacher-header-link" href={`/prof/statements?year=${year}&month=${month}`}>
@@ -93,78 +277,198 @@ export default async function TeacherStatementMonthDetailPage({
         ]}
       />
 
+      {isImpersonating ? (
+        <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} />
+      ) : null}
+
       {ok ? <AlertCard tone="ok">{ok}</AlertCard> : null}
       {error ? <AlertCard tone="error">{error}</AlertCard> : null}
+      {!statementsResult.ok ? <AlertCard tone="error">Erreur releve detail: {statementsResult.message}</AlertCard> : null}
 
-      <ActionCard title="Actions" subtitle="Validation ou signalement sur la periode.">
-        <div className="row teacher-actions-wrap">
-          <form action={teacherApproveStatementsAction}>
-            <input type="hidden" name="year" value={year} />
-            <input type="hidden" name="month" value={month} />
-            <input type="hidden" name="return_to" value={`/prof/statements/${year}/${month}`} />
-            <button type="submit">Approuver et generer</button>
-          </form>
-          <form action={teacherDisputeStatementsAction} className="teacher-dispute-form">
-            <input type="hidden" name="year" value={year} />
-            <input type="hidden" name="month" value={month} />
-            <input type="hidden" name="return_to" value={`/prof/statements/${year}/${month}`} />
-            <input type="text" name="message" placeholder="Motif du litige" required />
-            <button type="submit" className="ghost">
-              Litige
-            </button>
-          </form>
+      <article className="card statement-period-hero">
+        <p className="statement-title">Releve de prestations</p>
+        <p className="statement-period-strong">Periode du {period.start} au {period.end}</p>
+        <span className={`status-pill ${globalStatusTone}`}>{globalStatus}</span>
+      </article>
+
+      <article className="card statement-summary-card">
+        <h3>Resume financier</h3>
+        <div className="statement-summary-grid">
+          <div>
+            <small className="muted">Nombre de prestations</small>
+            <strong>{totalServices}</strong>
+          </div>
+          <div>
+            <small className="muted">Total heures</small>
+            <strong>{totalHours} h</strong>
+          </div>
+          <div>
+            <small className="muted">Total HT</small>
+            <strong>{totalHt} EUR</strong>
+          </div>
+          <div>
+            <small className="muted">TVA</small>
+            <strong>{totalVat} EUR</strong>
+          </div>
+          <div>
+            <small className="muted">Total TTC</small>
+            <strong>{totalTtc} EUR</strong>
+          </div>
         </div>
-      </ActionCard>
+      </article>
 
-      <div className="grid teacher-entity-grid">
-        {statementsResult.data.map((statement) => (
-          <article key={statement.payor_legal_entity_id} className="card">
-            <div className="row spread">
-              <strong>{statement.payor_legal_entity_name}</strong>
-              <span className={`status-pill ${statement.attendance_complete ? "status-ok" : "status-warn"}`}>
-                {statement.attendance_complete ? statement.status : "Presences a renseigner"}
-              </span>
+      <article className="card">
+        <div className="row spread">
+          <h3>Prestations du releve</h3>
+          <span className="badge">{services.length}</span>
+        </div>
+        {services.length === 0 ? (
+          <p className="muted">Aucune prestation detaillee sur cette periode.</p>
+        ) : (
+          <div className="statement-service-list">
+            {services.map((row) => {
+              const lineLabel = `${row.payorName} | ${row.courseLabel} | ${row.dateLabel} ${row.timeLabel}`;
+              return (
+                <article key={row.rowId} className="statement-service-card">
+                  <label className="statement-line-check">
+                    <input type="checkbox" name="selected_lines" value={lineLabel} form="statement-dispute-form" />
+                    <span>Selectionner cette ligne</span>
+                  </label>
+                  <div className="row spread">
+                    <strong>{row.courseLabel}</strong>
+                    <span className="badge">{row.payorName}</span>
+                  </div>
+                  <p className="muted">{row.dateLabel} · {row.timeLabel}</p>
+                  <p className="muted">{row.studentOrGroup}</p>
+                  <p className="muted">{row.locationOrMode}</p>
+                  <div className="statement-service-grid">
+                    <small>Duree: <strong>{row.durationMinutes} min</strong></small>
+                    <small>Taux HT: <strong>{row.rateHt} EUR</strong></small>
+                    <small>HT: <strong>{row.amountHt} EUR</strong></small>
+                    <small>TVA: <strong>{row.vat} EUR</strong></small>
+                    <small>TTC: <strong>{row.totalTtc} EUR</strong></small>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </article>
+
+      <article className="card statement-action-block">
+        <h3>Signaler un probleme sur lignes existantes</h3>
+        <p className="muted">Selectionnez une ou plusieurs lignes puis ouvrez le parcours dedie pour envoyer un commentaire a l administration.</p>
+        <a className="mode-link" href={disputePanelHref}>
+          Signaler un probleme sur les lignes selectionnees
+        </a>
+      </article>
+
+      <article className="card statement-action-block">
+        <h3>Ajouter une prestation manquante</h3>
+        <p className="muted">Parcours distinct pour signaler une prestation effectuee mais absente du releve.</p>
+        <a className="mode-link" href={missingPanelHref}>
+          Ajouter une prestation manquante
+        </a>
+      </article>
+
+      <article className="card statement-validation-block">
+        <h3>Validation et facture</h3>
+        <p className="muted">Validez d abord le releve, puis choisissez votre mode de facturation.</p>
+        <div className="statement-validation-actions">
+          <form action={teacherApproveStatementsOnlyAction}>
+            <input type="hidden" name="year" value={year} />
+            <input type="hidden" name="month" value={month} />
+            <input type="hidden" name="return_to" value={`/prof/statements/${year}/${month}`} />
+            <button type="submit">Approuver le releve</button>
+          </form>
+
+          {billingUnlocked ? (
+            <div className="statement-billing-options">
+              <form action={teacherGenerateStatementsInvoiceAction}>
+                <input type="hidden" name="year" value={year} />
+                <input type="hidden" name="month" value={month} />
+                <input type="hidden" name="return_to" value={`/prof/statements/${year}/${month}`} />
+                <button type="submit" className="ghost">Generer ma facture (modele Piano Academie)</button>
+              </form>
+              <a className="mode-link" href={`/prof/statements/${year}/${month}/export`}>
+                Exporter les prestations (modele personnel)
+              </a>
             </div>
+          ) : (
+            <p className="muted">Les options de facturation seront disponibles apres approbation du releve.</p>
+          )}
+        </div>
+      </article>
 
-            <div className="teacher-chip-row">
-              <StatChip label="HT" value={`${statement.totals_ht} ${statement.currency}`} />
-              <StatChip label="TVA" value={`${statement.totals_vat} ${statement.currency}`} />
-              <StatChip label="TTC" value={`${statement.totals_ttc} ${statement.currency}`} tone="ok" />
-            </div>
+      <section id="statement-dispute-modal" className="modal-overlay statement-target-modal">
+        <article className="modal-panel modal-compact">
+          <a className="close-link" href="#" aria-label="Fermer le signalement">
+            ✕
+          </a>
+          <h3>Signaler un probleme sur les lignes selectionnees</h3>
+          <p className="muted">Les lignes cochees dans le releve seront jointes a votre signalement.</p>
+          <form id="statement-dispute-form" action={teacherDisputeSelectedLinesAction} className="grid top-gap-sm">
+            <input type="hidden" name="year" value={year} />
+            <input type="hidden" name="month" value={month} />
+            <input type="hidden" name="return_to" value={monthPath} />
+            <label>
+              Commentaire (obligatoire)
+              <textarea
+                name="message"
+                required
+                minLength={5}
+                maxLength={4000}
+                rows={5}
+                placeholder="Expliquez le probleme constate sur les prestations selectionnees"
+              />
+            </label>
+            <button type="submit" className="ghost">Envoyer a l administration</button>
+          </form>
+        </article>
+      </section>
 
-            <SectionAccordion title="Lignes de releve" defaultOpen={true}>
-              <div className="list teacher-list-compact">
-                {statement.lines.map((line) => (
-                  <ListRow
-                    key={`${statement.payor_legal_entity_id}-${line.course_type_id ?? line.course_type_label}`}
-                    left={line.course_type_label}
-                    subtitle={`${line.hours} h | Taux HT ${line.unit_rate_ht}`}
-                    right={`${line.amount_ttc} ${statement.currency}`}
-                  />
-                ))}
-              </div>
-            </SectionAccordion>
-
-            {!statement.attendance_complete ? (
-              <SectionAccordion
-                title="Presences a renseigner"
-                subtitle="Completer avant approbation"
-                badge={<span className="status-pill status-warn">{statement.missing_sessions.length}</span>}
-              >
-                <div className="list teacher-list-compact">
-                  {statement.missing_sessions.map((row) => (
-                    <ListRow
-                      key={row.session_id}
-                      left={row.title}
-                      subtitle={`${new Date(row.start_at_utc).toLocaleString("fr-FR")} | ${row.pending_students_count}/${row.total_students_count}`}
-                    />
-                  ))}
-                </div>
-              </SectionAccordion>
-            ) : null}
-          </article>
-        ))}
-      </div>
+      <section id="statement-missing-modal" className="modal-overlay statement-target-modal">
+        <article className="modal-panel modal-compact">
+          <a className="close-link" href="#" aria-label="Fermer la prestation manquante">
+            ✕
+          </a>
+          <h3>Ajouter une prestation manquante</h3>
+          <form action={teacherReportMissingServiceAction} className="grid top-gap-sm">
+            <input type="hidden" name="year" value={year} />
+            <input type="hidden" name="month" value={month} />
+            <input type="hidden" name="return_to" value={monthPath} />
+            <label>
+              Date (obligatoire)
+              <input type="date" name="service_date" required />
+            </label>
+            <label>
+              Type / intitule de prestation (obligatoire)
+              <input type="text" name="service_label" required maxLength={200} placeholder="Ex: Cours individuel piano 60 min" />
+            </label>
+            <label>
+              Eleve ou groupe
+              <input type="text" name="student_or_group" maxLength={200} placeholder="Ex: Marie Besnard" />
+            </label>
+            <label>
+              Duree (minutes)
+              <input type="number" name="duration_minutes" min={1} max={720} required defaultValue={60} />
+            </label>
+            <label>
+              Lieu / modalite
+              <input type="text" name="modality" maxLength={80} placeholder="Ex: En ligne / Studio Lyon" />
+            </label>
+            <label>
+              Taux estime HT (optionnel)
+              <input type="text" name="estimated_rate_ht" inputMode="decimal" placeholder="Ex: 32.00" />
+            </label>
+            <label>
+              Commentaire (obligatoire)
+              <textarea name="comment" required minLength={5} maxLength={4000} rows={5} placeholder="Precisez la prestation manquante" />
+            </label>
+            <button type="submit" className="ghost">Envoyer a l administration</button>
+          </form>
+        </article>
+      </section>
     </section>
   );
 }

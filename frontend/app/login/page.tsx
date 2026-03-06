@@ -1,6 +1,10 @@
+import Link from "next/link";
+
 import { forgotPasswordAction, loginAction, registerAction, resetPasswordAction } from "../../lib/actions";
+import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from "../../lib/reference-data";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+type AuthMode = "login" | "signup" | "forgot";
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -10,111 +14,209 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
+function resolveMode(rawMode: string, resetToken: string): AuthMode {
+  if (resetToken) {
+    return "forgot";
+  }
+  if (rawMode === "signup") {
+    return "signup";
+  }
+  if (rawMode === "forgot") {
+    return "forgot";
+  }
+  return "login";
+}
+
 export default function LoginPage({ searchParams }: { searchParams: SearchParams }): JSX.Element {
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
   const resetToken = readParam(searchParams, "reset_token");
+  const emailHint = readParam(searchParams, "email");
+  const mode = resolveMode(readParam(searchParams, "mode").trim().toLowerCase(), resetToken);
 
   return (
-    <main className="page">
-      <section className="card">
-        <h1>Piano Academie</h1>
-        <p className="muted">Portail client V1: inscription, connexion, achat de plan et reservation.</p>
-      </section>
+    <main className="page auth-page">
+      <section className="auth-shell">
+        <header className="auth-header">
+          <h1>Piano Academie</h1>
+          <p>Accedez a votre espace client pour reserver vos cours, gerer vos informations et suivre vos inscriptions.</p>
+        </header>
 
-      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
-      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
+        {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
+        {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
 
-      <section className="grid cols-2">
-        {resetToken ? (
-          <article className="card">
-            <h2>Reinitialiser le mot de passe</h2>
-            <p className="muted">Choisissez un nouveau mot de passe pour ce compte.</p>
-            <form action={resetPasswordAction} className="grid">
-              <input type="hidden" name="token" value={resetToken} />
-              <label>
-                Nouveau mot de passe
-                <input type="password" name="password" required minLength={8} autoComplete="new-password" />
-              </label>
-              <label>
-                Confirmer le mot de passe
-                <input type="password" name="password_confirm" required minLength={8} autoComplete="new-password" />
-              </label>
-              <button type="submit">Mettre a jour le mot de passe</button>
-            </form>
-          </article>
-        ) : null}
+        <article className="card auth-card">
+          <nav className="auth-tabs" aria-label="Navigation authentification">
+            <Link className={`auth-tab ${mode === "login" ? "active" : ""}`} href="/login?mode=login">
+              Se connecter
+            </Link>
+            <Link className={`auth-tab ${mode === "signup" ? "active" : ""}`} href="/login?mode=signup">
+              Creer un compte
+            </Link>
+          </nav>
 
-        <article className="card">
-          <h2>Connexion</h2>
-          <p className="muted">Utilisez votre compte existant.</p>
-          <form action={loginAction} className="grid">
-            <label>
-              Email
-              <input type="email" name="email" required autoComplete="email" />
-            </label>
-            <label>
-              Mot de passe
-              <input type="password" name="password" required minLength={8} autoComplete="current-password" />
-            </label>
-            <button type="submit">Se connecter</button>
-          </form>
+          {mode === "login" ? (
+            <section className="auth-section">
+              <h2>Connexion</h2>
+              <p className="muted">Utilisez votre compte existant pour acceder a votre espace client.</p>
+              <form action={loginAction} className="grid auth-form">
+                <input type="hidden" name="auth_mode" value="login" />
+                <label>
+                  Email
+                  <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
+                </label>
+                <label>
+                  Mot de passe
+                  <input type="password" name="password" required minLength={8} autoComplete="current-password" />
+                </label>
+                <button type="submit">Se connecter</button>
+              </form>
+              <div className="auth-links">
+                <Link href={`/login?mode=forgot${emailHint ? `&email=${encodeURIComponent(emailHint)}` : ""}`}>Mot de passe oublie ?</Link>
+                <Link href="/login?mode=signup">Creer un compte</Link>
+              </div>
+            </section>
+          ) : null}
 
-          <hr />
+          {mode === "forgot" ? (
+            <section className="auth-section">
+              {resetToken ? (
+                <>
+                  <h2>Reinitialiser votre mot de passe</h2>
+                  <p className="muted">Choisissez un nouveau mot de passe pour votre compte.</p>
+                  <form action={resetPasswordAction} className="grid auth-form">
+                    <input type="hidden" name="token" value={resetToken} />
+                    <label>
+                      Nouveau mot de passe
+                      <input type="password" name="password" required minLength={8} autoComplete="new-password" />
+                    </label>
+                    <label>
+                      Confirmer le mot de passe
+                      <input type="password" name="password_confirm" required minLength={8} autoComplete="new-password" />
+                    </label>
+                    <button type="submit">Mettre a jour le mot de passe</button>
+                  </form>
+                </>
+              ) : (
+                <>
+                  <h2>Reinitialiser votre mot de passe</h2>
+                  <p className="muted">Saisissez votre adresse email pour recevoir un lien de reinitialisation.</p>
+                  <form action={forgotPasswordAction} className="grid auth-form">
+                    <input type="hidden" name="auth_mode" value="forgot" />
+                    <label>
+                      Email
+                      <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
+                    </label>
+                    <button type="submit">Envoyer le lien</button>
+                  </form>
+                </>
+              )}
+              <div className="auth-links">
+                <Link href="/login?mode=login">Retour a la connexion</Link>
+              </div>
+            </section>
+          ) : null}
 
-          <h3>Mot de passe oublie ?</h3>
-          <p className="muted">Saisissez votre email pour recevoir un lien de reinitialisation.</p>
-          <form action={forgotPasswordAction} className="grid">
-            <label>
-              Email
-              <input type="email" name="email" required autoComplete="email" />
-            </label>
-            <button type="submit">Envoyer le lien</button>
-          </form>
-        </article>
+          {mode === "signup" ? (
+            <section className="auth-section">
+              <h2>Creer un compte</h2>
+              <p className="muted">Renseignez les informations de base, ajoutez la photo eleve et validez les consentements.</p>
 
-        <article className="card">
-          <h2>Creer un compte client</h2>
-          <p className="muted">Les informations de profil peuvent etre completees ici ou dans le dashboard.</p>
-          <form action={registerAction} className="grid">
-            <label>
-              Email
-              <input type="email" name="email" required autoComplete="email" />
-            </label>
-            <label>
-              Mot de passe
-              <input type="password" name="password" required minLength={8} autoComplete="new-password" />
-            </label>
-            <label>
-              Prenom
-              <input type="text" name="first_name" maxLength={100} />
-            </label>
-            <label>
-              Nom
-              <input type="text" name="last_name" maxLength={100} />
-            </label>
-            <label>
-              Adresse
-              <input type="text" name="address_line" maxLength={255} />
-            </label>
-            <label>
-              Telephone
-              <input type="text" name="phone" maxLength={30} />
-            </label>
-            <label>
-              Pays de residence (ISO 2)
-              <input type="text" name="residence_country" defaultValue="FR" minLength={2} maxLength={2} required />
-            </label>
-            <label>
-              Devise preferee (ISO 3)
-              <input type="text" name="preferred_currency" defaultValue="EUR" minLength={3} maxLength={3} required />
-            </label>
-            <label>
-              Fuseau horaire
-              <input type="text" name="timezone" defaultValue="Europe/Paris" required maxLength={100} />
-            </label>
-            <button type="submit">Creer le compte</button>
-          </form>
+              <ol className="auth-step-indicator">
+                <li>Etape 1 - Informations obligatoires</li>
+                <li>Etape 2 - Photo de l eleve</li>
+                <li>Etape 3 - Consentements et validation</li>
+              </ol>
+
+              <form action={registerAction} className="grid auth-form" encType="multipart/form-data">
+                <input type="hidden" name="auth_mode" value="signup" />
+
+                <section className="auth-step-card">
+                  <h3>Etape 1 - Informations obligatoires</h3>
+                  <label>
+                    Cette inscription concerne
+                    <select name="registration_subject_type" defaultValue="self" required>
+                      <option value="self">Moi-meme</option>
+                      <option value="child">Mon enfant</option>
+                    </select>
+                  </label>
+                  <label>
+                    Prenom
+                    <input type="text" name="first_name" required maxLength={100} autoComplete="given-name" />
+                  </label>
+                  <label>
+                    Nom
+                    <input type="text" name="last_name" required maxLength={100} autoComplete="family-name" />
+                  </label>
+                  <label>
+                    Email
+                    <input type="email" name="email" required autoComplete="email" />
+                  </label>
+                  <label>
+                    Telephone
+                    <input type="tel" name="phone" required maxLength={30} autoComplete="tel" />
+                  </label>
+                  <label>
+                    Pays de residence
+                    <select name="residence_country" defaultValue={DEFAULT_COUNTRY} required>
+                      {COUNTRY_OPTIONS.map((country) => (
+                        <option key={country.value} value={country.value}>
+                          {country.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Mot de passe
+                    <input type="password" name="password" required minLength={8} autoComplete="new-password" />
+                  </label>
+                  <p className="muted">Une photo de l eleve sera demandee a l etape suivante pour faciliter l identification pendant les cours en ligne.</p>
+                </section>
+
+                <section className="auth-step-card">
+                  <h3>Etape 2 - Photo de l eleve</h3>
+                  <p className="muted">Cette photo est obligatoire pour finaliser la creation du compte.</p>
+                  <label>
+                    Prendre une photo (mobile) ou choisir une image
+                    <input type="file" name="student_photo" accept="image/jpeg,image/jpg,image/png,image/webp" capture="user" required />
+                  </label>
+                  <p className="muted">Si la camera est indisponible, choisissez une photo existante depuis votre galerie.</p>
+                </section>
+
+                <section className="auth-step-card">
+                  <h3>Etape 3 - Consentements et validation</h3>
+                  <p>
+                    En creant votre compte, vous autorisez Piano Academie a vous envoyer des emails et SMS lies a la gestion de votre compte, de vos reservations, de vos cours et au fonctionnement du service.
+                  </p>
+                  <p className="muted">
+                    Vous pourrez ensuite modifier vos preferences de communication depuis votre espace client et vous desinscrire des communications non essentielles.
+                  </p>
+                  <label className="checkline">
+                    <input type="checkbox" name="marketing_email_opt_in" />
+                    Je souhaite egalement recevoir les actualites et offres par email.
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="marketing_sms_opt_in" />
+                    Je souhaite egalement recevoir les actualites et offres par SMS.
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="confirm_accuracy" required />
+                    Je confirme l exactitude des informations renseignees.
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="accept_account_terms" required />
+                    J accepte les conditions de creation de mon compte.
+                  </label>
+                </section>
+
+                <button type="submit">Creer mon compte</button>
+              </form>
+
+              <div className="auth-links">
+                <Link href="/login?mode=login">J ai deja un compte</Link>
+              </div>
+            </section>
+          ) : null}
         </article>
       </section>
     </main>

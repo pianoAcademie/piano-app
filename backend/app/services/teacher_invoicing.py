@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Professor, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.ops import LegalEntity
 from app.services.payouts import resolve_hourly_rate_for_session
 
@@ -84,9 +84,10 @@ def compute_teacher_monthly_statements(
     now = _utcnow()
     period_start, period_end = month_bounds_utc(year=year, month=month)
     session_rows = db.execute(
-        select(CourseSession, CourseType, LegalEntity)
+        select(CourseSession, CourseType, LegalEntity, Location)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(LegalEntity, LegalEntity.id == CourseSession.snapshot_payor_legal_entity_id)
+        .join(Location, Location.id == CourseSession.location_id)
         .where(
             func.coalesce(CourseSession.substitute_teacher_id, CourseSession.professor_id) == professor.id,
             CourseSession.start_at_utc >= period_start,
@@ -98,7 +99,7 @@ def compute_teacher_monthly_statements(
     if not session_rows:
         return []
 
-    session_ids = [session_obj.id for session_obj, _, _ in session_rows]
+    session_ids = [session_obj.id for session_obj, _, _, _ in session_rows]
     pending_count_expr = func.sum(case((Booking.status == BookingStatus.BOOKED, 1), else_=0))
     total_count_expr = func.count(Booking.id)
     booking_stats_rows = db.execute(
@@ -124,7 +125,7 @@ def compute_teacher_monthly_statements(
     for session_id, pending_count, total_count in booking_stats_rows:
         stats_by_session[session_id] = (int(pending_count or 0), int(total_count or 0))
 
-    grouped_rows: dict[UUID, list[tuple[CourseSession, CourseType, LegalEntity]]] = defaultdict(list)
+    grouped_rows: dict[UUID, list[tuple[CourseSession, CourseType, LegalEntity, Location]]] = defaultdict(list)
     for row in session_rows:
         grouped_rows[row[0].snapshot_payor_legal_entity_id].append(row)
 
@@ -139,7 +140,7 @@ def compute_teacher_monthly_statements(
         missing_sessions: list[ComputedMissingSession] = []
         attendance_complete = True
 
-        for session_obj, course_type, _ in rows:
+        for session_obj, course_type, _, location in rows:
             pending_count, total_count = stats_by_session.get(session_obj.id, (0, 0))
             if pending_count > 0 and session_obj.start_at_utc <= now:
                 attendance_complete = False
@@ -168,6 +169,23 @@ def compute_teacher_monthly_statements(
                 amount_ttc = _quantize(amount_ht * (Decimal("1.00") + (vat_rate / Decimal("100.00"))))
             else:
                 amount_ttc = amount_ht
+            vat_amount = _quantize(amount_ttc - amount_ht)
+            duration_minutes = max(1, int((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds() // 60))
+            session_item = {
+                "session_id": str(session_obj.id),
+                "title": (session_obj.title or "").strip() or course_type.name,
+                "date": session_obj.start_at_utc.date().isoformat(),
+                "start_at_utc": session_obj.start_at_utc.isoformat(),
+                "end_at_utc": session_obj.end_at_utc.isoformat(),
+                "student_or_group": (session_obj.title or "").strip() or None,
+                "location_name": (location.name or "").strip() or "-",
+                "modality": "En ligne" if bool(location.is_online) else "Presentiel",
+                "duration_minutes": duration_minutes,
+                "unit_rate_ht": f"{unit_rate_ht}",
+                "amount_ht": f"{amount_ht}",
+                "vat_amount": f"{vat_amount}",
+                "amount_ttc": f"{amount_ttc}",
+            }
 
             key = (course_type.id, course_type.name, unit_rate_ht)
             existing = line_map.get(key)
@@ -182,6 +200,7 @@ def compute_teacher_monthly_statements(
                     meta={
                         "sessions_count": 1,
                         "last_session_id": str(session_obj.id),
+                        "session_items": [session_item],
                     },
                 )
             else:
@@ -190,6 +209,11 @@ def compute_teacher_monthly_statements(
                 existing.amount_ttc = _quantize(existing.amount_ttc + amount_ttc)
                 existing.meta["sessions_count"] = int(existing.meta.get("sessions_count", 0)) + 1
                 existing.meta["last_session_id"] = str(session_obj.id)
+                items = existing.meta.get("session_items")
+                if isinstance(items, list):
+                    items.append(session_item)
+                else:
+                    existing.meta["session_items"] = [session_item]
 
         lines = sorted(line_map.values(), key=lambda row: (row.course_type_label.casefold(), str(row.course_type_id or "")))
         totals_ht = _quantize(sum((row.amount_ht for row in lines), Decimal("0.00")))
