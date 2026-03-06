@@ -80,9 +80,24 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
             set -euo pipefail
             cd '${VPS_PATH}'
-            docker compose up -d --build db redis
+            services=\$(docker compose config --services)
+
+            if echo \"\$services\" | grep -qx redis; then
+              docker compose up -d --build db redis
+            else
+              docker compose up -d --build db
+            fi
+
             docker compose run --rm -T --build backend alembic upgrade head
-            docker compose up -d --build backend frontend notifications-immediate-worker notifications-scheduled-worker notifications-feedback-worker
+
+            up_targets='backend frontend'
+            for svc in notifications-immediate-worker notifications-scheduled-worker notifications-feedback-worker; do
+              if echo \"\$services\" | grep -qx \"\$svc\"; then
+                up_targets=\"\$up_targets \$svc\"
+              fi
+            done
+
+            docker compose up -d --build \$up_targets
             docker compose ps
           "
 
@@ -111,7 +126,12 @@ jobs:
             code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/login || true)
             [ \"\$code\" = \"200\" ] || { echo \"Frontend healthcheck failed: \$code\"; exit 1; }
 
+            services=\$(docker compose config --services)
             for svc in notifications-immediate-worker notifications-scheduled-worker notifications-feedback-worker; do
+              if ! echo \"\$services\" | grep -qx \"\$svc\"; then
+                echo \"Skip optional service check: \$svc (not defined)\"
+                continue
+              fi
               running=\$(docker compose ps --format json \"\$svc\" | python3 -c 'import json,sys; rows=json.load(sys.stdin); print("ok" if rows and rows[0].get("State")=="running" else "ko")')
               [ \"\$running\" = \"ok\" ] || { echo \"Service not running: \$svc\"; docker compose ps \"\$svc\"; exit 1; }
             done
@@ -128,8 +148,10 @@ jobs:
             docker compose logs --tail=200 backend
             docker compose logs --tail=120 frontend
             docker compose logs --tail=120 db
-            docker compose logs --tail=120 redis
-            docker compose logs --tail=120 notifications-immediate-worker
-            docker compose logs --tail=120 notifications-scheduled-worker
-            docker compose logs --tail=120 notifications-feedback-worker
+            services=\$(docker compose config --services)
+            for svc in redis notifications-immediate-worker notifications-scheduled-worker notifications-feedback-worker; do
+              if echo \"\$services\" | grep -qx \"\$svc\"; then
+                docker compose logs --tail=120 \"\$svc\"
+              fi
+            done
           "
