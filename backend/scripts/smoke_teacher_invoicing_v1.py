@@ -344,7 +344,12 @@ def main() -> None:
     now = datetime.now(UTC)
     y1, m1 = now.year, now.month
     y2, m2 = add_months(y1, m1, 1)
-    y3, m3 = add_months(y1, m1, 2)
+    if now.day > 1:
+        y3, m3 = y1, m1
+        case3_day = now.day - 1
+    else:
+        y3, m3 = add_months(y1, m1, -1)
+        case3_day = 1
     counter_start = 9000
 
     step("prepare professor billing profile (VAT off)")
@@ -462,7 +467,7 @@ def main() -> None:
     session_incomplete = create_session(
         admin_token,
         title=f"Teacher incomplete {ts}",
-        start_at_utc=fixed_start(y3, m3, 13, 10),
+        start_at_utc=fixed_start(y3, m3, case3_day, 10),
         activity_id=pa_activity_m3,
         location_id=location_id,
         professor_id=professor_id,

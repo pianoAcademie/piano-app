@@ -15,6 +15,10 @@ from app.models.ops import LegalEntity
 from app.services.payouts import resolve_hourly_rate_for_session
 
 
+def _utcnow() -> datetime:
+    return datetime.now(tz=UTC)
+
+
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -77,13 +81,14 @@ def compute_teacher_monthly_statements(
     year: int,
     month: int,
 ) -> list[ComputedStatement]:
+    now = _utcnow()
     period_start, period_end = month_bounds_utc(year=year, month=month)
     session_rows = db.execute(
         select(CourseSession, CourseType, LegalEntity)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(LegalEntity, LegalEntity.id == CourseSession.snapshot_payor_legal_entity_id)
         .where(
-            CourseSession.professor_id == professor.id,
+            func.coalesce(CourseSession.substitute_teacher_id, CourseSession.professor_id) == professor.id,
             CourseSession.start_at_utc >= period_start,
             CourseSession.start_at_utc < period_end,
             CourseSession.status != SessionStatus.CANCELLED,
@@ -136,7 +141,7 @@ def compute_teacher_monthly_statements(
 
         for session_obj, course_type, _ in rows:
             pending_count, total_count = stats_by_session.get(session_obj.id, (0, 0))
-            if pending_count > 0:
+            if pending_count > 0 and session_obj.start_at_utc <= now:
                 attendance_complete = False
                 missing_sessions.append(
                     ComputedMissingSession(
@@ -154,6 +159,7 @@ def compute_teacher_monthly_statements(
                 db,
                 session_obj=session_obj,
                 on_date=session_obj.start_at_utc.date(),
+                professor_id_override=professor.id,
                 default_grid_lines=None,
             )
             unit_rate_ht = _quantize(Decimal(resolved_rate.hourly_rate if resolved_rate is not None else 0))
