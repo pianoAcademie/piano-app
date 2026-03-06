@@ -5278,13 +5278,13 @@ export async function updateAdminCollaboratorRatesAction(formData: FormData): Pr
         );
       }
       const validFrom = String(formData.get(`activity_valid_from_${courseTypeId}`) ?? "").trim() || effectiveFrom;
-      if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(validFrom)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(validFrom)) {
         redirect(
           `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`Activite ${courseTypeId}: date debut invalide`)}`,
         );
       }
       const validTo = String(formData.get(`activity_valid_to_${courseTypeId}`) ?? "").trim();
-      if (validTo && !/^\\d{4}-\\d{2}-\\d{2}$/.test(validTo)) {
+      if (validTo && !/^\d{4}-\d{2}-\d{2}$/.test(validTo)) {
         redirect(
           `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`Activite ${courseTypeId}: date fin invalide`)}`,
         );
@@ -6432,10 +6432,10 @@ export async function createAdminConfigProfessorDefaultGridPeriodAction(formData
   const endDate = String(formData.get("end_date") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
   const cloneFromPeriodId = String(formData.get("clone_from_period_id") ?? "").trim() || null;
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
     redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20debut%20invalide");
   }
-  if (endDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(endDate)) {
+  if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
     redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20invalide");
   }
   if (endDate && endDate < startDate) {
@@ -6477,10 +6477,10 @@ export async function updateAdminConfigProfessorDefaultGridPeriodAction(formData
   const endDate = String(formData.get("end_date") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
   const statusValue = String(formData.get("status") ?? "").trim().toUpperCase();
-  if (startDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)) {
+  if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
     redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20debut%20invalide");
   }
-  if (endDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(endDate)) {
+  if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
     redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20invalide");
   }
   if (startDate && endDate && endDate < startDate) {
