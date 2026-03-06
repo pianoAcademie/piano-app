@@ -3,8 +3,11 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import ColorHexInput from "../../../components/color-hex-input";
+import AdminProfessorDefaultGridManager from "../../../components/admin-professor-default-grid-manager";
 import RichMessageEditor from "../../../components/rich-message-editor";
 import {
+  archiveAdminConfigProfessorDefaultGridPeriodAction,
+  createAdminConfigProfessorDefaultGridPeriodAction,
   createAdminCatalogCategoryAction,
   createAdminCatalogKitAction,
   createAdminCatalogProductAction,
@@ -28,7 +31,8 @@ import {
   updateAdminConfigMessagingSettingsAction,
   updateAdminConfigInvoiceNumberingAction,
   updateAdminConfigInvoiceTemplateAction,
-  updateAdminConfigProfessorDefaultGridAction,
+  updateAdminConfigProfessorDefaultGridPeriodAction,
+  updateAdminConfigProfessorDefaultGridPeriodRulesAction,
   updateAdminConfigProductCategoriesAction,
   updateAdminConfigPaymentMethodsAction,
   updateAdminConfigPaymentProviderAction,
@@ -54,7 +58,8 @@ import type {
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
-  AdminProfessorDefaultGridOut,
+  AdminProfessorPayGridPeriodDetailOut,
+  AdminProfessorPayGridPeriodOut,
   AdminSubscriptionSettingsOut,
 } from "../../../lib/types";
 
@@ -279,28 +284,6 @@ function activityModeLabel(mode: string): string {
   return "Tous";
 }
 
-function contractModeLabel(mode: string): string {
-  const normalized = mode.trim().toUpperCase();
-  if (normalized === "PRESENTIEL") {
-    return "Presentiel";
-  }
-  if (normalized === "EN_LIGNE") {
-    return "En ligne";
-  }
-  return "Autre";
-}
-
-function encodeHeadcountRules(
-  rules: Array<{ min_students: number; max_students: number | null; hourly_rate: string }>,
-): string {
-  return rules
-    .map((rule) => {
-      const range = rule.max_students === null ? `${rule.min_students}+` : `${rule.min_students}-${rule.max_students}`;
-      return `${range}:${rule.hourly_rate}`;
-    })
-    .join("; ");
-}
-
 function formatMoney(amountRaw: string | null, currency: string | null): string {
   if (!amountRaw) {
     return "-";
@@ -377,12 +360,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   if (section === "products") {
     redirect("/admin/products");
   }
+  const selectedGridPeriodIdParam = readParam(params, "grid_period").trim();
   const mainSection = toMainSection(section);
   const showInactiveFormulas = readParam(params, "show_inactive") === "1";
 
   const formulasEndpoint = showInactiveFormulas
     ? "/api/v1/admin/formulas?include_inactive=true"
     : "/api/v1/admin/formulas";
+  const gridPeriodsRequest = backendRequest<AdminProfessorPayGridPeriodOut[]>(
+    "/api/v1/admin/config/professor-default-grid/periods",
+    {},
+    token,
+  );
 
   const [
     accountResult,
@@ -396,7 +385,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     emailPredefinedTemplatesResult,
     smsPredefinedTemplatesResult,
     customTemplatesResult,
-    defaultProfessorGridResult,
+    defaultProfessorGridPeriodsResult,
+    selectedProfessorGridPeriodDetailResult,
     formulasResult,
     activitiesResult,
     legalEntitiesResult,
@@ -425,7 +415,22 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       token,
     ),
     backendRequest<AdminMessagingTemplateOut[]>("/api/v1/admin/config/messaging-templates?kind=CUSTOM", {}, token),
-    backendRequest<AdminProfessorDefaultGridOut>("/api/v1/admin/config/professor-default-grid", {}, token),
+    gridPeriodsRequest,
+    (async () => {
+      const periods = await gridPeriodsRequest;
+      if (!periods.ok || periods.data.length === 0) {
+        return { ok: true as const, status: 200, data: null as AdminProfessorPayGridPeriodDetailOut | null };
+      }
+      const selectedPeriodId = selectedGridPeriodIdParam || periods.data.find((period) => period.is_active)?.id || periods.data[0]?.id || "";
+      if (!selectedPeriodId) {
+        return { ok: true as const, status: 200, data: null as AdminProfessorPayGridPeriodDetailOut | null };
+      }
+      return backendRequest<AdminProfessorPayGridPeriodDetailOut>(
+        `/api/v1/admin/config/professor-default-grid/periods/${selectedPeriodId}`,
+        {},
+        token,
+      );
+    })(),
     backendRequest<AdminFormulaOut[]>(formulasEndpoint, {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=true", {}, token),
@@ -506,11 +511,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
         loadErrors.push(`Modeles personnalises: ${customTemplatesResult.message}`);
         return [] as AdminMessagingTemplateOut[];
       })();
-  const defaultProfessorGrid = defaultProfessorGridResult.ok
-    ? defaultProfessorGridResult.data
+  const defaultProfessorGridPeriods = defaultProfessorGridPeriodsResult.ok
+    ? defaultProfessorGridPeriodsResult.data
     : (() => {
-        loadErrors.push(`Grille salaire professeurs: ${defaultProfessorGridResult.message}`);
-        return { lines: [], updated_at: null } as AdminProfessorDefaultGridOut;
+        loadErrors.push(`Periodes grille salaire: ${defaultProfessorGridPeriodsResult.message}`);
+        return [] as AdminProfessorPayGridPeriodOut[];
+      })();
+  const selectedProfessorGridPeriodDetail = selectedProfessorGridPeriodDetailResult.ok
+    ? selectedProfessorGridPeriodDetailResult.data
+    : (() => {
+        if (!selectedProfessorGridPeriodDetailResult.ok) {
+          loadErrors.push(`Detail periode grille salaire: ${selectedProfessorGridPeriodDetailResult.message}`);
+        }
+        return null as AdminProfessorPayGridPeriodDetailOut | null;
       })();
 
   const formulas = formulasResult.ok
@@ -598,7 +611,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const paymentMethodLabelByCode = new Map(paymentMethods.map((method) => [method.code, method.label]));
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
-  const defaultGridLineSlots = 16;
 
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
@@ -893,89 +905,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           ) : null}
 
           {section === "params-professor-default-grid" ? (
-            <section className="card">
-              <h3>Grille salariale par defaut (professeurs)</h3>
-              <p className="muted">
-                Cette grille s applique a tous les professeurs pour le calcul depuis le planning si aucune grille specifique collaborateur
-                n est definie. Les parametrages au niveau du professeur restent prioritaires.
-              </p>
-              {defaultProfessorGrid.updated_at ? (
-                <p className="muted">Derniere mise a jour: {new Date(defaultProfessorGrid.updated_at).toLocaleString("fr-FR")}</p>
-              ) : null}
-
-              <form action={updateAdminConfigProfessorDefaultGridAction} className="grid">
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Activite (planning)</th>
-                        <th>Mode (derive)</th>
-                        <th>Duree ref (min)</th>
-                        <th>Taux default</th>
-                        <th>Regles effectif</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Array.from({ length: defaultGridLineSlots }).map((_, index) => {
-                        const line = defaultProfessorGrid.lines[index];
-                        const activity = line ? activityById.get(line.course_type_id) : undefined;
-                        const modeLabel = activity
-                          ? contractModeLabel(activity.mode === "ONLINE" ? "EN_LIGNE" : activity.mode === "ONSITE" ? "PRESENTIEL" : "AUTRE")
-                          : (line ? contractModeLabel(line.mode) : "-");
-                        const duration = activity?.duration_minutes ?? line?.reference_duration_minutes ?? null;
-
-                        return (
-                          <tr key={`default-grid-line-${index}`}>
-                            <td>
-                              <select name={`line_course_type_id_${index}`} defaultValue={line?.course_type_id ?? ""}>
-                                <option value="">Selectionner une activite</option>
-                                {activities.map((activityRow) => (
-                                  <option key={`default-grid-activity-${index}-${activityRow.id}`} value={activityRow.id}>
-                                    {activityRow.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td>
-                              <span className="muted">{modeLabel}</span>
-                            </td>
-                            <td>
-                              <span className="muted">{duration ?? "-"}</span>
-                            </td>
-                            <td>
-                              <input
-                                type="number"
-                                name={`line_default_rate_${index}`}
-                                min="0"
-                                step="0.01"
-                                defaultValue={line?.default_hourly_rate ?? ""}
-                                placeholder="ex: 35.00"
-                              />
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                name={`line_rules_${index}`}
-                                defaultValue={line ? encodeHeadcountRules(line.rules) : ""}
-                                placeholder="0-3:35; 4-8:42; 9+:50"
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                <p className="muted">
-                  Format regles effectif: <code>0-3:35; 4-8:42; 9+:50</code>. Si aucune regle ne matche, le taux default est utilise.
-                </p>
-
-                <div className="row">
-                  <button type="submit">Enregistrer la grille par defaut</button>
-                </div>
-              </form>
-            </section>
+            <AdminProfessorDefaultGridManager
+              activities={activities}
+              periods={defaultProfessorGridPeriods}
+              selectedPeriod={selectedProfessorGridPeriodDetail?.period ?? null}
+              selectedLines={selectedProfessorGridPeriodDetail?.lines ?? []}
+              selectedPeriodId={selectedProfessorGridPeriodDetail?.period.id ?? null}
+              createPeriodAction={createAdminConfigProfessorDefaultGridPeriodAction}
+              updatePeriodAction={updateAdminConfigProfessorDefaultGridPeriodAction}
+              archivePeriodAction={archiveAdminConfigProfessorDefaultGridPeriodAction}
+              updatePeriodRulesAction={updateAdminConfigProfessorDefaultGridPeriodRulesAction}
+              defaultCurrency={accountDefaultCurrency}
+            />
           ) : null}
 
           {section === "params-payments" ? (
@@ -1193,6 +1134,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     <input type="checkbox" name="active" defaultChecked />
                     Active
                   </label>
+                  <label className="checkline span-2">
+                    <input type="checkbox" name="can_be_requested_by_professor" defaultChecked />
+                    Commandable par professeur
+                  </label>
                   <div className="row span-4">
                     <button type="submit">Ajouter categorie</button>
                   </div>
@@ -1208,6 +1153,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <th>Nom</th>
                           <th>Description</th>
                           <th>Statut</th>
+                          <th>Professeurs</th>
                           <th>Actions</th>
                         </tr>
                       </thead>
@@ -1217,6 +1163,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <td>{category.name}</td>
                             <td>{category.description || "-"}</td>
                             <td>{category.active ? "Active" : "Inactive"}</td>
+                            <td>{category.can_be_requested_by_professor ? "Commandable" : "Masquee"}</td>
                             <td>
                               <div className="row">
                                 <details>
@@ -1234,6 +1181,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                     <label className="checkline">
                                       <input type="checkbox" name="active" defaultChecked={category.active} />
                                       Active
+                                    </label>
+                                    <label className="checkline">
+                                      <input
+                                        type="checkbox"
+                                        name="can_be_requested_by_professor"
+                                        defaultChecked={category.can_be_requested_by_professor}
+                                      />
+                                      Commandable par professeur
                                     </label>
                                     <div className="row">
                                       <button type="submit">Sauvegarder</button>

@@ -1580,7 +1580,7 @@ def update_collaborator_rates(
     if not payload.rates and not clear_course_type_ids:
         return list_collaborator_rates(professor_id=professor_id, db=db, _=_)
 
-    unique_rates: dict[str, tuple[UUID | None, Decimal | None, str, list[dict[str, object]]]] = {}
+    unique_rates: dict[str, tuple[UUID | None, Decimal | None, str, list[dict[str, object]], date, date | None]] = {}
     for row_index, row in enumerate(payload.rates):
         fallback_currency = professor.payout_currency if professor.payout_currency in allowed_currencies else default_currency
         currency = _validate_currency((row.currency_code or fallback_currency), allowed_codes=allowed_currencies)
@@ -1588,6 +1588,11 @@ def update_collaborator_rates(
             row.rules,
             rate_label=f"Rate {row_index + 1}",
         )
+        if row.course_type_id is None and normalized_rules:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Rate {row_index + 1}: global headcount rules are not supported",
+            )
         hourly_rate = _quantize_money(Decimal(row.hourly_rate)) if row.hourly_rate is not None else None
         if hourly_rate is not None and hourly_rate < 0:
             raise HTTPException(
@@ -1596,17 +1601,24 @@ def update_collaborator_rates(
             )
         if hourly_rate is None and not normalized_rules:
             continue
-        dedupe_key = str(row.course_type_id) if row.course_type_id is not None else "__GLOBAL__"
-        unique_rates[dedupe_key] = (row.course_type_id, hourly_rate, currency, normalized_rules)
+        row_valid_from = row.valid_from or effective_from
+        row_valid_to = row.valid_to
+        if row_valid_to is not None and row_valid_to < row_valid_from:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Rate {row_index + 1}: valid_to must be >= valid_from",
+            )
+        dedupe_key = (
+            f"{row.course_type_id or '__GLOBAL__'}:{row_valid_from.isoformat()}:{row_valid_to.isoformat() if row_valid_to else ''}"
+        )
+        unique_rates[dedupe_key] = (row.course_type_id, hourly_rate, currency, normalized_rules, row_valid_from, row_valid_to)
 
     if not unique_rates:
         unique_rate_course_type_ids = set()
     else:
-        unique_rate_course_type_ids = {
-            course_type_id for course_type_id, _, _, _ in unique_rates.values() if course_type_id is not None
-        }
+        unique_rate_course_type_ids = {course_type_id for course_type_id, *_ in unique_rates.values() if course_type_id is not None}
 
-    course_type_ids = [course_type_id for course_type_id, _, _, _ in unique_rates.values() if course_type_id is not None]
+    course_type_ids = [course_type_id for course_type_id, *_ in unique_rates.values() if course_type_id is not None]
     course_type_ids.extend(clear_course_type_ids)
     course_type_ids = list(dict.fromkeys(course_type_ids))
     course_types = db.scalars(select(CourseType).where(CourseType.id.in_(course_type_ids))).all() if course_type_ids else []
@@ -1615,33 +1627,73 @@ def update_collaborator_rates(
     if missing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Course type(s) not found: {', '.join(missing)}")
 
-    def _truncate_overlapping_rows(*, course_type_id: UUID | None) -> None:
-        overlapping_rows = db.scalars(
+    def _truncate_overlapping_rows(
+        *,
+        course_type_id: UUID | None,
+        start_date: date,
+        end_date: date | None,
+    ) -> None:
+        stmt = (
             select(ProfessorHourlyRate)
             .where(
                 ProfessorHourlyRate.professor_id == professor_id,
                 ProfessorHourlyRate.course_type_id == course_type_id,
                 ProfessorHourlyRate.location_id.is_(None),
-                or_(ProfessorHourlyRate.valid_to.is_(None), ProfessorHourlyRate.valid_to >= effective_from),
+                or_(ProfessorHourlyRate.valid_to.is_(None), ProfessorHourlyRate.valid_to >= start_date),
             )
             .with_for_update()
             .order_by(ProfessorHourlyRate.valid_from.asc(), ProfessorHourlyRate.created_at.asc())
-        ).all()
+        )
+        if end_date is not None:
+            stmt = stmt.where(ProfessorHourlyRate.valid_from <= end_date)
+        overlapping_rows = db.scalars(stmt).all()
 
         for row in overlapping_rows:
-            if row.valid_from < effective_from:
-                cutoff = effective_from - timedelta(days=1)
-                if row.valid_to is None or row.valid_to > cutoff:
-                    row.valid_to = cutoff
-            else:
-                db.delete(row)
+            row_start = row.valid_from
+            row_end = row.valid_to
+            if end_date is not None and row_start > end_date:
+                continue
+            if row_start < start_date:
+                split_tail = (
+                    end_date is not None
+                    and row_end is not None
+                    and row_end > end_date
+                ) or (
+                    end_date is not None
+                    and row_end is None
+                )
+                previous_end = row_end
+                row.valid_to = start_date - timedelta(days=1)
+                if split_tail:
+                    db.add(
+                        ProfessorHourlyRate(
+                            professor_id=row.professor_id,
+                            course_type_id=row.course_type_id,
+                            location_id=row.location_id,
+                            currency_code=row.currency_code,
+                            hourly_rate=row.hourly_rate,
+                            headcount_rules_json=row.headcount_rules_json,
+                            valid_from=end_date + timedelta(days=1),
+                            valid_to=previous_end,
+                        )
+                    )
+                continue
+            db.delete(row)
 
     clear_only_course_type_ids = clear_course_type_ids - unique_rate_course_type_ids
     for course_type_id in clear_only_course_type_ids:
-        _truncate_overlapping_rows(course_type_id=course_type_id)
+        _truncate_overlapping_rows(
+            course_type_id=course_type_id,
+            start_date=effective_from,
+            end_date=None,
+        )
 
-    for course_type_id, hourly_rate, currency_code, normalized_rules in unique_rates.values():
-        _truncate_overlapping_rows(course_type_id=course_type_id)
+    for course_type_id, hourly_rate, currency_code, normalized_rules, row_valid_from, row_valid_to in unique_rates.values():
+        _truncate_overlapping_rows(
+            course_type_id=course_type_id,
+            start_date=row_valid_from,
+            end_date=row_valid_to,
+        )
 
         db.add(
             ProfessorHourlyRate(
@@ -1651,8 +1703,8 @@ def update_collaborator_rates(
                 currency_code=currency_code,
                 hourly_rate=hourly_rate,
                 headcount_rules_json=normalized_rules,
-                valid_from=effective_from,
-                valid_to=None,
+                valid_from=row_valid_from,
+                valid_to=row_valid_to,
             )
         )
 

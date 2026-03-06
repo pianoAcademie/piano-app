@@ -437,21 +437,10 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     .filter((courseType) => courseType.active)
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
   const defaultGridByCourseTypeId = new Map(defaultProfessorGrid.lines.map((line) => [line.course_type_id, line]));
-  const professorReferenceLine =
-    defaultProfessorGrid.lines.find((line) => line.rules.length > 0)
-    ?? defaultProfessorGrid.lines.find((line) => line.default_hourly_rate !== null)
-    ?? null;
-  const professorReferenceGrid = professorReferenceLine
-    ? {
-        default_hourly_rate: professorReferenceLine.default_hourly_rate,
-        rules: professorReferenceLine.rules.map((rule) => ({
-          min_students: rule.min_students,
-          max_students: rule.max_students,
-          hourly_rate: rule.hourly_rate,
-        })),
-      }
-    : null;
-  const professorHasHeadcountOverride = Boolean(activeBaseRate && activeBaseRate.rules.length > 0);
+  const activeGeneralPeriodLabel =
+    defaultProfessorGrid.active_period_start_date
+      ? `${defaultProfessorGrid.active_period_start_date} -> ${defaultProfessorGrid.active_period_end_date ?? "en cours"}`
+      : null;
   const payrollActivities = editableCourseTypes.map((courseType) => {
     const activeRate = activeRatesByKey.get(courseType.id) ?? null;
     const defaultGridLine = defaultGridByCourseTypeId.get(courseType.id) ?? null;
@@ -479,9 +468,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
         }
       : null;
     const hasSpecific = Boolean(activeRate && (activeRate.hourly_rate !== null || activeRate.rules.length > 0));
-    const initialMode: "GENERAL" | "PROFESSOR" | "SPECIFIC" = hasSpecific
-      ? "SPECIFIC"
-      : (activeBaseRate ? "PROFESSOR" : "GENERAL");
+    const initialMode: "GENERAL" | "SPECIFIC" = hasSpecific ? "SPECIFIC" : "GENERAL";
 
     return {
       course_type_id: courseType.id,
@@ -491,6 +478,8 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
       initial_mode: initialMode,
       general_grid: generalGrid,
       specific_grid: specificGrid,
+      specific_valid_from: activeRate?.valid_from ?? null,
+      specific_valid_to: activeRate?.valid_to ?? null,
     };
   });
 
@@ -926,21 +915,8 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 currencyCode={activeBaseRate?.currency_code ?? defaultRateCurrency}
                 availableCurrencies={availableCurrencies}
                 baseHourlyRate={activeBaseRate?.hourly_rate ?? ""}
-                professorHasOverride={professorHasHeadcountOverride}
-                professorGrid={
-                  activeBaseRate
-                    ? {
-                        default_hourly_rate: activeBaseRate.hourly_rate,
-                        rules: activeBaseRate.rules.map((rule) => ({
-                          min_students: rule.min_students,
-                          max_students: rule.max_students,
-                          hourly_rate: rule.hourly_rate,
-                        })),
-                      }
-                    : null
-                }
-                professorReferenceGrid={professorReferenceGrid}
                 activities={payrollActivities}
+                activeGeneralPeriodLabel={activeGeneralPeriodLabel}
               />
             </form>
           </article>

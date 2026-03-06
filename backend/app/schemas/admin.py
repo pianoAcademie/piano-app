@@ -278,6 +278,44 @@ class AdminProfessorDefaultGridUpdateRequest(BaseModel):
     lines: list[AdminProfessorDefaultGridLineInput] = Field(default_factory=list)
 
 
+class AdminProfessorPayGridPeriodOut(BaseModel):
+    id: UUID
+    start_date: date
+    end_date: date | None
+    status: str
+    notes: str | None = None
+    is_active: bool
+    is_future: bool
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
+    rules_count: int = 0
+
+
+class AdminProfessorPayGridPeriodCreateRequest(BaseModel):
+    start_date: date
+    end_date: date | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    clone_from_period_id: UUID | None = None
+
+
+class AdminProfessorPayGridPeriodUpdateRequest(BaseModel):
+    start_date: date | None = None
+    end_date: date | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    status: str | None = None
+
+
+class AdminProfessorPayGridPeriodRulesUpdateRequest(BaseModel):
+    lines: list[AdminProfessorDefaultGridLineInput] = Field(default_factory=list)
+    currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+
+
+class AdminProfessorPayGridPeriodDetailOut(BaseModel):
+    period: AdminProfessorPayGridPeriodOut
+    lines: list["AdminProfessorDefaultGridLineOut"] = Field(default_factory=list)
+
+
 class AdminProfessorDefaultGridRuleOut(BaseModel):
     min_students: int
     max_students: int | None
@@ -298,6 +336,9 @@ class AdminProfessorDefaultGridLineOut(BaseModel):
 class AdminProfessorDefaultGridOut(BaseModel):
     lines: list[AdminProfessorDefaultGridLineOut] = Field(default_factory=list)
     updated_at: datetime | None
+    active_period_id: UUID | None = None
+    active_period_start_date: date | None = None
+    active_period_end_date: date | None = None
 
 
 class AdminFormulaRestrictionIn(BaseModel):
@@ -1440,6 +1481,8 @@ class AdminProfessorRateInput(BaseModel):
     hourly_rate: Decimal | None = None
     rules: list[AdminProfessorRateRuleInput] = Field(default_factory=list)
     currency_code: str | None = Field(default=None, min_length=3, max_length=3)
+    valid_from: date | None = None
+    valid_to: date | None = None
 
 
 class AdminProfessorRatesUpdateRequest(BaseModel):

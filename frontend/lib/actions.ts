@@ -56,6 +56,8 @@ import type {
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProfessorDefaultGridOut,
+  AdminProfessorPayGridPeriodDetailOut,
+  AdminProfessorPayGridPeriodOut,
   AuthLoginResponse,
   ClientPaymentCheckoutOut,
   ProfessorPermissionOut,
@@ -5150,7 +5152,7 @@ export async function updateAdminCollaboratorRatesAction(formData: FormData): Pr
   }
 
   const uiVersion = String(formData.get("pay_ui_version") ?? "").trim();
-  if (uiVersion === "2") {
+  if (uiVersion === "2" || uiVersion === "3") {
     const parseStructuredRules = (
       minValuesRaw: FormDataEntryValue[],
       maxValuesRaw: FormDataEntryValue[],
@@ -5228,27 +5230,18 @@ export async function updateAdminCollaboratorRatesAction(formData: FormData): Pr
       redirect(`/admin/professors/${professorId}?tab=tarifs&error=Taux%20horaire%20de%20base%20invalide`);
     }
 
-    const profGridMode = String(formData.get("prof_grid_mode") ?? "inherit").trim().toLowerCase();
-    const professorRules =
-      profGridMode === "override"
-        ? parseStructuredRules(
-            formData.getAll("prof_grid_min"),
-            formData.getAll("prof_grid_max"),
-            formData.getAll("prof_grid_rate"),
-            "Grille professeur",
-          )
-        : [];
-
     const rates: Array<{
       course_type_id: string | null;
       hourly_rate: number | null;
       rules: Array<{ min_students: number; max_students: number | null; hourly_rate: number }>;
       currency_code: string | null;
+      valid_from?: string | null;
+      valid_to?: string | null;
     }> = [
       {
         course_type_id: null,
         hourly_rate: baseHourlyRate,
-        rules: professorRules,
+        rules: [],
         currency_code: currency,
       },
     ];
@@ -5256,7 +5249,7 @@ export async function updateAdminCollaboratorRatesAction(formData: FormData): Pr
     const clearCourseTypeIds: string[] = [];
     const courseTypeIds = parseStringList(formData.getAll("activity_course_type_id"));
     for (const courseTypeId of courseTypeIds) {
-      const mode = String(formData.get(`activity_rate_mode_${courseTypeId}`) ?? "PROFESSOR")
+      const mode = String(formData.get(`activity_rate_mode_${courseTypeId}`) ?? "GENERAL")
         .trim()
         .toUpperCase();
       if (mode !== "SPECIFIC") {
@@ -5284,12 +5277,31 @@ export async function updateAdminCollaboratorRatesAction(formData: FormData): Pr
           `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`Activite ${courseTypeId}: definir au moins une tranche`)}`,
         );
       }
+      const validFrom = String(formData.get(`activity_valid_from_${courseTypeId}`) ?? "").trim() || effectiveFrom;
+      if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(validFrom)) {
+        redirect(
+          `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`Activite ${courseTypeId}: date debut invalide`)}`,
+        );
+      }
+      const validTo = String(formData.get(`activity_valid_to_${courseTypeId}`) ?? "").trim();
+      if (validTo && !/^\\d{4}-\\d{2}-\\d{2}$/.test(validTo)) {
+        redirect(
+          `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`Activite ${courseTypeId}: date fin invalide`)}`,
+        );
+      }
+      if (validTo && validTo < validFrom) {
+        redirect(
+          `/admin/professors/${professorId}?tab=tarifs&error=${encodeURIComponent(`Activite ${courseTypeId}: date fin avant debut`)}`,
+        );
+      }
 
       rates.push({
         course_type_id: courseTypeId,
         hourly_rate: activityDefaultRate,
         rules: activityRules,
         currency_code: currency,
+        valid_from: validFrom,
+        valid_to: validTo || null,
       });
     }
 
@@ -6283,40 +6295,112 @@ export async function updateAdminConfigProfessorDefaultGridAction(formData: Form
   }
 
   await ensureAdmin(token);
+  const parseStructuredRules = (
+    minValuesRaw: FormDataEntryValue[],
+    maxValuesRaw: FormDataEntryValue[],
+    rateValuesRaw: FormDataEntryValue[],
+    label: string,
+  ): Array<{ min_students: number; max_students: number | null; hourly_rate: number }> => {
+    const minValues = minValuesRaw.map((value) => String(value ?? "").trim());
+    const maxValues = maxValuesRaw.map((value) => String(value ?? "").trim());
+    const rateValues = rateValuesRaw.map((value) => String(value ?? "").trim().replace(",", "."));
+    const rowCount = Math.max(minValues.length, maxValues.length, rateValues.length);
 
+    const rows: Array<{ min_students: number; max_students: number | null; hourly_rate: number }> = [];
+    for (let index = 0; index < rowCount; index += 1) {
+      const minRaw = minValues[index] ?? "";
+      const maxRaw = maxValues[index] ?? "";
+      const rateRaw = rateValues[index] ?? "";
+      if (!minRaw && !maxRaw && !rateRaw) {
+        continue;
+      }
+      const minStudents = parseNonNegativeInt(minRaw);
+      if (minStudents === null) {
+        redirect(`/admin/config?section=params-professor-default-grid&error=${encodeURIComponent(`${label}: minimum invalide ligne ${index + 1}`)}`);
+      }
+      let maxStudents: number | null = null;
+      if (maxRaw) {
+        maxStudents = parseNonNegativeInt(maxRaw);
+        if (maxStudents === null || maxStudents < minStudents) {
+          redirect(`/admin/config?section=params-professor-default-grid&error=${encodeURIComponent(`${label}: maximum invalide ligne ${index + 1}`)}`);
+        }
+      }
+      const hourlyRate = parseNonNegativeDecimal(rateRaw);
+      if (hourlyRate === null) {
+        redirect(`/admin/config?section=params-professor-default-grid&error=${encodeURIComponent(`${label}: taux invalide ligne ${index + 1}`)}`);
+      }
+      rows.push({ min_students: minStudents, max_students: maxStudents, hourly_rate: hourlyRate });
+    }
+
+    rows.sort((a, b) => (a.min_students - b.min_students) || ((a.max_students ?? Number.MAX_SAFE_INTEGER) - (b.max_students ?? Number.MAX_SAFE_INTEGER)));
+    for (let index = 1; index < rows.length; index += 1) {
+      const previous = rows[index - 1];
+      const current = rows[index];
+      if (previous.max_students === null || current.min_students <= previous.max_students) {
+        redirect(`/admin/config?section=params-professor-default-grid&error=${encodeURIComponent(`${label}: plages chevauchantes`)}`);
+      }
+    }
+    return rows;
+  };
+
+  const uiVersion = String(formData.get("default_grid_ui_version") ?? "").trim();
   const lines: Array<{
     course_type_id: string;
     default_hourly_rate: number | null;
     rules: Array<{ min_students: number; max_students: number | null; hourly_rate: number }>;
   }> = [];
-
-  for (let index = 0; index < 16; index += 1) {
-    const courseTypeId = String(formData.get(`line_course_type_id_${index}`) ?? "").trim();
-    const defaultRateRaw = String(formData.get(`line_default_rate_${index}`) ?? "").trim().replace(",", ".");
-    const rulesRaw = String(formData.get(`line_rules_${index}`) ?? "").trim();
-
-    if (!courseTypeId && !defaultRateRaw && !rulesRaw) {
-      continue;
+  if (uiVersion === "2") {
+    const courseTypeIds = [...new Set(parseStringList(formData.getAll("line_course_type_id")))];
+    for (const courseTypeId of courseTypeIds) {
+      const defaultRateRaw = String(formData.get(`line_default_rate_${courseTypeId}`) ?? "").trim().replace(",", ".");
+      const rules = parseStructuredRules(
+        formData.getAll(`line_rule_min_${courseTypeId}`),
+        formData.getAll(`line_rule_max_${courseTypeId}`),
+        formData.getAll(`line_rule_rate_${courseTypeId}`),
+        `Activite ${courseTypeId}`,
+      );
+      const defaultRate = defaultRateRaw ? parseNonNegativeDecimal(defaultRateRaw) : null;
+      if (defaultRateRaw && defaultRate === null) {
+        redirect(`/admin/config?section=params-professor-default-grid&error=${encodeURIComponent(`Activite ${courseTypeId}: taux invalide`)}`);
+      }
+      if (defaultRate === null && rules.length === 0) {
+        continue;
+      }
+      lines.push({
+        course_type_id: courseTypeId,
+        default_hourly_rate: defaultRate,
+        rules,
+      });
     }
-    if (!courseTypeId) {
-      redirect(`/admin/config?section=params-professor-default-grid&error=Ligne%20${index + 1}%20sans%20activite`);
-    }
+  } else {
+    for (let index = 0; index < 16; index += 1) {
+      const courseTypeId = String(formData.get(`line_course_type_id_${index}`) ?? "").trim();
+      const defaultRateRaw = String(formData.get(`line_default_rate_${index}`) ?? "").trim().replace(",", ".");
+      const rulesRaw = String(formData.get(`line_rules_${index}`) ?? "").trim();
 
-    const defaultRate = defaultRateRaw ? parseNonNegativeDecimal(defaultRateRaw) : null;
-    if (defaultRateRaw && defaultRate === null) {
-      redirect(`/admin/config?section=params-professor-default-grid&error=Taux%20default%20invalide%20sur%20ligne%20${index + 1}`);
-    }
+      if (!courseTypeId && !defaultRateRaw && !rulesRaw) {
+        continue;
+      }
+      if (!courseTypeId) {
+        redirect(`/admin/config?section=params-professor-default-grid&error=Ligne%20${index + 1}%20sans%20activite`);
+      }
 
-    const rules = parseHeadcountRules(rulesRaw);
-    if (rules === null) {
-      redirect(`/admin/config?section=params-professor-default-grid&error=Format%20regles%20effectif%20invalide%20sur%20ligne%20${index + 1}`);
-    }
+      const defaultRate = defaultRateRaw ? parseNonNegativeDecimal(defaultRateRaw) : null;
+      if (defaultRateRaw && defaultRate === null) {
+        redirect(`/admin/config?section=params-professor-default-grid&error=Taux%20default%20invalide%20sur%20ligne%20${index + 1}`);
+      }
 
-    lines.push({
-      course_type_id: courseTypeId,
-      default_hourly_rate: defaultRate,
-      rules,
-    });
+      const rules = parseHeadcountRules(rulesRaw);
+      if (rules === null) {
+        redirect(`/admin/config?section=params-professor-default-grid&error=Format%20regles%20effectif%20invalide%20sur%20ligne%20${index + 1}`);
+      }
+
+      lines.push({
+        course_type_id: courseTypeId,
+        default_hourly_rate: defaultRate,
+        rules,
+      });
+    }
   }
 
   const result = await backendRequest<AdminProfessorDefaultGridOut>(
@@ -6335,6 +6419,221 @@ export async function updateAdminConfigProfessorDefaultGridAction(formData: Form
   revalidatePath("/admin/config");
   revalidatePath("/admin/professors");
   redirect("/admin/config?section=params-professor-default-grid&ok=Grille%20salariale%20par%20defaut%20mise%20a%20jour");
+}
+
+export async function createAdminConfigProfessorDefaultGridPeriodAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const startDate = String(formData.get("start_date") ?? "").trim();
+  const endDate = String(formData.get("end_date") ?? "").trim();
+  const notes = String(formData.get("notes") ?? "").trim();
+  const cloneFromPeriodId = String(formData.get("clone_from_period_id") ?? "").trim() || null;
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20debut%20invalide");
+  }
+  if (endDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(endDate)) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20invalide");
+  }
+  if (endDate && endDate < startDate) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20avant%20debut");
+  }
+
+  const result = await backendRequest<AdminProfessorPayGridPeriodOut>(
+    "/api/v1/admin/config/professor-default-grid/periods",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        start_date: startDate,
+        end_date: endDate || null,
+        notes: notes || null,
+        clone_from_period_id: cloneFromPeriodId,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-professor-default-grid&error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath("/admin/config");
+  redirect(`/admin/config?section=params-professor-default-grid&grid_period=${result.data.id}&ok=Nouvelle%20periode%20cree`);
+}
+
+export async function updateAdminConfigProfessorDefaultGridPeriodAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const periodId = String(formData.get("period_id") ?? "").trim();
+  if (!periodId) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Periode%20invalide");
+  }
+  const startDate = String(formData.get("start_date") ?? "").trim();
+  const endDate = String(formData.get("end_date") ?? "").trim();
+  const notes = String(formData.get("notes") ?? "").trim();
+  const statusValue = String(formData.get("status") ?? "").trim().toUpperCase();
+  if (startDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(startDate)) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20debut%20invalide");
+  }
+  if (endDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(endDate)) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20invalide");
+  }
+  if (startDate && endDate && endDate < startDate) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Date%20de%20fin%20avant%20debut");
+  }
+  const result = await backendRequest<AdminProfessorPayGridPeriodOut>(
+    `/api/v1/admin/config/professor-default-grid/periods/${periodId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        start_date: startDate || null,
+        end_date: endDate || null,
+        notes: notes || null,
+        status: statusValue || null,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath("/admin/config");
+  redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&ok=Periode%20mise%20a%20jour`);
+}
+
+export async function archiveAdminConfigProfessorDefaultGridPeriodAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const periodId = String(formData.get("period_id") ?? "").trim();
+  if (!periodId) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Periode%20invalide");
+  }
+  const result = await backendRequest<AdminProfessorPayGridPeriodOut>(
+    `/api/v1/admin/config/professor-default-grid/periods/${periodId}/archive`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath("/admin/config");
+  redirect("/admin/config?section=params-professor-default-grid&ok=Periode%20archivee");
+}
+
+export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const periodId = String(formData.get("period_id") ?? "").trim();
+  if (!periodId) {
+    redirect("/admin/config?section=params-professor-default-grid&error=Periode%20invalide");
+  }
+  const currencyCode = String(formData.get("currency_code") ?? "").trim().toUpperCase() || "EUR";
+
+  const parseStructuredRules = (
+    minValuesRaw: FormDataEntryValue[],
+    maxValuesRaw: FormDataEntryValue[],
+    rateValuesRaw: FormDataEntryValue[],
+    label: string,
+  ): Array<{ min_students: number; max_students: number | null; hourly_rate: number }> => {
+    const minValues = minValuesRaw.map((value) => String(value ?? "").trim());
+    const maxValues = maxValuesRaw.map((value) => String(value ?? "").trim());
+    const rateValues = rateValuesRaw.map((value) => String(value ?? "").trim().replace(",", "."));
+    const rowCount = Math.max(minValues.length, maxValues.length, rateValues.length);
+    const rows: Array<{ min_students: number; max_students: number | null; hourly_rate: number }> = [];
+    for (let index = 0; index < rowCount; index += 1) {
+      const minRaw = minValues[index] ?? "";
+      const maxRaw = maxValues[index] ?? "";
+      const rateRaw = rateValues[index] ?? "";
+      if (!minRaw && !maxRaw && !rateRaw) {
+        continue;
+      }
+      const minStudents = parseNonNegativeInt(minRaw);
+      if (minStudents === null) {
+        redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`${label}: minimum invalide`)}`);
+      }
+      let maxStudents: number | null = null;
+      if (maxRaw) {
+        maxStudents = parseNonNegativeInt(maxRaw);
+        if (maxStudents === null || maxStudents < minStudents) {
+          redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`${label}: maximum invalide`)}`);
+        }
+      }
+      const hourlyRate = parseNonNegativeDecimal(rateRaw);
+      if (hourlyRate === null) {
+        redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`${label}: taux invalide`)}`);
+      }
+      rows.push({ min_students: minStudents, max_students: maxStudents, hourly_rate: hourlyRate });
+    }
+    rows.sort((a, b) => (a.min_students - b.min_students) || ((a.max_students ?? Number.MAX_SAFE_INTEGER) - (b.max_students ?? Number.MAX_SAFE_INTEGER)));
+    for (let index = 1; index < rows.length; index += 1) {
+      const previous = rows[index - 1];
+      const current = rows[index];
+      if (previous.max_students === null || current.min_students <= previous.max_students) {
+        redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`${label}: plages chevauchantes`)}`);
+      }
+    }
+    return rows;
+  };
+
+  const lines: Array<{
+    course_type_id: string;
+    default_hourly_rate: number | null;
+    rules: Array<{ min_students: number; max_students: number | null; hourly_rate: number }>;
+  }> = [];
+  const courseTypeIds = [...new Set(parseStringList(formData.getAll("line_course_type_id")))];
+  for (const courseTypeId of courseTypeIds) {
+    const defaultRateRaw = String(formData.get(`line_default_rate_${courseTypeId}`) ?? "").trim().replace(",", ".");
+    const rules = parseStructuredRules(
+      formData.getAll(`line_rule_min_${courseTypeId}`),
+      formData.getAll(`line_rule_max_${courseTypeId}`),
+      formData.getAll(`line_rule_rate_${courseTypeId}`),
+      `Activite ${courseTypeId}`,
+    );
+    const defaultRate = defaultRateRaw ? parseNonNegativeDecimal(defaultRateRaw) : null;
+    if (defaultRateRaw && defaultRate === null) {
+      redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(`Activite ${courseTypeId}: taux invalide`)}`);
+    }
+    if (defaultRate === null && rules.length === 0) {
+      continue;
+    }
+    lines.push({
+      course_type_id: courseTypeId,
+      default_hourly_rate: defaultRate,
+      rules,
+    });
+  }
+
+  const result = await backendRequest<AdminProfessorPayGridPeriodDetailOut>(
+    `/api/v1/admin/config/professor-default-grid/periods/${periodId}/rules`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        lines,
+        currency_code: currencyCode,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin/professors");
+  redirect(`/admin/config?section=params-professor-default-grid&grid_period=${encodeURIComponent(periodId)}&ok=Grille%20de%20periode%20mise%20a%20jour`);
 }
 
 export async function updateAdminConfigPaymentMethodsAction(formData: FormData): Promise<void> {

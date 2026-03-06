@@ -7,12 +7,13 @@ import re
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CourseType, CreditType, DeliveryMode
 from app.models.ops import AppSetting, LegalEntity
+from app.models.payout import ProfessorPayGridBracket, ProfessorPayGridPeriod, ProfessorPayGridRule
 from app.models.product_catalog import ProductCategory
 from app.models.plan import (
     Plan,
@@ -67,6 +68,11 @@ from app.schemas.admin import (
     AdminProfessorDefaultGridOut,
     AdminProfessorDefaultGridRuleOut,
     AdminProfessorDefaultGridUpdateRequest,
+    AdminProfessorPayGridPeriodCreateRequest,
+    AdminProfessorPayGridPeriodDetailOut,
+    AdminProfessorPayGridPeriodOut,
+    AdminProfessorPayGridPeriodRulesUpdateRequest,
+    AdminProfessorPayGridPeriodUpdateRequest,
     AdminSubscriptionSettingsOut,
     AdminSubscriptionSettingsUpdateRequest,
 )
@@ -74,8 +80,15 @@ from app.services.professor_contracts import contract_mode_from_course_type
 from app.services.professor_default_grid import (
     DefaultProfessorGridLine,
     DefaultProfessorGridRule,
+    archive_default_professor_grid_period,
+    create_default_professor_grid_period,
+    get_default_professor_grid_period_snapshot,
+    list_default_professor_grid_periods,
     load_default_professor_grid,
+    load_default_professor_grid_for_period,
     save_default_professor_grid,
+    save_default_professor_grid_for_period,
+    update_default_professor_grid_period,
 )
 from app.services.payment_provider import (
     CAPABILITIES_BY_PROVIDER,
@@ -600,11 +613,13 @@ def _normalize_default_grid_lines(
     return normalized
 
 
-def _serialize_default_professor_grid(db: Session) -> AdminProfessorDefaultGridOut:
-    lines, updated_at = load_default_professor_grid(db)
+def _serialize_default_professor_grid_lines(
+    db: Session,
+    *,
+    lines: list[DefaultProfessorGridLine],
+) -> list[AdminProfessorDefaultGridLineOut]:
     if not lines:
-        return AdminProfessorDefaultGridOut(lines=[], updated_at=updated_at)
-
+        return []
     course_type_ids = [line.course_type_id for line in lines]
     rows = db.scalars(select(CourseType).where(CourseType.id.in_(course_type_ids))).all()
     by_id = {row.id: row for row in rows}
@@ -634,8 +649,39 @@ def _serialize_default_professor_grid(db: Session) -> AdminProfessorDefaultGridO
                 ],
             )
         )
+    return serialized_lines
 
-    return AdminProfessorDefaultGridOut(lines=serialized_lines, updated_at=updated_at)
+
+def _serialize_default_professor_grid(db: Session) -> AdminProfessorDefaultGridOut:
+    lines, updated_at = load_default_professor_grid(db)
+    periods = list_default_professor_grid_periods(db)
+    active_period = next((period for period in periods if period.is_active), None)
+    serialized_lines = _serialize_default_professor_grid_lines(db, lines=lines)
+    return AdminProfessorDefaultGridOut(
+        lines=serialized_lines,
+        updated_at=updated_at,
+        active_period_id=active_period.id if active_period is not None else None,
+        active_period_start_date=active_period.start_date if active_period is not None else None,
+        active_period_end_date=active_period.end_date if active_period is not None else None,
+    )
+
+
+def _serialize_default_professor_grid_period(period: object) -> AdminProfessorPayGridPeriodOut:
+    if isinstance(period, AdminProfessorPayGridPeriodOut):
+        return period
+    return AdminProfessorPayGridPeriodOut(
+        id=period.id,
+        start_date=period.start_date,
+        end_date=period.end_date,
+        status=period.status,
+        notes=period.notes,
+        is_active=period.is_active,
+        is_future=period.is_future,
+        is_archived=period.is_archived,
+        created_at=period.created_at,
+        updated_at=period.updated_at,
+        rules_count=period.rules_count,
+    )
 
 
 def _normalize_payment_provider(raw: str) -> PaymentProvider:
@@ -2151,6 +2197,127 @@ def update_admin_professor_default_grid(
     save_default_professor_grid(db, lines=normalized_lines)
     db.commit()
     return _serialize_default_professor_grid(db)
+
+
+@router.get("/config/professor-default-grid/periods", response_model=list[AdminProfessorPayGridPeriodOut])
+def list_admin_professor_default_grid_periods(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminProfessorPayGridPeriodOut]:
+    snapshots = list_default_professor_grid_periods(db)
+    return [_serialize_default_professor_grid_period(period) for period in snapshots]
+
+
+@router.get("/config/professor-default-grid/periods/{period_id}", response_model=AdminProfessorPayGridPeriodDetailOut)
+def get_admin_professor_default_grid_period(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProfessorPayGridPeriodDetailOut:
+    snapshot = get_default_professor_grid_period_snapshot(db, period_id=period_id)
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grid period not found")
+    lines, _ = load_default_professor_grid_for_period(db, period_id=period_id)
+    serialized = _serialize_default_professor_grid_lines(db, lines=lines)
+    return AdminProfessorPayGridPeriodDetailOut(
+        period=_serialize_default_professor_grid_period(snapshot),
+        lines=serialized,
+    )
+
+
+@router.post("/config/professor-default-grid/periods", response_model=AdminProfessorPayGridPeriodOut, status_code=status.HTTP_201_CREATED)
+def create_admin_professor_default_grid_period(
+    payload: AdminProfessorPayGridPeriodCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProfessorPayGridPeriodOut:
+    try:
+        period = create_default_professor_grid_period(
+            db,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            notes=payload.notes,
+            clone_from_period_id=payload.clone_from_period_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    snapshot = get_default_professor_grid_period_snapshot(db, period_id=period.id)
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load created period")
+    return _serialize_default_professor_grid_period(snapshot)
+
+
+@router.patch("/config/professor-default-grid/periods/{period_id}", response_model=AdminProfessorPayGridPeriodOut)
+def update_admin_professor_default_grid_period(
+    period_id: UUID,
+    payload: AdminProfessorPayGridPeriodUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProfessorPayGridPeriodOut:
+    try:
+        period = update_default_professor_grid_period(
+            db,
+            period_id=period_id,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            notes=payload.notes,
+            status=payload.status,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    if period is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grid period not found")
+    db.commit()
+    snapshot = get_default_professor_grid_period_snapshot(db, period_id=period.id)
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load updated period")
+    return _serialize_default_professor_grid_period(snapshot)
+
+
+@router.post("/config/professor-default-grid/periods/{period_id}/archive", response_model=AdminProfessorPayGridPeriodOut)
+def archive_admin_professor_default_grid_period(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProfessorPayGridPeriodOut:
+    period = archive_default_professor_grid_period(db, period_id=period_id)
+    if period is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grid period not found")
+    db.commit()
+    snapshot = get_default_professor_grid_period_snapshot(db, period_id=period.id)
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load archived period")
+    return _serialize_default_professor_grid_period(snapshot)
+
+
+@router.put("/config/professor-default-grid/periods/{period_id}/rules", response_model=AdminProfessorPayGridPeriodDetailOut)
+def update_admin_professor_default_grid_period_rules(
+    period_id: UUID,
+    payload: AdminProfessorPayGridPeriodRulesUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminProfessorPayGridPeriodDetailOut:
+    normalized_lines = _normalize_default_grid_lines(db=db, lines=payload.lines)
+    try:
+        save_default_professor_grid_for_period(
+            db,
+            period_id=period_id,
+            lines=normalized_lines,
+            currency_code=(payload.currency_code or "EUR"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    snapshot = get_default_professor_grid_period_snapshot(db, period_id=period_id)
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grid period not found")
+    lines, _ = load_default_professor_grid_for_period(db, period_id=period_id)
+    serialized = _serialize_default_professor_grid_lines(db, lines=lines)
+    return AdminProfessorPayGridPeriodDetailOut(
+        period=_serialize_default_professor_grid_period(snapshot),
+        lines=serialized,
+    )
 
 
 @router.get("/formulas", response_model=list[AdminFormulaOut])

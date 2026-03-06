@@ -18,9 +18,11 @@ type ActivityPayrollRow = {
   course_type_name: string;
   mode_label: string;
   reference_duration_minutes: number | null;
-  initial_mode: "GENERAL" | "PROFESSOR" | "SPECIFIC";
+  initial_mode: "GENERAL" | "SPECIFIC";
   general_grid: RateGrid | null;
   specific_grid: RateGrid | null;
+  specific_valid_from: string | null;
+  specific_valid_to: string | null;
 };
 
 type Props = {
@@ -29,10 +31,8 @@ type Props = {
   currencyCode: string;
   availableCurrencies: string[];
   baseHourlyRate: string;
-  professorHasOverride: boolean;
-  professorGrid: RateGrid | null;
-  professorReferenceGrid: RateGrid | null;
   activities: ActivityPayrollRow[];
+  activeGeneralPeriodLabel: string | null;
 };
 
 type EditableRule = {
@@ -262,18 +262,13 @@ export default function AdminProfessorPayrollEditor({
   currencyCode,
   availableCurrencies,
   baseHourlyRate,
-  professorHasOverride,
-  professorGrid,
-  professorReferenceGrid,
   activities,
+  activeGeneralPeriodLabel,
 }: Props): JSX.Element {
-  const initialProfessorRules = professorHasOverride ? gridToEditableRules(professorGrid) : [];
-  const [profGridMode, setProfGridMode] = useState<"inherit" | "override">(professorHasOverride ? "override" : "inherit");
-  const [profRules, setProfRules] = useState<EditableRule[]>(initialProfessorRules);
   const [activitySearch, setActivitySearch] = useState("");
   const [activityFilter, setActivityFilter] = useState<"ALL" | "INHERITED" | "OVERRIDDEN">("ALL");
 
-  const [activityModes, setActivityModes] = useState<Record<string, "GENERAL" | "PROFESSOR" | "SPECIFIC">>(
+  const [activityModes, setActivityModes] = useState<Record<string, "GENERAL" | "SPECIFIC">>(
     Object.fromEntries(activities.map((row) => [row.course_type_id, row.initial_mode])),
   );
   const [activityRules, setActivityRules] = useState<Record<string, EditableRule[]>>(
@@ -285,34 +280,14 @@ export default function AdminProfessorPayrollEditor({
     ),
   );
   const [activityDefaultRates, setActivityDefaultRates] = useState<Record<string, string>>(
-    Object.fromEntries(
-      activities.map((row) => [row.course_type_id, row.specific_grid?.default_hourly_rate ?? ""]),
-    ),
+    Object.fromEntries(activities.map((row) => [row.course_type_id, row.specific_grid?.default_hourly_rate ?? ""])),
   );
-
-  const resolvedProfessorGrid: RateGrid | null = useMemo(() => {
-    if (profGridMode !== "override") {
-      return null;
-    }
-    return {
-      default_hourly_rate: baseHourlyRate,
-      rules: profRules
-        .map((row) => {
-          const min = Number.parseInt(row.min, 10);
-          const max = row.max.trim() ? Number.parseInt(row.max, 10) : null;
-          const rate = normalizeMoneyInput(row.rate);
-          if (!Number.isFinite(min) || !rate) {
-            return null;
-          }
-          return {
-            min_students: min,
-            max_students: Number.isFinite(max as number) ? max : null,
-            hourly_rate: rate,
-          } satisfies RateRule;
-        })
-        .filter((row): row is RateRule => row !== null),
-    };
-  }, [profGridMode, profRules, baseHourlyRate]);
+  const [activityValidFrom, setActivityValidFrom] = useState<Record<string, string>>(
+    Object.fromEntries(activities.map((row) => [row.course_type_id, row.specific_valid_from ?? effectiveFrom])),
+  );
+  const [activityValidTo, setActivityValidTo] = useState<Record<string, string>>(
+    Object.fromEntries(activities.map((row) => [row.course_type_id, row.specific_valid_to ?? ""])),
+  );
 
   const filteredActivities = useMemo(() => {
     const query = activitySearch.trim().toLowerCase();
@@ -331,16 +306,27 @@ export default function AdminProfessorPayrollEditor({
     });
   }, [activities, activityFilter, activityModes, activitySearch]);
 
+  const overriddenCount = useMemo(
+    () => Object.values(activityModes).filter((mode) => mode === "SPECIFIC").length,
+    [activityModes],
+  );
+
   return (
     <section className="prof-pay-editor">
-      <input type="hidden" name="pay_ui_version" value="2" />
+      <input type="hidden" name="pay_ui_version" value="3" />
       <input type="hidden" name="professor_id" value={professorId} />
 
       <article className="card prof-pay-base-card">
-        <h3>1. Paie de base</h3>
+        <div className="row spread">
+          <h3>1. Paie de base</h3>
+          <span className="badge">{overriddenCount} surcouche(s) active(s)</span>
+        </div>
         <p className="muted">
-          Ce taux s applique uniquement si aucune grille par nombre d eleves ni aucune regle specifique d activite n est definie.
+          Ce taux s applique uniquement si aucune grille generale active ni surcouche par activite n est applicable.
         </p>
+        {activeGeneralPeriodLabel ? (
+          <p className="muted">Periode de grille generale active: {activeGeneralPeriodLabel}</p>
+        ) : null}
         <div className="grid cols-3">
           <label>
             Date de prise d effet
@@ -363,83 +349,9 @@ export default function AdminProfessorPayrollEditor({
         </div>
       </article>
 
-      <article className="card prof-pay-prof-grid-card">
-        <div className="row spread">
-          <h3>2. Grille professeur</h3>
-          <span className="badge">{profGridMode === "override" ? "Surcouche professeur active" : "Herite de la grille generale"}</span>
-        </div>
-
-        <input type="hidden" name="prof_grid_mode" value={profGridMode} />
-
-        <div className="grid cols-2 top-gap-sm">
-          <GridPreview title="Grille generale (reference)" grid={professorReferenceGrid} currencyCode={currencyCode} />
-          <GridPreview
-            title="Grille professeur active"
-            grid={profGridMode === "override" ? resolvedProfessorGrid : professorReferenceGrid}
-            currencyCode={currencyCode}
-          />
-        </div>
-
-        {profGridMode === "inherit" ? (
-          <div className="row top-gap-sm">
-            <button
-              type="button"
-              onClick={() => {
-                setProfGridMode("override");
-                if (profRules.length === 0) {
-                  setProfRules(gridToEditableRules(professorReferenceGrid));
-                }
-              }}
-            >
-              Creer une surcouche professeur
-            </button>
-          </div>
-        ) : (
-          <>
-            <RuleRowsEditor
-              rows={profRules}
-              currencyCode={currencyCode}
-              onChange={setProfRules}
-              onAdd={() => setProfRules((previous) => addRuleRow(previous))}
-              onReset={() => setProfRules(gridToEditableRules(professorReferenceGrid))}
-              resetLabel="Reinitialiser depuis la grille generale"
-            />
-            <div className="row top-gap-sm">
-              <button
-                type="button"
-                className="danger"
-                onClick={() => {
-                  setProfGridMode("inherit");
-                  setProfRules([]);
-                }}
-              >
-                Supprimer la surcouche
-              </button>
-            </div>
-          </>
-        )}
-
-        {profGridMode === "override"
-          ? profRules.map((row) => (
-              <div key={`prof-hidden-${row.id}`}>
-                <input type="hidden" name="prof_grid_min" value={row.min} />
-                <input type="hidden" name="prof_grid_max" value={row.max} />
-                <input type="hidden" name="prof_grid_rate" value={normalizeMoneyInput(row.rate)} />
-              </div>
-            ))
-          : null}
-
-        <div className="prof-pay-simulation top-gap-sm">
-          <strong>Simulation rapide</strong>
-          <p className="muted">2 eleves: {formatMoney(resolveRate(profGridMode === "override" ? resolvedProfessorGrid : professorReferenceGrid, 2), currencyCode)}</p>
-          <p className="muted">4 eleves: {formatMoney(resolveRate(profGridMode === "override" ? resolvedProfessorGrid : professorReferenceGrid, 4), currencyCode)}</p>
-          <p className="muted">6 eleves: {formatMoney(resolveRate(profGridMode === "override" ? resolvedProfessorGrid : professorReferenceGrid, 6), currencyCode)}</p>
-        </div>
-      </article>
-
       <article className="card prof-pay-activities-card">
         <div className="row spread">
-          <h3>3. Regles par activite</h3>
+          <h3>2. Regles par activite</h3>
           <span className="badge">{activities.length} activite(s)</span>
         </div>
 
@@ -455,7 +367,7 @@ export default function AdminProfessorPayrollEditor({
           </label>
           <label>
             Filtre
-            <select value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as "ALL" | "INHERITED" | "OVERRIDDEN")}>
+            <select value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as "ALL" | "INHERITED" | "OVERRIDDEN") }>
               <option value="ALL">Toutes</option>
               <option value="INHERITED">Heritees</option>
               <option value="OVERRIDDEN">Surchargees</option>
@@ -468,7 +380,9 @@ export default function AdminProfessorPayrollEditor({
             const mode = activityModes[activity.course_type_id] ?? activity.initial_mode;
             const specificRows = activityRules[activity.course_type_id] ?? [];
             const specificGrid: RateGrid = {
-              default_hourly_rate: activityDefaultRates[activity.course_type_id] ? normalizeMoneyInput(activityDefaultRates[activity.course_type_id]) : null,
+              default_hourly_rate: activityDefaultRates[activity.course_type_id]
+                ? normalizeMoneyInput(activityDefaultRates[activity.course_type_id])
+                : null,
               rules: specificRows
                 .map((row) => {
                   const min = Number.parseInt(row.min, 10);
@@ -485,15 +399,7 @@ export default function AdminProfessorPayrollEditor({
                 })
                 .filter((row): row is RateRule => row !== null),
             };
-
-            const inheritedProfessorGrid = profGridMode === "override" ? resolvedProfessorGrid : null;
-            const activeGrid = mode === "SPECIFIC" ? specificGrid : mode === "PROFESSOR" ? (inheritedProfessorGrid ?? activity.general_grid) : activity.general_grid;
-            const activeLabel =
-              mode === "SPECIFIC"
-                ? "Surcouche activite"
-                : mode === "PROFESSOR"
-                  ? "Herite de la grille professeur"
-                  : "Herite de la grille generale";
+            const activeGrid = mode === "SPECIFIC" ? specificGrid : activity.general_grid;
 
             return (
               <article key={`activity-pay-${activity.course_type_id}`} className="item prof-pay-activity-card">
@@ -507,7 +413,7 @@ export default function AdminProfessorPayrollEditor({
                       {activity.mode_label} | Duree ref: {activity.reference_duration_minutes ?? "-"} min
                     </p>
                   </div>
-                  <span className="badge">Regle active: {activeLabel}</span>
+                  <span className="badge">{mode === "SPECIFIC" ? "Surcouche professeur" : "Grille generale"}</span>
                 </div>
 
                 <label className="top-gap-sm">
@@ -515,15 +421,10 @@ export default function AdminProfessorPayrollEditor({
                   <select
                     value={mode}
                     onChange={(event) => {
-                      const nextMode = event.target.value as "GENERAL" | "PROFESSOR" | "SPECIFIC";
+                      const nextMode = event.target.value as "GENERAL" | "SPECIFIC";
                       setActivityModes((previous) => ({ ...previous, [activity.course_type_id]: nextMode }));
                       if (nextMode === "SPECIFIC" && (activityRules[activity.course_type_id] ?? []).length === 0) {
-                        const seedGrid =
-                          activity.general_grid ??
-                          (profGridMode === "override" ? resolvedProfessorGrid : null) ?? {
-                            default_hourly_rate: baseHourlyRate,
-                            rules: [],
-                          };
+                        const seedGrid = activity.general_grid ?? { default_hourly_rate: baseHourlyRate, rules: [] };
                         setActivityRules((previous) => ({
                           ...previous,
                           [activity.course_type_id]: gridToEditableRules(seedGrid),
@@ -532,17 +433,50 @@ export default function AdminProfessorPayrollEditor({
                           ...previous,
                           [activity.course_type_id]: seedGrid.default_hourly_rate ?? "",
                         }));
+                        setActivityValidFrom((previous) => ({
+                          ...previous,
+                          [activity.course_type_id]: effectiveFrom,
+                        }));
                       }
                     }}
                   >
-                    <option value="GENERAL">Heriter de la grille generale</option>
-                    <option value="PROFESSOR">Heriter de la grille professeur</option>
-                    <option value="SPECIFIC">Definir une regle specifique</option>
+                    <option value="GENERAL">Utiliser la grille generale</option>
+                    <option value="SPECIFIC">Definir une surcouche professeur</option>
                   </select>
                 </label>
 
                 {mode === "SPECIFIC" ? (
                   <>
+                    <div className="grid cols-2 top-gap-sm">
+                      <label>
+                        Date debut surcouche
+                        <input
+                          type="date"
+                          value={activityValidFrom[activity.course_type_id] ?? effectiveFrom}
+                          onChange={(event) =>
+                            setActivityValidFrom((previous) => ({
+                              ...previous,
+                              [activity.course_type_id]: event.target.value,
+                            }))
+                          }
+                          required
+                        />
+                      </label>
+                      <label>
+                        Date fin surcouche (optionnel)
+                        <input
+                          type="date"
+                          value={activityValidTo[activity.course_type_id] ?? ""}
+                          onChange={(event) =>
+                            setActivityValidTo((previous) => ({
+                              ...previous,
+                              [activity.course_type_id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+
                     <label>
                       Taux de base de l activite (fallback)
                       <input
@@ -558,6 +492,7 @@ export default function AdminProfessorPayrollEditor({
                         }
                       />
                     </label>
+
                     <RuleRowsEditor
                       rows={specificRows}
                       currencyCode={currencyCode}
@@ -574,7 +509,7 @@ export default function AdminProfessorPayrollEditor({
                         }))
                       }
                       onReset={() => {
-                        const seed = activity.general_grid ?? (profGridMode === "override" ? resolvedProfessorGrid : null);
+                        const seed = activity.general_grid;
                         setActivityRules((previous) => ({
                           ...previous,
                           [activity.course_type_id]: gridToEditableRules(seed),
@@ -584,42 +519,24 @@ export default function AdminProfessorPayrollEditor({
                           [activity.course_type_id]: seed?.default_hourly_rate ?? "",
                         }));
                       }}
-                      resetLabel="Reinitialiser depuis la grille heritee"
+                      resetLabel="Reinitialiser depuis la grille generale"
                     />
 
-                    <div className="row">
-                      <button
-                        type="button"
-                        className="ghost"
-                        onClick={() => {
-                          setActivityModes((previous) => ({ ...previous, [activity.course_type_id]: "PROFESSOR" }));
-                          setActivityRules((previous) => ({ ...previous, [activity.course_type_id]: [] }));
-                        }}
-                      >
-                        Supprimer la surcouche activite
-                      </button>
+                    <div className="grid cols-2 top-gap-sm">
+                      <GridPreview title="Grille generale de reference" grid={activity.general_grid} currencyCode={currencyCode} />
+                      <GridPreview title="Surcouche professeur" grid={specificGrid} currencyCode={currencyCode} />
                     </div>
-                  </>
-                ) : (
-                  <div className="grid cols-2 top-gap-sm">
-                    <GridPreview title="Grille generale" grid={activity.general_grid} currencyCode={currencyCode} />
-                    <GridPreview
-                      title="Regle appliquee"
-                      grid={mode === "PROFESSOR" ? (inheritedProfessorGrid ?? activity.general_grid) : activity.general_grid}
-                      currencyCode={currencyCode}
+
+                    <input
+                      type="hidden"
+                      name={`activity_valid_from_${activity.course_type_id}`}
+                      value={activityValidFrom[activity.course_type_id] ?? effectiveFrom}
                     />
-                  </div>
-                )}
-
-                <div className="prof-pay-simulation top-gap-sm">
-                  <strong>Simulation rapide</strong>
-                  <p className="muted">2 eleves: {formatMoney(resolveRate(activeGrid, 2), currencyCode)}</p>
-                  <p className="muted">4 eleves: {formatMoney(resolveRate(activeGrid, 4), currencyCode)}</p>
-                  <p className="muted">6 eleves: {formatMoney(resolveRate(activeGrid, 6), currencyCode)}</p>
-                </div>
-
-                {mode === "SPECIFIC" ? (
-                  <>
+                    <input
+                      type="hidden"
+                      name={`activity_valid_to_${activity.course_type_id}`}
+                      value={activityValidTo[activity.course_type_id] ?? ""}
+                    />
                     <input
                       type="hidden"
                       name={`activity_default_rate_${activity.course_type_id}`}
@@ -637,7 +554,19 @@ export default function AdminProfessorPayrollEditor({
                       </div>
                     ))}
                   </>
-                ) : null}
+                ) : (
+                  <div className="grid cols-2 top-gap-sm">
+                    <GridPreview title="Grille appliquee" grid={activity.general_grid} currencyCode={currencyCode} />
+                    <GridPreview title="Simulation" grid={activity.general_grid} currencyCode={currencyCode} />
+                  </div>
+                )}
+
+                <div className="prof-pay-simulation top-gap-sm">
+                  <strong>Simulation rapide</strong>
+                  <p className="muted">2 eleves: {formatMoney(resolveRate(activeGrid, 2), currencyCode)}</p>
+                  <p className="muted">4 eleves: {formatMoney(resolveRate(activeGrid, 4), currencyCode)}</p>
+                  <p className="muted">6 eleves: {formatMoney(resolveRate(activeGrid, 6), currencyCode)}</p>
+                </div>
               </article>
             );
           })}

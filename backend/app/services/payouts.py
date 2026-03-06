@@ -99,8 +99,9 @@ def _resolve_professor_rate_hourly_value(
     rate_row: ProfessorHourlyRate,
     session_id: UUID,
     effective_students_cache: dict[str, int],
+    allow_headcount_rules: bool = True,
 ) -> Decimal | None:
-    rules = _normalize_professor_rate_rules(rate_row.headcount_rules_json)
+    rules = _normalize_professor_rate_rules(rate_row.headcount_rules_json) if allow_headcount_rules else []
     if rules:
         if "value" not in effective_students_cache:
             effective_students_cache["value"] = _effective_students_count(db, session_id=session_id)
@@ -122,23 +123,29 @@ def _resolve_hourly_rate(
     *,
     session_obj: CourseSession,
     on_date: date,
+    professor_id_override: UUID | None = None,
     default_grid_lines: list[DefaultProfessorGridLine] | None = None,
 ) -> ResolvedHourlyRate | None:
-    if session_obj.professor_id is None:
+    resolved_professor_id = professor_id_override if professor_id_override is not None else session_obj.professor_id
+    if resolved_professor_id is None:
         return None
 
     course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
     location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
 
     base_filters = [
-        ProfessorHourlyRate.professor_id == session_obj.professor_id,
+        ProfessorHourlyRate.professor_id == resolved_professor_id,
         ProfessorHourlyRate.valid_from <= on_date,
         or_(ProfessorHourlyRate.valid_to.is_(None), ProfessorHourlyRate.valid_to >= on_date),
     ]
 
     effective_students_cache: dict[str, int] = {}
 
-    def _resolve_from_professor_override(rate_row: ProfessorHourlyRate | None) -> ResolvedHourlyRate | None:
+    def _resolve_from_professor_override(
+        rate_row: ProfessorHourlyRate | None,
+        *,
+        allow_headcount_rules: bool = True,
+    ) -> ResolvedHourlyRate | None:
         if rate_row is None:
             return None
         resolved_hourly_rate = _resolve_professor_rate_hourly_value(
@@ -146,6 +153,7 @@ def _resolve_hourly_rate(
             rate_row=rate_row,
             session_id=session_obj.id,
             effective_students_cache=effective_students_cache,
+            allow_headcount_rules=allow_headcount_rules,
         )
         if resolved_hourly_rate is None:
             return None
@@ -186,7 +194,21 @@ def _resolve_hourly_rate(
     if resolved is not None:
         return resolved
 
-    # 3) professor global
+    if course_type is not None:
+        default_grid_rate = resolve_default_professor_grid_hourly_rate(
+            db,
+            session_id=session_obj.id,
+            course_type_id=session_obj.course_type_id,
+            preloaded_lines=default_grid_lines,
+        )
+        if default_grid_rate is not None:
+            payout_currency = db.scalar(select(Professor.payout_currency).where(Professor.id == resolved_professor_id)) or "EUR"
+            return ResolvedHourlyRate(
+                hourly_rate=_quantize_2(Decimal(default_grid_rate)),
+                currency_code=payout_currency.strip().upper() or "EUR",
+            )
+
+    # 3) professor global base rate (fallback only, without headcount rules)
     resolved = _resolve_from_professor_override(
         db.scalar(
             select(ProfessorHourlyRate)
@@ -197,38 +219,25 @@ def _resolve_hourly_rate(
             )
             .order_by(ProfessorHourlyRate.valid_from.desc(), ProfessorHourlyRate.created_at.desc())
             .limit(1)
-        )
+        ),
+        allow_headcount_rules=False,
     )
     if resolved is not None:
         return resolved
-
-    if course_type is not None:
-        default_grid_rate = resolve_default_professor_grid_hourly_rate(
-            db,
-            session_id=session_obj.id,
-            course_type_id=session_obj.course_type_id,
-            preloaded_lines=default_grid_lines,
-        )
-        if default_grid_rate is not None:
-            payout_currency = db.scalar(select(Professor.payout_currency).where(Professor.id == session_obj.professor_id)) or "EUR"
-            return ResolvedHourlyRate(
-                hourly_rate=_quantize_2(Decimal(default_grid_rate)),
-                currency_code=payout_currency.strip().upper() or "EUR",
-            )
 
     # Legacy fallback: historic contract grids are evaluated only if no
     # collaborator override and no global default grid matched.
     if course_type is not None and location is not None:
         resolved_contract_rate = resolve_professor_contract_rate_for_session(
             db,
-            professor_id=session_obj.professor_id,
+            professor_id=resolved_professor_id,
             session_id=session_obj.id,
             course_type=course_type,
             location=location,
             on_date=on_date,
         )
         if resolved_contract_rate is not None:
-            payout_currency = db.scalar(select(Professor.payout_currency).where(Professor.id == session_obj.professor_id)) or "EUR"
+            payout_currency = db.scalar(select(Professor.payout_currency).where(Professor.id == resolved_professor_id)) or "EUR"
             return ResolvedHourlyRate(
                 hourly_rate=_quantize_2(Decimal(resolved_contract_rate.hourly_rate)),
                 currency_code=payout_currency.strip().upper() or "EUR",
@@ -238,7 +247,7 @@ def _resolve_hourly_rate(
     if course_type is None or course_type.default_hourly_rate is None:
         return None
 
-    payout_currency = db.scalar(select(Professor.payout_currency).where(Professor.id == session_obj.professor_id)) or "EUR"
+    payout_currency = db.scalar(select(Professor.payout_currency).where(Professor.id == resolved_professor_id)) or "EUR"
     return ResolvedHourlyRate(
         hourly_rate=_quantize_2(Decimal(course_type.default_hourly_rate)),
         currency_code=payout_currency.strip().upper() or "EUR",
@@ -250,6 +259,7 @@ def resolve_hourly_rate_for_session(
     *,
     session_obj: CourseSession,
     on_date: date,
+    professor_id_override: UUID | None = None,
     default_grid_lines: list[DefaultProfessorGridLine] | None = None,
 ) -> ResolvedHourlyRate | None:
     lines = default_grid_lines
@@ -259,6 +269,7 @@ def resolve_hourly_rate_for_session(
         db,
         session_obj=session_obj,
         on_date=on_date,
+        professor_id_override=professor_id_override,
         default_grid_lines=lines,
     )
 

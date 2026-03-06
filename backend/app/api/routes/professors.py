@@ -378,8 +378,24 @@ def _build_effective_contract_grid(
 
     default_grid_lines, _ = load_default_professor_grid(db)
     default_grid_by_course_type = {line.course_type_id: line for line in default_grid_lines}
+    session_course_type_ids = db.scalars(
+        select(CourseSession.course_type_id)
+        .where(
+            CourseSession.professor_id == professor_id,
+            CourseSession.course_type_id.is_not(None),
+            CourseSession.status != SessionStatus.CANCELLED,
+        )
+        .distinct()
+    ).all()
 
-    course_type_ids = sorted({*default_grid_by_course_type.keys(), *active_rates_by_course_type.keys()}, key=str)
+    course_type_ids = sorted(
+        {
+            *default_grid_by_course_type.keys(),
+            *active_rates_by_course_type.keys(),
+            *session_course_type_ids,
+        },
+        key=str,
+    )
     course_types = (
         db.scalars(select(CourseType).where(CourseType.id.in_(course_type_ids)).order_by(CourseType.name.asc())).all()
         if course_type_ids
@@ -387,21 +403,6 @@ def _build_effective_contract_grid(
     )
 
     lines: list[ProfessorContractGridLineOut] = []
-
-    if active_global_rate is not None:
-        global_rules = _serialize_professor_rate_rules(active_global_rate.headcount_rules_json)
-        if active_global_rate.hourly_rate is not None or global_rules:
-            lines.append(
-                ProfessorContractGridLineOut(
-                    course_type_id=None,
-                    course_type_name="Taux global",
-                    service_type="Global",
-                    mode=ProfessorContractLineMode.AUTRE,
-                    reference_duration_minutes=None,
-                    default_hourly_rate=active_global_rate.hourly_rate,
-                    rules=global_rules,
-                )
-            )
 
     for course_type in course_types:
         rate_row = active_rates_by_course_type.get(course_type.id)
@@ -449,7 +450,7 @@ def _build_effective_contract_grid(
         valid_to=None,
         location_code=None,
         location_label="Configuration effective",
-        notes="Fusion grille salariale par defaut + surcouche professeur",
+        notes="Grille effective (generale + surcouche activite professeur)",
         lines=lines,
     )
 

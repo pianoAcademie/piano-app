@@ -27,6 +27,12 @@ export type UserOut = {
   sms_opt_in: boolean;
   lesson_reminder_email_opt_in: boolean;
   lesson_reminder_sms_opt_in: boolean;
+  email_delivery_status: string;
+  email_suspended_at: string | null;
+  email_suspension_reason: string | null;
+  phone_delivery_status: string;
+  phone_suspended_at: string | null;
+  phone_suspension_reason: string | null;
   residence_country: string;
   preferred_currency: string;
   timezone: string;
@@ -196,6 +202,12 @@ export type AdminClientOut = {
   sms_opt_in: boolean;
   lesson_reminder_email_opt_in: boolean;
   lesson_reminder_sms_opt_in: boolean;
+  email_delivery_status: string;
+  email_suspended_at: string | null;
+  email_suspension_reason: string | null;
+  phone_delivery_status: string;
+  phone_suspended_at: string | null;
+  phone_suspension_reason: string | null;
   residence_country: string;
   preferred_currency: string;
   timezone: string;
@@ -1453,6 +1465,28 @@ export type AdminProfessorDefaultGridLineOut = {
 export type AdminProfessorDefaultGridOut = {
   lines: AdminProfessorDefaultGridLineOut[];
   updated_at: string | null;
+  active_period_id?: string | null;
+  active_period_start_date?: string | null;
+  active_period_end_date?: string | null;
+};
+
+export type AdminProfessorPayGridPeriodOut = {
+  id: string;
+  start_date: string;
+  end_date: string | null;
+  status: string;
+  notes: string | null;
+  is_active: boolean;
+  is_future: boolean;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+  rules_count: number;
+};
+
+export type AdminProfessorPayGridPeriodDetailOut = {
+  period: AdminProfessorPayGridPeriodOut;
+  lines: AdminProfessorDefaultGridLineOut[];
 };
 
 export type AdminFormulaRestrictionPeriod = "DAY" | "WEEK" | "MONTH" | "ROLLING_MONTH" | "SEMESTER";
@@ -1701,4 +1735,85 @@ export type CommunicationProfessorFilterOut = {
 export type CommunicationFiltersOut = {
   communication_types: CommunicationTypeFilterOut[];
   professors: CommunicationProfessorFilterOut[];
+};
+
+export type NotificationJobRunOut = {
+  id: string;
+  job_name: string;
+  triggered_by: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  duration_seconds: number | null;
+  items_scanned: number;
+  items_processed: number;
+  items_sent: number;
+  items_skipped: number;
+  items_failed: number;
+  summary_text: string | null;
+  error_text: string | null;
+};
+
+export type NotificationJobRunPageOut = {
+  items: NotificationJobRunOut[];
+  total: number;
+};
+
+export type NotificationJobRunLogOut = {
+  id: string;
+  level: string;
+  message: string;
+  context_json: Record<string, unknown>;
+  created_at: string;
+};
+
+export type NotificationJobRelatedEntityOut = {
+  id: string;
+  notification_type: string;
+  channel: string;
+  status: string;
+  related_entity_type: string;
+  related_entity_id: string;
+  recipient_email: string | null;
+  recipient_phone: string | null;
+  scheduled_for: string;
+  sent_at: string | null;
+  failed_at: string | null;
+  skipped_at: string | null;
+  failure_reason: string | null;
+};
+
+export type NotificationIncidentOut = {
+  id: string;
+  contact_type: string;
+  contact_id: string;
+  channel: string;
+  incident_type: string;
+  severity: string;
+  provider_name: string | null;
+  provider_message_id: string | null;
+  detail_text: string | null;
+  notification_id: string | null;
+  detected_at: string;
+};
+
+export type NotificationJobRunDetailOut = {
+  run: NotificationJobRunOut;
+  metadata_json: Record<string, unknown>;
+  logs: NotificationJobRunLogOut[];
+  notifications: NotificationJobRelatedEntityOut[];
+  incidents: NotificationIncidentOut[];
+};
+
+export type ContactDeliveryStatusOut = {
+  contact_type: string;
+  contact_id: string;
+  email: string | null;
+  email_status: string;
+  email_suspended_at: string | null;
+  email_suspension_reason: string | null;
+  phone: string | null;
+  phone_status: string;
+  phone_suspended_at: string | null;
+  phone_suspension_reason: string | null;
 };
