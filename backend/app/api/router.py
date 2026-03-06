@@ -23,6 +23,7 @@ from app.api.routes import (
     plans,
     professor_catalog,
     professors,
+    quotes,
     reports,
     teacher_invoicing,
 )
@@ -46,6 +47,7 @@ api_router.include_router(bookings.router, tags=["bookings"])
 api_router.include_router(professors.router, tags=["professors"])
 api_router.include_router(teacher_invoicing.router, tags=["teacher-invoicing"])
 api_router.include_router(professor_catalog.router, tags=["professor-catalog"])
+api_router.include_router(quotes.router, tags=["quotes"])
 api_router.include_router(internal_jobs.router, tags=["internal-jobs"])
 api_router.include_router(notification_webhooks.router, tags=["notification-webhooks"])
 api_router.include_router(payments_public.router, tags=["public-payments"])

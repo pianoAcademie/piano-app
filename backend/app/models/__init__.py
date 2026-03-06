@@ -103,6 +103,22 @@ from app.models.product_catalog import (
     StockMovementType,
     ProductTransferStatus,
 )
+from app.models.quote import (
+    CgvVersion,
+    PaymentPlan,
+    PricingActivityPrice,
+    PricingCatalog,
+    PricingKitPrice,
+    PricingProductPrice,
+    Prospect,
+    Quote,
+    QuoteAcceptanceFollowup,
+    QuoteEmailOutbox,
+    QuoteEvent,
+    QuoteLine,
+    QuoteType,
+    SolfegeLevelRule,
+)
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 
 __all__ = [
@@ -175,6 +191,20 @@ __all__ = [
     "StockMovementSourceType",
     "StockMovementType",
     "ProductTransferStatus",
+    "Prospect",
+    "Quote",
+    "QuoteLine",
+    "QuoteEvent",
+    "QuoteEmailOutbox",
+    "QuoteAcceptanceFollowup",
+    "QuoteType",
+    "PricingCatalog",
+    "PricingActivityPrice",
+    "PricingProductPrice",
+    "PricingKitPrice",
+    "PaymentPlan",
+    "SolfegeLevelRule",
+    "CgvVersion",
     "ContactDeliveryStatus",
     "ContactDeliveryIncident",
     "JobRun",
