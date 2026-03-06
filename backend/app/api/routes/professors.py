@@ -2,20 +2,21 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location
 from app.models.catalog import Professor as ProfessorModel
 from app.models.catalog import SessionStatus
 from app.models.ops import CommunicationSenderCategory, MessageFormat, ProfessorSessionMessage
-from app.models.payout import PayoutStatus, ProfessorSessionPayout
+from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.professor_contract import ProfessorContractGrid, ProfessorContractGridLine, ProfessorContractGridLineRule
+from app.models.professor_contract import ProfessorContractLineMode
 from app.models.professor_access import ProfessorPermission
 from app.models.user import ClientStatus, User, UserRole
 from app.schemas.booking import AttendanceUpdateRequest, BookingOut
@@ -39,6 +40,7 @@ from app.schemas.professor import (
     ProfessorSessionStudentOut,
 )
 from app.services.professor_contracts import label_for_contract_location
+from app.services.professor_default_grid import DefaultProfessorGridLine, load_default_professor_grid
 from app.services.professor_permissions import permissions_dict
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.session_notifications import send_session_operation_email
@@ -280,6 +282,175 @@ def _serialize_professor_contract_grid(db: Session, *, grid: ProfessorContractGr
             )
             for line in lines
         ],
+    )
+
+
+def _serialize_professor_rate_rules(raw_rules: object) -> list[ProfessorContractGridRuleOut]:
+    if not isinstance(raw_rules, list):
+        return []
+
+    out: list[ProfessorContractGridRuleOut] = []
+    for raw_rule in raw_rules:
+        if not isinstance(raw_rule, dict):
+            continue
+        try:
+            min_students = int(raw_rule.get("min_students"))
+        except (TypeError, ValueError):
+            continue
+        if min_students < 0:
+            continue
+
+        max_students_raw = raw_rule.get("max_students")
+        if max_students_raw is None:
+            max_students: int | None = None
+        else:
+            try:
+                max_students = int(max_students_raw)
+            except (TypeError, ValueError):
+                continue
+            if max_students < min_students:
+                continue
+
+        try:
+            hourly_rate = Decimal(str(raw_rule.get("hourly_rate")))
+        except Exception:
+            continue
+        if hourly_rate < 0:
+            continue
+
+        out.append(
+            ProfessorContractGridRuleOut(
+                min_students=min_students,
+                max_students=max_students,
+                hourly_rate=hourly_rate,
+            )
+        )
+
+    out.sort(key=lambda row: (row.min_students, row.max_students if row.max_students is not None else 10**9))
+    return out
+
+
+def _default_grid_rules_to_contract_rules(line: DefaultProfessorGridLine) -> list[ProfessorContractGridRuleOut]:
+    return [
+        ProfessorContractGridRuleOut(
+            min_students=rule.min_students,
+            max_students=rule.max_students,
+            hourly_rate=Decimal(rule.hourly_rate),
+        )
+        for rule in line.rules
+    ]
+
+
+def _contract_mode_from_course_type(course_type: CourseType) -> ProfessorContractLineMode:
+    if course_type.mode == DeliveryMode.ONLINE:
+        return ProfessorContractLineMode.EN_LIGNE
+    if course_type.mode == DeliveryMode.ONSITE:
+        return ProfessorContractLineMode.PRESENTIEL
+    return ProfessorContractLineMode.AUTRE
+
+
+def _build_effective_contract_grid(
+    db: Session,
+    *,
+    professor_id: UUID,
+    reference_date: date,
+) -> ProfessorContractGridOut | None:
+    active_rates = db.scalars(
+        select(ProfessorHourlyRate)
+        .where(
+            ProfessorHourlyRate.professor_id == professor_id,
+            ProfessorHourlyRate.location_id.is_(None),
+            ProfessorHourlyRate.valid_from <= reference_date,
+            or_(ProfessorHourlyRate.valid_to.is_(None), ProfessorHourlyRate.valid_to >= reference_date),
+        )
+        .order_by(ProfessorHourlyRate.valid_from.desc(), ProfessorHourlyRate.created_at.desc())
+    ).all()
+
+    active_global_rate: ProfessorHourlyRate | None = None
+    active_rates_by_course_type: dict[UUID, ProfessorHourlyRate] = {}
+    for row in active_rates:
+        if row.course_type_id is None:
+            if active_global_rate is None:
+                active_global_rate = row
+            continue
+        if row.course_type_id not in active_rates_by_course_type:
+            active_rates_by_course_type[row.course_type_id] = row
+
+    default_grid_lines, _ = load_default_professor_grid(db)
+    default_grid_by_course_type = {line.course_type_id: line for line in default_grid_lines}
+
+    course_type_ids = sorted({*default_grid_by_course_type.keys(), *active_rates_by_course_type.keys()}, key=str)
+    course_types = (
+        db.scalars(select(CourseType).where(CourseType.id.in_(course_type_ids)).order_by(CourseType.name.asc())).all()
+        if course_type_ids
+        else []
+    )
+
+    lines: list[ProfessorContractGridLineOut] = []
+
+    if active_global_rate is not None:
+        global_rules = _serialize_professor_rate_rules(active_global_rate.headcount_rules_json)
+        if active_global_rate.hourly_rate is not None or global_rules:
+            lines.append(
+                ProfessorContractGridLineOut(
+                    course_type_id=None,
+                    course_type_name="Taux global",
+                    service_type="Global",
+                    mode=ProfessorContractLineMode.AUTRE,
+                    reference_duration_minutes=None,
+                    default_hourly_rate=active_global_rate.hourly_rate,
+                    rules=global_rules,
+                )
+            )
+
+    for course_type in course_types:
+        rate_row = active_rates_by_course_type.get(course_type.id)
+        default_line = default_grid_by_course_type.get(course_type.id)
+
+        rules = _serialize_professor_rate_rules(rate_row.headcount_rules_json) if rate_row is not None else []
+        if not rules and default_line is not None:
+            rules = _default_grid_rules_to_contract_rules(default_line)
+
+        default_hourly_rate: Decimal | None = None
+        if rate_row is not None and rate_row.hourly_rate is not None:
+            default_hourly_rate = Decimal(rate_row.hourly_rate)
+        elif default_line is not None and default_line.default_hourly_rate is not None:
+            default_hourly_rate = Decimal(default_line.default_hourly_rate)
+        elif active_global_rate is not None and active_global_rate.hourly_rate is not None:
+            default_hourly_rate = Decimal(active_global_rate.hourly_rate)
+        elif course_type.default_hourly_rate is not None:
+            default_hourly_rate = Decimal(course_type.default_hourly_rate)
+
+        if default_hourly_rate is None and not rules:
+            continue
+
+        lines.append(
+            ProfessorContractGridLineOut(
+                course_type_id=course_type.id,
+                course_type_name=course_type.name,
+                service_type=course_type.name,
+                mode=_contract_mode_from_course_type(course_type),
+                reference_duration_minutes=course_type.duration_minutes,
+                default_hourly_rate=default_hourly_rate,
+                rules=rules,
+            )
+        )
+
+    if not lines:
+        return None
+
+    valid_from_candidates = [row.valid_from for row in active_rates_by_course_type.values()]
+    if active_global_rate is not None:
+        valid_from_candidates.append(active_global_rate.valid_from)
+
+    return ProfessorContractGridOut(
+        grid_id=uuid5(NAMESPACE_URL, f"professor-effective-grid:{professor_id}:{reference_date.isoformat()}"),
+        valid_from=min(valid_from_candidates) if valid_from_candidates else reference_date,
+        valid_to=None,
+        location_code=None,
+        location_label="Configuration effective",
+        notes="Fusion grille salariale par defaut + surcouche professeur",
+        lines=lines,
     )
 
 
@@ -568,6 +739,15 @@ def list_my_contract_grids(
 ) -> list[ProfessorContractGridOut]:
     professor = _resolve_professor_profile(db, current_user=current_user)
     reference_date = on_date or date.today()
+
+    effective_grid = _build_effective_contract_grid(
+        db,
+        professor_id=professor.id,
+        reference_date=reference_date,
+    )
+    if effective_grid is not None:
+        return [effective_grid]
+
     grids = db.scalars(
         select(ProfessorContractGrid)
         .where(
