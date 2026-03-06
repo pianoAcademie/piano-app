@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
@@ -88,6 +89,13 @@ PRODUCT_IMAGE_ALLOWED_TYPES: dict[str, str] = {
     "image/png": ".png",
     "image/webp": ".webp",
 }
+
+
+def _normalize_code(raw: str | None) -> str | None:
+    value = normalize_optional(raw)
+    if value is None:
+        return None
+    return value.upper()
 
 
 def _require_category(db: Session, category_id: UUID) -> ProductCategory:
@@ -320,6 +328,7 @@ def _kit_out(
         id=row.id,
         category_id=row.category_id,
         category_name=category_name_by_id.get(row.category_id) if row.category_id else None,
+        code=row.code,
         title=row.title,
         image_url=row.image_url,
         short_description=row.short_description,
@@ -408,12 +417,15 @@ def list_admin_catalog_categories(
     stmt = select(ProductCategory)
     if not include_inactive:
         stmt = stmt.where(ProductCategory.active.is_(True))
-    rows = db.scalars(stmt.order_by(ProductCategory.name.asc())).all()
+    rows = db.scalars(stmt.order_by(ProductCategory.display_order.asc(), ProductCategory.name.asc())).all()
     return [
         AdminCatalogCategoryOut(
             id=row.id,
             name=row.name,
+            code=row.code,
             description=row.description,
+            display_order=int(row.display_order or 0),
+            can_be_requested_by_professor=bool(row.can_be_requested_by_professor),
             active=bool(row.active),
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -429,17 +441,25 @@ def create_admin_catalog_category(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCatalogCategoryOut:
     normalized_name = payload.name.strip()
+    normalized_code = _normalize_code(payload.code)
     if not normalized_name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Category name is required")
 
     existing = db.scalar(select(ProductCategory).where(ProductCategory.name.ilike(normalized_name)))
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Category already exists")
+    if normalized_code is not None:
+        existing_code = db.scalar(select(ProductCategory.id).where(ProductCategory.code.ilike(normalized_code)))
+        if existing_code is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Category code already exists")
 
     now = utcnow()
     row = ProductCategory(
         name=normalized_name,
+        code=normalized_code,
         description=normalize_optional(payload.description),
+        display_order=max(int(payload.display_order or 0), 0),
+        can_be_requested_by_professor=payload.can_be_requested_by_professor,
         active=payload.active,
         updated_at=now,
     )
@@ -449,7 +469,10 @@ def create_admin_catalog_category(
     return AdminCatalogCategoryOut(
         id=row.id,
         name=row.name,
+        code=row.code,
         description=row.description,
+        display_order=int(row.display_order or 0),
+        can_be_requested_by_professor=bool(row.can_be_requested_by_professor),
         active=bool(row.active),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -465,6 +488,7 @@ def update_admin_catalog_category(
 ) -> AdminCatalogCategoryOut:
     row = _require_category(db, category_id)
     normalized_name = payload.name.strip()
+    normalized_code = _normalize_code(payload.code)
     if not normalized_name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Category name is required")
 
@@ -473,9 +497,18 @@ def update_admin_catalog_category(
     )
     if duplicate is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Category already exists")
+    if normalized_code is not None:
+        duplicate_code = db.scalar(
+            select(ProductCategory.id).where(ProductCategory.id != row.id, ProductCategory.code.ilike(normalized_code))
+        )
+        if duplicate_code is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Category code already exists")
 
     row.name = normalized_name
+    row.code = normalized_code
     row.description = normalize_optional(payload.description)
+    row.display_order = max(int(payload.display_order or 0), 0)
+    row.can_be_requested_by_professor = payload.can_be_requested_by_professor
     row.active = payload.active
     row.updated_at = utcnow()
     db.add(row)
@@ -485,7 +518,10 @@ def update_admin_catalog_category(
     return AdminCatalogCategoryOut(
         id=row.id,
         name=row.name,
+        code=row.code,
         description=row.description,
+        display_order=int(row.display_order or 0),
+        can_be_requested_by_professor=bool(row.can_be_requested_by_professor),
         active=bool(row.active),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -503,12 +539,13 @@ def delete_admin_catalog_category(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
     row = _require_category(db, category_id)
-    linked_product = db.scalar(select(CatalogProduct.id).where(CatalogProduct.category_id == row.id).limit(1))
-    linked_kit = db.scalar(select(CatalogKit.id).where(CatalogKit.category_id == row.id).limit(1))
-    if linked_product is not None or linked_kit is not None:
+    linked_products_count = int(
+        db.scalar(select(func.count()).select_from(CatalogProduct).where(CatalogProduct.category_id == row.id)) or 0
+    )
+    if linked_products_count > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Category is still linked to products or kits",
+            detail=f"Suppression impossible: cette categorie est liee a {linked_products_count} produit(s). Archivez-la a la place.",
         )
     db.delete(row)
     db.commit()
@@ -725,11 +762,17 @@ def create_admin_catalog_kit(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCatalogKitOut:
+    normalized_code = _normalize_code(payload.code)
     if payload.category_id is not None:
         _require_category(db, payload.category_id)
+    if normalized_code is not None:
+        existing_code = db.scalar(select(CatalogKit.id).where(CatalogKit.code.ilike(normalized_code)))
+        if existing_code is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Kit code already exists")
 
     row = CatalogKit(
         category_id=payload.category_id,
+        code=normalized_code,
         title=payload.title.strip(),
         image_url=normalize_optional(payload.image_url),
         short_description=normalize_optional(payload.short_description),
@@ -779,10 +822,16 @@ def update_admin_catalog_kit(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCatalogKitOut:
     row = _require_kit(db, kit_id)
+    normalized_code = _normalize_code(payload.code)
     if payload.category_id is not None:
         _require_category(db, payload.category_id)
+    if normalized_code is not None:
+        duplicate_code = db.scalar(select(CatalogKit.id).where(CatalogKit.id != row.id, CatalogKit.code.ilike(normalized_code)))
+        if duplicate_code is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Kit code already exists")
 
     row.category_id = payload.category_id
+    row.code = normalized_code
     row.title = payload.title.strip()
     row.image_url = normalize_optional(payload.image_url)
     row.short_description = normalize_optional(payload.short_description)
@@ -834,9 +883,16 @@ def delete_admin_catalog_kit(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
     row = _require_kit(db, kit_id)
-    db.execute(delete(CatalogKitItem).where(CatalogKitItem.kit_id == row.id))
-    db.delete(row)
-    db.commit()
+    try:
+        db.execute(delete(CatalogKitItem).where(CatalogKitItem.kit_id == row.id))
+        db.delete(row)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Suppression impossible: ce kit est deja utilise par des transactions, factures ou affectations. Archivez-le a la place.",
+        ) from None
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

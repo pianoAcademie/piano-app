@@ -2,6 +2,7 @@
 
 import { Buffer } from "node:buffer";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
@@ -9,6 +10,8 @@ import {
   clearPortalReturnTo,
   clearPortalToken,
   getAnyToken,
+  getPortalToken,
+  getTokenForPathname,
   getPortalReturnTo,
   setAdminToken,
   setPortalReturnTo,
@@ -22,6 +25,7 @@ import type {
   AdminInvoiceTemplateOut,
   AdminTeacherInvoiceTemplateOut,
   AdminClientPasswordEmailTemplateOut,
+  AdminClientAutoInvoiceRuleOut,
   AdminRangeInvoiceEmailOut,
   AdminRangeInvoiceOut,
   AdminClientPaymentOut,
@@ -66,7 +70,23 @@ type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
 type BookingScope = "OCCURRENCE" | "SERIES_FUTURE";
 
 function currentToken(): string | null {
+  const referer = headers().get("referer") ?? "";
+  if (referer) {
+    try {
+      const pathname = new URL(referer).pathname;
+      const scoped = getTokenForPathname(pathname);
+      if (scoped) {
+        return scoped;
+      }
+    } catch {
+      // Ignore malformed referer and fallback to legacy behavior.
+    }
+  }
   return getAnyToken();
+}
+
+function currentPortalToken(): string | null {
+  return getPortalToken() ?? currentToken();
 }
 
 function setAdminSessionToken(token: string): void {
@@ -802,7 +822,7 @@ export async function logoutAction(): Promise<void> {
 }
 
 export async function updateProfileAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -856,7 +876,7 @@ export async function updateProfileAction(formData: FormData): Promise<void> {
 }
 
 export async function purchasePlanAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -897,12 +917,20 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
 }
 
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
 
   const returnTo = safeClientReturnPath(formData, "/client?tab=finance&finance_view=transactions");
+  const directPaymentUrl = String(formData.get("payment_url") ?? "").trim();
+  if (directPaymentUrl) {
+    if (directPaymentUrl.startsWith("/") || directPaymentUrl.startsWith("http://") || directPaymentUrl.startsWith("https://")) {
+      redirect(directPaymentUrl);
+    }
+    redirect(appendQueryMessage(returnTo, "error", "Lien de paiement invalide"));
+  }
+
   const paymentRaw = String(formData.get("payment_id") ?? "").trim();
   const paymentId = paymentRaw.startsWith("plan:") ? paymentRaw.slice("plan:".length) : paymentRaw;
   if (!paymentId) {
@@ -926,7 +954,7 @@ export async function openClientPaymentCheckoutAction(formData: FormData): Promi
 }
 
 export async function bookSessionAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -980,7 +1008,7 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1007,7 +1035,7 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
 }
 
 export async function professorUpdateAttendanceAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1038,7 +1066,7 @@ export async function professorUpdateAttendanceAction(formData: FormData): Promi
 }
 
 export async function professorSendSessionMessageAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1080,7 +1108,7 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
 }
 
 export async function professorMarkSessionAbsentAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1123,7 +1151,7 @@ export async function professorMarkSessionAbsentAction(formData: FormData): Prom
 }
 
 export async function teacherApproveStatementsAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1151,7 +1179,7 @@ export async function teacherApproveStatementsAction(formData: FormData): Promis
 }
 
 export async function teacherDisputeStatementsAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1179,7 +1207,7 @@ export async function teacherDisputeStatementsAction(formData: FormData): Promis
 }
 
 export async function teacherCancelInvoiceAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1204,7 +1232,7 @@ export async function teacherCancelInvoiceAction(formData: FormData): Promise<vo
 }
 
 export async function teacherUncancelInvoiceAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -1229,7 +1257,7 @@ export async function teacherUncancelInvoiceAction(formData: FormData): Promise<
 }
 
 export async function teacherSendInvoiceToAccountingAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -3325,18 +3353,10 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   if (!clientId) {
     redirect("/admin/clients?error=Client%20invalide");
   }
-
-  const issuedDate = String(formData.get("issued_date") ?? "").trim();
-  const startDate = String(formData.get("start_date") ?? "").trim();
-  const endDate = String(formData.get("end_date") ?? "").trim();
-  const dueDate = String(formData.get("due_date") ?? "").trim();
-  const noDueDate = parseCheckboxFlag(formData, "no_due_date", false);
-  if (!issuedDate || !startDate || !endDate || (!noDueDate && !dueDate)) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Dates%20de%20facture%20incompletes`);
-  }
-
   const generationModeRaw = String(formData.get("generation_mode") ?? "MANUAL").trim().toUpperCase();
   const generationMode = generationModeRaw === "AUTO" ? "AUTO" : "MANUAL";
+  const invoiceStepRaw = String(formData.get("invoice_step") ?? "").trim();
+  const invoiceStep = invoiceStepRaw === "2" ? "2" : "1";
   const includePending = String(formData.get("include_pending") ?? "true").trim().toLowerCase() !== "false";
   const includeCancelled = String(formData.get("include_cancelled") ?? "false").trim().toLowerCase() === "true";
   const layoutRaw = String(formData.get("layout") ?? "DETAILED").trim().toUpperCase();
@@ -3344,100 +3364,253 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   const groupAdjustmentsByType = parseCheckboxFlag(formData, "group_adjustments_by_type", false);
   const includeDiscountAdjustments = parseCheckboxFlag(formData, "include_discount_adjustments", true);
   const includeSupplementAdjustments = parseCheckboxFlag(formData, "include_supplement_adjustments", true);
+  const publicNote = optionalField(formData, "public_note");
+  const privateNote = optionalField(formData, "private_note");
 
   const autoCycleStartDate = optionalField(formData, "auto_cycle_start_date");
-  const autoPeriodScopeRaw = String(formData.get("auto_period_scope") ?? "PAST").trim().toUpperCase();
-  const autoPeriodScope = autoPeriodScopeRaw === "FUTURE" ? "FUTURE" : "PAST";
   const autoFrequencyRaw = String(formData.get("auto_frequency") ?? "MONTHLY").trim().toUpperCase();
-  const autoFrequency = autoFrequencyRaw === "WEEKLY" ? "WEEKLY" : "MONTHLY";
-  const autoRepeatEveryRaw = String(formData.get("auto_repeat_every") ?? "1").trim();
-  const autoRepeatEveryParsed = Number.parseInt(autoRepeatEveryRaw, 10);
-  const autoRepeatEvery =
-    Number.isFinite(autoRepeatEveryParsed) && autoRepeatEveryParsed >= 1 && autoRepeatEveryParsed <= 6
-      ? autoRepeatEveryParsed
-      : 1;
-  const autoLayoutStyleRaw = String(formData.get("auto_layout_style") ?? "NORMAL").trim().toUpperCase();
-  const autoLayoutStyle = autoLayoutStyleRaw === "CONDENSED" ? "CONDENSED" : "NORMAL";
-  const autoIncludePreviousBalance = parseCheckboxFlag(formData, "auto_include_previous_balance", true);
-  const autoSendEmail = parseCheckboxFlag(formData, "auto_send_email", false);
-  const autoExcludePackSubscriptionLines = parseCheckboxFlag(formData, "auto_exclude_pack_subscription_lines", true);
-  const autoFooterNote = optionalField(formData, "auto_footer_note");
+  const autoFrequency = autoFrequencyRaw === "QUARTERLY" || autoFrequencyRaw === "YEARLY" ? autoFrequencyRaw : "MONTHLY";
+  const autoBillingTimingRaw = String(formData.get("auto_billing_timing") ?? "UPCOMING_LESSONS").trim().toUpperCase();
+  const autoBillingTiming = autoBillingTimingRaw === "PREVIOUS_LESSONS" ? "PREVIOUS_LESSONS" : "UPCOMING_LESSONS";
+  const autoDueDateRuleTypeRaw = String(formData.get("auto_due_date_rule_type") ?? "SAME_DAY_ISSUE").trim().toUpperCase();
+  const autoDueDateRuleType = autoDueDateRuleTypeRaw === "X_DAYS_AFTER_ISSUE" ? "X_DAYS_AFTER_ISSUE" : "SAME_DAY_ISSUE";
+  const autoDueDateDaysOffsetRaw = String(formData.get("auto_due_date_days_offset") ?? "").trim();
+  const autoLegalEntityId = optionalField(formData, "auto_legal_entity_id");
+
+  const manualIssuedDate = String(formData.get("issued_date") ?? "").trim();
+  const manualStartDate = String(formData.get("start_date") ?? "").trim();
+  const manualEndDate = String(formData.get("end_date") ?? "").trim();
+  const manualDueDate = String(formData.get("due_date") ?? "").trim();
+  const manualNoDueDate = parseCheckboxFlag(formData, "no_due_date", false);
+
+  const parseDate = (value: string): Date | null => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return null;
+    }
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+    return parsed;
+  };
+
+  const redirectInvoiceWizardError = (globalMessage: string, fieldErrors: Record<string, string>, targetStep: "1" | "2"): never => {
+    const params = new URLSearchParams();
+    params.set("tab", returnTab);
+    params.set("payment_modal", "invoice_range");
+    params.set("payment_return_tab", returnTab);
+    params.set("invoice_step", targetStep);
+    params.set("generation_mode", generationMode);
+    if (manualIssuedDate) {
+      params.set("issued_date", manualIssuedDate);
+    }
+    if (manualStartDate) {
+      params.set("start_date", manualStartDate);
+    }
+    if (manualEndDate) {
+      params.set("end_date", manualEndDate);
+    }
+    if (manualDueDate) {
+      params.set("due_date", manualDueDate);
+    }
+    params.set("no_due_date", manualNoDueDate ? "true" : "false");
+    params.set("include_pending", includePending ? "true" : "false");
+    params.set("include_cancelled", includeCancelled ? "true" : "false");
+    params.set("layout", layout);
+    params.set("group_adjustments_by_type", groupAdjustmentsByType ? "true" : "false");
+    params.set("include_discount_adjustments", includeDiscountAdjustments ? "true" : "false");
+    params.set("include_supplement_adjustments", includeSupplementAdjustments ? "true" : "false");
+    if (autoCycleStartDate) {
+      params.set("auto_cycle_start_date", autoCycleStartDate);
+    }
+    params.set("auto_frequency", autoFrequency);
+    params.set("auto_billing_timing", autoBillingTiming);
+    params.set("auto_due_date_rule_type", autoDueDateRuleType);
+    if (autoDueDateDaysOffsetRaw) {
+      params.set("auto_due_date_days_offset", autoDueDateDaysOffsetRaw);
+    }
+    if (autoLegalEntityId) {
+      params.set("auto_legal_entity_id", autoLegalEntityId);
+    }
+    if (publicNote) {
+      params.set("public_note", publicNote);
+    }
+    if (privateNote) {
+      params.set("private_note", privateNote);
+    }
+    params.set("invoice_error_global", globalMessage);
+    if (Object.keys(fieldErrors).length > 0) {
+      params.set("invoice_error_fields", JSON.stringify(fieldErrors));
+    }
+    redirect(`/admin/clients/${clientId}?${params.toString()}`);
+  };
+
+  if (generationMode === "AUTO") {
+    const fieldErrors: Record<string, string> = {};
+    if (!autoCycleStartDate || !parseDate(autoCycleStartDate)) {
+      fieldErrors.auto_cycle_start_date = "Date de debut du cycle obligatoire.";
+    }
+    if (!autoLegalEntityId) {
+      fieldErrors.auto_legal_entity_id = "Entite legale obligatoire.";
+    }
+    const autoDueDateDaysOffsetParsed = Number.parseInt(autoDueDateDaysOffsetRaw, 10);
+    if (autoDueDateRuleType === "X_DAYS_AFTER_ISSUE") {
+      if (!Number.isFinite(autoDueDateDaysOffsetParsed) || autoDueDateDaysOffsetParsed < 0) {
+        fieldErrors.auto_due_date_days_offset = "Nombre de jours invalide.";
+      }
+    }
+    if (Object.keys(fieldErrors).length > 0) {
+      redirectInvoiceWizardError("Veuillez corriger les champs en erreur.", fieldErrors, "1");
+    }
+
+    const ruleResult = await backendRequest<AdminClientAutoInvoiceRuleOut>(
+      `/api/v1/admin/clients/${clientId}/invoice-auto-rules`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          cycle_start_date: autoCycleStartDate,
+          frequency: autoFrequency,
+          billing_timing: autoBillingTiming,
+          due_date_rule_type: autoDueDateRuleType,
+          due_date_days_offset: autoDueDateRuleType === "X_DAYS_AFTER_ISSUE" ? autoDueDateDaysOffsetParsed : null,
+          include_pending_lines: includePending,
+          include_cancelled_lines: includeCancelled,
+          legal_entity_id: autoLegalEntityId,
+          status: "ACTIVE",
+        }),
+      },
+      token,
+    );
+    if (!ruleResult.ok) {
+      const autoFieldErrors: Record<string, string> = {};
+      const normalizedRuleError = (ruleResult.message || "").toLowerCase();
+      if (normalizedRuleError.includes("due_date_days_offset")) {
+        autoFieldErrors.auto_due_date_days_offset = "Nombre de jours obligatoire pour la regle X jours.";
+      }
+      if (normalizedRuleError.includes("legal entity")) {
+        autoFieldErrors.auto_legal_entity_id = "Entite legale invalide.";
+      }
+      redirectInvoiceWizardError(ruleResult.message || "Impossible de sauvegarder la regle automatique.", autoFieldErrors, "1");
+    }
+    revalidatePath(`/admin/clients/${clientId}`);
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Regle%20de%20facturation%20automatique%20enregistree`);
+  }
+
+  const manualFieldErrors: Record<string, string> = {};
+  const issuedAt = parseDate(manualIssuedDate);
+  const startAt = parseDate(manualStartDate);
+  const endAt = parseDate(manualEndDate);
+  const dueAt = parseDate(manualDueDate);
+  if (!issuedAt) {
+    manualFieldErrors.issued_date = "Date d emission obligatoire.";
+  }
+  if (!startAt) {
+    manualFieldErrors.start_date = "Date de debut obligatoire.";
+  }
+  if (!endAt) {
+    manualFieldErrors.end_date = "Date de fin obligatoire.";
+  }
+  if (!manualNoDueDate && !dueAt) {
+    manualFieldErrors.due_date = "Date d echeance obligatoire.";
+  }
+  if (startAt && endAt && endAt.getTime() < startAt.getTime()) {
+    manualFieldErrors.end_date = "La date de fin doit etre apres la date de debut.";
+  }
+  const resolvedDueAt = manualNoDueDate ? issuedAt : dueAt;
+  if (issuedAt && resolvedDueAt && resolvedDueAt.getTime() < issuedAt.getTime()) {
+    manualFieldErrors.due_date = "La date d echeance doit etre apres la date d emission.";
+  }
+  if (Object.keys(manualFieldErrors).length > 0) {
+    redirectInvoiceWizardError("Veuillez corriger les champs en erreur.", manualFieldErrors, invoiceStep);
+  }
 
   const result = await backendRequest<AdminRangeInvoiceOut>(
     `/api/v1/admin/clients/${clientId}/payments/invoice-range`,
     {
       method: "POST",
       body: JSON.stringify({
-        issued_date: issuedDate,
-        start_date: startDate,
-        end_date: endDate,
-        due_date: dueDate || issuedDate,
-        no_due_date: noDueDate,
+        issued_date: manualIssuedDate,
+        start_date: manualStartDate,
+        end_date: manualEndDate,
+        due_date: manualNoDueDate ? manualIssuedDate : manualDueDate,
+        no_due_date: manualNoDueDate,
         include_pending: includePending,
         include_cancelled: includeCancelled,
         layout,
-        generation_mode: generationMode,
+        generation_mode: "MANUAL",
         group_adjustments_by_type: groupAdjustmentsByType,
         include_discount_adjustments: includeDiscountAdjustments,
         include_supplement_adjustments: includeSupplementAdjustments,
         auto_cycle_start_date: autoCycleStartDate,
-        auto_period_scope: autoPeriodScope,
-        auto_frequency: autoFrequency,
-        auto_repeat_every: autoRepeatEvery,
-        auto_layout_style: autoLayoutStyle,
-        auto_include_previous_balance: autoIncludePreviousBalance,
-        auto_send_email: autoSendEmail,
-        auto_footer_note: autoFooterNote,
-        auto_exclude_pack_subscription_lines: autoExcludePackSubscriptionLines,
+        auto_period_scope: autoBillingTiming === "PREVIOUS_LESSONS" ? "PAST" : "FUTURE",
+        auto_frequency: "MONTHLY",
+        auto_repeat_every: autoFrequency === "YEARLY" ? 12 : autoFrequency === "QUARTERLY" ? 3 : 1,
+        auto_layout_style: "NORMAL",
+        auto_include_previous_balance: true,
+        auto_send_email: false,
+        auto_footer_note: null,
+        auto_exclude_pack_subscription_lines: true,
         invoice_number: optionalField(formData, "invoice_number"),
-        public_note: optionalField(formData, "public_note"),
-        private_note: optionalField(formData, "private_note"),
+        public_note: publicNote,
+        private_note: privateNote,
       }),
     },
     token,
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+    const manualBackendFieldErrors: Record<string, string> = {};
+    const normalizedManualError = (result.message || "").toLowerCase();
+    if (normalizedManualError.includes("invalid date range")) {
+      manualBackendFieldErrors.end_date = "La date de fin doit etre apres la date de debut.";
+    }
+    if (normalizedManualError.includes("due date must")) {
+      manualBackendFieldErrors.due_date = "La date d echeance doit etre apres la date d emission.";
+    }
+    redirectInvoiceWizardError(result.message || "Impossible de creer la facture.", manualBackendFieldErrors, "2");
+  }
+  const invoiceData = result.ok ? result.data : null;
+  if (!invoiceData) {
+    throw new Error("Invoice creation returned no payload.");
   }
 
   const pdfUrl = new URL(`${backendUrl()}/api/v1/admin/clients/${clientId}/payments/invoice-range`);
-  pdfUrl.searchParams.set("start_date", result.data.start_date);
-  pdfUrl.searchParams.set("end_date", result.data.end_date);
-  pdfUrl.searchParams.set("issued_date", result.data.issued_date);
-  pdfUrl.searchParams.set("due_date", result.data.due_date);
-  pdfUrl.searchParams.set("no_due_date", result.data.no_due_date ? "true" : "false");
-  pdfUrl.searchParams.set("include_pending", result.data.include_pending ? "true" : "false");
-  pdfUrl.searchParams.set("include_cancelled", result.data.include_cancelled ? "true" : "false");
-  pdfUrl.searchParams.set("layout", result.data.layout);
-  pdfUrl.searchParams.set("generation_mode", result.data.generation_mode);
-  pdfUrl.searchParams.set("group_adjustments_by_type", result.data.group_adjustments_by_type ? "true" : "false");
-  pdfUrl.searchParams.set("include_discount_adjustments", result.data.include_discount_adjustments ? "true" : "false");
-  pdfUrl.searchParams.set("include_supplement_adjustments", result.data.include_supplement_adjustments ? "true" : "false");
-  if (result.data.auto_cycle_start_date) {
-    pdfUrl.searchParams.set("auto_cycle_start_date", result.data.auto_cycle_start_date);
+  pdfUrl.searchParams.set("start_date", invoiceData.start_date);
+  pdfUrl.searchParams.set("end_date", invoiceData.end_date);
+  pdfUrl.searchParams.set("issued_date", invoiceData.issued_date);
+  pdfUrl.searchParams.set("due_date", invoiceData.due_date);
+  pdfUrl.searchParams.set("no_due_date", invoiceData.no_due_date ? "true" : "false");
+  pdfUrl.searchParams.set("include_pending", invoiceData.include_pending ? "true" : "false");
+  pdfUrl.searchParams.set("include_cancelled", invoiceData.include_cancelled ? "true" : "false");
+  pdfUrl.searchParams.set("layout", invoiceData.layout);
+  pdfUrl.searchParams.set("generation_mode", invoiceData.generation_mode);
+  pdfUrl.searchParams.set("group_adjustments_by_type", invoiceData.group_adjustments_by_type ? "true" : "false");
+  pdfUrl.searchParams.set("include_discount_adjustments", invoiceData.include_discount_adjustments ? "true" : "false");
+  pdfUrl.searchParams.set("include_supplement_adjustments", invoiceData.include_supplement_adjustments ? "true" : "false");
+  if (invoiceData.auto_cycle_start_date) {
+    pdfUrl.searchParams.set("auto_cycle_start_date", invoiceData.auto_cycle_start_date);
   }
-  pdfUrl.searchParams.set("auto_period_scope", result.data.auto_period_scope);
-  pdfUrl.searchParams.set("auto_frequency", result.data.auto_frequency);
-  pdfUrl.searchParams.set("auto_repeat_every", String(result.data.auto_repeat_every));
-  pdfUrl.searchParams.set("auto_layout_style", result.data.auto_layout_style);
-  pdfUrl.searchParams.set("auto_include_previous_balance", result.data.auto_include_previous_balance ? "true" : "false");
-  pdfUrl.searchParams.set("auto_send_email", result.data.auto_send_email ? "true" : "false");
+  pdfUrl.searchParams.set("auto_period_scope", invoiceData.auto_period_scope);
+  pdfUrl.searchParams.set("auto_frequency", invoiceData.auto_frequency);
+  pdfUrl.searchParams.set("auto_repeat_every", String(invoiceData.auto_repeat_every));
+  pdfUrl.searchParams.set("auto_layout_style", invoiceData.auto_layout_style);
+  pdfUrl.searchParams.set("auto_include_previous_balance", invoiceData.auto_include_previous_balance ? "true" : "false");
+  pdfUrl.searchParams.set("auto_send_email", invoiceData.auto_send_email ? "true" : "false");
   pdfUrl.searchParams.set(
     "auto_exclude_pack_subscription_lines",
-    result.data.auto_exclude_pack_subscription_lines ? "true" : "false",
+    invoiceData.auto_exclude_pack_subscription_lines ? "true" : "false",
   );
-  if (result.data.auto_footer_note) {
-    pdfUrl.searchParams.set("auto_footer_note", result.data.auto_footer_note);
+  if (invoiceData.auto_footer_note) {
+    pdfUrl.searchParams.set("auto_footer_note", invoiceData.auto_footer_note);
   }
-  pdfUrl.searchParams.set("invoice_number", result.data.invoice_number);
-  pdfUrl.searchParams.set("invoice_status", result.data.invoice_status);
+  pdfUrl.searchParams.set("invoice_number", invoiceData.invoice_number);
+  pdfUrl.searchParams.set("invoice_status", invoiceData.invoice_status);
   pdfUrl.searchParams.set("persist_note", "false");
-  if (result.data.public_note) {
-    pdfUrl.searchParams.set("public_note", result.data.public_note);
+  if (invoiceData.public_note) {
+    pdfUrl.searchParams.set("public_note", invoiceData.public_note);
   }
-  if (result.data.private_note) {
-    pdfUrl.searchParams.set("private_note", result.data.private_note);
+  if (invoiceData.private_note) {
+    pdfUrl.searchParams.set("private_note", invoiceData.private_note);
   }
 
   await fetch(pdfUrl.toString(), {
@@ -5855,8 +6028,12 @@ export async function createAdminCatalogCategoryAction(formData: FormData): Prom
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const name = String(formData.get("name") ?? "").trim();
+  const code = optionalField(formData, "code");
   const description = optionalField(formData, "description");
-  const active = checkboxFieldWithDefault(formData, "active", true);
+  const displayOrder = parseNonNegativeInt(String(formData.get("display_order") ?? "0")) ?? 0;
+  const statusValue = String(formData.get("status") ?? "").trim().toLowerCase();
+  const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
+  const canBeRequestedByProfessor = checkboxFieldWithDefault(formData, "can_be_requested_by_professor", true);
   if (!name) {
     redirect(appendQueryMessage(returnTo, "error", "Nom categorie obligatoire"));
   }
@@ -5865,7 +6042,14 @@ export async function createAdminCatalogCategoryAction(formData: FormData): Prom
     "/api/v1/admin/config/catalog/categories",
     {
       method: "POST",
-      body: JSON.stringify({ name, description, active }),
+      body: JSON.stringify({
+        name,
+        code,
+        description,
+        display_order: displayOrder,
+        active,
+        can_be_requested_by_professor: canBeRequestedByProfessor,
+      }),
     },
     token,
   );
@@ -5874,6 +6058,7 @@ export async function createAdminCatalogCategoryAction(formData: FormData): Prom
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Categorie cree"));
@@ -5889,8 +6074,12 @@ export async function updateAdminCatalogCategoryAction(formData: FormData): Prom
 
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
   const name = String(formData.get("name") ?? "").trim();
+  const code = optionalField(formData, "code");
   const description = optionalField(formData, "description");
-  const active = checkboxFieldWithDefault(formData, "active", true);
+  const displayOrder = parseNonNegativeInt(String(formData.get("display_order") ?? "0")) ?? 0;
+  const statusValue = String(formData.get("status") ?? "").trim().toLowerCase();
+  const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
+  const canBeRequestedByProfessor = checkboxFieldWithDefault(formData, "can_be_requested_by_professor", true);
   if (!categoryId || !name) {
     redirect(appendQueryMessage(returnTo, "error", "Categorie invalide"));
   }
@@ -5899,7 +6088,14 @@ export async function updateAdminCatalogCategoryAction(formData: FormData): Prom
     `/api/v1/admin/config/catalog/categories/${categoryId}`,
     {
       method: "PUT",
-      body: JSON.stringify({ name, description, active }),
+      body: JSON.stringify({
+        name,
+        code,
+        description,
+        display_order: displayOrder,
+        active,
+        can_be_requested_by_professor: canBeRequestedByProfessor,
+      }),
     },
     token,
   );
@@ -5907,6 +6103,7 @@ export async function updateAdminCatalogCategoryAction(formData: FormData): Prom
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Categorie mise a jour"));
@@ -5935,9 +6132,69 @@ export async function deleteAdminCatalogCategoryAction(formData: FormData): Prom
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Categorie supprimee"));
+}
+
+export async function toggleAdminCatalogCategoryArchiveAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
+  const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
+  const archiveValue = String(formData.get("archive") ?? "").trim().toLowerCase();
+  const shouldArchive = archiveValue === "1" || archiveValue === "true" || archiveValue === "yes" || archiveValue === "on";
+  if (!categoryId) {
+    redirect(appendQueryMessage(returnTo, "error", "Categorie invalide"));
+  }
+
+  const categoriesResult = await backendRequest<AdminCatalogCategoryOut[]>(
+    "/api/v1/admin/config/catalog/categories?include_inactive=true",
+    {},
+    token,
+  );
+  if (!categoriesResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", categoriesResult.message));
+  }
+  const current = categoriesResult.data.find((row) => row.id === categoryId);
+  if (!current) {
+    redirect(appendQueryMessage(returnTo, "error", "Categorie introuvable"));
+  }
+
+  const updateResult = await backendRequest<AdminCatalogCategoryOut>(
+    `/api/v1/admin/config/catalog/categories/${categoryId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        name: current.name,
+        code: current.code,
+        description: current.description,
+        display_order: current.display_order,
+        can_be_requested_by_professor: current.can_be_requested_by_professor,
+        active: !shouldArchive,
+      }),
+    },
+    token,
+  );
+  if (!updateResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", updateResult.message));
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
+  revalidatePath("/admin/products");
+  revalidatePath("/admin/clients");
+  redirect(
+    appendQueryMessage(
+      removeQueryParam(removeQueryParam(returnTo, "ok"), "error"),
+      "ok",
+      shouldArchive ? "Categorie archivee" : "Categorie desarchivee",
+    ),
+  );
 }
 
 export async function createAdminCatalogProductAction(formData: FormData): Promise<void> {
@@ -6100,9 +6357,14 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const title = String(formData.get("title") ?? "").trim();
+  const code = optionalField(formData, "code");
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
   const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
+  const statusValue = String(formData.get("status") ?? "").trim().toLowerCase();
+  const visibilityValue = String(formData.get("visibility") ?? "").trim().toLowerCase();
+  const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
+  const isPublic = visibilityValue ? visibilityValue === "public" : checkboxFieldWithDefault(formData, "is_public", true);
   const items = parseCatalogKitItemsFromFormData(formData);
   if (!title || priceInclVat === null || vatRate === null || items === null) {
     redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
@@ -6110,6 +6372,7 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
 
   const payload = {
     category_id: categoryId,
+    code,
     title,
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
@@ -6117,8 +6380,8 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
     price_incl_vat: priceInclVat,
     vat_rate: vatRate,
     purchasable_online: checkboxField(formData, "purchasable_online"),
-    is_public: checkboxFieldWithDefault(formData, "is_public", true),
-    active: checkboxFieldWithDefault(formData, "active", true),
+    is_public: isPublic,
+    active,
     items,
   };
 
@@ -6134,6 +6397,7 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit cree"));
 }
@@ -6147,9 +6411,14 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
   const kitId = parseUuid(String(formData.get("kit_id") ?? ""));
   const title = String(formData.get("title") ?? "").trim();
+  const code = optionalField(formData, "code");
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
   const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
+  const statusValue = String(formData.get("status") ?? "").trim().toLowerCase();
+  const visibilityValue = String(formData.get("visibility") ?? "").trim().toLowerCase();
+  const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
+  const isPublic = visibilityValue ? visibilityValue === "public" : checkboxFieldWithDefault(formData, "is_public", true);
   const items = parseCatalogKitItemsFromFormData(formData);
   if (!kitId || !title || priceInclVat === null || vatRate === null || items === null) {
     redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
@@ -6157,6 +6426,7 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
 
   const payload = {
     category_id: categoryId,
+    code,
     title,
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
@@ -6164,8 +6434,8 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
     price_incl_vat: priceInclVat,
     vat_rate: vatRate,
     purchasable_online: checkboxField(formData, "purchasable_online"),
-    is_public: checkboxFieldWithDefault(formData, "is_public", true),
-    active: checkboxFieldWithDefault(formData, "active", true),
+    is_public: isPublic,
+    active,
     items,
   };
 
@@ -6181,6 +6451,7 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit mis a jour"));
 }
@@ -6207,8 +6478,74 @@ export async function deleteAdminCatalogKitAction(formData: FormData): Promise<v
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit supprime"));
+}
+
+export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
+  const kitId = parseUuid(String(formData.get("kit_id") ?? ""));
+  const archiveValue = String(formData.get("archive") ?? "").trim().toLowerCase();
+  const shouldArchive = archiveValue === "1" || archiveValue === "true" || archiveValue === "yes" || archiveValue === "on";
+  if (!kitId) {
+    redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
+  }
+
+  const kitsResult = await backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token);
+  if (!kitsResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", kitsResult.message));
+  }
+  const current = kitsResult.data.find((row) => row.id === kitId);
+  if (!current) {
+    redirect(appendQueryMessage(returnTo, "error", "Kit introuvable"));
+  }
+  const items = current.items.map((item) => ({
+    product_id: item.product_id,
+    quantity: item.quantity,
+    display_order: item.display_order,
+  }));
+
+  const updateResult = await backendRequest<AdminCatalogKitOut>(
+    `/api/v1/admin/config/catalog/kits/${kitId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        category_id: current.category_id,
+        code: current.code,
+        title: current.title,
+        image_url: current.image_url,
+        short_description: current.short_description,
+        long_description: current.long_description,
+        price_incl_vat: Number(current.price_incl_vat),
+        vat_rate: Number(current.vat_rate),
+        purchasable_online: current.purchasable_online,
+        is_public: current.is_public,
+        active: !shouldArchive,
+        items,
+      }),
+    },
+    token,
+  );
+  if (!updateResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", updateResult.message));
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
+  revalidatePath("/admin/products");
+  redirect(
+    appendQueryMessage(
+      removeQueryParam(removeQueryParam(returnTo, "ok"), "error"),
+      "ok",
+      shouldArchive ? "Kit archive" : "Kit desarchive",
+    ),
+  );
 }
 
 export async function updateAdminCatalogInventoryAction(formData: FormData): Promise<void> {
@@ -6572,7 +6909,7 @@ export async function deliverAdminCatalogRequestAction(formData: FormData): Prom
 }
 
 export async function professorCreateCatalogRequestAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -6608,7 +6945,7 @@ export async function professorCreateCatalogRequestAction(formData: FormData): P
 }
 
 export async function professorDeliverCatalogRequestAction(formData: FormData): Promise<void> {
-  const token = currentToken();
+  const token = currentPortalToken();
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }

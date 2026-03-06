@@ -78,7 +78,14 @@ class ProductCategory(Base):
         server_default=text("gen_random_uuid()"),
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    code: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    can_be_requested_by_professor: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+    )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -180,6 +187,7 @@ class CatalogKit(Base):
         ForeignKey("product_categories.id", ondelete="SET NULL"),
         nullable=True,
     )
+    code: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     short_description: Mapped[str | None] = mapped_column(String(500), nullable=True)

@@ -14,7 +14,10 @@ from app.models.product_catalog import StockMovementSourceType, StockMovementTyp
 class AdminCatalogCategoryOut(BaseModel):
     id: UUID
     name: str
+    code: str | None
     description: str | None
+    display_order: int
+    can_be_requested_by_professor: bool
     active: bool
     created_at: datetime
     updated_at: datetime
@@ -22,13 +25,19 @@ class AdminCatalogCategoryOut(BaseModel):
 
 class AdminCatalogCategoryCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    code: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=2000)
+    display_order: int = Field(default=0, ge=0, le=100000)
+    can_be_requested_by_professor: bool = True
     active: bool = True
 
 
 class AdminCatalogCategoryUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    code: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=2000)
+    display_order: int = Field(default=0, ge=0, le=100000)
+    can_be_requested_by_professor: bool = True
     active: bool = True
 
 
@@ -107,6 +116,7 @@ class AdminCatalogKitOut(BaseModel):
     id: UUID
     category_id: UUID | None
     category_name: str | None
+    code: str | None
     title: str
     image_url: str | None
     short_description: str | None
@@ -124,6 +134,7 @@ class AdminCatalogKitOut(BaseModel):
 
 class AdminCatalogKitCreateRequest(BaseModel):
     category_id: UUID | None = None
+    code: str | None = Field(default=None, max_length=64)
     title: str = Field(min_length=1, max_length=255)
     image_url: str | None = Field(default=None, max_length=4000)
     short_description: str | None = Field(default=None, max_length=500)

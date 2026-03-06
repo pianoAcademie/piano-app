@@ -393,6 +393,27 @@ export type AdminRangeInvoiceOut = {
   related_invoices: AdminRangeInvoiceReferenceOut[];
 };
 
+export type AdminClientAutoInvoiceRuleOut = {
+  id: string;
+  client_id: string;
+  legal_entity_id: string;
+  cycle_start_date: string;
+  frequency: "MONTHLY" | "QUARTERLY" | "YEARLY";
+  billing_timing: "UPCOMING_LESSONS" | "PREVIOUS_LESSONS";
+  due_date_rule_type: "SAME_DAY_ISSUE" | "X_DAYS_AFTER_ISSUE";
+  due_date_days_offset: number | null;
+  include_pending_lines: boolean;
+  include_cancelled_lines: boolean;
+  next_run_date: string;
+  preview_period_start_date: string;
+  preview_period_end_date: string;
+  preview_due_date: string;
+  last_generated_at: string | null;
+  status: "ACTIVE" | "PAUSED" | "ARCHIVED";
+  created_at: string;
+  updated_at: string;
+};
+
 export type AdminRangeInvoiceReferenceOut = {
   note_id: string;
   invoice_number: string;
@@ -531,6 +552,7 @@ export type ClientMessageOut = {
   provider_message_id: string | null;
   error_message: string | null;
   subject_preview: string;
+  content_preview: string | null;
 };
 
 export type ClientPaymentOut = {
@@ -563,6 +585,8 @@ export type ClientInvoiceOut = {
   currency: string;
   reference: string | null;
   download_url: string | null;
+  payment_url: string | null;
+  included_payment_keys: string[];
 };
 
 export type ClientPaymentCheckoutOut = {
@@ -1124,7 +1148,10 @@ export type AdminProductCategoriesOut = {
 export type AdminCatalogCategoryOut = {
   id: string;
   name: string;
+  code: string | null;
   description: string | null;
+  display_order: number;
+  can_be_requested_by_professor: boolean;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -1213,6 +1240,7 @@ export type AdminCatalogKitOut = {
   id: string;
   category_id: string | null;
   category_name: string | null;
+  code: string | null;
   title: string;
   image_url: string | null;
   short_description: string | null;

@@ -549,7 +549,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 <Link className="ghost" href={addLink}>
                   Ajouter un produit
                 </Link>
-                <Link className="mode-link" href="/admin/config?section=products">
+                <Link className="mode-link" href="/admin/config/catalog">
                   Configurer categories/kits
                 </Link>
               </div>
