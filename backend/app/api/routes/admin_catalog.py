@@ -98,6 +98,20 @@ def _normalize_code(raw: str | None) -> str | None:
     return value.upper()
 
 
+def _normalize_kit_price_mode(raw: str | None) -> str:
+    value = (raw or "").strip().lower()
+    if value == "forced":
+        return "forced"
+    return "calculated"
+
+
+def _normalize_currency(raw: str | None) -> str:
+    value = (raw or "").strip().upper()
+    if not value:
+        return "EUR"
+    return value
+
+
 def _require_category(db: Session, category_id: UUID) -> ProductCategory:
     row = db.scalar(select(ProductCategory).where(ProductCategory.id == category_id))
     if row is None:
@@ -324,6 +338,11 @@ def _kit_out(
             )
         )
 
+    price_mode = _normalize_kit_price_mode(row.price_mode)
+    forced_price = Decimal(row.forced_price).quantize(Decimal("0.01")) if row.forced_price is not None else None
+    currency = _normalize_currency(row.currency)
+    price_effective = forced_price if price_mode == "forced" and forced_price is not None else computed
+
     return AdminCatalogKitOut(
         id=row.id,
         category_id=row.category_id,
@@ -333,7 +352,11 @@ def _kit_out(
         image_url=row.image_url,
         short_description=row.short_description,
         long_description=row.long_description,
-        price_incl_vat=Decimal(row.price_incl_vat),
+        price_mode=price_mode,
+        forced_price=forced_price,
+        currency=currency,
+        price_effective_incl_vat=price_effective,
+        price_incl_vat=price_effective,
         vat_rate=Decimal(row.vat_rate),
         computed_price_incl_vat=computed,
         purchasable_online=bool(row.purchasable_online),
@@ -770,6 +793,26 @@ def create_admin_catalog_kit(
         if existing_code is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Kit code already exists")
 
+    currency = _normalize_currency(payload.currency)
+    if len(currency) != 3:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid currency")
+    price_mode = _normalize_kit_price_mode(payload.price_mode)
+    vat_rate = Decimal(payload.vat_rate).quantize(Decimal("0.001"))
+    computed_price = Decimal("0.00")
+    for item in payload.items:
+        product = _require_product(db, item.product_id)
+        unit_price = Decimal(product.price_incl_vat or Decimal("0.00")).quantize(Decimal("0.01"))
+        computed_price = (computed_price + (unit_price * Decimal(item.quantity or 0))).quantize(Decimal("0.01"))
+
+    forced_price = Decimal(payload.forced_price).quantize(Decimal("0.01")) if payload.forced_price is not None else None
+    legacy_price = Decimal(payload.price_incl_vat).quantize(Decimal("0.01"))
+    if price_mode == "forced":
+        forced_price = forced_price if forced_price is not None else legacy_price
+        price_effective = forced_price
+    else:
+        forced_price = None
+        price_effective = computed_price
+
     row = CatalogKit(
         category_id=payload.category_id,
         code=normalized_code,
@@ -777,8 +820,11 @@ def create_admin_catalog_kit(
         image_url=normalize_optional(payload.image_url),
         short_description=normalize_optional(payload.short_description),
         long_description=normalize_optional(payload.long_description),
-        price_incl_vat=Decimal(payload.price_incl_vat).quantize(Decimal("0.01")),
-        vat_rate=Decimal(payload.vat_rate).quantize(Decimal("0.001")),
+        price_mode=price_mode,
+        forced_price=forced_price,
+        currency=currency,
+        price_incl_vat=price_effective,
+        vat_rate=vat_rate,
         purchasable_online=payload.purchasable_online,
         is_public=payload.is_public,
         active=payload.active,
@@ -830,14 +876,37 @@ def update_admin_catalog_kit(
         if duplicate_code is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Kit code already exists")
 
+    currency = _normalize_currency(payload.currency)
+    if len(currency) != 3:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid currency")
+    price_mode = _normalize_kit_price_mode(payload.price_mode)
+    vat_rate = Decimal(payload.vat_rate).quantize(Decimal("0.001"))
+    computed_price = Decimal("0.00")
+    for item in payload.items:
+        product = _require_product(db, item.product_id)
+        unit_price = Decimal(product.price_incl_vat or Decimal("0.00")).quantize(Decimal("0.01"))
+        computed_price = (computed_price + (unit_price * Decimal(item.quantity or 0))).quantize(Decimal("0.01"))
+
+    forced_price = Decimal(payload.forced_price).quantize(Decimal("0.01")) if payload.forced_price is not None else None
+    legacy_price = Decimal(payload.price_incl_vat).quantize(Decimal("0.01"))
+    if price_mode == "forced":
+        forced_price = forced_price if forced_price is not None else legacy_price
+        price_effective = forced_price
+    else:
+        forced_price = None
+        price_effective = computed_price
+
     row.category_id = payload.category_id
     row.code = normalized_code
     row.title = payload.title.strip()
     row.image_url = normalize_optional(payload.image_url)
     row.short_description = normalize_optional(payload.short_description)
     row.long_description = normalize_optional(payload.long_description)
-    row.price_incl_vat = Decimal(payload.price_incl_vat).quantize(Decimal("0.01"))
-    row.vat_rate = Decimal(payload.vat_rate).quantize(Decimal("0.001"))
+    row.price_mode = price_mode
+    row.forced_price = forced_price
+    row.currency = currency
+    row.price_incl_vat = price_effective
+    row.vat_rate = vat_rate
     row.purchasable_online = payload.purchasable_online
     row.is_public = payload.is_public
     row.active = payload.active

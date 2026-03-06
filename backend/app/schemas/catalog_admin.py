@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -121,6 +122,10 @@ class AdminCatalogKitOut(BaseModel):
     image_url: str | None
     short_description: str | None
     long_description: str | None
+    price_mode: Literal["calculated", "forced"] | str
+    forced_price: Decimal | None
+    currency: str
+    price_effective_incl_vat: Decimal
     price_incl_vat: Decimal
     vat_rate: Decimal
     computed_price_incl_vat: Decimal
@@ -139,6 +144,9 @@ class AdminCatalogKitCreateRequest(BaseModel):
     image_url: str | None = Field(default=None, max_length=4000)
     short_description: str | None = Field(default=None, max_length=500)
     long_description: str | None = Field(default=None, max_length=12000)
+    price_mode: Literal["calculated", "forced"] = "calculated"
+    forced_price: Decimal | None = Field(default=None, ge=Decimal("0"))
+    currency: str = Field(default="EUR", min_length=3, max_length=3)
     price_incl_vat: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
     vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
     purchasable_online: bool = False

@@ -174,6 +174,9 @@ class CatalogKit(Base):
     __table_args__ = (
         CheckConstraint("vat_rate >= 0 AND vat_rate <= 100", name="ck_catalog_kits_vat_rate_range"),
         CheckConstraint("price_incl_vat >= 0", name="ck_catalog_kits_price_incl_non_negative"),
+        CheckConstraint("price_mode IN ('calculated', 'forced')", name="ck_catalog_kits_price_mode"),
+        CheckConstraint("forced_price IS NULL OR forced_price >= 0", name="ck_catalog_kits_forced_price_non_negative"),
+        CheckConstraint("char_length(currency) = 3", name="ck_catalog_kits_currency_len"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -192,6 +195,9 @@ class CatalogKit(Base):
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     short_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     long_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price_mode: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'calculated'"))
+    forced_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     price_incl_vat: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     vat_rate: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False, server_default=text("20"))
     purchasable_online: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

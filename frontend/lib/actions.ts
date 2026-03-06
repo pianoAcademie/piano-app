@@ -471,6 +471,8 @@ type CatalogKitItemPayload = {
   display_order: number;
 };
 
+type CatalogKitPriceMode = "calculated" | "forced";
+
 function parseCatalogKitItemsFromFormData(formData: FormData, maxRows = 10): CatalogKitItemPayload[] | null {
   const out: CatalogKitItemPayload[] = [];
   const seen = new Set<string>();
@@ -493,6 +495,18 @@ function parseCatalogKitItemsFromFormData(formData: FormData, maxRows = 10): Cat
     });
   }
   return out;
+}
+
+function parseCatalogKitPriceMode(raw: string): CatalogKitPriceMode {
+  return raw.trim().toLowerCase() === "forced" ? "forced" : "calculated";
+}
+
+function parseCurrencyCode(raw: string, fallback = "EUR"): string {
+  const value = raw.trim().toUpperCase();
+  if (!value) {
+    return fallback;
+  }
+  return /^[A-Z]{3}$/.test(value) ? value : fallback;
 }
 
 function parsePaymentMethodCode(raw: string): string | null {
@@ -7122,14 +7136,18 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
   const title = String(formData.get("title") ?? "").trim();
   const code = optionalField(formData, "code");
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
-  const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
+  const priceMode = parseCatalogKitPriceMode(String(formData.get("price_mode") ?? ""));
+  const forcedPrice = parseNonNegativeDecimal(String(formData.get("forced_price") ?? ""));
+  const legacyPriceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
+  const effectiveForcedPrice = forcedPrice ?? legacyPriceInclVat;
+  const currency = parseCurrencyCode(String(formData.get("currency") ?? "EUR"));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const statusValue = String(formData.get("status") ?? "").trim().toLowerCase();
   const visibilityValue = String(formData.get("visibility") ?? "").trim().toLowerCase();
   const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
   const isPublic = visibilityValue ? visibilityValue === "public" : checkboxFieldWithDefault(formData, "is_public", true);
   const items = parseCatalogKitItemsFromFormData(formData);
-  if (!title || priceInclVat === null || vatRate === null || items === null) {
+  if (!title || vatRate === null || items === null || (priceMode === "forced" && effectiveForcedPrice === null)) {
     redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
   }
 
@@ -7140,7 +7158,10 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
-    price_incl_vat: priceInclVat,
+    price_mode: priceMode,
+    forced_price: priceMode === "forced" ? effectiveForcedPrice : null,
+    currency,
+    price_incl_vat: effectiveForcedPrice ?? 0,
     vat_rate: vatRate,
     purchasable_online: checkboxField(formData, "purchasable_online"),
     is_public: isPublic,
@@ -7176,14 +7197,18 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
   const title = String(formData.get("title") ?? "").trim();
   const code = optionalField(formData, "code");
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
-  const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
+  const priceMode = parseCatalogKitPriceMode(String(formData.get("price_mode") ?? ""));
+  const forcedPrice = parseNonNegativeDecimal(String(formData.get("forced_price") ?? ""));
+  const legacyPriceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
+  const effectiveForcedPrice = forcedPrice ?? legacyPriceInclVat;
+  const currency = parseCurrencyCode(String(formData.get("currency") ?? "EUR"));
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const statusValue = String(formData.get("status") ?? "").trim().toLowerCase();
   const visibilityValue = String(formData.get("visibility") ?? "").trim().toLowerCase();
   const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
   const isPublic = visibilityValue ? visibilityValue === "public" : checkboxFieldWithDefault(formData, "is_public", true);
   const items = parseCatalogKitItemsFromFormData(formData);
-  if (!kitId || !title || priceInclVat === null || vatRate === null || items === null) {
+  if (!kitId || !title || vatRate === null || items === null || (priceMode === "forced" && effectiveForcedPrice === null)) {
     redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
   }
 
@@ -7194,7 +7219,10 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
     image_url: optionalField(formData, "image_url"),
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
-    price_incl_vat: priceInclVat,
+    price_mode: priceMode,
+    forced_price: priceMode === "forced" ? effectiveForcedPrice : null,
+    currency,
+    price_incl_vat: effectiveForcedPrice ?? 0,
     vat_rate: vatRate,
     purchasable_online: checkboxField(formData, "purchasable_online"),
     is_public: isPublic,
@@ -7246,6 +7274,92 @@ export async function deleteAdminCatalogKitAction(formData: FormData): Promise<v
   redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit supprime"));
 }
 
+export async function duplicateAdminCatalogKitAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
+  const kitId = parseUuid(String(formData.get("kit_id") ?? ""));
+  if (!kitId) {
+    redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
+  }
+
+  const kitsResult = await backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token);
+  if (!kitsResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", kitsResult.message));
+  }
+  const sourceKit = kitsResult.data.find((row) => row.id === kitId);
+  if (!sourceKit) {
+    redirect(appendQueryMessage(returnTo, "error", "Kit introuvable"));
+  }
+
+  const existingTitles = new Set(kitsResult.data.map((row) => row.title.trim().toLocaleLowerCase("fr-FR")));
+  const existingCodes = new Set(
+    kitsResult.data
+      .map((row) => (row.code || "").trim().toUpperCase())
+      .filter((value) => value.length > 0),
+  );
+  const baseTitle = `${sourceKit.title} (copie)`;
+  let titleCandidate = baseTitle;
+  let titleIndex = 2;
+  while (existingTitles.has(titleCandidate.toLocaleLowerCase("fr-FR"))) {
+    titleCandidate = `${baseTitle} ${titleIndex}`;
+    titleIndex += 1;
+  }
+
+  let codeCandidate: string | null = sourceKit.code ? `${sourceKit.code}-COPY` : null;
+  if (codeCandidate) {
+    codeCandidate = codeCandidate.slice(0, 64);
+    let codeIndex = 2;
+    while (existingCodes.has(codeCandidate)) {
+      const suffix = `-COPY-${codeIndex}`;
+      codeCandidate = `${sourceKit.code}${suffix}`.slice(0, 64);
+      codeIndex += 1;
+    }
+  }
+
+  const payload = {
+    category_id: sourceKit.category_id,
+    code: codeCandidate,
+    title: titleCandidate,
+    image_url: sourceKit.image_url,
+    short_description: sourceKit.short_description,
+    long_description: sourceKit.long_description,
+    price_mode: parseCatalogKitPriceMode(sourceKit.price_mode),
+    forced_price: sourceKit.price_mode === "forced" ? Number(sourceKit.forced_price ?? sourceKit.price_effective_incl_vat) : null,
+    currency: parseCurrencyCode(sourceKit.currency || "EUR"),
+    price_incl_vat: Number(sourceKit.price_effective_incl_vat || sourceKit.price_incl_vat),
+    vat_rate: Number(sourceKit.vat_rate),
+    purchasable_online: sourceKit.purchasable_online,
+    is_public: sourceKit.is_public,
+    active: sourceKit.active,
+    items: sourceKit.items.map((item) => ({
+      product_id: item.product_id,
+      quantity: item.quantity,
+      display_order: item.display_order,
+    })),
+  };
+
+  const createResult = await backendRequest<AdminCatalogKitOut>(
+    "/api/v1/admin/config/catalog/kits",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+  if (!createResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", createResult.message));
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin/config/catalog");
+  revalidatePath("/admin/products");
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit duplique"));
+}
+
 export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -7285,7 +7399,10 @@ export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Pr
         image_url: current.image_url,
         short_description: current.short_description,
         long_description: current.long_description,
-        price_incl_vat: Number(current.price_incl_vat),
+        price_mode: parseCatalogKitPriceMode(current.price_mode),
+        forced_price: current.price_mode === "forced" ? Number(current.forced_price ?? current.price_effective_incl_vat) : null,
+        currency: parseCurrencyCode(current.currency || "EUR"),
+        price_incl_vat: Number(current.price_effective_incl_vat || current.price_incl_vat),
         vat_rate: Number(current.vat_rate),
         purchasable_online: current.purchasable_online,
         is_public: current.is_public,

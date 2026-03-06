@@ -1281,6 +1281,10 @@ export type AdminCatalogKitOut = {
   image_url: string | null;
   short_description: string | null;
   long_description: string | null;
+  price_mode: "calculated" | "forced" | string;
+  forced_price: string | null;
+  currency: string;
+  price_effective_incl_vat: string;
   price_incl_vat: string;
   vat_rate: string;
   computed_price_incl_vat: string;

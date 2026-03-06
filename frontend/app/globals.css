@@ -5853,6 +5853,29 @@ button.danger {
   grid-template-columns: minmax(0, 1fr) 110px 110px;
 }
 
+.catalog-kit-price-readonly {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #e6e8ee;
+  border-radius: 10px;
+  background: #f9fbff;
+}
+
+.catalog-kit-price-mode-group {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e6e8ee;
+  border-radius: 10px;
+  padding: 10px;
+  margin: 0;
+}
+
+.catalog-kit-price-mode-group legend {
+  font-weight: 700;
+  padding: 0 4px;
+}
+
 .catalog-stock-form {
   display: grid;
   gap: 8px;

@@ -7,12 +7,15 @@ import {
   createAdminCatalogKitAction,
   deleteAdminCatalogCategoryAction,
   deleteAdminCatalogKitAction,
+  duplicateAdminCatalogKitAction,
   toggleAdminCatalogCategoryArchiveAction,
   toggleAdminCatalogKitArchiveAction,
   updateAdminCatalogCategoryAction,
   updateAdminCatalogKitAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import AdminKitActionsMenu from "../../../../components/admin-kit-actions-menu";
+import CatalogKitPriceFields from "../../../../components/catalog-kit-price-fields";
 import type { AdminCatalogCategoryOut, AdminCatalogKitOut, AdminCatalogProductOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -92,6 +95,10 @@ function statusLabel(active: boolean): string {
 
 function visibilityLabel(isPublic: boolean): string {
   return isPublic ? "Visible" : "Masque";
+}
+
+function kitPriceModeLabel(mode: string): string {
+  return mode.trim().toLowerCase() === "forced" ? "Force" : "Automatique";
 }
 
 export default async function AdminCatalogConfigPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
@@ -396,10 +403,10 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                 <thead>
                   <tr>
                     <th>Nom</th>
-                    <th>Code</th>
-                    <th>Description</th>
                     <th>Elements</th>
-                    <th>Prix TTC</th>
+                    <th>Prix calcule</th>
+                    <th>Prix facture</th>
+                    <th>Mode</th>
                     <th>Statut</th>
                     <th>Visibilite</th>
                     <th>Actions</th>
@@ -408,39 +415,36 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                 <tbody>
                   {filteredKits.map((kit) => {
                     const editHref = buildCatalogConfigHref(params, { tab: "kits", kit_drawer: "edit", kit_id: kit.id });
+                    const viewCompositionHref = buildCatalogConfigHref(params, {
+                      tab: "kits",
+                      kit_drawer: "edit",
+                      kit_id: kit.id,
+                      kit_focus: "composition",
+                    });
                     return (
                       <tr key={kit.id}>
-                        <td>{kit.title}</td>
-                        <td>{kit.code || "-"}</td>
-                        <td>{kit.short_description || "-"}</td>
+                        <td>
+                          <strong>{kit.title}</strong>
+                          <br />
+                          <span className="muted">{kit.code || "-"}</span>
+                        </td>
                         <td>{kit.items.length}</td>
-                        <td>{formatMoney(kit.price_incl_vat, "EUR")}</td>
+                        <td>{formatMoney(kit.computed_price_incl_vat, kit.currency || "EUR")}</td>
+                        <td>{formatMoney(kit.price_effective_incl_vat || kit.price_incl_vat, kit.currency || "EUR")}</td>
+                        <td>{kitPriceModeLabel(kit.price_mode)}</td>
                         <td>{statusLabel(kit.active)}</td>
                         <td>{visibilityLabel(kit.is_public)}</td>
                         <td>
-                          <details className="catalog-actions-menu">
-                            <summary className="ghost catalog-actions-trigger">...</summary>
-                            <div className="catalog-actions-menu-panel">
-                              <Link className="catalog-actions-item" href={editHref}>
-                                Modifier
-                              </Link>
-                              <form action={toggleAdminCatalogKitArchiveAction}>
-                                <input type="hidden" name="kit_id" value={kit.id} />
-                                <input type="hidden" name="archive" value={kit.active ? "true" : "false"} />
-                                <input type="hidden" name="return_to" value={currentHref} />
-                                <button type="submit" className="catalog-actions-item">
-                                  {kit.active ? "Archiver" : "Desarchiver"}
-                                </button>
-                              </form>
-                              <form action={deleteAdminCatalogKitAction}>
-                                <input type="hidden" name="kit_id" value={kit.id} />
-                                <input type="hidden" name="return_to" value={currentHref} />
-                                <button type="submit" className="catalog-actions-item danger">
-                                  Supprimer
-                                </button>
-                              </form>
-                            </div>
-                          </details>
+                          <AdminKitActionsMenu
+                            editHref={editHref}
+                            viewCompositionHref={viewCompositionHref}
+                            kitId={kit.id}
+                            returnTo={currentHref}
+                            active={kit.active}
+                            duplicateAction={duplicateAdminCatalogKitAction}
+                            toggleArchiveAction={toggleAdminCatalogKitArchiveAction}
+                            deleteAction={deleteAdminCatalogKitAction}
+                          />
                         </td>
                       </tr>
                     );
@@ -628,21 +632,22 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                   </div>
                 </article>
 
+                <CatalogKitPriceFields
+                  computedPrice={selectedKit?.computed_price_incl_vat || "0.00"}
+                  effectivePrice={selectedKit?.price_effective_incl_vat || selectedKit?.price_incl_vat || "0.00"}
+                  currency={selectedKit?.currency || "EUR"}
+                  initialPriceMode={selectedKit?.price_mode || "calculated"}
+                  initialForcedPrice={selectedKit?.forced_price || ""}
+                />
+
                 <article className="card">
-                  <h4>Prix</h4>
+                  <h4>TVA</h4>
                   <div className="grid cols-2 config-form-grid">
-                    <label>
-                      Prix TTC
-                      <input type="number" name="price_incl_vat" min={0} step="0.01" required defaultValue={selectedKit?.price_incl_vat || "0.00"} />
-                    </label>
                     <label>
                       TVA (%)
                       <input type="number" name="vat_rate" min={0} max={100} step="0.001" required defaultValue={selectedKit?.vat_rate || "20.000"} />
                     </label>
                   </div>
-                  {selectedKit ? (
-                    <p className="muted">Prix calcule actuel selon composition: {formatMoney(selectedKit.computed_price_incl_vat, "EUR")}</p>
-                  ) : null}
                 </article>
               </section>
 
