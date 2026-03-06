@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,9 +13,10 @@ from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType
 from app.models.catalog import Professor as ProfessorModel
 from app.models.catalog import SessionStatus
 from app.models.ops import CommunicationSenderCategory, MessageFormat, ProfessorSessionMessage
-from app.models.payout import PayoutStatus, ProfessorSessionPayout
+from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.professor_contract import ProfessorContractGrid, ProfessorContractGridLine, ProfessorContractGridLineRule
+from app.models.professor_contract import ProfessorContractLineMode
 from app.models.professor_access import ProfessorPermission
 from app.models.user import ClientStatus, User, UserRole
 from app.schemas.booking import AttendanceUpdateRequest, BookingOut
@@ -39,8 +40,15 @@ from app.schemas.professor import (
     ProfessorSessionStudentOut,
 )
 from app.services.professor_contracts import label_for_contract_location
+from app.services.professor_contracts import contract_mode_from_course_type
+from app.services.professor_default_grid import load_default_professor_grid
 from app.services.professor_permissions import permissions_dict
 from app.services.reminders import skip_pending_reminders_for_booking
+from app.services.session_teachers import (
+    effective_teacher_filter_for_professor,
+    effective_teacher_id_for_session,
+    professor_display_name,
+)
 from app.services.session_notifications import send_session_operation_email
 
 router = APIRouter()
@@ -66,6 +74,10 @@ def _deserialize_languages(raw: str | None) -> list[str]:
 def _display_name(user: User) -> str:
     full_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
     return full_name or user.email
+
+
+def _session_effective_teacher_id(session_obj: CourseSession) -> UUID | None:
+    return effective_teacher_id_for_session(session_obj)
 
 
 def _resolve_professor_profile(db: Session, *, current_user: User) -> ProfessorModel:
@@ -94,7 +106,7 @@ def _require_professor_session(
     session_obj = db.scalar(stmt)
     if session_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    if session_obj.professor_id != professor_id:
+    if _session_effective_teacher_id(session_obj) != professor_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Session does not belong to this professor")
     return session_obj
 
@@ -283,6 +295,189 @@ def _serialize_professor_contract_grid(db: Session, *, grid: ProfessorContractGr
     )
 
 
+def _quantize_money(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _normalize_professor_rate_rules(raw_rules: object) -> list[ProfessorContractGridRuleOut]:
+    if not isinstance(raw_rules, list):
+        return []
+
+    rules: list[ProfessorContractGridRuleOut] = []
+    for raw_rule in raw_rules:
+        if not isinstance(raw_rule, dict):
+            continue
+        try:
+            min_students = int(raw_rule.get("min_students"))
+        except (TypeError, ValueError):
+            continue
+        if min_students < 0:
+            continue
+
+        max_students_raw = raw_rule.get("max_students")
+        if max_students_raw is None:
+            max_students: int | None = None
+        else:
+            try:
+                max_students = int(max_students_raw)
+            except (TypeError, ValueError):
+                continue
+            if max_students < min_students:
+                continue
+
+        try:
+            hourly_rate = _quantize_money(Decimal(str(raw_rule.get("hourly_rate"))))
+        except (InvalidOperation, ValueError):
+            continue
+        if hourly_rate < 0:
+            continue
+
+        rules.append(
+            ProfessorContractGridRuleOut(
+                min_students=min_students,
+                max_students=max_students,
+                hourly_rate=hourly_rate,
+            )
+        )
+
+    rules.sort(key=lambda row: (row.min_students, row.max_students if row.max_students is not None else 10**9))
+    return rules
+
+
+def _rate_payload_for_display(
+    rate_row: ProfessorHourlyRate,
+) -> tuple[Decimal | None, list[ProfessorContractGridRuleOut]] | None:
+    rules = _normalize_professor_rate_rules(rate_row.headcount_rules_json)
+    hourly_rate = _quantize_money(Decimal(rate_row.hourly_rate)) if rate_row.hourly_rate is not None else None
+    if hourly_rate is None and not rules:
+        return None
+    return hourly_rate, rules
+
+
+def _build_effective_contract_grid(
+    db: Session,
+    *,
+    professor: ProfessorModel,
+    on_date: date,
+) -> list[ProfessorContractGridOut]:
+    default_grid_lines, _ = load_default_professor_grid(db)
+    default_by_course_type_id = {line.course_type_id: line for line in default_grid_lines}
+
+    active_rate_rows = db.scalars(
+        select(ProfessorHourlyRate)
+        .where(
+            ProfessorHourlyRate.professor_id == professor.id,
+            ProfessorHourlyRate.location_id.is_(None),
+            ProfessorHourlyRate.valid_from <= on_date,
+            or_(ProfessorHourlyRate.valid_to.is_(None), ProfessorHourlyRate.valid_to >= on_date),
+        )
+        .order_by(ProfessorHourlyRate.valid_from.desc(), ProfessorHourlyRate.created_at.desc())
+    ).all()
+
+    rate_by_course_type_id: dict[UUID | None, ProfessorHourlyRate] = {}
+    for row in active_rate_rows:
+        if row.course_type_id in rate_by_course_type_id:
+            continue
+        rate_by_course_type_id[row.course_type_id] = row
+
+    global_payload = None
+    global_rate_row = rate_by_course_type_id.get(None)
+    if global_rate_row is not None:
+        global_payload = _rate_payload_for_display(global_rate_row)
+
+    course_type_ids = {
+        course_type_id
+        for course_type_id in set(default_by_course_type_id.keys()) | set(rate_by_course_type_id.keys())
+        if course_type_id is not None
+    }
+    course_type_rows = (
+        db.scalars(select(CourseType).where(CourseType.id.in_(course_type_ids)).order_by(CourseType.name.asc())).all()
+        if course_type_ids
+        else []
+    )
+    course_type_by_id = {row.id: row for row in course_type_rows}
+
+    ordered_course_type_ids = [row.id for row in course_type_rows]
+    missing_course_type_ids = sorted(str(course_type_id) for course_type_id in course_type_ids if course_type_id not in course_type_by_id)
+    ordered_course_type_ids.extend(UUID(raw_id) for raw_id in missing_course_type_ids)
+
+    serialized_lines: list[ProfessorContractGridLineOut] = []
+    for course_type_id in ordered_course_type_ids:
+        course_type = course_type_by_id.get(course_type_id)
+        default_line = default_by_course_type_id.get(course_type_id)
+        default_rules = (
+            [
+                ProfessorContractGridRuleOut(
+                    min_students=rule.min_students,
+                    max_students=rule.max_students,
+                    hourly_rate=_quantize_money(Decimal(rule.hourly_rate)),
+                )
+                for rule in default_line.rules
+            ]
+            if default_line is not None
+            else []
+        )
+        default_hourly_rate = (
+            _quantize_money(Decimal(default_line.default_hourly_rate))
+            if default_line is not None and default_line.default_hourly_rate is not None
+            else None
+        )
+
+        applied_hourly_rate = default_hourly_rate
+        applied_rules = default_rules
+
+        course_rate_row = rate_by_course_type_id.get(course_type_id)
+        course_payload = _rate_payload_for_display(course_rate_row) if course_rate_row is not None else None
+        if course_payload is not None:
+            applied_hourly_rate, applied_rules = course_payload
+        elif global_payload is not None:
+            applied_hourly_rate, applied_rules = global_payload
+
+        if applied_hourly_rate is None and not applied_rules:
+            continue
+
+        serialized_lines.append(
+            ProfessorContractGridLineOut(
+                course_type_id=course_type_id,
+                course_type_name=course_type.name if course_type is not None else "Activite supprimee",
+                service_type=course_type.name if course_type is not None else "Activite supprimee",
+                mode=contract_mode_from_course_type(course_type) if course_type is not None else ProfessorContractLineMode.AUTRE,
+                reference_duration_minutes=course_type.duration_minutes if course_type is not None else None,
+                default_hourly_rate=applied_hourly_rate,
+                rules=applied_rules,
+            )
+        )
+
+    if not serialized_lines and global_payload is not None:
+        serialized_lines.append(
+            ProfessorContractGridLineOut(
+                course_type_id=None,
+                course_type_name="Global",
+                service_type="Global",
+                mode=ProfessorContractLineMode.AUTRE,
+                reference_duration_minutes=None,
+                default_hourly_rate=global_payload[0],
+                rules=global_payload[1],
+            )
+        )
+
+    if not serialized_lines:
+        return []
+
+    effective_from = min((row.valid_from for row in rate_by_course_type_id.values()), default=on_date)
+    return [
+        ProfessorContractGridOut(
+            grid_id=professor.id,
+            valid_from=effective_from,
+            valid_to=None,
+            location_code=None,
+            location_label="Tous lieux",
+            notes=None,
+            lines=serialized_lines,
+        )
+    ]
+
+
 @router.get("/professors/me", response_model=ProfessorMeOut)
 def get_my_professor_profile(
     db: Session = Depends(get_db),
@@ -352,7 +547,7 @@ def list_my_professor_sessions(
     )
 
     if not can_view_all_school_sessions:
-        stmt = stmt.where(CourseSession.professor_id == professor.id)
+        stmt = stmt.where(effective_teacher_filter_for_professor(professor_id=professor.id))
 
     if from_ is not None:
         stmt = stmt.where(CourseSession.start_at_utc >= from_)
@@ -361,43 +556,66 @@ def list_my_professor_sessions(
 
     rows = db.execute(stmt.order_by(CourseSession.start_at_utc.asc())).all()
     sessions = [row[0] for row in rows]
+    teacher_ids = {
+        teacher_id
+        for session_obj in sessions
+        for teacher_id in (session_obj.professor_id, session_obj.substitute_teacher_id)
+        if teacher_id is not None
+    }
+    teachers_by_id: dict[UUID, ProfessorModel] = {}
+    if teacher_ids:
+        teacher_rows = db.scalars(select(ProfessorModel).where(ProfessorModel.id.in_(teacher_ids))).all()
+        teachers_by_id = {row.id: row for row in teacher_rows}
 
     students_by_session: dict[UUID, list[ProfessorSessionStudentOut]] = {}
     if include_students and sessions:
         for session_obj in sessions:
             # With school-wide visibility, keep student roster visibility restricted
             # to the collaborator's own sessions unless explicit client rights are granted.
-            if can_view_all_school_sessions and session_obj.professor_id != professor.id and not permissions["can_view_clients"]:
+            if (
+                can_view_all_school_sessions
+                and _session_effective_teacher_id(session_obj) != professor.id
+                and not permissions["can_view_clients"]
+            ):
                 students_by_session[session_obj.id] = []
             else:
                 students_by_session[session_obj.id] = _session_students(db, session_obj=session_obj)
 
-    return [
-        ProfessorSessionOut(
-            id=session.id,
-            title=session.title,
-            description=session.description,
-            start_at_utc=session.start_at_utc,
-            end_at_utc=session.end_at_utc,
-            status=session.status,
-            capacity_max=session.capacity_max,
-            booked_count=int(booked_count or 0),
-            zoom_link=session.zoom_link,
-            students=students_by_session.get(session.id, []),
-            course_type=ProfessorSessionCourseTypeOut(
-                id=course_type.id,
-                code=course_type.code,
-                name=course_type.name,
-            ),
-            location=ProfessorSessionLocationOut(
-                id=location.id,
-                code=location.code,
-                name=location.name,
-                is_online=location.is_online,
-            ),
+    payload: list[ProfessorSessionOut] = []
+    for session, course_type, location, booked_count in rows:
+        effective_teacher_id = _session_effective_teacher_id(session)
+        payload.append(
+            ProfessorSessionOut(
+                id=session.id,
+                title=session.title,
+                description=session.description,
+                start_at_utc=session.start_at_utc,
+                end_at_utc=session.end_at_utc,
+                status=session.status,
+                capacity_max=session.capacity_max,
+                booked_count=int(booked_count or 0),
+                zoom_link=session.zoom_link,
+                habitual_teacher_id=session.professor_id,
+                habitual_teacher_display_name=professor_display_name(teachers_by_id.get(session.professor_id)),
+                substitute_teacher_id=session.substitute_teacher_id,
+                substitute_teacher_display_name=professor_display_name(teachers_by_id.get(session.substitute_teacher_id)) or None,
+                effective_teacher_id=effective_teacher_id,
+                effective_teacher_display_name=professor_display_name(teachers_by_id.get(effective_teacher_id)) or None,
+                students=students_by_session.get(session.id, []),
+                course_type=ProfessorSessionCourseTypeOut(
+                    id=course_type.id,
+                    code=course_type.code,
+                    name=course_type.name,
+                ),
+                location=ProfessorSessionLocationOut(
+                    id=location.id,
+                    code=location.code,
+                    name=location.name,
+                    is_online=location.is_online,
+                ),
+            )
         )
-        for session, course_type, location, booked_count in rows
-    ]
+    return payload
 
 
 @router.get("/professors/me/sessions/{session_id}/bookings", response_model=list[ProfessorSessionStudentOut])
@@ -451,7 +669,7 @@ def list_pending_attendance(
             (Booking.session_id == CourseSession.id) & (Booking.status.in_(tracked_statuses)),
         )
         .where(
-            CourseSession.professor_id == professor.id,
+            effective_teacher_filter_for_professor(professor_id=professor.id),
             CourseSession.end_at_utc <= now,
             CourseSession.status != SessionStatus.CANCELLED,
         )
@@ -568,6 +786,10 @@ def list_my_contract_grids(
 ) -> list[ProfessorContractGridOut]:
     professor = _resolve_professor_profile(db, current_user=current_user)
     reference_date = on_date or date.today()
+    effective_grid = _build_effective_contract_grid(db, professor=professor, on_date=reference_date)
+    if effective_grid:
+        return effective_grid
+
     grids = db.scalars(
         select(ProfessorContractGrid)
         .where(
@@ -871,7 +1093,7 @@ def update_booking_attendance(
         permissions = _resolve_professor_permissions(db, professor_id=professor.id)
         if not permissions["can_edit_planning"]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Attendance permission denied")
-        if session_obj.professor_id != professor.id:
+        if _session_effective_teacher_id(session_obj) != professor.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Session does not belong to this professor")
 
     if booking.status in (BookingStatus.CANCELLED, BookingStatus.WAITLISTED):
