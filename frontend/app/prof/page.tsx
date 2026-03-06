@@ -208,6 +208,44 @@ function formatTime(value: string): string {
   });
 }
 
+function formatDateOnly(value: string): string {
+  return new Date(`${value}T00:00:00Z`).toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function professorModeLabel(mode: string): string {
+  const normalized = mode.trim().toUpperCase();
+  if (normalized === "EN_LIGNE") {
+    return "En ligne";
+  }
+  if (normalized === "PRESENTIEL") {
+    return "Presentiel";
+  }
+  return "Autre";
+}
+
+function formatMoneyEurLike(amountRaw: string, currency: string): string {
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount)) {
+    return `${amountRaw} ${currency}`;
+  }
+  return `${amount.toFixed(2).replace(".", ",")} ${currency}`;
+}
+
+function formatRuleLabel(
+  rule: { min_students: number; max_students: number | null; hourly_rate: string },
+  currency: string,
+): string {
+  if (rule.max_students === null) {
+    return `${rule.min_students} eleves et + : ${formatMoneyEurLike(rule.hourly_rate, currency)}`;
+  }
+  return `${rule.min_students} a ${rule.max_students} eleves : ${formatMoneyEurLike(rule.hourly_rate, currency)}`;
+}
+
 function statusBadgeClass(status: string): string {
   const normalized = status.toUpperCase();
   if (normalized === "ATTENDANCE_PENDING") {
@@ -1021,54 +1059,67 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             )}
           </ActionCard>
 
-          <ActionCard title="Ma grille contractuelle" subtitle="Regles de remuneration par activite et effectif.">
+          <ActionCard title="Ma grille de remuneration" subtitle="Voici les taux actuellement appliques a vos activites.">
             {contractGridsResult.ok && contractGridsResult.data.length > 0 ? (
-              <div className="list">
-                {contractGridsResult.data.map((grid) => (
-                  <SectionAccordion
-                    key={grid.grid_id}
-                    title={grid.location_label}
-                    subtitle={`${grid.valid_from} - ${grid.valid_to ?? "non definie"}`}
-                    defaultOpen={false}
-                  >
-                    <div className="table-wrap top-gap-sm">
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th>Activite</th>
-                            <th>Mode</th>
-                            <th>Duree ref</th>
-                            <th>Taux default</th>
-                            <th>Regles effectif</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {grid.lines.map((line) => (
-                            <tr key={`${grid.grid_id}-${line.course_type_id ?? line.service_type}-${line.mode}`}>
-                              <td>{line.course_type_name || line.service_type}</td>
-                              <td>{line.mode}</td>
-                              <td>{line.reference_duration_minutes ?? "-"}</td>
-                              <td>{line.default_hourly_rate ?? "-"}</td>
-                              <td>
-                                {line.rules.length > 0
-                                  ? line.rules
-                                      .map((rule) => {
-                                        const range = rule.max_students === null ? `${rule.min_students}+` : `${rule.min_students}-${rule.max_students}`;
-                                        return `${range}:${rule.hourly_rate}`;
-                                      })
-                                      .join("; ")
-                                  : "-"}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+              (() => {
+                const grids = contractGridsResult.data;
+                const firstGrid = grids[0];
+                const periodLabel = firstGrid.valid_to
+                  ? `du ${formatDateOnly(firstGrid.valid_from)} au ${formatDateOnly(firstGrid.valid_to)}`
+                  : `a partir du ${formatDateOnly(firstGrid.valid_from)}`;
+
+                const seen = new Set<string>();
+                const lines = grids.flatMap((grid) => grid.lines).filter((line) => {
+                  const key = `${line.course_type_id ?? line.service_type}:${line.mode}:${line.reference_duration_minutes ?? "-"}`;
+                  if (seen.has(key)) {
+                    return false;
+                  }
+                  seen.add(key);
+                  return true;
+                });
+
+                return (
+                  <>
+                    <article className="item">
+                      <strong>Periode applicable</strong>
+                      <p className="muted top-gap-sm">{periodLabel}</p>
+                    </article>
+
+                    <div className="list top-gap-sm">
+                      {lines.map((line, index) => {
+                        const title = line.course_type_name || line.service_type;
+                        const modeLabel = professorModeLabel(line.mode);
+                        const durationLabel = line.reference_duration_minutes ? `${line.reference_duration_minutes} min` : "-";
+                        const gridRows =
+                          line.rules.length > 0
+                            ? line.rules.map((rule) => formatRuleLabel(rule, profile.payout_currency))
+                            : line.default_hourly_rate
+                              ? [`Tarif horaire: ${formatMoneyEurLike(line.default_hourly_rate, profile.payout_currency)}`]
+                              : ["Aucune tranche disponible"];
+
+                        return (
+                          <article key={`prof-rate-line-${index}-${title}`} className="item">
+                            <strong>{title}</strong>
+                            <p className="muted top-gap-sm">
+                              {modeLabel} • {durationLabel}
+                            </p>
+                            <p className="muted top-gap-sm">
+                              <strong>Grille active</strong>
+                            </p>
+                            <ul className="top-gap-sm">
+                              {gridRows.map((row) => (
+                                <li key={`${title}-${row}`}>{row}</li>
+                              ))}
+                            </ul>
+                          </article>
+                        );
+                      })}
                     </div>
-                  </SectionAccordion>
-                ))}
-              </div>
+                  </>
+                );
+              })()
             ) : (
-              <p className="muted">Aucune grille contractuelle active a cette date.</p>
+              <p className="muted">Aucune grille de remuneration active a cette date.</p>
             )}
           </ActionCard>
         </section>
