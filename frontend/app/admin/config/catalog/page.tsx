@@ -2,7 +2,6 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import ClientHydrationMarker from "../../../../components/client-hydration-marker";
 import {
   createAdminCatalogCategoryAction,
   createAdminCatalogKitAction,
@@ -229,7 +228,6 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
 
   return (
     <main className="stack catalog-admin-page">
-      <ClientHydrationMarker />
       <section className="card">
         <div className="row spread">
           <div>
