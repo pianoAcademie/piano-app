@@ -80,9 +80,9 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
             set -euo pipefail
             cd '${VPS_PATH}'
-            docker compose up -d --build db
+            docker compose up -d --build db redis
             docker compose run --rm -T --build backend alembic upgrade head
-            docker compose up -d --build backend frontend
+            docker compose up -d --build backend frontend notifications-immediate-worker notifications-scheduled-worker notifications-feedback-worker
             docker compose ps
           "
 
@@ -110,6 +110,11 @@ jobs:
             done
             code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/login || true)
             [ \"\$code\" = \"200\" ] || { echo \"Frontend healthcheck failed: \$code\"; exit 1; }
+
+            for svc in notifications-immediate-worker notifications-scheduled-worker notifications-feedback-worker; do
+              running=\$(docker compose ps --format json \"\$svc\" | python3 -c 'import json,sys; rows=json.load(sys.stdin); print("ok" if rows and rows[0].get("State")=="running" else "ko")')
+              [ \"\$running\" = \"ok\" ] || { echo \"Service not running: \$svc\"; docker compose ps \"\$svc\"; exit 1; }
+            done
           "
 
       - name: Dump remote logs on failure
@@ -123,4 +128,8 @@ jobs:
             docker compose logs --tail=200 backend
             docker compose logs --tail=120 frontend
             docker compose logs --tail=120 db
+            docker compose logs --tail=120 redis
+            docker compose logs --tail=120 notifications-immediate-worker
+            docker compose logs --tail=120 notifications-scheduled-worker
+            docker compose logs --tail=120 notifications-feedback-worker
           "
