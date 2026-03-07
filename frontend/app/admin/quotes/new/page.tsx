@@ -51,6 +51,8 @@ type SolfegeLevelRuleOut = {
   duration_minutes: number;
   allowed_weekdays: number[];
   allowed_time_slots: Array<Record<string, unknown>>;
+  location_id: string | null;
+  modality: string | null;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -201,6 +203,8 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
           duration_minutes: row.duration_minutes,
           allowed_weekdays: row.allowed_weekdays,
           allowed_time_slots: row.allowed_time_slots,
+          location_id: row.location_id,
+          modality: row.modality,
         }))}
         defaultProspectId={selectedProspectId}
         createAction={createQuoteDraftAction}

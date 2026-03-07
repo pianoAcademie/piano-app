@@ -73,6 +73,31 @@ type SolfegeRule = {
   duration_minutes: number;
   allowed_weekdays: number[];
   allowed_time_slots: Array<Record<string, unknown>>;
+  location_id: string | null;
+  modality: string | null;
+};
+
+type PlanningBlock = {
+  uid: string;
+  activity_id: string;
+  location_id: string;
+  weekday: number;
+  start_date: string;
+  end_date: string;
+  start_time: string;
+  end_time: string;
+  modality: string;
+};
+
+type SolfegeSlotOption = {
+  key: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  location_id: string | null;
+  modality: string | null;
+  label: string;
 };
 
 type QuoteWizardFormProps = {
@@ -233,6 +258,20 @@ function addMinutesToTime(startTime: string, deltaMinutes: number): string {
   return `${outHours}:${outMinutes}`;
 }
 
+function weekdayLabel(weekday: number): string {
+  const row = WEEKDAY_LABELS.find((item) => item.value === weekday);
+  return row?.label ?? String(weekday);
+}
+
+function timeSlotParts(slot: Record<string, unknown>): { start: string; end: string } | null {
+  const start = typeof slot.start_time === "string" ? slot.start_time : typeof slot.start === "string" ? slot.start : "";
+  const end = typeof slot.end_time === "string" ? slot.end_time : typeof slot.end === "string" ? slot.end : "";
+  if (!start || !end) {
+    return null;
+  }
+  return { start, end };
+}
+
 export default function QuoteWizardForm({
   returnTo,
   prospects,
@@ -253,19 +292,22 @@ export default function QuoteWizardForm({
   const [contextType, setContextType] = useState<"acquisition" | "active_client">("acquisition");
   const [selectedProspectId, setSelectedProspectId] = useState<string>(defaultProspectId || "");
   const [selectedClientId, setSelectedClientId] = useState<string>("");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
-  const [weekdays, setWeekdays] = useState<number[]>([0]);
-  const [selectedCalendarActivityId, setSelectedCalendarActivityId] = useState<string>(activities[0]?.id ?? "");
-  const [startTime, setStartTime] = useState<string>("17:00");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(quoteTemplates.find((item) => item.is_default)?.id ?? quoteTemplates[0]?.id ?? "");
   const [language, setLanguage] = useState<string>("fr");
   const [currency, setCurrency] = useState<string>("EUR");
   const [tvaRate, setTvaRate] = useState<string>("20");
   const [estimatedLevel, setEstimatedLevel] = useState<string>("");
+  const [selectedSolfegeSlotKey, setSelectedSolfegeSlotKey] = useState<string>("");
   const [lines, setLines] = useState<WizardLine[]>([]);
+  const [planningBlocks, setPlanningBlocks] = useState<PlanningBlock[]>([]);
 
-  const sessionsCount = useMemo(() => countEstimatedSessions(startDate, endDate, weekdays), [startDate, endDate, weekdays]);
+  const sessionsCount = useMemo(
+    () => planningBlocks.reduce((sum, block) => {
+      const blockCount = countEstimatedSessions(block.start_date, block.end_date, [block.weekday]);
+      return sum + blockCount;
+    }, 0),
+    [planningBlocks],
+  );
 
   const total = useMemo(() => lines.reduce((sum, line) => sum + lineAmount(line), 0), [lines]);
 
@@ -273,13 +315,63 @@ export default function QuoteWizardForm({
     () => solfegeRules.find((rule) => String(rule.level_code) === String(estimatedLevel)),
     [solfegeRules, estimatedLevel],
   );
-  const selectedCalendarActivity = useMemo(
-    () => activities.find((activity) => activity.id === selectedCalendarActivityId) ?? null,
-    [activities, selectedCalendarActivityId],
+
+  const solfegeSlotOptions = useMemo<SolfegeSlotOption[]>(() => {
+    if (!selectedSolfegeRule) {
+      return [];
+    }
+    const weekdays = selectedSolfegeRule.allowed_weekdays.length > 0
+      ? selectedSolfegeRule.allowed_weekdays.filter((day) => Number.isFinite(day) && day >= 0 && day <= 6)
+      : [0, 1, 2, 3, 4, 5, 6];
+
+    const options: SolfegeSlotOption[] = [];
+    for (const weekday of weekdays) {
+      for (const slot of selectedSolfegeRule.allowed_time_slots) {
+        const parts = timeSlotParts(slot);
+        if (!parts) {
+          continue;
+        }
+        const key = `${weekday}|${parts.start}|${parts.end}`;
+        options.push({
+          key,
+          weekday,
+          start_time: parts.start,
+          end_time: parts.end,
+          duration_minutes: selectedSolfegeRule.duration_minutes,
+          location_id: selectedSolfegeRule.location_id,
+          modality: selectedSolfegeRule.modality,
+          label: `${weekdayLabel(weekday)} ${parts.start}-${parts.end}`,
+        });
+      }
+    }
+    return options;
+  }, [selectedSolfegeRule]);
+
+  const selectedSolfegeSlot = useMemo(
+    () => solfegeSlotOptions.find((item) => item.key === selectedSolfegeSlotKey) ?? null,
+    [solfegeSlotOptions, selectedSolfegeSlotKey],
   );
-  const endTime = useMemo(
-    () => addMinutesToTime(startTime, selectedCalendarActivity?.duration_minutes ?? 60),
-    [startTime, selectedCalendarActivity],
+
+  const planningBlocksJson = useMemo(
+    () =>
+      JSON.stringify(
+        planningBlocks.map((row) => ({
+          activity_id: row.activity_id || null,
+          location_id: row.location_id || null,
+          weekday: row.weekday,
+          start_date: row.start_date,
+          end_date: row.end_date,
+          start_time: row.start_time,
+          end_time: row.end_time,
+          modality: row.modality || null,
+        })),
+      ),
+    [planningBlocks],
+  );
+
+  const selectedSolfegeSlotJson = useMemo(
+    () => (selectedSolfegeSlot ? JSON.stringify(selectedSolfegeSlot) : ""),
+    [selectedSolfegeSlot],
   );
 
   const linesJson = useMemo(
@@ -287,8 +379,41 @@ export default function QuoteWizardForm({
     [lines],
   );
 
-  function toggleWeekday(value: number): void {
-    setWeekdays((prev) => (prev.includes(value) ? prev.filter((day) => day !== value) : [...prev, value].sort((a, b) => a - b)));
+  function addPlanningBlock(): void {
+    const defaultActivityId = activities[0]?.id ?? "";
+    const defaultDuration = activities[0]?.duration_minutes ?? 60;
+    const startTime = "17:00";
+    setPlanningBlocks((prev) => [
+      ...prev,
+      {
+        uid: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        activity_id: defaultActivityId,
+        location_id: locations[0]?.id ?? "",
+        weekday: 0,
+        start_date: "",
+        end_date: "",
+        start_time: startTime,
+        end_time: addMinutesToTime(startTime, defaultDuration),
+        modality: "",
+      },
+    ]);
+  }
+
+  function removePlanningBlock(uid: string): void {
+    setPlanningBlocks((prev) => prev.filter((row) => row.uid !== uid));
+  }
+
+  function updatePlanningBlock(uid: string, patch: Partial<PlanningBlock>): void {
+    setPlanningBlocks((prev) => prev.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
+  }
+
+  function syncPlanningActivity(uid: string, activityId: string, startTime: string): void {
+    const activity = activities.find((item) => item.id === activityId);
+    const duration = activity?.duration_minutes ?? 60;
+    updatePlanningBlock(uid, {
+      activity_id: activityId,
+      end_time: addMinutesToTime(startTime, duration),
+    });
   }
 
   function addLine(kind: LineKind): void {
@@ -362,6 +487,8 @@ export default function QuoteWizardForm({
     <form action={createAction} className="quote-wizard-layout">
       <input type="hidden" name="return_to" value={returnTo} />
       <input type="hidden" name="lines_json" value={linesJson} />
+      <input type="hidden" name="planning_blocks_json" value={planningBlocksJson} />
+      <input type="hidden" name="solfege_slot_json" value={selectedSolfegeSlotJson} />
 
       <section className="quote-wizard-main stack">
         <article className="card quote-wizard-card">
@@ -521,59 +648,105 @@ export default function QuoteWizardForm({
 
         <article className="card quote-wizard-card">
           <h3>3. Planning piano</h3>
-          <div className="grid cols-2 top-gap-sm">
-            <label>
-              Lieu
-              <select name="location_id" defaultValue={locations[0]?.id ?? ""}>
-                <option value="">Aucun</option>
-                {locations.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Activite planning
-              <select name="calendar_activity_id" value={selectedCalendarActivityId} onChange={(event) => setSelectedCalendarActivityId(event.target.value)}>
-                <option value="">Aucune</option>
-                {activities.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Date debut
-              <input type="date" name="calendar_start_date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-            </label>
-            <label>
-              Date fin
-              <input type="date" name="calendar_end_date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-            </label>
-            <label>
-              Heure debut
-              <input type="time" name="calendar_start_time" value={startTime} onChange={(event) => setStartTime(event.target.value)} />
-            </label>
-            <label>
-              Heure fin
-              <input type="time" name="calendar_end_time_display" value={endTime} readOnly />
-              <input type="hidden" name="calendar_end_time" value={endTime} />
-            </label>
-          </div>
+          <p className="muted">
+            Ajoutez une ou plusieurs activites. Pour chaque activite, l heure de fin est calculee automatiquement depuis la duree en base.
+          </p>
           <div className="row wrap gap-sm top-gap-sm">
-            {WEEKDAY_LABELS.map((entry) => (
-              <label key={entry.value} className="row gap-xs quote-weekday-chip">
-                <input
-                  type="checkbox"
-                  name="calendar_weekdays"
-                  value={String(entry.value)}
-                  checked={weekdays.includes(entry.value)}
-                  onChange={() => toggleWeekday(entry.value)}
-                />
-                {entry.label}
-              </label>
+            <button type="button" className="ghost" onClick={addPlanningBlock}>+ Ajouter une activite planning</button>
+          </div>
+          {planningBlocks.length === 0 ? <p className="muted top-gap-sm">Aucun bloc planning configure.</p> : null}
+          <div className="list top-gap-sm">
+            {planningBlocks.map((block, index) => (
+              <article key={block.uid} className="item">
+                <div className="row spread wrap gap-sm">
+                  <strong>Activite #{index + 1}</strong>
+                  <button type="button" className="ghost small-btn" onClick={() => removePlanningBlock(block.uid)}>
+                    Supprimer
+                  </button>
+                </div>
+                <div className="grid cols-4 top-gap-sm">
+                  <label>
+                    Activite
+                    <select
+                      value={block.activity_id}
+                      onChange={(event) => syncPlanningActivity(block.uid, event.target.value, block.start_time)}
+                    >
+                      <option value="">Selectionner</option>
+                      {activities.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} ({item.duration_minutes} min)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Lieu
+                    <select
+                      value={block.location_id}
+                      onChange={(event) => updatePlanningBlock(block.uid, { location_id: event.target.value })}
+                    >
+                      <option value="">Aucun</option>
+                      {locations.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Jour
+                    <select
+                      value={String(block.weekday)}
+                      onChange={(event) => updatePlanningBlock(block.uid, { weekday: Number.parseInt(event.target.value, 10) || 0 })}
+                    >
+                      {WEEKDAY_LABELS.map((entry) => (
+                        <option key={entry.value} value={entry.value}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Modalite
+                    <select
+                      value={block.modality}
+                      onChange={(event) => updatePlanningBlock(block.uid, { modality: event.target.value })}
+                    >
+                      <option value="">Auto</option>
+                      <option value="ONLINE">En ligne</option>
+                      <option value="ONSITE">Presentiel</option>
+                    </select>
+                  </label>
+                  <label>
+                    Date debut
+                    <input type="date" value={block.start_date} onChange={(event) => updatePlanningBlock(block.uid, { start_date: event.target.value })} />
+                  </label>
+                  <label>
+                    Date fin
+                    <input type="date" value={block.end_date} onChange={(event) => updatePlanningBlock(block.uid, { end_date: event.target.value })} />
+                  </label>
+                  <label>
+                    Heure debut
+                    <input
+                      type="time"
+                      value={block.start_time}
+                      onChange={(event) => {
+                        const nextStart = event.target.value;
+                        const activity = activities.find((item) => item.id === block.activity_id);
+                        const duration = activity?.duration_minutes ?? 60;
+                        updatePlanningBlock(block.uid, {
+                          start_time: nextStart,
+                          end_time: addMinutesToTime(nextStart, duration),
+                        });
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Heure fin (auto)
+                    <input type="time" value={block.end_time} readOnly />
+                  </label>
+                </div>
+              </article>
             ))}
           </div>
           <p className="muted top-gap-sm">Apercu rapide: {sessionsCount} seances estimees (hors jours feries/fermetures).</p>
@@ -598,7 +771,24 @@ export default function QuoteWizardForm({
                 Duree suggeree: <strong>{selectedSolfegeRule.duration_minutes} min</strong>
               </p>
               <p className="muted">Jours autorises: {selectedSolfegeRule.allowed_weekdays.length > 0 ? selectedSolfegeRule.allowed_weekdays.join(", ") : "Tous"}</p>
-              <p className="muted">Creneaux configures: {selectedSolfegeRule.allowed_time_slots.length}</p>
+              <p className="muted">Creneaux configures: {solfegeSlotOptions.length}</p>
+              <label className="top-gap-sm">
+                Creneau propose
+                <select value={selectedSolfegeSlotKey} onChange={(event) => setSelectedSolfegeSlotKey(event.target.value)}>
+                  <option value="">Selectionner un creneau</option>
+                  {solfegeSlotOptions.map((slot) => (
+                    <option key={slot.key} value={slot.key}>
+                      {slot.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedSolfegeSlot ? (
+                <p className="muted top-gap-sm">
+                  Selection: <strong>{selectedSolfegeSlot.label}</strong>
+                  {selectedSolfegeSlot.modality ? ` · ${selectedSolfegeSlot.modality}` : ""}
+                </p>
+              ) : null}
             </div>
           ) : (
             <p className="muted top-gap-sm">Selectionne un niveau pour afficher la regle active.</p>
@@ -680,7 +870,9 @@ export default function QuoteWizardForm({
           <p className="muted">Devise: <strong>{currency}</strong> · Langue: <strong>{language.toUpperCase()}</strong></p>
           <p className="muted">TVA: <strong>{tvaRate || "0"} %</strong></p>
           <p className="muted">Lignes: <strong>{lines.length}</strong></p>
+          <p className="muted">Activites planning: <strong>{planningBlocks.length}</strong></p>
           <p className="muted">Seances estimees: <strong>{sessionsCount}</strong></p>
+          {selectedSolfegeSlot ? <p className="muted">Creneau solfege: <strong>{selectedSolfegeSlot.label}</strong></p> : null}
           <p className="quote-total">Total estime: {toMoney(String(total))}</p>
         </article>
       </aside>

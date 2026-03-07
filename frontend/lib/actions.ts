@@ -8707,6 +8707,16 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const expiryDays = parsePositiveInt(String(formData.get("expiry_days") ?? "10")) ?? 10;
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
   const estimatedSolfegeLevel = String(formData.get("estimated_solfege_level") ?? "").trim() || null;
+  const solfegeSlotJsonRaw = String(formData.get("solfege_slot_json") ?? "").trim();
+  const parsedSolfegeSlot = parseSolfegeSlotJson(solfegeSlotJsonRaw);
+  if (parsedSolfegeSlot === undefined) {
+    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege invalide"));
+  }
+  const planningBlocksRaw = String(formData.get("planning_blocks_json") ?? "").trim();
+  const planningBlocks = planningBlocksRaw ? parsePlanningBlocksJson(planningBlocksRaw) : [];
+  if (planningBlocks === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Planning devis invalide"));
+  }
   const calendarActivityId = parseUuid(String(formData.get("calendar_activity_id") ?? ""));
   const startDate = parseDateOnly(String(formData.get("calendar_start_date") ?? ""));
   const endDate = parseDateOnly(String(formData.get("calendar_end_date") ?? ""));
@@ -8738,7 +8748,9 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   }
 
   let calendarSnapshot: Record<string, unknown> = {};
-  if (startDate && endDate && startTime && endTime && weekdays.length > 0) {
+  if (planningBlocks.length > 0) {
+    calendarSnapshot = await buildCalendarSnapshotFromBlocks({ blocks: planningBlocks, token, returnTo });
+  } else if (startDate && endDate && startTime && endTime && weekdays.length > 0) {
     const preview = await backendRequest<Record<string, unknown>>(
       "/api/v1/quotes/calendar/preview",
       {
@@ -8759,6 +8771,15 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
       calendarSnapshot = preview.data;
     }
   }
+  if (estimatedSolfegeLevel && parsedSolfegeSlot) {
+    calendarSnapshot = {
+      ...(calendarSnapshot || {}),
+      solfege: {
+        estimated_level: estimatedSolfegeLevel,
+        selected_slot: parsedSolfegeSlot,
+      },
+    };
+  }
 
   const payload = {
     context_type: contextType,
@@ -8774,7 +8795,10 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     school_year_label: schoolYearLabel,
     currency,
     language,
-    meta: tvaRate ? { tva_rate: tvaRate } : {},
+    meta: {
+      ...(tvaRate ? { tva_rate: tvaRate } : {}),
+      ...(parsedSolfegeSlot ? { selected_solfege_slot: parsedSolfegeSlot } : {}),
+    },
     expiry_days: expiryDays,
     estimated_solfege_level: estimatedSolfegeLevel,
     calendar_snapshot: calendarSnapshot,
@@ -9017,6 +9041,15 @@ type QuotePlanningBlockInput = {
   modality: string | null;
 };
 
+type QuoteSolfegeSlotInput = {
+  weekday: number;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  location_id: string | null;
+  modality: string | null;
+};
+
 function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null {
   const value = raw.trim();
   if (!value) {
@@ -9068,24 +9101,47 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
   }
 }
 
-export async function updateQuotePlanningAction(formData: FormData): Promise<void> {
-  const token = currentToken();
-  if (!token) {
-    redirect("/login?error=Session%20expiree");
+function parseSolfegeSlotJson(raw: string): QuoteSolfegeSlotInput | null | undefined {
+  const value = raw.trim();
+  if (!value) {
+    return null;
   }
-  await ensureAdmin(token);
-
-  const quoteId = String(formData.get("quote_id") ?? "").trim();
-  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
-  if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return undefined;
+    }
+    const row = parsed as Record<string, unknown>;
+    const weekday = Number.parseInt(String(row.weekday ?? ""), 10);
+    const startTime = String(row.start_time ?? "").trim();
+    const endTime = String(row.end_time ?? "").trim();
+    const durationMinutes = Number.parseInt(String(row.duration_minutes ?? ""), 10);
+    if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
+      return undefined;
+    }
+    if (!startTime || !endTime || !Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+      return undefined;
+    }
+    const modalityRaw = String(row.modality ?? "").trim().toUpperCase();
+    return {
+      weekday,
+      start_time: startTime,
+      end_time: endTime,
+      duration_minutes: durationMinutes,
+      location_id: parseUuid(String(row.location_id ?? "").trim()),
+      modality: modalityRaw === "ONLINE" || modalityRaw === "ONSITE" ? modalityRaw : null,
+    };
+  } catch {
+    return undefined;
   }
+}
 
-  const blocks = parsePlanningBlocksJson(String(formData.get("planning_blocks_json") ?? ""));
-  if (blocks === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Planning invalide"));
-  }
-
+async function buildCalendarSnapshotFromBlocks(
+  *,
+  blocks: QuotePlanningBlockInput[],
+  token: string,
+  returnTo: string,
+): Promise<Record<string, unknown>> {
   const sessions: Array<Record<string, unknown>> = [];
   for (const block of blocks) {
     const preview = await backendRequest<Record<string, unknown>>(
@@ -9124,12 +9180,32 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
     return 0;
   });
 
-  const snapshot: Record<string, unknown> = {
+  return {
     blocks,
     sessions,
     sessions_count: sessions.length,
     generated_at: new Date().toISOString(),
   };
+}
+
+export async function updateQuotePlanningAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const blocks = parsePlanningBlocksJson(String(formData.get("planning_blocks_json") ?? ""));
+  if (blocks === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Planning invalide"));
+  }
+  const snapshot = await buildCalendarSnapshotFromBlocks({ blocks, token, returnTo });
 
   const result = await backendRequest<{ quote: { id: string } }>(
     `/api/v1/quotes/${encodeURIComponent(quoteId)}`,
