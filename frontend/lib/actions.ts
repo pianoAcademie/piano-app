@@ -1481,7 +1481,12 @@ export async function teacherDisputeSelectedLinesAction(formData: FormData): Pro
   }
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Probleme envoye a l administration"));
+  const successPath = setQueryParam(
+    appendQueryMessage(returnTo, "ok", "Probleme envoye a l administration"),
+    "notice",
+    "dispute_sent",
+  );
+  redirect(`${successPath}#statement-success-modal`);
 }
 
 export async function teacherReportMissingServiceAction(formData: FormData): Promise<void> {
@@ -1530,7 +1535,12 @@ export async function teacherReportMissingServiceAction(formData: FormData): Pro
   }
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Prestation manquante signalee a l administration"));
+  const successPath = setQueryParam(
+    appendQueryMessage(returnTo, "ok", "Prestation manquante signalee a l administration"),
+    "notice",
+    "missing_service_sent",
+  );
+  redirect(`${successPath}#statement-success-modal`);
 }
 
 export async function teacherCancelInvoiceAction(formData: FormData): Promise<void> {

@@ -240,6 +240,7 @@ export default async function TeacherStatementMonthDetailPage({
   const ok = Array.isArray(searchParams.ok) ? searchParams.ok[0] : (searchParams.ok ?? "");
   const error = Array.isArray(searchParams.error) ? searchParams.error[0] : (searchParams.error ?? "");
   const impersonationNameHint = Array.isArray(searchParams.imp_name) ? searchParams.imp_name[0] ?? "" : searchParams.imp_name ?? "";
+  const notice = readQueryParam(searchParams, "notice").trim().toLowerCase();
   const backToRaw = readQueryParam(searchParams, "from").trim();
   const [statementsResult, courseTypesResult, locationsResult, contractGridsResult] = await Promise.all([
     backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements/${year}/${month}`, {}, token),
@@ -271,6 +272,11 @@ export default async function TeacherStatementMonthDetailPage({
   const disputePanelHref = "#statement-dispute-modal";
   const missingPanelHref = "#statement-missing-modal";
   const fallbackCurrency = statements[0]?.currency || "EUR";
+  const successMessage = notice === "missing_service_sent"
+    ? "Votre signalement de prestation manquante a bien ete envoye."
+    : notice === "dispute_sent"
+      ? "Votre signalement de probleme a bien ete envoye."
+      : "";
 
   const gridLineByCourseTypeId = new Map<string, ProfessorContractGridOut["lines"][number]>();
   if (contractGridsResult.ok) {
@@ -389,7 +395,7 @@ export default async function TeacherStatementMonthDetailPage({
         <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} />
       ) : null}
 
-      {ok ? <AlertCard tone="ok">{ok}</AlertCard> : null}
+      {ok && !successMessage ? <AlertCard tone="ok">{ok}</AlertCard> : null}
       {error ? <AlertCard tone="error">{error}</AlertCard> : null}
       {!statementsResult.ok ? <AlertCard tone="error">Erreur releve detail: {statementsResult.message}</AlertCard> : null}
       {!courseTypesResult.ok ? <AlertCard tone="error">Erreur prestations: {courseTypesResult.message}</AlertCard> : null}
@@ -561,6 +567,19 @@ export default async function TeacherStatementMonthDetailPage({
             activities={missingServiceActivities}
             locations={missingServiceLocations}
           />
+        </article>
+      </section>
+
+      <section id="statement-success-modal" className="modal-overlay statement-target-modal">
+        <article className="modal-panel modal-compact">
+          <a className="close-link" href="#" aria-label="Fermer la confirmation">
+            ✕
+          </a>
+          <h3>Signalement envoye</h3>
+          <p className="muted">{successMessage || ok || "Votre message a ete transmis a l administration."}</p>
+          <a className="mode-link" href={monthPathWithContext}>
+            Continuer
+          </a>
         </article>
       </section>
     </section>
