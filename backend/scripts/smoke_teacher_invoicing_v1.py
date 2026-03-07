@@ -296,7 +296,10 @@ def mark_all_attendance_done(session_id: str) -> None:
 
 
 def approve_month(prof_token: str, *, year: int, month: int) -> ApiResult:
-    return api.call("POST", f"/api/v1/teacher/statements/{year}/{month}/approve", token=prof_token)
+    approval = api.call("POST", f"/api/v1/teacher/statements/{year}/{month}/approve-only", token=prof_token)
+    if approval.status != 200:
+        return approval
+    return api.call("POST", f"/api/v1/teacher/statements/{year}/{month}/generate-invoices", token=prof_token)
 
 
 def parse_counter(invoice_number: str) -> int:
