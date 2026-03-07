@@ -37,7 +37,10 @@ jobs:
           test -n "${VPS_HOST}" || { echo "Missing secret VPS_HOST"; exit 1; }
           test -n "${VPS_USER}" || { echo "Missing secret VPS_USER"; exit 1; }
           test -n "${VPS_PATH}" || { echo "Missing secret VPS_PATH"; exit 1; }
-          test -n "${{ secrets.VPS_SSH_KEY }}" || { echo "Missing secret VPS_SSH_KEY"; exit 1; }
+          if [ -z "${{ secrets.VPS_SSH_KEY }}" ] && [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "Missing SSH key secret: set VPS_SSH_KEY (preferred) or SSH_PRIVATE_KEY"
+            exit 1
+          fi
           if [ -n "${VPS_PORT:-}" ]; then
             echo "${VPS_PORT}" | grep -Eq '^[0-9]+$' || { echo "Invalid VPS_PORT secret (must be numeric, e.g. 22)"; exit 1; }
           fi
@@ -51,7 +54,11 @@ jobs:
           set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          SSH_KEY_CONTENT="${{ secrets.VPS_SSH_KEY }}"
+          if [ -z "${SSH_KEY_CONTENT}" ]; then
+            SSH_KEY_CONTENT="${{ secrets.SSH_PRIVATE_KEY }}"
+          fi
+          printf '%s\n' "${SSH_KEY_CONTENT}" | tr -d '\r' > ~/.ssh/id_ed25519
           test -s ~/.ssh/id_ed25519 || { echo "SSH key file is empty"; exit 1; }
           chmod 600 ~/.ssh/id_ed25519
           : > ~/.ssh/known_hosts
