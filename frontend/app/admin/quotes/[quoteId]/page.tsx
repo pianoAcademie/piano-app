@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import CopyLinkButton from "../../../../components/copy-link-button";
+import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
 import {
@@ -248,6 +249,45 @@ function getSelectedSolfegeSlot(meta: Record<string, unknown>, snapshot: Record<
   return readObject(solfege.selected_slot);
 }
 
+function getProposedSolfegeSlots(meta: Record<string, unknown>, snapshot: Record<string, unknown>): Array<{
+  key: string;
+  label: string;
+  start_time: string;
+  end_time: string;
+}> {
+  const fromMeta = meta.proposed_solfege_slots;
+  const solfege = readObject(snapshot.solfege);
+  const fromSnapshot = solfege?.proposed_slots;
+  const raw = Array.isArray(fromMeta) && fromMeta.length > 0
+    ? fromMeta
+    : Array.isArray(fromSnapshot) ? fromSnapshot : [];
+  return raw
+    .map((item, index) => {
+      const row = readObject(item);
+      if (!row) {
+        return null;
+      }
+      const start = String(row.start_time ?? row.start ?? "").trim();
+      const end = String(row.end_time ?? row.end ?? "").trim();
+      if (!start || !end) {
+        return null;
+      }
+      const weekday = Number.parseInt(String(row.weekday ?? row.day ?? ""), 10);
+      const weekdayText = Number.isFinite(weekday) ? weekdayLabelFromNumber(weekday) : "-";
+      const modalityText = modalityLabel(row.modality);
+      const location = String(row.location_label ?? row.location_name ?? "").trim();
+      const suffix = [modalityText !== "-" ? modalityText : "", location].filter(Boolean).join(" · ");
+      const label = `${weekdayText} ${start}-${end}${suffix ? ` · ${suffix}` : ""}`;
+      return {
+        key: `${weekdayText}|${start}|${end}|${index}`,
+        label,
+        start_time: start,
+        end_time: end,
+      };
+    })
+    .filter((row): row is { key: string; label: string; start_time: string; end_time: string } => row !== null);
+}
+
 export default async function AdminQuoteDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -326,6 +366,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
   const selectedSolfegeSlot = getSelectedSolfegeSlot(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
+  const proposedSolfegeSlots = getProposedSolfegeSlots(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
   const languageQuoteTemplates = quoteTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
   const selectedTemplate = quoteTemplates.find((row) => row.id === quoteTemplateId);
   const templateOptions = (() => {
@@ -635,24 +676,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             </p>
 
             <div className="grid cols-2 top-gap-sm">
-              <form action={selectQuoteFollowupSlotAction} className="card quote-followup-form">
-                <h4>Selectionner / modifier le creneau solfege</h4>
-                <input type="hidden" name="followup_id" value={activeFollowup.id} />
-                <input type="hidden" name="return_to" value={selfPath} />
-                <label>
-                  Date
-                  <input type="date" name="slot_date" required />
-                </label>
-                <label>
-                  Debut
-                  <input type="time" name="slot_start_time" required />
-                </label>
-                <label>
-                  Fin
-                  <input type="time" name="slot_end_time" required />
-                </label>
-                <button type="submit">Enregistrer creneau</button>
-              </form>
+              <QuoteFollowupSlotForm
+                followupId={activeFollowup.id}
+                returnTo={selfPath}
+                proposedSlots={proposedSolfegeSlots}
+                submitAction={selectQuoteFollowupSlotAction}
+              />
 
               <form action={changeQuoteFollowupPaymentMethodAction} className="card quote-followup-form">
                 <h4>Changer le mode de paiement</h4>
