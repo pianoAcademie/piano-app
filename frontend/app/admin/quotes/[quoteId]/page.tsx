@@ -362,6 +362,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     : "-";
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = readStringMeta(detail.quote.meta || {}, "template_id");
+  const quoteCgvVersionId = readStringMeta(detail.quote.meta || {}, "cgv_version_id") || readStringMeta(detail.quote.cgv_snapshot || {}, "id");
   const tvaRate = readStringMeta(detail.quote.meta || {}, "tva_rate", "20.00");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
@@ -377,6 +378,18 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       return languageQuoteTemplates;
     }
     return [selectedTemplate, ...languageQuoteTemplates];
+  })();
+  const cgvOptions = (() => {
+    if (!quoteCgvVersionId) {
+      return cgvVersions;
+    }
+    if (cgvVersions.some((row) => row.id === quoteCgvVersionId)) {
+      return cgvVersions;
+    }
+    return [
+      { id: quoteCgvVersionId, version_label: String(detail.quote.cgv_snapshot?.version_label || "Snapshot actuel") },
+      ...cgvVersions,
+    ];
   })();
 
   const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
@@ -498,9 +511,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           </label>
           <label>
             CGV
-            <select name="cgv_version_id" defaultValue="" disabled={detail.quote.status !== "created"}>
+            <select name="cgv_version_id" defaultValue={quoteCgvVersionId} disabled={detail.quote.status !== "created"}>
               <option value="">Conserver snapshot actuel</option>
-              {cgvVersions.map((row) => (
+              {cgvOptions.map((row) => (
                 <option key={row.id} value={row.id}>{row.version_label}</option>
               ))}
             </select>
