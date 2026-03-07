@@ -357,8 +357,11 @@ export default function QuoteWizardForm({
       JSON.stringify(
         planningBlocks.map((row) => ({
           activity_id: row.activity_id || null,
+          activity_label: activities.find((item) => item.id === row.activity_id)?.name || null,
           location_id: row.location_id || null,
+          location_label: locations.find((item) => item.id === row.location_id)?.name || null,
           weekday: row.weekday,
+          weekday_label: weekdayLabel(row.weekday),
           start_date: row.start_date,
           end_date: row.end_date,
           start_time: row.start_time,

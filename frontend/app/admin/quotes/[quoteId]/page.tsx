@@ -193,6 +193,56 @@ function readStringMeta(meta: Record<string, unknown>, key: string, fallback = "
   return fallback;
 }
 
+function readObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function modalityLabel(value: unknown): string {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "ONLINE") {
+    return "En ligne";
+  }
+  if (normalized === "ONSITE") {
+    return "Presentiel";
+  }
+  return normalized || "-";
+}
+
+function weekdayLabelFromNumber(value: unknown): string {
+  const weekday = Number.parseInt(String(value ?? ""), 10);
+  if (weekday === 0) return "Lundi";
+  if (weekday === 1) return "Mardi";
+  if (weekday === 2) return "Mercredi";
+  if (weekday === 3) return "Jeudi";
+  if (weekday === 4) return "Vendredi";
+  if (weekday === 5) return "Samedi";
+  if (weekday === 6) return "Dimanche";
+  return "-";
+}
+
+function getPlanningBlocks(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
+  const raw = snapshot.blocks;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+}
+
+function getSelectedSolfegeSlot(meta: Record<string, unknown>, snapshot: Record<string, unknown>): Record<string, unknown> | null {
+  const fromMeta = readObject(meta.selected_solfege_slot);
+  if (fromMeta) {
+    return fromMeta;
+  }
+  const solfege = readObject(snapshot.solfege);
+  if (!solfege) {
+    return null;
+  }
+  return readObject(solfege.selected_slot);
+}
+
 export default async function AdminQuoteDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -255,6 +305,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
+  const activityById = new Map(activities.map((row) => [row.id, row.name]));
+  const locationById = new Map(locations.map((row) => [row.id, row.name]));
 
   const owner = detail.quote.context_type === "acquisition"
     ? prospectById.get(detail.quote.prospect_id || "")
@@ -266,6 +318,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = readStringMeta(detail.quote.meta || {}, "template_id");
   const tvaRate = readStringMeta(detail.quote.meta || {}, "tva_rate", "20.00");
+  const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
+  const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
+  const selectedSolfegeSlot = getSelectedSolfegeSlot(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
 
   const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
 
@@ -454,8 +509,24 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       </section>
 
       <section className="card">
+        <h3>Selection solfege</h3>
+        {selectedSolfegeSlot ? (
+          <div className="grid cols-3 top-gap-sm">
+            <p><strong>Jour:</strong> {weekdayLabelFromNumber(selectedSolfegeSlot.weekday)}</p>
+            <p><strong>Horaire:</strong> {String(selectedSolfegeSlot.start_time ?? "--:--")} - {String(selectedSolfegeSlot.end_time ?? "--:--")}</p>
+            <p><strong>Duree:</strong> {String(selectedSolfegeSlot.duration_minutes ?? "-")} min</p>
+            <p><strong>Modalite:</strong> {modalityLabel(selectedSolfegeSlot.modality)}</p>
+            <p><strong>Lieu:</strong> {String(selectedSolfegeSlot.location_label ?? locationById.get(String(selectedSolfegeSlot.location_id ?? "")) ?? "-")}</p>
+            <p><strong>Libelle:</strong> {String(selectedSolfegeSlot.label ?? "-")}</p>
+          </div>
+        ) : (
+          <p className="muted">Aucun creneau solfege selectionne sur ce devis.</p>
+        )}
+      </section>
+
+      <section className="card">
         <h3>Calendrier previsionnel</h3>
-        <p className="muted">{getCalendarSessions(detail.quote.calendar_snapshot).length} seances calculees.</p>
+        <p className="muted">{calendarSessions.length} seances calculees.</p>
         <div className="top-gap-sm">
           <QuotePlanningEditor
             quoteId={detail.quote.id}
@@ -474,12 +545,35 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             saveAction={updateQuotePlanningAction}
           />
         </div>
+        {planningBlocks.length > 0 ? (
+          <div className="quote-public-lines top-gap-sm">
+            {planningBlocks.map((block, index) => (
+              <article key={`block-${index}`} className="quote-public-line-item">
+                <strong>{String(block.activity_label ?? activityById.get(String(block.activity_id ?? "")) ?? "Activite")}</strong>
+                <span>
+                  {weekdayLabelFromNumber(block.weekday)} · {String(block.start_time ?? "--:--")} - {String(block.end_time ?? "--:--")}
+                </span>
+                <small className="muted">
+                  {String(block.start_date ?? "-")} → {String(block.end_date ?? "-")}
+                  {" · "}
+                  {String(block.location_label ?? locationById.get(String(block.location_id ?? "")) ?? "Lieu non defini")}
+                </small>
+              </article>
+            ))}
+          </div>
+        ) : null}
         <div className="quote-public-lines top-gap-sm">
-          {getCalendarSessions(detail.quote.calendar_snapshot).slice(0, 20).map((session, index) => (
+          {calendarSessions.slice(0, 20).map((session, index) => (
             <article key={`session-${index}`} className="quote-public-line-item">
               <strong>{String(session.date ?? "-")}</strong>
               <span>{String(session.start_time ?? "--:--")} - {String(session.end_time ?? "--:--")}</span>
-              <small className="muted">{String(session.modality ?? "")}</small>
+              <small className="muted">
+                {String(session.activity_label ?? activityById.get(String(session.activity_id ?? "")) ?? "Activite")}
+                {" · "}
+                {String(session.location_label ?? locationById.get(String(session.location_id ?? "")) ?? "Lieu non defini")}
+                {" · "}
+                {modalityLabel(session.modality)}
+              </small>
             </article>
           ))}
         </div>

@@ -9032,8 +9032,11 @@ export async function updateQuoteLinesAction(formData: FormData): Promise<void> 
 
 type QuotePlanningBlockInput = {
   activity_id: string | null;
+  activity_label: string | null;
   location_id: string | null;
+  location_label: string | null;
   weekday: number;
+  weekday_label: string | null;
   start_date: string;
   end_date: string;
   start_time: string;
@@ -9043,10 +9046,13 @@ type QuotePlanningBlockInput = {
 
 type QuoteSolfegeSlotInput = {
   weekday: number;
+  weekday_label: string | null;
   start_time: string;
   end_time: string;
+  label: string | null;
   duration_minutes: number;
   location_id: string | null;
+  location_label: string | null;
   modality: string | null;
 };
 
@@ -9067,12 +9073,15 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       }
       const item = row as Record<string, unknown>;
       const weekday = Number.parseInt(String(item.weekday ?? ""), 10);
+      const weekdayLabel = String(item.weekday_label ?? "").trim();
       const startDate = String(item.start_date ?? "").trim();
       const endDate = String(item.end_date ?? "").trim();
       const startTime = String(item.start_time ?? "").trim();
       const endTime = String(item.end_time ?? "").trim();
       const activityIdRaw = String(item.activity_id ?? "").trim();
+      const activityLabel = String(item.activity_label ?? "").trim();
       const locationIdRaw = String(item.location_id ?? "").trim();
+      const locationLabel = String(item.location_label ?? "").trim();
       const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
       if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
         return null;
@@ -9086,8 +9095,11 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       }
       out.push({
         activity_id: parsedActivityId,
+        activity_label: activityLabel || null,
         location_id: parseUuid(locationIdRaw),
+        location_label: locationLabel || null,
         weekday,
+        weekday_label: weekdayLabel || null,
         start_date: startDate,
         end_date: endDate,
         start_time: startTime,
@@ -9113,8 +9125,10 @@ function parseSolfegeSlotJson(raw: string): QuoteSolfegeSlotInput | null | undef
     }
     const row = parsed as Record<string, unknown>;
     const weekday = Number.parseInt(String(row.weekday ?? ""), 10);
+    const weekdayLabel = String(row.weekday_label ?? "").trim();
     const startTime = String(row.start_time ?? "").trim();
     const endTime = String(row.end_time ?? "").trim();
+    const slotLabel = String(row.label ?? "").trim();
     const durationMinutes = Number.parseInt(String(row.duration_minutes ?? ""), 10);
     if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
       return undefined;
@@ -9125,10 +9139,13 @@ function parseSolfegeSlotJson(raw: string): QuoteSolfegeSlotInput | null | undef
     const modalityRaw = String(row.modality ?? "").trim().toUpperCase();
     return {
       weekday,
+      weekday_label: weekdayLabel || null,
       start_time: startTime,
       end_time: endTime,
+      label: slotLabel || null,
       duration_minutes: durationMinutes,
       location_id: parseUuid(String(row.location_id ?? "").trim()),
+      location_label: String(row.location_label ?? "").trim() || null,
       modality: modalityRaw === "ONLINE" || modalityRaw === "ONSITE" ? modalityRaw : null,
     };
   } catch {
@@ -9168,7 +9185,15 @@ async function buildCalendarSnapshotFromBlocks({
       redirect(appendQueryMessage(returnTo, "error", preview.message));
     }
     const rows = Array.isArray(preview.data.sessions) ? (preview.data.sessions as Array<Record<string, unknown>>) : [];
-    sessions.push(...rows);
+    for (const row of rows) {
+      sessions.push({
+        ...row,
+        activity_label: block.activity_label,
+        location_label: block.location_label,
+        weekday: block.weekday,
+        weekday_label: block.weekday_label,
+      });
+    }
   }
 
   sessions.sort((a, b) => {

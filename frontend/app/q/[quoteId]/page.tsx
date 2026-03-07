@@ -103,12 +103,51 @@ function quoteStatusClass(status: string): string {
   return "status-off";
 }
 
+function readObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function modalityLabel(value: unknown): string {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "ONLINE") {
+    return "En ligne";
+  }
+  if (normalized === "ONSITE") {
+    return "Presentiel";
+  }
+  return normalized || "-";
+}
+
+function weekdayLabelFromNumber(value: unknown): string {
+  const weekday = Number.parseInt(String(value ?? ""), 10);
+  if (weekday === 0) return "Lundi";
+  if (weekday === 1) return "Mardi";
+  if (weekday === 2) return "Mercredi";
+  if (weekday === 3) return "Jeudi";
+  if (weekday === 4) return "Vendredi";
+  if (weekday === 5) return "Samedi";
+  if (weekday === 6) return "Dimanche";
+  return "-";
+}
+
 function getCalendarSessions(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
   const raw = snapshot.sessions;
   if (!Array.isArray(raw)) {
     return [];
   }
   return raw.filter((row): row is Record<string, unknown> => !!row && typeof row === "object");
+}
+
+function getSelectedSolfegeSlot(quote: QuoteOut): Record<string, unknown> | null {
+  const metaSlot = readObject(readObject(quote.calendar_snapshot)?.solfege);
+  const fromCalendar = metaSlot ? readObject(metaSlot.selected_slot) : null;
+  if (fromCalendar) {
+    return fromCalendar;
+  }
+  return null;
 }
 
 function buildSelfPath(quoteId: string, token: string): string {
@@ -130,6 +169,7 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
   const canAct = payload ? ["sent", "change_requested"].includes(payload.quote.status) : false;
   const selfPath = buildSelfPath(quoteId, token);
   const sessions = payload ? getCalendarSessions(payload.quote.calendar_snapshot) : [];
+  const selectedSolfegeSlot = payload ? getSelectedSolfegeSlot(payload.quote) : null;
 
   return (
     <main className="quote-public-page">
@@ -221,11 +261,42 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                       <article key={`session-${index}`} className="quote-public-line-item">
                         <strong>{String(session.date ?? "-")}</strong>
                         <span>{String(session.start_time ?? "--:--")} - {String(session.end_time ?? "--:--")}</span>
-                        <small className="muted">{String(session.modality ?? "")} {session.location_id ? `· ${String(session.location_id)}` : ""}</small>
+                        <small className="muted">
+                          {String(session.activity_label ?? "Activite")}
+                          {" · "}
+                          {String(session.location_label ?? session.location_id ?? "Lieu non defini")}
+                          {" · "}
+                          {modalityLabel(session.modality)}
+                        </small>
                       </article>
                     ))
                   )}
                 </div>
+              </article>
+
+              <article className="card quote-public-calendar-card">
+                <h3>Creneau solfege selectionne</h3>
+                {selectedSolfegeSlot ? (
+                  <div className="quote-public-lines top-gap-sm">
+                    <article className="quote-public-line-item">
+                      <strong>{String(selectedSolfegeSlot.label ?? "Creneau solfege")}</strong>
+                      <span>
+                        {weekdayLabelFromNumber(selectedSolfegeSlot.weekday)}
+                        {" · "}
+                        {String(selectedSolfegeSlot.start_time ?? "--:--")} - {String(selectedSolfegeSlot.end_time ?? "--:--")}
+                      </span>
+                      <small className="muted">
+                        {String(selectedSolfegeSlot.duration_minutes ?? "-")} min
+                        {" · "}
+                        {String(selectedSolfegeSlot.location_label ?? selectedSolfegeSlot.location_id ?? "Lieu non defini")}
+                        {" · "}
+                        {modalityLabel(selectedSolfegeSlot.modality)}
+                      </small>
+                    </article>
+                  </div>
+                ) : (
+                  <p className="muted top-gap-sm">Aucun creneau solfege selectionne.</p>
+                )}
               </article>
 
               <article className="card quote-public-schedule-card">
