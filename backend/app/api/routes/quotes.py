@@ -162,6 +162,8 @@ def _quote_out(row: Quote) -> QuoteOut:
         location_id=row.location_id,
         payment_plan_id=row.payment_plan_id,
         status=row.status,
+        public_token=row.public_token,
+        pdf_token=row.pdf_token,
         version_number=int(row.version_number or 1),
         parent_quote_id=row.parent_quote_id,
         currency=row.currency,
@@ -1409,6 +1411,22 @@ def get_quote_followup(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote follow-up not found")
     return _followup_out(row)
+
+
+@router.get("/quote-followups", response_model=list[QuoteFollowupOut])
+def list_quote_followups(
+    quote_id: UUID | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[QuoteFollowupOut]:
+    stmt = select(QuoteAcceptanceFollowup)
+    if quote_id is not None:
+        stmt = stmt.where(QuoteAcceptanceFollowup.quote_id == quote_id)
+    if status_filter:
+        stmt = stmt.where(QuoteAcceptanceFollowup.status == status_filter.strip())
+    rows = db.scalars(stmt.order_by(QuoteAcceptanceFollowup.updated_at.desc(), QuoteAcceptanceFollowup.created_at.desc()).limit(500)).all()
+    return [_followup_out(row) for row in rows]
 
 
 @router.patch("/quote-followups/{followup_id}", response_model=QuoteFollowupOut)

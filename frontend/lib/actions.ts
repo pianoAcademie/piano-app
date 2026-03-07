@@ -8545,3 +8545,475 @@ export async function updatePlanningActivitiesAction(formData: FormData): Promis
   revalidatePath(`/admin/plannings/${locationId}/settings`);
   redirect(`/admin/plannings/${locationId}/settings?ok=Activites%20du%20planning%20mises%20a%20jour`);
 }
+
+type QuoteWizardLinePayload = {
+  line_category: "service" | "product";
+  line_type: "item" | "discount" | "surcharge";
+  master_item_type: "activity" | "product" | "kit" | "option" | "discount_rule" | "surcharge_rule" | null;
+  activity_id: string | null;
+  product_id: string | null;
+  kit_id: string | null;
+  title: string;
+  quantity: string;
+  unit_price_ttc: string;
+  sort_order: number;
+};
+
+function safeAdminQuotesPath(path: string, fallback = "/admin/quotes"): string {
+  const value = path.trim();
+  if (value.startsWith("/admin/quotes")) {
+    return value;
+  }
+  return fallback;
+}
+
+function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
+  const value = raw.trim();
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const out: QuoteWizardLinePayload[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const row = item as Record<string, unknown>;
+      const lineCategory = String(row.line_category ?? "").trim().toLowerCase();
+      const lineType = String(row.line_type ?? "").trim().toLowerCase();
+      const title = String(row.title ?? "").trim();
+      const quantity = String(row.quantity ?? "").trim();
+      const unitPrice = String(row.unit_price_ttc ?? "").trim();
+      const sortOrder = Number.parseInt(String(row.sort_order ?? "0"), 10);
+      if ((lineCategory !== "service" && lineCategory !== "product") || (lineType !== "item" && lineType !== "discount" && lineType !== "surcharge")) {
+        continue;
+      }
+      if (!title) {
+        continue;
+      }
+      if (!Number.isFinite(Number(quantity)) || Number(quantity) <= 0) {
+        continue;
+      }
+      if (!Number.isFinite(Number(unitPrice))) {
+        continue;
+      }
+      const activityId = parseUuid(String(row.activity_id ?? "")) ?? null;
+      const productId = parseUuid(String(row.product_id ?? "")) ?? null;
+      const kitId = parseUuid(String(row.kit_id ?? "")) ?? null;
+      const masterTypeRaw = String(row.master_item_type ?? "").trim().toLowerCase();
+      const masterType =
+        masterTypeRaw === "activity" ||
+        masterTypeRaw === "product" ||
+        masterTypeRaw === "kit" ||
+        masterTypeRaw === "option" ||
+        masterTypeRaw === "discount_rule" ||
+        masterTypeRaw === "surcharge_rule"
+          ? masterTypeRaw
+          : null;
+      out.push({
+        line_category: lineCategory,
+        line_type: lineType,
+        master_item_type: masterType,
+        activity_id: activityId,
+        product_id: productId,
+        kit_id: kitId,
+        title,
+        quantity,
+        unit_price_ttc: unitPrice,
+        sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+export async function createQuoteProspectAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const email = String(formData.get("prospect_email") ?? "").trim().toLowerCase();
+  const firstName = String(formData.get("prospect_first_name") ?? "").trim();
+  const lastName = String(formData.get("prospect_last_name") ?? "").trim();
+  const phone = String(formData.get("prospect_phone") ?? "").trim();
+
+  if (!email || !email.includes("@")) {
+    redirect(appendQueryMessage(returnTo, "error", "Email prospect invalide"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    "/api/v1/prospects",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        first_name: firstName || null,
+        last_name: lastName || null,
+        phone: phone || null,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}prospect_id=${encodeURIComponent(result.data.id)}&ok=${encodeURIComponent("Prospect cree")}`);
+}
+
+export async function createQuoteDraftAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const contextType = String(formData.get("context_type") ?? "acquisition").trim().toLowerCase() === "active_client" ? "active_client" : "acquisition";
+  const prospectId = parseUuid(String(formData.get("prospect_id") ?? ""));
+  const clientId = parseUuid(String(formData.get("client_id") ?? ""));
+  const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
+  const pricingCatalogId = parseUuid(String(formData.get("pricing_catalog_id") ?? ""));
+  const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
+  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const expiryDays = parsePositiveInt(String(formData.get("expiry_days") ?? "10")) ?? 10;
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
+  const estimatedSolfegeLevel = String(formData.get("estimated_solfege_level") ?? "").trim() || null;
+  const calendarActivityId = parseUuid(String(formData.get("calendar_activity_id") ?? ""));
+  const startDate = parseDateOnly(String(formData.get("calendar_start_date") ?? ""));
+  const endDate = parseDateOnly(String(formData.get("calendar_end_date") ?? ""));
+  const startTime = String(formData.get("calendar_start_time") ?? "").trim();
+  const endTime = String(formData.get("calendar_end_time") ?? "").trim();
+  const weekdays = formData
+    .getAll("calendar_weekdays")
+    .map((entry) => Number.parseInt(String(entry), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0 && value <= 6);
+  const lines = parseQuoteWizardLines(String(formData.get("lines_json") ?? ""));
+
+  if (contextType === "acquisition" && !prospectId) {
+    redirect(appendQueryMessage(returnTo, "error", "Selectionner un prospect pour un devis acquisition"));
+  }
+  if (contextType === "active_client" && !clientId) {
+    redirect(appendQueryMessage(returnTo, "error", "Selectionner un client actif pour ce devis"));
+  }
+
+  let calendarSnapshot: Record<string, unknown> = {};
+  if (startDate && endDate && startTime && endTime && weekdays.length > 0) {
+    const preview = await backendRequest<Record<string, unknown>>(
+      "/api/v1/quotes/calendar/preview",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          start_date: startDate,
+          end_date: endDate,
+          weekdays,
+          start_time: startTime,
+          end_time: endTime,
+          activity_id: calendarActivityId,
+          location_id: locationId,
+        }),
+      },
+      token,
+    );
+    if (preview.ok) {
+      calendarSnapshot = preview.data;
+    }
+  }
+
+  const payload = {
+    context_type: contextType,
+    quote_type: "forfait",
+    quote_type_id: quoteTypeId,
+    pricing_catalog_id: pricingCatalogId,
+    prospect_id: contextType === "acquisition" ? prospectId : null,
+    client_id: contextType === "active_client" ? clientId : null,
+    location_id: locationId,
+    payment_plan_id: paymentPlanId,
+    school_year_label: schoolYearLabel,
+    currency: "EUR",
+    expiry_days: expiryDays,
+    estimated_solfege_level: estimatedSolfegeLevel,
+    calendar_snapshot: calendarSnapshot,
+    lines: lines.map((line) => ({
+      line_category: line.line_category,
+      line_type: line.line_type,
+      master_item_type: line.master_item_type,
+      activity_id: line.activity_id,
+      product_id: line.product_id,
+      kit_id: line.kit_id,
+      title: line.title,
+      quantity: line.quantity,
+      unit_price_ttc: line.unit_price_ttc,
+      pricing_unit: line.line_category === "service" ? "session" : "item",
+      sort_order: line.sort_order,
+    })),
+  };
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    "/api/v1/quotes",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  redirect(`/admin/quotes?quote_id=${encodeURIComponent(result.data.quote.id)}&ok=${encodeURIComponent("Devis brouillon cree")}`);
+}
+
+export async function sendQuoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/send`,
+    {
+      method: "POST",
+      body: JSON.stringify({ recipient_email: recipientEmail || null }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  redirect(`/admin/quotes?quote_id=${encodeURIComponent(quoteId)}&ok=${encodeURIComponent("Devis envoye")}`);
+}
+
+export async function duplicateQuoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/duplicate`,
+    { method: "POST" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  redirect(`/admin/quotes?quote_id=${encodeURIComponent(result.data.quote.id)}&ok=${encodeURIComponent("Nouvelle version creee")}`);
+}
+
+async function runPublicQuoteAction({
+  action,
+  quoteId,
+  token,
+  body,
+}: {
+  action: "approve" | "reject" | "change-request";
+  quoteId: string;
+  token: string;
+  body: Record<string, unknown> | null;
+}): Promise<{ ok: boolean; message: string }> {
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/public/quotes/${encodeURIComponent(quoteId)}/${action}?t=${encodeURIComponent(token)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    },
+  );
+  if (!result.ok) {
+    return { ok: false, message: result.message };
+  }
+  return { ok: true, message: "" };
+}
+
+function safeQuotePublicPath(path: string, fallback: string): string {
+  const value = path.trim();
+  if (value.startsWith("/q/")) {
+    return value;
+  }
+  return fallback;
+}
+
+export async function approvePublicQuoteAction(formData: FormData): Promise<void> {
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const token = String(formData.get("public_token") ?? "").trim();
+  const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
+  if (!quoteId || !token) {
+    redirect(appendQueryMessage(returnTo, "error", "Lien devis invalide"));
+  }
+  const result = await runPublicQuoteAction({
+    action: "approve",
+    quoteId,
+    token,
+    body: null,
+  });
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  redirect(appendQueryMessage(returnTo, "ok", "Devis approuve"));
+}
+
+export async function rejectPublicQuoteAction(formData: FormData): Promise<void> {
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const token = String(formData.get("public_token") ?? "").trim();
+  const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
+  if (!quoteId || !token) {
+    redirect(appendQueryMessage(returnTo, "error", "Lien devis invalide"));
+  }
+  const result = await runPublicQuoteAction({
+    action: "reject",
+    quoteId,
+    token,
+    body: null,
+  });
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  redirect(appendQueryMessage(returnTo, "ok", "Devis rejete"));
+}
+
+export async function changeRequestPublicQuoteAction(formData: FormData): Promise<void> {
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const token = String(formData.get("public_token") ?? "").trim();
+  const message = String(formData.get("change_message") ?? "").trim();
+  const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
+  if (!quoteId || !token) {
+    redirect(appendQueryMessage(returnTo, "error", "Lien devis invalide"));
+  }
+  if (!message) {
+    redirect(appendQueryMessage(returnTo, "error", "Message de modification obligatoire"));
+  }
+  const result = await runPublicQuoteAction({
+    action: "change-request",
+    quoteId,
+    token,
+    body: { message },
+  });
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  redirect(appendQueryMessage(returnTo, "ok", "Demande de modification envoyee"));
+}
+
+export async function selectQuoteFollowupSlotAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const followupId = String(formData.get("followup_id") ?? "").trim();
+  const slotDate = String(formData.get("slot_date") ?? "").trim();
+  const slotStart = String(formData.get("slot_start_time") ?? "").trim();
+  const slotEnd = String(formData.get("slot_end_time") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!followupId || !slotDate || !slotStart || !slotEnd) {
+    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege incomplet"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}/select-solfege-slot`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        slot: {
+          date: slotDate,
+          start_time: slotStart,
+          end_time: slotEnd,
+        },
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  redirect(appendQueryMessage(returnTo, "ok", "Creneau solfege enregistre"));
+}
+
+export async function changeQuoteFollowupPaymentMethodAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const followupId = String(formData.get("followup_id") ?? "").trim();
+  const paymentMethodCode = String(formData.get("payment_method_code") ?? "").trim();
+  const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!followupId || !paymentMethodCode) {
+    redirect(appendQueryMessage(returnTo, "error", "Methode de paiement invalide"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}/change-payment-method`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        payment_method_code: paymentMethodCode,
+        payment_plan_id: paymentPlanId,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  redirect(appendQueryMessage(returnTo, "ok", "Methode de paiement mise a jour"));
+}
+
+export async function finalizeQuoteFollowupAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+  const followupId = String(formData.get("followup_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!followupId) {
+    redirect(appendQueryMessage(returnTo, "error", "Follow-up introuvable"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}/finalize`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  redirect(appendQueryMessage(returnTo, "ok", "Follow-up finalise"));
+}

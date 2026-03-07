@@ -101,6 +101,8 @@ class QuoteOut(BaseModel):
     location_id: UUID | None = None
     payment_plan_id: UUID | None = None
     status: str
+    public_token: str | None = None
+    pdf_token: str | None = None
     version_number: int
     parent_quote_id: UUID | None = None
     currency: str

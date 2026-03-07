@@ -57,6 +57,9 @@ function labelForSegment(segment: string, previous: string): string | null {
   if (segment === "subscriptions") {
     return "Abonnements";
   }
+  if (segment === "quotes") {
+    return "Devis";
+  }
   if (segment === "communications") {
     return "Communications";
   }
@@ -96,6 +99,9 @@ function labelForSegment(segment: string, previous: string): string | null {
   }
   if (previous === "formulas" && looksLikeId(segment)) {
     return "Modifier formule";
+  }
+  if (previous === "quotes" && looksLikeId(segment)) {
+    return "Detail devis";
   }
 
   if (looksLikeId(segment)) {
