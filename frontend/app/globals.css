@@ -4204,6 +4204,22 @@ button.danger {
   gap: 6px;
 }
 
+.wysiwyg-editor {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fffdf9;
+  padding: 10px 12px;
+  min-height: 220px;
+  line-height: 1.5;
+  overflow: auto;
+}
+
+.wysiwyg-editor:focus {
+  outline: 2px solid rgba(208, 132, 48, 0.2);
+  border-color: #d08430;
+}
+
 .activity-list {
   gap: 10px;
 }

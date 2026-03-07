@@ -801,7 +801,7 @@ def _extract_vat_rate(meta: dict[str, object] | None) -> Decimal | None:
 
 
 def _freeze_quote_document_snapshot(db: Session, *, quote: Quote, lines: list[QuoteLine], state: str) -> QuoteDocumentSnapshot:
-    body_html, terms_html, combined_html = render_quote_parts_html(quote=quote, lines=lines)
+    body_html, terms_html, combined_html = render_quote_parts_html(db=db, quote=quote, lines=lines)
     document_hash = hashlib.sha256(combined_html.encode("utf-8")).hexdigest()
     existing = db.scalar(
         select(QuoteDocumentSnapshot)
@@ -1854,7 +1854,7 @@ def preview_quote_document(
 ) -> dict[str, object]:
     quote = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
-    body_html, terms_html, combined_html = render_quote_parts_html(quote=quote, lines=lines)
+    body_html, terms_html, combined_html = render_quote_parts_html(db=db, quote=quote, lines=lines)
     document_hash = hashlib.sha256(combined_html.encode("utf-8")).hexdigest()
     return {
         "quote_id": str(quote.id),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 type QuoteTemplateVariable = {
   key: string;
@@ -31,7 +31,9 @@ export default function QuoteTemplateEditor({
   const hasVariables = variables.length > 0;
   const [subject, setSubject] = useState<string>(defaultSubject);
   const [body, setBody] = useState<string>(defaultBody);
+  const [editorMode, setEditorMode] = useState<"wysiwyg" | "html">("wysiwyg");
   const [selectedVariable, setSelectedVariable] = useState<string>(variables[0]?.key || "quote_number");
+  const editorRef = useRef<HTMLDivElement | null>(null);
 
   const selected = useMemo(
     () => variables.find((item) => item.key === selectedVariable) ?? variables[0] ?? null,
@@ -43,6 +45,12 @@ export default function QuoteTemplateEditor({
       return;
     }
     const token = tokenForVariable(selected.key);
+    if (editorMode === "wysiwyg" && editorRef.current) {
+      editorRef.current.focus();
+      document.execCommand("insertText", false, token);
+      setBody(editorRef.current.innerHTML);
+      return;
+    }
     setBody((prev) => `${prev}${prev.endsWith("\n") || !prev ? "" : "\n"}${token}`);
   }
 
@@ -62,14 +70,34 @@ export default function QuoteTemplateEditor({
 
       <label>
         Corps du template
-        <textarea
-          name={bodyName}
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
-          rows={8}
-          required
-          maxLength={20000}
-        />
+        <div className="row wrap gap-sm top-gap-sm">
+          <button type="button" className={editorMode === "wysiwyg" ? "" : "ghost"} onClick={() => setEditorMode("wysiwyg")}>
+            WYSIWYG
+          </button>
+          <button type="button" className={editorMode === "html" ? "" : "ghost"} onClick={() => setEditorMode("html")}>
+            HTML
+          </button>
+        </div>
+        {editorMode === "wysiwyg" ? (
+          <div
+            ref={editorRef}
+            className="wysiwyg-editor top-gap-sm"
+            contentEditable
+            suppressContentEditableWarning
+            onInput={(event) => setBody((event.currentTarget as HTMLDivElement).innerHTML)}
+            dangerouslySetInnerHTML={{ __html: body }}
+          />
+        ) : (
+          <textarea
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            rows={10}
+            required
+            maxLength={20000}
+            className="top-gap-sm"
+          />
+        )}
+        <textarea name={bodyName} value={body} onChange={() => {}} hidden readOnly />
       </label>
 
       <div className="card">

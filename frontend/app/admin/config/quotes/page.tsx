@@ -29,6 +29,7 @@ import {
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import QuoteTemplateEditor from "../../../../components/quote-template-editor";
+import WysiwygField from "../../../../components/wysiwyg-field";
 import type { LocationOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -638,10 +639,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               <input type="checkbox" name="is_active" defaultChecked />
               Active
             </label>
-            <label className="span-2">
-              Contenu
-              <textarea name="content" rows={8} required />
-            </label>
+            <div className="span-2">
+              <WysiwygField
+                name="content"
+                label="Contenu"
+                defaultValue="<p>Conditions generales de vente...</p>"
+                helpText="Vous pouvez utiliser du HTML dans les CGV."
+              />
+            </div>
             <div className="row span-2">
               <button type="submit">Ajouter la version</button>
             </div>
@@ -672,10 +677,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
                       Active
                     </label>
-                    <label>
-                      Contenu
-                      <textarea name="content" rows={8} defaultValue={row.content} required />
-                    </label>
+                    <WysiwygField
+                      name="content"
+                      label="Contenu"
+                      defaultValue={row.content}
+                      helpText="Version CGV editable en mode WYSIWYG ou HTML."
+                    />
                     <div className="row">
                       <button type="submit">Enregistrer</button>
                     </div>
@@ -725,7 +732,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 subjectName="subject_template"
                 bodyName="body_template"
                 defaultSubject="Votre devis {quote_number} Piano Academie"
-                defaultBody={"Bonjour {recipient_name},\n\nVotre devis {quote_number} est pret.\nTotal: {total_ttc} {currency}.\nExpiration: {expires_at}."}
+                defaultBody={
+                  "<h1>Devis {quote_number}</h1><p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p><p><strong>Type:</strong> {prospect_type_label}</p><p><strong>Parent:</strong> {parent_full_name}</p><p><strong>Eleve:</strong> {child_full_name}</p><h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Echeancier de paiement</h2>{payment_schedule_table_html}<h2>Calendrier des cours</h2>{calendar_table_html}<p><strong>Total HT:</strong> {total_ht} {currency}</p><p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p><p><strong>Total TTC:</strong> {total_ttc} {currency}</p><p><strong>Expiration:</strong> {expires_at}</p>"
+                }
                 variables={templateVariables}
               />
             </div>
@@ -857,7 +866,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 subjectName="subject_template"
                 bodyName="body_template"
                 defaultSubject="Votre devis {quote_number} Piano Academie"
-                defaultBody={"Bonjour {recipient_name},\n\nVotre devis {quote_number} est pret.\nTotal: {total_ttc} {currency}.\nExpiration: {expires_at}."}
+                defaultBody={
+                  "<h1>Devis {quote_number}</h1><p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p><p><strong>Type:</strong> {prospect_type_label}</p><p><strong>Parent:</strong> {parent_full_name}</p><p><strong>Eleve:</strong> {child_full_name}</p><h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Echeancier de paiement</h2>{payment_schedule_table_html}<h2>Calendrier des cours</h2>{calendar_table_html}<p><strong>Total HT:</strong> {total_ht} {currency}</p><p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p><p><strong>Total TTC:</strong> {total_ttc} {currency}</p><p><strong>Expiration:</strong> {expires_at}</p>"
+                }
                 variables={templateVariables}
               />
             </div>
@@ -942,7 +953,10 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                           subjectName="subject_template"
                           bodyName="body_template"
                           defaultSubject={prefill?.subject || `Devis {quote_number}`}
-                          defaultBody={prefill?.body || "Contenu du template"}
+                          defaultBody={
+                            prefill?.body ||
+                            "<h1>Devis {quote_number}</h1><h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Echeancier</h2>{payment_schedule_table_html}<h2>Calendrier</h2>{calendar_table_html}<p>Total TTC: {total_ttc} {currency}</p>"
+                          }
                           variables={templateVariables}
                         />
                       </div>
@@ -1017,10 +1031,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               Changelog
               <input type="text" name="changelog" maxLength={2000} />
             </label>
-            <label className="span-2">
-              Contenu CGV
-              <textarea name="content" rows={10} required />
-            </label>
+            <div className="span-2">
+              <WysiwygField
+                name="content"
+                label="Contenu CGV"
+                defaultValue="<h2>Conditions generales de vente</h2><p>...</p>"
+                helpText="Editez les CGV en mode WYSIWYG ou HTML."
+              />
+            </div>
             <div className="row span-2">
               <button type="submit">Creer le template CGV</button>
             </div>
@@ -1094,10 +1112,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         Changelog
                         <input type="text" name="changelog" maxLength={2000} />
                       </label>
-                      <label className="span-2">
-                        Contenu CGV
-                        <textarea name="content" rows={10} defaultValue={prefill?.content || ""} required />
-                      </label>
+                      <div className="span-2">
+                        <WysiwygField
+                          name="content"
+                          label="Contenu CGV"
+                          defaultValue={prefill?.content || ""}
+                          helpText="Toute modification publie une nouvelle version CGV."
+                        />
+                      </div>
                       <div className="row span-2">
                         <button type="submit">Enregistrer</button>
                       </div>
