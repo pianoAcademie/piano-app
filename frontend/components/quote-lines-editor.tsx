@@ -49,6 +49,7 @@ type QuoteLinesEditorProps = {
   quoteId: string;
   returnTo: string;
   editable: boolean;
+  currency: string;
   initialLines: InitialQuoteLine[];
   activities: ActivityOption[];
   products: ProductOption[];
@@ -65,14 +66,14 @@ function lineAmount(line: EditableLine): number {
   return qty * price;
 }
 
-function toMoney(value: number): string {
+function toMoney(value: number, currency = "EUR"): string {
   if (!Number.isFinite(value)) {
-    return "0,00 EUR";
+    return `0,00 ${(currency || "EUR").toUpperCase()}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(value);
+    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: (currency || "EUR").toUpperCase() }).format(value);
   } catch {
-    return `${value.toFixed(2)} EUR`;
+    return `${value.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
 }
 
@@ -178,10 +179,15 @@ function selectableOptions(kind: LineKind, activities: ActivityOption[], product
   return [];
 }
 
+function isCatalogKind(kind: LineKind): boolean {
+  return kind === "activity" || kind === "product" || kind === "kit";
+}
+
 export default function QuoteLinesEditor({
   quoteId,
   returnTo,
   editable,
+  currency,
   initialLines,
   activities,
   products,
@@ -308,19 +314,32 @@ export default function QuoteLinesEditor({
               </label>
               <label>
                 Prix TTC
-                <input type="number" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.uid, { unitPrice: event.target.value })} required disabled={!editable} />
+                <input
+                  type="number"
+                  step="0.01"
+                  value={line.unitPrice}
+                  onChange={(event) => updateLine(line.uid, { unitPrice: event.target.value })}
+                  required
+                  readOnly={isCatalogKind(line.kind)}
+                  disabled={!editable}
+                />
               </label>
               <div className="quote-line-amount">
                 <span>Montant</span>
-                <strong>{toMoney(lineAmount(line))}</strong>
+                <strong>{toMoney(lineAmount(line), currency)}</strong>
               </div>
             </div>
+            {isCatalogKind(line.kind) ? (
+              <small className="muted">
+                Prix catalogue applique automatiquement depuis la base. Utilisez une remise ou un supplement pour ajuster.
+              </small>
+            ) : null}
           </article>
         ))}
       </div>
 
       <div className="row spread wrap top-gap-sm">
-        <p className="quote-total">Total estime: {toMoney(total)}</p>
+        <p className="quote-total">Total estime: {toMoney(total, currency)}</p>
         <button type="submit" disabled={!editable}>Enregistrer les lignes</button>
       </div>
       {!editable ? <p className="muted top-gap-sm">Le devis est immuable apres envoi.</p> : null}

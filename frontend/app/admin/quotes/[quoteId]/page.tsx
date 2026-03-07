@@ -604,6 +604,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           quoteId={detail.quote.id}
           returnTo={selfPath}
           editable={detail.quote.status === "created"}
+          currency={detail.quote.currency}
           initialLines={detail.lines}
           activities={activities.map((row) => ({
             id: row.id,

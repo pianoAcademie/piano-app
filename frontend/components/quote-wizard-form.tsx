@@ -144,15 +144,15 @@ const WEEKDAY_LABELS: Array<{ value: number; label: string }> = [
   { value: 6, label: "Dim" },
 ];
 
-function toMoney(value: string): string {
+function toMoney(value: string, currency = "EUR"): string {
   const n = Number(value);
   if (!Number.isFinite(n)) {
-    return "0,00 EUR";
+    return `0,00 ${(currency || "EUR").toUpperCase()}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(n);
+    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: (currency || "EUR").toUpperCase() }).format(n);
   } catch {
-    return `${n.toFixed(2)} EUR`;
+    return `${n.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
 }
 
@@ -275,6 +275,10 @@ function timeSlotParts(slot: Record<string, unknown>): { start: string; end: str
     return null;
   }
   return { start, end };
+}
+
+function isCatalogKind(kind: LineKind): boolean {
+  return kind === "activity" || kind === "product" || kind === "kit";
 }
 
 export default function QuoteWizardForm({
@@ -870,13 +874,25 @@ export default function QuoteWizardForm({
                   </label>
                   <label>
                     Prix TTC
-                    <input type="number" step="0.01" value={line.unitPrice} onChange={(event) => updateLine(line.uid, { unitPrice: event.target.value })} required />
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={line.unitPrice}
+                      onChange={(event) => updateLine(line.uid, { unitPrice: event.target.value })}
+                      required
+                      readOnly={isCatalogKind(line.kind)}
+                    />
                   </label>
                   <div className="quote-line-amount">
                     <span>Montant</span>
-                    <strong>{toMoney(String(lineAmount(line)))}</strong>
+                    <strong>{toMoney(String(lineAmount(line)), currency)}</strong>
                   </div>
                 </div>
+                {isCatalogKind(line.kind) ? (
+                  <small className="muted">
+                    Prix catalogue applique automatiquement depuis la base. Utilisez une remise ou un supplement pour ajuster.
+                  </small>
+                ) : null}
               </article>
             ))}
           </div>
@@ -902,7 +918,7 @@ export default function QuoteWizardForm({
           <p className="muted">Activites planning: <strong>{planningBlocks.length}</strong></p>
           <p className="muted">Seances estimees: <strong>{sessionsCount}</strong></p>
           {selectedSolfegeSlot ? <p className="muted">Creneau solfege: <strong>{selectedSolfegeSlot.label}</strong></p> : null}
-          <p className="quote-total">Total estime: {toMoney(String(total))}</p>
+          <p className="quote-total">Total estime: {toMoney(String(total), currency)}</p>
         </article>
       </aside>
     </form>
