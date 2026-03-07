@@ -8959,6 +8959,197 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   redirect(appendQueryMessage(returnTo, "ok", "Parametres devis mis a jour"));
 }
 
+export async function updateQuoteLinesAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const lines = parseQuoteWizardLines(String(formData.get("lines_json") ?? ""));
+  const payload = {
+    lines: lines.map((line) => ({
+      line_category: line.line_category,
+      line_type: line.line_type,
+      master_item_type: line.master_item_type,
+      activity_id: line.activity_id,
+      product_id: line.product_id,
+      kit_id: line.kit_id,
+      title: line.title,
+      quantity: line.quantity,
+      unit_price_ttc: line.unit_price_ttc,
+      pricing_unit: line.line_category === "service" ? "session" : "item",
+      sort_order: line.sort_order,
+    })),
+  };
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Lignes devis mises a jour"));
+}
+
+type QuotePlanningBlockInput = {
+  activity_id: string | null;
+  location_id: string | null;
+  weekday: number;
+  start_date: string;
+  end_date: string;
+  start_time: string;
+  end_time: string;
+  modality: string | null;
+};
+
+function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null {
+  const value = raw.trim();
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+    const out: QuotePlanningBlockInput[] = [];
+    for (const row of parsed) {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+      const item = row as Record<string, unknown>;
+      const weekday = Number.parseInt(String(item.weekday ?? ""), 10);
+      const startDate = String(item.start_date ?? "").trim();
+      const endDate = String(item.end_date ?? "").trim();
+      const startTime = String(item.start_time ?? "").trim();
+      const endTime = String(item.end_time ?? "").trim();
+      const activityIdRaw = String(item.activity_id ?? "").trim();
+      const locationIdRaw = String(item.location_id ?? "").trim();
+      const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
+      if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
+        return null;
+      }
+      if (!activityIdRaw || !startDate || !endDate || !startTime || !endTime) {
+        return null;
+      }
+      const parsedActivityId = parseUuid(activityIdRaw);
+      if (!parsedActivityId) {
+        return null;
+      }
+      out.push({
+        activity_id: parsedActivityId,
+        location_id: parseUuid(locationIdRaw),
+        weekday,
+        start_date: startDate,
+        end_date: endDate,
+        start_time: startTime,
+        end_time: endTime,
+        modality: modalityRaw === "ONLINE" || modalityRaw === "ONSITE" ? modalityRaw : null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+export async function updateQuotePlanningAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const blocks = parsePlanningBlocksJson(String(formData.get("planning_blocks_json") ?? ""));
+  if (blocks === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Planning invalide"));
+  }
+
+  const sessions: Array<Record<string, unknown>> = [];
+  for (const block of blocks) {
+    const preview = await backendRequest<Record<string, unknown>>(
+      "/api/v1/quotes/calendar/preview",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          start_date: block.start_date,
+          end_date: block.end_date,
+          weekdays: [block.weekday],
+          start_time: block.start_time,
+          end_time: block.end_time,
+          activity_id: block.activity_id,
+          location_id: block.location_id,
+          modality: block.modality,
+        }),
+      },
+      token,
+    );
+    if (!preview.ok) {
+      redirect(appendQueryMessage(returnTo, "error", preview.message));
+    }
+    const rows = Array.isArray(preview.data.sessions) ? (preview.data.sessions as Array<Record<string, unknown>>) : [];
+    sessions.push(...rows);
+  }
+
+  sessions.sort((a, b) => {
+    const dateA = String(a.date ?? "");
+    const dateB = String(b.date ?? "");
+    if (dateA < dateB) return -1;
+    if (dateA > dateB) return 1;
+    const timeA = String(a.start_time ?? "");
+    const timeB = String(b.start_time ?? "");
+    if (timeA < timeB) return -1;
+    if (timeA > timeB) return 1;
+    return 0;
+  });
+
+  const snapshot: Record<string, unknown> = {
+    blocks,
+    sessions,
+    sessions_count: sessions.length,
+    generated_at: new Date().toISOString(),
+  };
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        calendar_snapshot: snapshot,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Planning devis mis a jour"));
+}
+
 type ProspectPayload = {
   first_name: string | null;
   last_name: string | null;

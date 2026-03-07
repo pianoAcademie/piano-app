@@ -3,16 +3,20 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import CopyLinkButton from "../../../../components/copy-link-button";
+import QuoteLinesEditor from "../../../../components/quote-lines-editor";
+import QuotePlanningEditor from "../../../../components/quote-planning-editor";
 import {
   changeQuoteFollowupPaymentMethodAction,
   duplicateQuoteAction,
   finalizeQuoteFollowupAction,
   selectQuoteFollowupSlotAction,
   sendQuoteAction,
+  updateQuoteLinesAction,
+  updateQuotePlanningAction,
   updateQuoteSettingsAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
-import type { AdminClientOut } from "../../../../lib/types";
+import type { AdminActivityOut, AdminCatalogKitOut, AdminCatalogProductOut, AdminClientOut, LocationOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -33,6 +37,11 @@ type ProspectOut = {
 type QuoteLineOut = {
   id: string;
   line_type: string;
+  line_category: string;
+  master_item_type: string | null;
+  activity_id: string | null;
+  product_id: string | null;
+  kit_id: string | null;
   title: string;
   quantity: string;
   unit_price_ttc: string;
@@ -199,7 +208,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, prospectsResult, clientsResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
@@ -207,6 +216,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
     backendRequest<CgvVersionOut[]>("/api/v1/cgv-versions", {}, token),
     backendRequest<QuoteTemplateOut[]>("/api/v1/quote-templates?active_only=true", {}, token),
+    backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
+    backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
+    backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
+    backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
   ]);
@@ -233,6 +246,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const catalogs = catalogsResult.ok ? catalogsResult.data : [];
   const cgvVersions = cgvVersionsResult.ok ? cgvVersionsResult.data : [];
   const quoteTemplates = quoteTemplatesResult.ok ? quoteTemplatesResult.data : [];
+  const activities = activitiesResult.ok ? activitiesResult.data : [];
+  const products = productsResult.ok ? productsResult.data : [];
+  const kits = kitsResult.ok ? kitsResult.data : [];
+  const locations = locationsResult.ok ? locationsResult.data : [];
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
 
@@ -439,6 +456,24 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       <section className="card">
         <h3>Calendrier previsionnel</h3>
         <p className="muted">{getCalendarSessions(detail.quote.calendar_snapshot).length} seances calculees.</p>
+        <div className="top-gap-sm">
+          <QuotePlanningEditor
+            quoteId={detail.quote.id}
+            returnTo={selfPath}
+            editable={detail.quote.status === "created"}
+            activities={activities.map((row) => ({
+              id: row.id,
+              name: row.name,
+              duration_minutes: row.duration_minutes,
+            }))}
+            locations={locations.map((row) => ({
+              id: row.id,
+              name: row.name,
+            }))}
+            initialSnapshot={detail.quote.calendar_snapshot}
+            saveAction={updateQuotePlanningAction}
+          />
+        </div>
         <div className="quote-public-lines top-gap-sm">
           {getCalendarSessions(detail.quote.calendar_snapshot).slice(0, 20).map((session, index) => (
             <article key={`session-${index}`} className="quote-public-line-item">
@@ -452,34 +487,29 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
       <section className="card">
         <h3>Lignes du devis</h3>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Intitule</th>
-                <th>Quantite</th>
-                <th>PU TTC</th>
-                <th>Montant TTC</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detail.lines.length === 0 ? (
-                <tr><td colSpan={5}>Aucune ligne</td></tr>
-              ) : (
-                detail.lines.map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.line_type}</td>
-                    <td>{row.title}</td>
-                    <td>{row.quantity}</td>
-                    <td>{formatAmount(row.unit_price_ttc, detail.quote.currency)}</td>
-                    <td>{formatAmount(row.amount_ttc, detail.quote.currency)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <QuoteLinesEditor
+          quoteId={detail.quote.id}
+          returnTo={selfPath}
+          editable={detail.quote.status === "created"}
+          initialLines={detail.lines}
+          activities={activities.map((row) => ({
+            id: row.id,
+            name: row.name,
+            duration_minutes: row.duration_minutes,
+            default_course_rate_ttc: row.default_course_rate_ttc,
+          }))}
+          products={products.map((row) => ({
+            id: row.id,
+            title: row.title,
+            price_incl_vat: row.price_incl_vat,
+          }))}
+          kits={kits.map((row) => ({
+            id: row.id,
+            title: row.title,
+            effective_price_ttc: row.price_effective_incl_vat,
+          }))}
+          saveAction={updateQuoteLinesAction}
+        />
       </section>
 
       <section className="card">

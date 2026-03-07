@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -727,6 +727,7 @@ def list_quotes(
     context_type: str | None = None,
     prospect_id: UUID | None = None,
     client_id: UUID | None = None,
+    activity_id: UUID | None = None,
     q: str | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
@@ -741,6 +742,14 @@ def list_quotes(
         stmt = stmt.where(Quote.prospect_id == prospect_id)
     if client_id is not None:
         stmt = stmt.where(Quote.client_id == client_id)
+    if activity_id is not None:
+        stmt = stmt.where(
+            exists(
+                select(QuoteLine.id)
+                .where(QuoteLine.quote_id == Quote.id, QuoteLine.activity_id == activity_id)
+                .limit(1)
+            )
+        )
     if q:
         pattern = f"%{q.strip()}%"
         stmt = stmt.where(Quote.quote_number.ilike(pattern))

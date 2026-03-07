@@ -37,6 +37,12 @@ jobs:
           test -n "${VPS_USER}" || { echo "Missing secret VPS_USER"; exit 1; }
           test -n "${VPS_PATH}" || { echo "Missing secret VPS_PATH"; exit 1; }
           test -n "${{ secrets.VPS_SSH_KEY }}" || { echo "Missing secret VPS_SSH_KEY"; exit 1; }
+          if [ -n "${VPS_PORT:-}" ]; then
+            echo "${VPS_PORT}" | grep -Eq '^[0-9]+$' || { echo "Invalid VPS_PORT secret (must be numeric, e.g. 22)"; exit 1; }
+          fi
+          echo "${VPS_HOST}" | grep -Eq '[<>]' && { echo "Invalid VPS_HOST secret (placeholder detected)"; exit 1; }
+          echo "${VPS_USER}" | grep -Eq '[<>]' && { echo "Invalid VPS_USER secret (placeholder detected)"; exit 1; }
+          echo "${VPS_PATH}" | grep -Eq '[<>]' && { echo "Invalid VPS_PATH secret (placeholder detected)"; exit 1; }
 
       - name: Setup SSH
         run: |
@@ -56,6 +62,11 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "mkdir -p '${VPS_PATH}'"
+
+      - name: SSH preflight check
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "echo '[OK] SSH connected to' \$(hostname) && docker --version && docker compose version"
 
       - name: Sync project to VPS
         run: |

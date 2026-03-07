@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../lib/backend";
-import type { AdminClientOut } from "../../../lib/types";
+import type { AdminActivityOut, AdminClientOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -163,6 +163,7 @@ function prospectTypeLabelFromClient(client: AdminClientOut | undefined): "adult
 function buildQuotesListHref(params: {
   status: string;
   contextType: string;
+  activityId: string;
   q: string;
   prospectType: string;
   currency: string;
@@ -182,6 +183,7 @@ function buildQuotesListHref(params: {
   const sp = new URLSearchParams();
   if (params.status) sp.set("status", params.status);
   if (params.contextType) sp.set("context_type", params.contextType);
+  if (params.activityId) sp.set("activity_id", params.activityId);
   if (params.q) sp.set("q", params.q);
   if (params.prospectType) sp.set("prospect_type", params.prospectType);
   if (params.currency) sp.set("currency", params.currency);
@@ -209,6 +211,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
 
   const statusFilter = readParam(searchParams, "status");
   const contextFilter = readParam(searchParams, "context_type");
+  const activityFilter = readParam(searchParams, "activity_id");
   const query = readParam(searchParams, "q");
   const prospectTypeFilter = readParam(searchParams, "prospect_type").trim().toLowerCase();
   const currencyFilter = readParam(searchParams, "currency").trim().toUpperCase();
@@ -237,16 +240,19 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const listQuery = new URLSearchParams();
   if (statusFilter) listQuery.set("status", statusFilter);
   if (contextFilter) listQuery.set("context_type", contextFilter);
+  if (activityFilter) listQuery.set("activity_id", activityFilter);
   listQuery.set("limit", "1000");
 
-  const [prospectsResult, clientsResult, quotesResult] = await Promise.all([
+  const [prospectsResult, clientsResult, activitiesResult, quotesResult] = await Promise.all([
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=false", {}, token),
+    backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<QuoteOut[]>(`/api/v1/quotes?${listQuery.toString()}`, {}, token),
   ]);
 
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
+  const activities = activitiesResult.ok ? activitiesResult.data : [];
   const quotes = quotesResult.ok ? quotesResult.data : [];
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
@@ -354,6 +360,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const currentListHref = buildQuotesListHref({
     status: statusFilter,
     contextType: contextFilter,
+    activityId: activityFilter,
     q: query,
     prospectType: prospectTypeFilter,
     currency: currencyFilter,
@@ -397,6 +404,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       </section>
 
       {!quotesResult.ok ? <section className="flash-err">Erreur devis: {quotesResult.message}</section> : null}
+      {!activitiesResult.ok ? <section className="flash-err">Erreur activites: {activitiesResult.message}</section> : null}
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
 
@@ -422,6 +430,15 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
               <option value="">Tous</option>
               <option value="acquisition">Acquisition</option>
               <option value="active_client">Client actif</option>
+            </select>
+          </label>
+          <label>
+            Activite specifique
+            <select name="activity_id" defaultValue={activityFilter}>
+              <option value="">Toutes</option>
+              {activities.map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
             </select>
           </label>
           <label>
