@@ -2,6 +2,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import CopyLinkButton from "../../../components/copy-link-button";
+import { duplicateQuoteAction, sendQuoteAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import type { AdminActivityOut, AdminClientOut } from "../../../lib/types";
 
@@ -20,6 +22,8 @@ type QuoteOut = {
   id: string;
   quote_number: string;
   status: string;
+  public_token: string | null;
+  pdf_token: string | null;
   context_type: string;
   currency: string;
   total_ttc: string;
@@ -384,6 +388,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
 
   const currencyValues = Array.from(new Set(quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean))).sort();
   const quoteTypeValues = Array.from(new Set(quotes.map((row) => (row.quote_type || "").trim()).filter(Boolean))).sort();
+  const frontendBase = process.env.NEXT_PUBLIC_FRONTEND_URL ?? "http://localhost:3000";
 
   return (
     <section className="admin-page-grid">
@@ -565,11 +570,14 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                   const ownerName = owner
                     ? displayName(owner.first_name, owner.last_name, owner.email)
                     : "-";
+                  const ownerEmail = owner?.email ?? "";
 
                   const rowProspectType = row.context_type === "acquisition"
                     ? prospectTypeLabelFromMeta((owner as ProspectOut | undefined)?.meta || {})
                     : prospectTypeLabelFromClient(owner as AdminClientOut | undefined);
                   const detailHref = `/admin/quotes/${row.id}?back=${encodeURIComponent(currentListHref)}`;
+                  const publicHref = row.public_token ? `/q/${row.id}?t=${encodeURIComponent(row.public_token)}` : "";
+                  const publicAbsoluteHref = row.public_token ? `${frontendBase}/q/${row.id}?t=${row.public_token}` : "";
 
                   return (
                     <tr key={row.id}>
@@ -594,7 +602,28 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                       <td>{formatDate(row.expires_at)}</td>
                       <td>{getCalendarSessionsCount(row.calendar_snapshot)}</td>
                       <td>
-                        <Link className="ghost" href={detailHref}>Ouvrir</Link>
+                        <div className="row wrap gap-xs">
+                          <Link className="ghost" href={detailHref}>Ouvrir</Link>
+                          {row.status === "created" ? (
+                            <form action={sendQuoteAction}>
+                              <input type="hidden" name="quote_id" value={row.id} />
+                              <input type="hidden" name="return_to" value={currentListHref} />
+                              <input type="hidden" name="recipient_email" value={ownerEmail} />
+                              <button type="submit" className="ghost">Envoyer</button>
+                            </form>
+                          ) : null}
+                          <form action={duplicateQuoteAction}>
+                            <input type="hidden" name="quote_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={currentListHref} />
+                            <button type="submit" className="ghost">Dupliquer</button>
+                          </form>
+                          {publicHref ? (
+                            <Link className="ghost" href={publicHref} target="_blank">Page publique</Link>
+                          ) : null}
+                          {publicAbsoluteHref ? (
+                            <CopyLinkButton value={publicAbsoluteHref} label="Copier lien" />
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   );
