@@ -33,6 +33,7 @@ jobs:
       - name: Validate required secrets
         run: |
           set -euo pipefail
+          echo "Validating deploy secrets..."
           test -n "${VPS_HOST}" || { echo "Missing secret VPS_HOST"; exit 1; }
           test -n "${VPS_USER}" || { echo "Missing secret VPS_USER"; exit 1; }
           test -n "${VPS_PATH}" || { echo "Missing secret VPS_PATH"; exit 1; }
@@ -43,6 +44,7 @@ jobs:
           echo "${VPS_HOST}" | grep -Eq '[<>]' && { echo "Invalid VPS_HOST secret (placeholder detected)"; exit 1; }
           echo "${VPS_USER}" | grep -Eq '[<>]' && { echo "Invalid VPS_USER secret (placeholder detected)"; exit 1; }
           echo "${VPS_PATH}" | grep -Eq '[<>]' && { echo "Invalid VPS_PATH secret (placeholder detected)"; exit 1; }
+          echo "[OK] Secrets look valid"
 
       - name: Setup SSH
         run: |
@@ -50,12 +52,22 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          test -s ~/.ssh/id_ed25519 || { echo "SSH key file is empty"; exit 1; }
           chmod 600 ~/.ssh/id_ed25519
-          if [ -n "${VPS_KNOWN_HOSTS}" ]; then
-            printf '%s\n' "${VPS_KNOWN_HOSTS}" > ~/.ssh/known_hosts
-          else
-            ssh-keyscan -p "${VPS_PORT:-22}" -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          : > ~/.ssh/known_hosts
+          # Always refresh host fingerprint to avoid stale known_hosts mismatches.
+          ssh-keygen -R "${VPS_HOST}" >/dev/null 2>&1 || true
+          ssh-keygen -R "[${VPS_HOST}]:${VPS_PORT:-22}" >/dev/null 2>&1 || true
+          if ! ssh-keyscan -p "${VPS_PORT:-22}" -H "${VPS_HOST}" >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "Warning: ssh-keyscan failed for ${VPS_HOST}:${VPS_PORT:-22}"
           fi
+          if [ -n "${VPS_KNOWN_HOSTS}" ]; then
+            printf '%s\n' "${VPS_KNOWN_HOSTS}" >> ~/.ssh/known_hosts
+          fi
+          test -s ~/.ssh/known_hosts || {
+            echo "known_hosts is empty. Configure VPS_KNOWN_HOSTS secret or ensure ssh-keyscan reaches the host.";
+            exit 1;
+          }
           chmod 644 ~/.ssh/known_hosts
 
       - name: Ensure remote directory exists
@@ -152,6 +164,10 @@ jobs:
         if: failure()
         run: |
           set -euo pipefail
+          if [ ! -f ~/.ssh/id_ed25519 ]; then
+            echo "Skip remote log dump: SSH key file missing (failure happened before Setup SSH)."
+            exit 0
+          fi
           ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
             set +e
             cd '${VPS_PATH}'

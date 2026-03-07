@@ -265,9 +265,13 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
 
     const ownerName = owner ? displayName(owner.first_name, owner.last_name, owner.email) : "";
     const ownerPhone = owner
-      ? "phone" in owner
-        ? String(owner.phone || "")
-        : [String(owner.phone || ""), String(owner.mobile_phone_1 || ""), String(owner.mobile_phone_2 || "")].join(" ")
+      ? [
+          String(owner.phone || ""),
+          "mobile_phone_1" in owner ? String(owner.mobile_phone_1 || "") : "",
+          "mobile_phone_2" in owner ? String(owner.mobile_phone_2 || "") : "",
+        ]
+          .join(" ")
+          .trim()
       : "";
 
     const textHaystack = [row.quote_number, ownerName, owner?.email || "", ownerPhone]
