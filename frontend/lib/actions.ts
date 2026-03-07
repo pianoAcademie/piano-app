@@ -9136,12 +9136,15 @@ function parseSolfegeSlotJson(raw: string): QuoteSolfegeSlotInput | null | undef
   }
 }
 
-async function buildCalendarSnapshotFromBlocks(
-  *,
-  blocks: QuotePlanningBlockInput[],
-  token: string,
-  returnTo: string,
-): Promise<Record<string, unknown>> {
+async function buildCalendarSnapshotFromBlocks({
+  blocks,
+  token,
+  returnTo,
+}: {
+  blocks: QuotePlanningBlockInput[];
+  token: string;
+  returnTo: string;
+}): Promise<Record<string, unknown>> {
   const sessions: Array<Record<string, unknown>> = [];
   for (const block of blocks) {
     const preview = await backendRequest<Record<string, unknown>>(
