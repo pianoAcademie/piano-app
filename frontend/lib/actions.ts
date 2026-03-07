@@ -1486,7 +1486,7 @@ export async function teacherDisputeSelectedLinesAction(formData: FormData): Pro
     "notice",
     "dispute_sent",
   );
-  redirect(`${successPath}#statement-success-modal`);
+  redirect(successPath);
 }
 
 export async function teacherReportMissingServiceAction(formData: FormData): Promise<void> {
@@ -1540,7 +1540,7 @@ export async function teacherReportMissingServiceAction(formData: FormData): Pro
     "notice",
     "missing_service_sent",
   );
-  redirect(`${successPath}#statement-success-modal`);
+  redirect(successPath);
 }
 
 export async function teacherCancelInvoiceAction(formData: FormData): Promise<void> {

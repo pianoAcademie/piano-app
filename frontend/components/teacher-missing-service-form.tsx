@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useFormStatus } from "react-dom";
 
 type MissingServiceRule = {
   min_students: number;
@@ -63,6 +64,15 @@ function resolveHourlyRate(activity: MissingServiceActivityOption | null, attend
     return parseDecimal(rule.hourly_rate);
   }
   return parseDecimal(activity.default_hourly_rate);
+}
+
+function SubmitButton({ disabled }: { disabled: boolean }): JSX.Element {
+  const { pending } = useFormStatus();
+  return (
+    <button type="submit" className="ghost" disabled={disabled || pending}>
+      {pending ? "Envoi en cours..." : "Envoyer a l administration"}
+    </button>
+  );
 }
 
 export default function TeacherMissingServiceForm({
@@ -174,9 +184,7 @@ export default function TeacherMissingServiceForm({
         Commentaire (obligatoire)
         <textarea name="comment" required minLength={5} maxLength={4000} rows={5} placeholder="Precisez la prestation manquante" />
       </label>
-      <button type="submit" className="ghost" disabled={!hasSelectableData}>
-        Envoyer a l administration
-      </button>
+      <SubmitButton disabled={!hasSelectableData} />
     </form>
   );
 }

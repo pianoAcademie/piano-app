@@ -299,6 +299,7 @@ export default async function TeacherStatementsPage({
     : notice === "dispute_sent"
       ? "Votre signalement de probleme a bien ete envoye."
       : "";
+  const showSuccessModal = successMessage.length > 0;
   const monthInvoices = invoicesResult.ok ? invoicesResult.data : [];
   const externalPayorOptions = statements.map((statement) => ({
     id: statement.payor_legal_entity_id,
@@ -682,9 +683,12 @@ export default async function TeacherStatementsPage({
         </article>
       </section>
 
-      <section id="statement-success-modal" className="modal-overlay statement-target-modal">
+      <section
+        id="statement-success-modal"
+        className={`modal-overlay statement-target-modal${showSuccessModal ? " is-open" : ""}`}
+      >
         <article className="modal-panel modal-compact">
-          <a className="close-link" href="#" aria-label="Fermer la confirmation">
+          <a className="close-link" href={statementsMonthHref} aria-label="Fermer la confirmation">
             ✕
           </a>
           <h3>Signalement envoye</h3>

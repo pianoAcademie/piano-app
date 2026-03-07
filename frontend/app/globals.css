@@ -7175,6 +7175,10 @@ button.danger {
   display: grid;
 }
 
+.statement-target-modal.is-open {
+  display: grid;
+}
+
 .admin-sidebar .admin-nav-link,
 .admin-sidebar .admin-nav-link span {
   color: rgba(255, 255, 255, 0.82);
