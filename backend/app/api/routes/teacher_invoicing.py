@@ -419,6 +419,19 @@ def _assert_no_missing_sessions(rows: list[tuple[TeacherMonthlyStatement, Comput
         )
 
 
+def _assert_statements_approvable(rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]]) -> None:
+    blocked_statuses = {"in_dispute", "awaiting_admin_feedback"}
+    blocked = [statement.status for statement, _ in rows if statement.status in blocked_statuses]
+    if blocked:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Statement blocked by an open dispute or missing-service report.",
+                "blocked_statuses": sorted(set(blocked)),
+            },
+        )
+
+
 def _generate_invoices_for_period(
     db: Session,
     *,
@@ -806,6 +819,7 @@ def approve_teacher_statement_month_only(
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
     _assert_no_missing_sessions(rows)
+    _assert_statements_approvable(rows)
     now = _utcnow()
     for statement, _ in rows:
         if statement.status not in {"invoice_generated", "closed"}:
@@ -834,6 +848,7 @@ def generate_teacher_statement_invoices(
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+    _assert_statements_approvable(rows)
     return _generate_invoices_for_period(
         db,
         current_user=current_user,
@@ -856,6 +871,7 @@ def approve_teacher_statement_month(
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+    _assert_statements_approvable(rows)
     return _generate_invoices_for_period(
         db,
         current_user=current_user,
@@ -863,7 +879,7 @@ def approve_teacher_statement_month(
         rows=rows,
         year=year,
         month=month,
-        require_validated_status=False,
+        require_validated_status=True,
     )
 
 

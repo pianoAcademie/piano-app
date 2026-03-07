@@ -6941,6 +6941,16 @@ button.danger {
   gap: 10px;
 }
 
+.statement-month-switcher .row {
+  align-items: center;
+  gap: 8px;
+}
+
+.statement-month-switcher strong {
+  font-size: 18px;
+  color: #1f334d;
+}
+
 .statement-title {
   margin: 0;
   font-size: 14px;
