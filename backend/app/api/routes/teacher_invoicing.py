@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import Professor
+from app.models.catalog import CourseType, DeliveryMode, Location, Professor
 from app.models.ops import AppSetting, LegalEntity
 from app.models.teacher_invoicing import (
     TeacherInvoice,
@@ -46,6 +46,7 @@ from app.services.teacher_invoicing import (
     invoice_period_label,
     statement_to_snapshot_payload,
 )
+from app.services.payouts import resolve_hourly_rate_for_missing_service
 
 router = APIRouter(prefix="/teacher")
 
@@ -60,6 +61,14 @@ def _quantize(value: Decimal) -> Decimal:
 
 def _format_money(value: Decimal | None) -> str:
     return f"{_quantize(value or Decimal('0'))}"
+
+
+def _delivery_mode_label(mode: DeliveryMode) -> str:
+    if mode == DeliveryMode.ONLINE:
+        return "En ligne"
+    if mode == DeliveryMode.ONSITE:
+        return "Presentiel"
+    return "Tous modes"
 
 
 def _teacher_invoice_lines_payload(lines: list[TeacherInvoiceLine]) -> list[dict[str, str]]:
@@ -694,15 +703,60 @@ def report_teacher_statement_missing_service(
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
-    estimated_rate_text = "-" if payload.estimated_rate_ht is None else f"{_quantize(payload.estimated_rate_ht)}"
+    attendee_count = int(payload.attendee_count or 0)
+    service_label: str
+    duration_minutes: int
+    modality_label: str
+    estimated_rate_text: str
+    estimated_rate_currency: str | None = None
+    course_type_id: str | None = None
+    location_id: str | None = None
+    location_name: str | None = None
+
+    if payload.course_type_id is not None and payload.location_id is not None:
+        course_type = db.scalar(select(CourseType).where(CourseType.id == payload.course_type_id))
+        if course_type is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Type de prestation introuvable")
+        location = db.scalar(select(Location).where(Location.id == payload.location_id))
+        if location is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lieu introuvable")
+
+        service_label = (course_type.name or "").strip() or "Prestation"
+        duration_minutes = int(course_type.duration_minutes or 0) or int(payload.duration_minutes or 60)
+        modality_label = f"{location.name} / {_delivery_mode_label(course_type.mode)}"
+        resolved_rate = resolve_hourly_rate_for_missing_service(
+            db,
+            professor_id=professor.id,
+            course_type_id=course_type.id,
+            location_id=location.id,
+            on_date=payload.service_date,
+            attendees_count=attendee_count,
+        )
+        estimated_rate_text = "-" if resolved_rate is None else _format_money(resolved_rate.hourly_rate)
+        estimated_rate_currency = resolved_rate.currency_code if resolved_rate is not None else None
+        course_type_id = str(course_type.id)
+        location_id = str(location.id)
+        location_name = location.name
+    else:
+        if payload.service_label is None or payload.duration_minutes is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Type de prestation et duree obligatoires",
+            )
+        service_label = payload.service_label.strip()
+        duration_minutes = int(payload.duration_minutes)
+        modality_label = (payload.modality or "-").strip()
+        estimated_rate_text = "-" if payload.estimated_rate_ht is None else f"{_quantize(payload.estimated_rate_ht)}"
+
     message = (
         "Signalement prestation manquante\n"
         f"Date: {payload.service_date.isoformat()}\n"
-        f"Prestation: {payload.service_label.strip()}\n"
+        f"Prestation: {service_label}\n"
         f"Eleve/Groupe: {(payload.student_or_group or '-').strip()}\n"
-        f"Duree (min): {payload.duration_minutes}\n"
-        f"Modalite/Lieu: {(payload.modality or '-').strip()}\n"
-        f"Taux estime HT: {estimated_rate_text}\n\n"
+        f"Duree (min): {duration_minutes}\n"
+        f"Modalite/Lieu: {modality_label}\n"
+        f"Eleves presents: {attendee_count}\n"
+        f"Taux estime HT: {estimated_rate_text}{f' {estimated_rate_currency}' if estimated_rate_currency else ''}\n\n"
         f"Commentaire professeur:\n{payload.comment.strip()}"
     )
     out = _mark_statements_with_message(
@@ -715,11 +769,16 @@ def report_teacher_statement_missing_service(
         event_type="teacher_statement_missing_service_reported",
         payload={
             "service_date": payload.service_date.isoformat(),
-            "service_label": payload.service_label.strip(),
+            "service_label": service_label,
+            "course_type_id": course_type_id,
             "student_or_group": (payload.student_or_group or "").strip(),
-            "duration_minutes": payload.duration_minutes,
-            "modality": (payload.modality or "").strip(),
+            "duration_minutes": duration_minutes,
+            "modality": modality_label,
+            "location_id": location_id,
+            "location_name": location_name,
+            "attendee_count": attendee_count,
             "estimated_rate_ht": estimated_rate_text,
+            "estimated_rate_currency": estimated_rate_currency,
             "comment": payload.comment.strip(),
         },
     )

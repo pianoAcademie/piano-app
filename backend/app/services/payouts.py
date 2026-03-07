@@ -274,6 +274,123 @@ def resolve_hourly_rate_for_session(
     )
 
 
+def resolve_hourly_rate_for_missing_service(
+    db: Session,
+    *,
+    professor_id: UUID,
+    course_type_id: UUID,
+    location_id: UUID | None,
+    on_date: date,
+    attendees_count: int,
+    default_grid_lines: list[DefaultProfessorGridLine] | None = None,
+) -> ResolvedHourlyRate | None:
+    safe_attendees = max(0, int(attendees_count))
+    payout_currency = db.scalar(select(Professor.payout_currency).where(Professor.id == professor_id)) or "EUR"
+    currency_code = payout_currency.strip().upper() or "EUR"
+
+    base_filters = [
+        ProfessorHourlyRate.professor_id == professor_id,
+        ProfessorHourlyRate.valid_from <= on_date,
+        or_(ProfessorHourlyRate.valid_to.is_(None), ProfessorHourlyRate.valid_to >= on_date),
+    ]
+
+    def _resolve_from_row(row: ProfessorHourlyRate | None, *, allow_headcount_rules: bool = True) -> ResolvedHourlyRate | None:
+        if row is None:
+            return None
+        rules = _normalize_professor_rate_rules(row.headcount_rules_json) if allow_headcount_rules else []
+        if rules:
+            for rule in rules:
+                if safe_attendees < rule.min_students:
+                    continue
+                if rule.max_students is not None and safe_attendees > rule.max_students:
+                    continue
+                return ResolvedHourlyRate(
+                    hourly_rate=_quantize_2(Decimal(rule.hourly_rate)),
+                    currency_code=(row.currency_code or currency_code).strip().upper() or currency_code,
+                )
+        if row.hourly_rate is None:
+            return None
+        return ResolvedHourlyRate(
+            hourly_rate=_quantize_2(Decimal(row.hourly_rate)),
+            currency_code=(row.currency_code or currency_code).strip().upper() or currency_code,
+        )
+
+    if location_id is not None:
+        resolved = _resolve_from_row(
+            db.scalar(
+                select(ProfessorHourlyRate)
+                .where(
+                    *base_filters,
+                    ProfessorHourlyRate.course_type_id == course_type_id,
+                    ProfessorHourlyRate.location_id == location_id,
+                )
+                .order_by(ProfessorHourlyRate.valid_from.desc(), ProfessorHourlyRate.created_at.desc())
+                .limit(1)
+            )
+        )
+        if resolved is not None:
+            return resolved
+
+    resolved = _resolve_from_row(
+        db.scalar(
+            select(ProfessorHourlyRate)
+            .where(
+                *base_filters,
+                ProfessorHourlyRate.course_type_id == course_type_id,
+                ProfessorHourlyRate.location_id.is_(None),
+            )
+            .order_by(ProfessorHourlyRate.valid_from.desc(), ProfessorHourlyRate.created_at.desc())
+            .limit(1)
+        )
+    )
+    if resolved is not None:
+        return resolved
+
+    lines = default_grid_lines
+    if lines is None:
+        lines, _ = load_default_professor_grid(db)
+    default_line = next((line for line in lines if line.course_type_id == course_type_id), None)
+    if default_line is not None:
+        for rule in default_line.rules:
+            if safe_attendees < rule.min_students:
+                continue
+            if rule.max_students is not None and safe_attendees > rule.max_students:
+                continue
+            return ResolvedHourlyRate(
+                hourly_rate=_quantize_2(Decimal(rule.hourly_rate)),
+                currency_code=currency_code,
+            )
+        if default_line.default_hourly_rate is not None:
+            return ResolvedHourlyRate(
+                hourly_rate=_quantize_2(Decimal(default_line.default_hourly_rate)),
+                currency_code=currency_code,
+            )
+
+    resolved = _resolve_from_row(
+        db.scalar(
+            select(ProfessorHourlyRate)
+            .where(
+                *base_filters,
+                ProfessorHourlyRate.course_type_id.is_(None),
+                ProfessorHourlyRate.location_id.is_(None),
+            )
+            .order_by(ProfessorHourlyRate.valid_from.desc(), ProfessorHourlyRate.created_at.desc())
+            .limit(1)
+        ),
+        allow_headcount_rules=False,
+    )
+    if resolved is not None:
+        return resolved
+
+    course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
+    if course_type is None or course_type.default_hourly_rate is None:
+        return None
+    return ResolvedHourlyRate(
+        hourly_rate=_quantize_2(Decimal(course_type.default_hourly_rate)),
+        currency_code=currency_code,
+    )
+
+
 def run_calc_professor_payouts_job(
     db: Session,
     *,

@@ -275,9 +275,12 @@ class TeacherStatementDisputeLinesRequest(BaseModel):
 
 class TeacherStatementMissingServiceRequest(BaseModel):
     service_date: date
-    service_label: str = Field(min_length=1, max_length=200)
+    course_type_id: UUID | None = None
+    location_id: UUID | None = None
+    attendee_count: int | None = Field(default=None, ge=0, le=300)
+    service_label: str | None = Field(default=None, max_length=200)
     student_or_group: str | None = Field(default=None, max_length=200)
-    duration_minutes: int = Field(ge=1, le=720)
+    duration_minutes: int | None = Field(default=None, ge=1, le=720)
     modality: str | None = Field(default=None, max_length=80)
     estimated_rate_ht: Decimal | None = None
     comment: str = Field(min_length=1, max_length=4000)

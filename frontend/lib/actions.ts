@@ -1493,20 +1493,21 @@ export async function teacherReportMissingServiceAction(formData: FormData): Pro
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
   const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
   const serviceDate = String(formData.get("service_date") ?? "").trim();
-  const serviceLabel = String(formData.get("service_label") ?? "").trim();
+  const courseTypeId = String(formData.get("course_type_id") ?? "").trim();
+  const locationId = String(formData.get("location_id") ?? "").trim();
   const studentOrGroup = optionalField(formData, "student_or_group");
-  const durationMinutes = Number.parseInt(String(formData.get("duration_minutes") ?? "").trim(), 10);
-  const modality = optionalField(formData, "modality");
-  const estimatedRateRaw = String(formData.get("estimated_rate_ht") ?? "").trim();
+  const attendeeCountRaw = String(formData.get("attendee_count") ?? "").trim();
   const comment = String(formData.get("comment") ?? "").trim();
 
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !serviceDate || !serviceLabel || !Number.isFinite(durationMinutes) || !comment) {
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !serviceDate || !courseTypeId || !locationId || !comment) {
     redirect(appendQueryMessage(returnTo, "error", "Tous les champs obligatoires doivent etre renseignes"));
   }
-
-  const estimatedRate = estimatedRateRaw ? parseNonNegativeDecimal(estimatedRateRaw.replace(",", ".")) : null;
-  if (estimatedRateRaw && estimatedRate === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Taux estime invalide"));
+  let attendeeCount: number | null = null;
+  if (attendeeCountRaw) {
+    attendeeCount = Number.parseInt(attendeeCountRaw, 10);
+    if (!Number.isFinite(attendeeCount) || attendeeCount < 0) {
+      redirect(appendQueryMessage(returnTo, "error", "Nombre d eleves presents invalide"));
+    }
   }
 
   const result = await backendRequest<TeacherStatementOut[]>(
@@ -1515,11 +1516,10 @@ export async function teacherReportMissingServiceAction(formData: FormData): Pro
       method: "POST",
       body: JSON.stringify({
         service_date: serviceDate,
-        service_label: serviceLabel,
+        course_type_id: courseTypeId,
+        location_id: locationId,
         student_or_group: studentOrGroup,
-        duration_minutes: durationMinutes,
-        modality,
-        estimated_rate_ht: estimatedRate,
+        attendee_count: attendeeCount,
         comment,
       }),
     },

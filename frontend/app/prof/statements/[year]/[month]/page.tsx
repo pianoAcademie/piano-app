@@ -13,8 +13,9 @@ import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from
 import AlertCard from "../../../../../components/teacher-ui/alert-card";
 import BottomTabs from "../../../../../components/teacher-ui/bottom-tabs";
 import PageHeaderMobile from "../../../../../components/teacher-ui/page-header-mobile";
+import TeacherMissingServiceForm, { type MissingServiceActivityOption, type MissingServiceLocationOption } from "../../../../../components/teacher-missing-service-form";
 import PortalImpersonationBanner from "../../../../../components/portal-impersonation-banner";
-import type { TeacherStatementOut } from "../../../../../lib/types";
+import type { CourseTypeOut, LocationOut, ProfessorContractGridOut, TeacherStatementOut } from "../../../../../lib/types";
 
 type StatementServiceRow = {
   rowId: string;
@@ -69,6 +70,17 @@ function toDateFr(value: string): string {
     month: "2-digit",
     day: "2-digit",
   });
+}
+
+function modeLabel(rawMode: string): string {
+  const normalized = rawMode.trim().toUpperCase();
+  if (normalized === "EN_LIGNE" || normalized === "ONLINE") {
+    return "En ligne";
+  }
+  if (normalized === "PRESENTIEL" || normalized === "ONSITE") {
+    return "Presentiel";
+  }
+  return "Tous modes";
 }
 
 function toTimeFr(value: string): string {
@@ -229,7 +241,12 @@ export default async function TeacherStatementMonthDetailPage({
   const error = Array.isArray(searchParams.error) ? searchParams.error[0] : (searchParams.error ?? "");
   const impersonationNameHint = Array.isArray(searchParams.imp_name) ? searchParams.imp_name[0] ?? "" : searchParams.imp_name ?? "";
   const backToRaw = readQueryParam(searchParams, "from").trim();
-  const statementsResult = await backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements/${year}/${month}`, {}, token);
+  const [statementsResult, courseTypesResult, locationsResult, contractGridsResult] = await Promise.all([
+    backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements/${year}/${month}`, {}, token),
+    backendRequest<CourseTypeOut[]>("/api/v1/course-types?active=true", {}, token),
+    backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token),
+    backendRequest<ProfessorContractGridOut[]>("/api/v1/professors/me/contract-grids", {}, token),
+  ]);
   const statements = statementsResult.ok ? statementsResult.data : [];
 
   const monthLabel = MONTH_LABELS[Math.max(1, Math.min(12, month)) - 1] ?? String(month);
@@ -253,6 +270,62 @@ export default async function TeacherStatementMonthDetailPage({
   const monthPathWithContext = `${monthPath}?from=${encodeURIComponent(safeBackHref)}`;
   const disputePanelHref = "#statement-dispute-modal";
   const missingPanelHref = "#statement-missing-modal";
+  const fallbackCurrency = statements[0]?.currency || "EUR";
+
+  const gridLineByCourseTypeId = new Map<string, ProfessorContractGridOut["lines"][number]>();
+  if (contractGridsResult.ok) {
+    for (const grid of contractGridsResult.data) {
+      for (const line of grid.lines) {
+        if (!line.course_type_id || gridLineByCourseTypeId.has(line.course_type_id)) {
+          continue;
+        }
+        gridLineByCourseTypeId.set(line.course_type_id, line);
+      }
+    }
+  }
+
+  const activitiesMap = new Map<string, MissingServiceActivityOption>();
+  if (courseTypesResult.ok && courseTypesResult.data.length > 0) {
+    const restrictToProfessorActivities = gridLineByCourseTypeId.size > 0;
+    for (const courseType of courseTypesResult.data) {
+      if (restrictToProfessorActivities && !gridLineByCourseTypeId.has(courseType.id)) {
+        continue;
+      }
+      const line = gridLineByCourseTypeId.get(courseType.id);
+      activitiesMap.set(courseType.id, {
+        id: courseType.id,
+        label: (line?.course_type_name || courseType.name || "").trim() || "Prestation",
+        duration_minutes: Number(line?.reference_duration_minutes ?? courseType.duration_minutes ?? 60) || 60,
+        mode_label: modeLabel(line?.mode ?? courseType.mode),
+        default_hourly_rate: line?.default_hourly_rate ?? courseType.default_hourly_rate,
+        rules: line?.rules ?? [],
+      });
+    }
+  }
+
+  if (activitiesMap.size === 0 && contractGridsResult.ok) {
+    for (const grid of contractGridsResult.data) {
+      for (const line of grid.lines) {
+        if (!line.course_type_id || activitiesMap.has(line.course_type_id)) {
+          continue;
+        }
+        activitiesMap.set(line.course_type_id, {
+          id: line.course_type_id,
+          label: (line.course_type_name || line.service_type || "").trim() || "Prestation",
+          duration_minutes: Number(line.reference_duration_minutes ?? 60) || 60,
+          mode_label: modeLabel(line.mode),
+          default_hourly_rate: line.default_hourly_rate,
+          rules: line.rules,
+        });
+      }
+    }
+  }
+
+  const missingServiceActivities = Array.from(activitiesMap.values()).sort((a, b) => a.label.localeCompare(b.label, "fr"));
+  const missingServiceLocations: MissingServiceLocationOption[] = locationsResult.ok
+    ? locationsResult.data.map((location) => ({ id: location.id, label: location.name }))
+    : [];
+  const defaultMissingServiceDate = new Date().toISOString().slice(0, 10);
 
   return (
     <section className="page teacher-shell teacher-subpage">
@@ -319,6 +392,9 @@ export default async function TeacherStatementMonthDetailPage({
       {ok ? <AlertCard tone="ok">{ok}</AlertCard> : null}
       {error ? <AlertCard tone="error">{error}</AlertCard> : null}
       {!statementsResult.ok ? <AlertCard tone="error">Erreur releve detail: {statementsResult.message}</AlertCard> : null}
+      {!courseTypesResult.ok ? <AlertCard tone="error">Erreur prestations: {courseTypesResult.message}</AlertCard> : null}
+      {!locationsResult.ok ? <AlertCard tone="error">Erreur lieux: {locationsResult.message}</AlertCard> : null}
+      {!contractGridsResult.ok ? <AlertCard tone="error">Erreur grille contractuelle: {contractGridsResult.message}</AlertCard> : null}
 
       <article className="card statement-period-hero">
         <p className="statement-title">Releve de prestations</p>
@@ -475,40 +551,16 @@ export default async function TeacherStatementMonthDetailPage({
             ✕
           </a>
           <h3>Ajouter une prestation manquante</h3>
-          <form action={teacherReportMissingServiceAction} className="grid top-gap-sm">
-            <input type="hidden" name="year" value={year} />
-            <input type="hidden" name="month" value={month} />
-            <input type="hidden" name="return_to" value={monthPathWithContext} />
-            <label>
-              Date (obligatoire)
-              <input type="date" name="service_date" required />
-            </label>
-            <label>
-              Type / intitule de prestation (obligatoire)
-              <input type="text" name="service_label" required maxLength={200} placeholder="Ex: Cours individuel piano 60 min" />
-            </label>
-            <label>
-              Eleve ou groupe
-              <input type="text" name="student_or_group" maxLength={200} placeholder="Ex: Marie Besnard" />
-            </label>
-            <label>
-              Duree (minutes)
-              <input type="number" name="duration_minutes" min={1} max={720} required defaultValue={60} />
-            </label>
-            <label>
-              Lieu / modalite
-              <input type="text" name="modality" maxLength={80} placeholder="Ex: En ligne / Studio Lyon" />
-            </label>
-            <label>
-              Taux estime HT (optionnel)
-              <input type="text" name="estimated_rate_ht" inputMode="decimal" placeholder="Ex: 32.00" />
-            </label>
-            <label>
-              Commentaire (obligatoire)
-              <textarea name="comment" required minLength={5} maxLength={4000} rows={5} placeholder="Precisez la prestation manquante" />
-            </label>
-            <button type="submit" className="ghost">Envoyer a l administration</button>
-          </form>
+          <TeacherMissingServiceForm
+            action={teacherReportMissingServiceAction}
+            year={year}
+            month={month}
+            returnTo={monthPathWithContext}
+            defaultDate={defaultMissingServiceDate}
+            currency={fallbackCurrency}
+            activities={missingServiceActivities}
+            locations={missingServiceLocations}
+          />
         </article>
       </section>
     </section>
