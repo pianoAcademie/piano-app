@@ -457,3 +457,144 @@ class QuoteTemplateVariableOut(BaseModel):
     label: str
     description: str
     example: str
+
+
+class QuoteTemplateVersionOut(BaseModel):
+    id: UUID
+    quote_template_id: UUID
+    version_number: int
+    content_snapshot: dict[str, object] = Field(default_factory=dict)
+    is_active_version: bool
+    published_at: datetime | None = None
+    changelog: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuoteTemplateV2Out(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    template_type: str
+    target: str | None = None
+    language: str
+    description: str | None = None
+    is_active: bool
+    is_default: bool
+    status: str
+    current_version_id: UUID | None = None
+    current_version_number: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+
+class QuoteTemplateV2UpsertRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=180)
+    template_type: str = Field(default="quote_body", min_length=2, max_length=40)
+    target: str | None = Field(default=None, max_length=40)
+    language: str = Field(default="fr", min_length=2, max_length=8)
+    description: str | None = None
+    is_active: bool = True
+    is_default: bool = False
+    status: str = Field(default="draft", max_length=20)
+    subject_template: str = Field(min_length=1, max_length=255)
+    body_template: str = Field(min_length=1, max_length=20000)
+    changelog: str | None = None
+    publish_now: bool = True
+
+
+class QuoteTemplateVersionPublishRequest(BaseModel):
+    subject_template: str = Field(min_length=1, max_length=255)
+    body_template: str = Field(min_length=1, max_length=20000)
+    changelog: str | None = None
+    activate: bool = True
+
+
+class TermsTemplateVersionOut(BaseModel):
+    id: UUID
+    terms_template_id: UUID
+    version_number: int
+    content_snapshot: dict[str, object] = Field(default_factory=dict)
+    is_active_version: bool
+    published_at: datetime | None = None
+    changelog: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TermsTemplateOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    terms_type: str
+    target: str | None = None
+    language: str
+    description: str | None = None
+    is_active: bool
+    status: str
+    current_version_id: UUID | None = None
+    current_version_number: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+
+class TermsTemplateUpsertRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=180)
+    terms_type: str = Field(default="cgv", min_length=2, max_length=40)
+    target: str | None = Field(default=None, max_length=40)
+    language: str = Field(default="fr", min_length=2, max_length=8)
+    description: str | None = None
+    is_active: bool = True
+    status: str = Field(default="draft", max_length=20)
+    version_label: str = Field(min_length=1, max_length=80)
+    content: str = Field(min_length=1)
+    changelog: str | None = None
+    publish_now: bool = True
+
+
+class TermsTemplateVersionPublishRequest(BaseModel):
+    version_label: str = Field(min_length=1, max_length=80)
+    content: str = Field(min_length=1)
+    changelog: str | None = None
+    activate: bool = True
+
+
+class QuoteDocumentBindingOut(BaseModel):
+    id: UUID
+    prospect_type: str | None = None
+    context_type: str | None = None
+    activity_family: str | None = None
+    activity_id: UUID | None = None
+    quote_type_id: UUID | None = None
+    language: str | None = None
+    currency: str | None = None
+    quote_template_id: UUID | None = None
+    quote_template_version_id: UUID | None = None
+    terms_template_id: UUID | None = None
+    terms_template_version_id: UUID | None = None
+    priority: int
+    is_active: bool
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuoteDocumentBindingUpsertRequest(BaseModel):
+    prospect_type: str | None = Field(default=None, max_length=20)
+    context_type: str | None = Field(default=None, max_length=30)
+    activity_family: str | None = Field(default=None, max_length=80)
+    activity_id: UUID | None = None
+    quote_type_id: UUID | None = None
+    language: str | None = Field(default=None, max_length=8)
+    currency: str | None = Field(default=None, max_length=3)
+    quote_template_id: UUID | None = None
+    quote_template_version_id: UUID | None = None
+    terms_template_id: UUID | None = None
+    terms_template_version_id: UUID | None = None
+    priority: int = Field(default=100, ge=0, le=9999)
+    is_active: bool = True
+    notes: str | None = None

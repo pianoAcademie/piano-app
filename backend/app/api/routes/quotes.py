@@ -27,6 +27,7 @@ from app.models.quote import (
     Prospect,
     Quote,
     QuoteAcceptanceFollowup,
+    QuoteDocumentBinding,
     QuoteDocumentSnapshot,
     QuoteEmailOutbox,
     QuoteEvent,
@@ -72,11 +73,21 @@ from app.schemas.quote import (
     QuoteTypeOut,
     QuoteTypeUpsertRequest,
     QuoteTemplateOut,
+    QuoteTemplateV2Out,
+    QuoteTemplateV2UpsertRequest,
     QuoteTemplateUpsertRequest,
+    QuoteTemplateVersionOut,
+    QuoteTemplateVersionPublishRequest,
     QuoteTemplateVariableOut,
     QuoteUpdateRequest,
+    QuoteDocumentBindingOut,
+    QuoteDocumentBindingUpsertRequest,
     SolfegeLevelRuleOut,
     SolfegeLevelRuleUpsertRequest,
+    TermsTemplateOut,
+    TermsTemplateUpsertRequest,
+    TermsTemplateVersionOut,
+    TermsTemplateVersionPublishRequest,
 )
 from app.services.email_delivery import send_email
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
@@ -384,6 +395,336 @@ def _quote_template_out(row: dict[str, object]) -> QuoteTemplateOut:
         is_default=bool(row.get("is_default", False)),
         created_at=_parse_iso_datetime(str(row.get("created_at") or _utcnow().isoformat())),
         updated_at=_parse_iso_datetime(str(row.get("updated_at") or _utcnow().isoformat())),
+    )
+
+
+def _active_quote_template_version(db: Session, template_id: UUID, *, lock: bool = False) -> QuoteTemplateVersion | None:
+    stmt = (
+        select(QuoteTemplateVersion)
+        .where(QuoteTemplateVersion.quote_template_id == template_id)
+        .order_by(QuoteTemplateVersion.is_active_version.desc(), QuoteTemplateVersion.version_number.desc())
+        .limit(1)
+    )
+    if lock:
+        stmt = stmt.with_for_update()
+    return db.scalar(stmt)
+
+
+def _active_terms_template_version(db: Session, template_id: UUID, *, lock: bool = False) -> TermsTemplateVersion | None:
+    stmt = (
+        select(TermsTemplateVersion)
+        .where(TermsTemplateVersion.terms_template_id == template_id)
+        .order_by(TermsTemplateVersion.is_active_version.desc(), TermsTemplateVersion.version_number.desc())
+        .limit(1)
+    )
+    if lock:
+        stmt = stmt.with_for_update()
+    return db.scalar(stmt)
+
+
+def _quote_template_version_out(row: QuoteTemplateVersion) -> QuoteTemplateVersionOut:
+    return QuoteTemplateVersionOut(
+        id=row.id,
+        quote_template_id=row.quote_template_id,
+        version_number=int(row.version_number),
+        content_snapshot=row.content_snapshot or {},
+        is_active_version=bool(row.is_active_version),
+        published_at=row.published_at,
+        changelog=row.changelog,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _quote_template_v2_out(db: Session, row: QuoteTemplate) -> QuoteTemplateV2Out:
+    active_version = _active_quote_template_version(db, row.id)
+    return QuoteTemplateV2Out(
+        id=row.id,
+        code=row.code,
+        name=row.name,
+        template_type=row.template_type,
+        target=row.target,
+        language=row.language,
+        description=row.description,
+        is_active=bool(row.is_active),
+        is_default=bool(row.is_default),
+        status=row.status,
+        current_version_id=row.current_version_id,
+        current_version_number=int(active_version.version_number) if active_version is not None else None,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        archived_at=row.archived_at,
+    )
+
+
+def _terms_template_version_out(row: TermsTemplateVersion) -> TermsTemplateVersionOut:
+    return TermsTemplateVersionOut(
+        id=row.id,
+        terms_template_id=row.terms_template_id,
+        version_number=int(row.version_number),
+        content_snapshot=row.content_snapshot or {},
+        is_active_version=bool(row.is_active_version),
+        published_at=row.published_at,
+        changelog=row.changelog,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _terms_template_out(db: Session, row: TermsTemplate) -> TermsTemplateOut:
+    active_version = _active_terms_template_version(db, row.id)
+    return TermsTemplateOut(
+        id=row.id,
+        code=row.code,
+        name=row.name,
+        terms_type=row.terms_type,
+        target=row.target,
+        language=row.language,
+        description=row.description,
+        is_active=bool(row.is_active),
+        status=row.status,
+        current_version_id=row.current_version_id,
+        current_version_number=int(active_version.version_number) if active_version is not None else None,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        archived_at=row.archived_at,
+    )
+
+
+def _quote_document_binding_out(row: QuoteDocumentBinding) -> QuoteDocumentBindingOut:
+    return QuoteDocumentBindingOut(
+        id=row.id,
+        prospect_type=row.prospect_type,
+        context_type=row.context_type,
+        activity_family=row.activity_family,
+        activity_id=row.activity_id,
+        quote_type_id=row.quote_type_id,
+        language=row.language,
+        currency=row.currency,
+        quote_template_id=row.quote_template_id,
+        quote_template_version_id=row.quote_template_version_id,
+        terms_template_id=row.terms_template_id,
+        terms_template_version_id=row.terms_template_version_id,
+        priority=int(row.priority or 100),
+        is_active=bool(row.is_active),
+        notes=row.notes,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _normalized_match_value(value: str | None) -> str | None:
+    cleaned = (value or "").strip().lower()
+    return cleaned or None
+
+
+def _next_quote_template_version_number(db: Session, template_id: UUID) -> int:
+    current = db.scalar(
+        select(func.max(QuoteTemplateVersion.version_number)).where(QuoteTemplateVersion.quote_template_id == template_id)
+    )
+    return int(current or 0) + 1
+
+
+def _next_terms_template_version_number(db: Session, template_id: UUID) -> int:
+    current = db.scalar(
+        select(func.max(TermsTemplateVersion.version_number)).where(TermsTemplateVersion.terms_template_id == template_id)
+    )
+    return int(current or 0) + 1
+
+
+def _clear_quote_template_default_flag(db: Session, *, language: str | None, except_id: UUID | None = None) -> None:
+    rows = db.scalars(select(QuoteTemplate).where(QuoteTemplate.is_default.is_(True)).with_for_update()).all()
+    normalized_language = _normalized_match_value(language)
+    for row in rows:
+        row_language = _normalized_match_value(row.language)
+        if normalized_language is not None and row_language != normalized_language:
+            continue
+        if except_id is not None and row.id == except_id:
+            continue
+        row.is_default = False
+        row.updated_at = _utcnow()
+        db.add(row)
+
+
+def _cgv_snapshot_from_terms_version(version: TermsTemplateVersion) -> dict[str, object]:
+    content_snapshot = version.content_snapshot or {}
+    return {
+        "terms_template_id": str(version.terms_template_id),
+        "terms_template_version_id": str(version.id),
+        "version_label": str(content_snapshot.get("version_label") or f"terms-v{version.version_number}"),
+        "content": str(content_snapshot.get("content") or ""),
+    }
+
+
+def _quote_prospect_type_for_context(
+    db: Session,
+    *,
+    prospect_id: UUID | None,
+    client_id: UUID | None,
+) -> str | None:
+    if prospect_id is not None:
+        prospect = db.scalar(select(Prospect).where(Prospect.id == prospect_id))
+        if prospect is not None:
+            return _normalized_prospect_type(prospect.meta or {})
+    if client_id is not None:
+        client = db.scalar(select(User).where(User.id == client_id))
+        if client is not None:
+            kind = (client.client_kind or "").strip().upper()
+            if kind == "CHILD":
+                return "child"
+            return "adult"
+    return None
+
+
+def _quote_activity_context(
+    db: Session,
+    *,
+    activity_ids: list[UUID],
+) -> tuple[UUID | None, str | None]:
+    if not activity_ids:
+        return None, None
+    first_activity_id = activity_ids[0]
+    activity = db.scalar(select(CourseType).where(CourseType.id == first_activity_id))
+    if activity is None:
+        return first_activity_id, None
+    service_code = (activity.service_code or "").strip().lower() or None
+    return first_activity_id, service_code
+
+
+def _resolve_document_binding(
+    db: Session,
+    *,
+    prospect_type: str | None,
+    context_type: str | None,
+    activity_family: str | None,
+    activity_id: UUID | None,
+    quote_type_id: UUID | None,
+    language: str | None,
+    currency: str | None,
+) -> QuoteDocumentBinding | None:
+    normalized_prospect_type = _normalized_match_value(prospect_type)
+    normalized_context_type = _normalized_match_value(context_type)
+    normalized_activity_family = _normalized_match_value(activity_family)
+    normalized_language = _normalized_match_value(language)
+    normalized_currency = _normalized_match_value(currency)
+
+    rows = db.scalars(
+        select(QuoteDocumentBinding)
+        .where(QuoteDocumentBinding.is_active.is_(True))
+        .order_by(QuoteDocumentBinding.priority.asc(), QuoteDocumentBinding.created_at.desc())
+    ).all()
+    for row in rows:
+        if row.prospect_type and _normalized_match_value(row.prospect_type) != normalized_prospect_type:
+            continue
+        if row.context_type and _normalized_match_value(row.context_type) != normalized_context_type:
+            continue
+        if row.activity_family and _normalized_match_value(row.activity_family) != normalized_activity_family:
+            continue
+        if row.activity_id is not None and row.activity_id != activity_id:
+            continue
+        if row.quote_type_id is not None and row.quote_type_id != quote_type_id:
+            continue
+        if row.language and _normalized_match_value(row.language) != normalized_language:
+            continue
+        if row.currency and _normalized_match_value(row.currency) != normalized_currency:
+            continue
+        return row
+    return None
+
+
+def _resolve_document_templates(
+    db: Session,
+    *,
+    prospect_type: str | None,
+    context_type: str | None,
+    activity_family: str | None,
+    activity_id: UUID | None,
+    quote_type_id: UUID | None,
+    language: str | None,
+    currency: str | None,
+    quote_template: QuoteTemplate | None,
+    quote_template_version: QuoteTemplateVersion | None,
+    terms_template: TermsTemplate | None,
+    terms_template_version: TermsTemplateVersion | None,
+) -> tuple[QuoteTemplate | None, QuoteTemplateVersion | None, TermsTemplate | None, TermsTemplateVersion | None, QuoteDocumentBinding | None]:
+    selected_quote_template = quote_template
+    selected_quote_template_version = quote_template_version
+    selected_terms_template = terms_template
+    selected_terms_template_version = terms_template_version
+
+    binding = _resolve_document_binding(
+        db,
+        prospect_type=prospect_type,
+        context_type=context_type,
+        activity_family=activity_family,
+        activity_id=activity_id,
+        quote_type_id=quote_type_id,
+        language=language,
+        currency=currency,
+    )
+
+    if selected_quote_template_version is None and binding and binding.quote_template_version_id is not None:
+        selected_quote_template_version = db.scalar(
+            select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == binding.quote_template_version_id)
+        )
+    if selected_quote_template is None:
+        if selected_quote_template_version is not None:
+            selected_quote_template = db.scalar(
+                select(QuoteTemplate).where(QuoteTemplate.id == selected_quote_template_version.quote_template_id)
+            )
+        elif binding and binding.quote_template_id is not None:
+            selected_quote_template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == binding.quote_template_id))
+        else:
+            normalized_language = _normalized_match_value(language)
+            candidates = db.scalars(
+                select(QuoteTemplate)
+                .where(QuoteTemplate.is_active.is_(True))
+                .order_by(QuoteTemplate.is_default.desc(), QuoteTemplate.updated_at.desc())
+            ).all()
+            selected_quote_template = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if normalized_language is None or _normalized_match_value(candidate.language) == normalized_language
+                ),
+                candidates[0] if candidates else None,
+            )
+    if selected_quote_template_version is None and selected_quote_template is not None:
+        selected_quote_template_version = _active_quote_template_version(db, selected_quote_template.id)
+
+    if selected_terms_template_version is None and binding and binding.terms_template_version_id is not None:
+        selected_terms_template_version = db.scalar(
+            select(TermsTemplateVersion).where(TermsTemplateVersion.id == binding.terms_template_version_id)
+        )
+    if selected_terms_template is None:
+        if selected_terms_template_version is not None:
+            selected_terms_template = db.scalar(
+                select(TermsTemplate).where(TermsTemplate.id == selected_terms_template_version.terms_template_id)
+            )
+        elif binding and binding.terms_template_id is not None:
+            selected_terms_template = db.scalar(select(TermsTemplate).where(TermsTemplate.id == binding.terms_template_id))
+        else:
+            normalized_language = _normalized_match_value(language)
+            candidates = db.scalars(
+                select(TermsTemplate).where(TermsTemplate.is_active.is_(True)).order_by(TermsTemplate.updated_at.desc())
+            ).all()
+            selected_terms_template = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if normalized_language is None or _normalized_match_value(candidate.language) == normalized_language
+                ),
+                candidates[0] if candidates else None,
+            )
+    if selected_terms_template_version is None and selected_terms_template is not None:
+        selected_terms_template_version = _active_terms_template_version(db, selected_terms_template.id)
+
+    return (
+        selected_quote_template,
+        selected_quote_template_version,
+        selected_terms_template,
+        selected_terms_template_version,
+        binding,
     )
 
 
@@ -950,10 +1291,12 @@ def create_quote(
     if payload.context_type == "active_client" and payload.client_id is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="client_id is required for active_client quote")
 
+    prospect: Prospect | None = None
     if payload.prospect_id is not None:
         prospect = db.scalar(select(Prospect).where(Prospect.id == payload.prospect_id))
         if prospect is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prospect not found")
+    client: User | None = None
     if payload.client_id is not None:
         client = db.scalar(select(User).where(User.id == payload.client_id))
         if client is None:
@@ -1021,6 +1364,43 @@ def create_quote(
         if payload.language is not None and payload.language.strip()
         else str(selected_template.get("language") or "").strip().lower() if selected_template is not None else None
     )
+    activity_ids = [line.activity_id for line in payload.lines if line.activity_id is not None]
+    activity_id_for_document, activity_family_for_document = _quote_activity_context(db, activity_ids=activity_ids)
+    prospect_type_for_document = (
+        _normalized_prospect_type((prospect.meta if prospect is not None else {}) or {})
+        if prospect is not None
+        else ("child" if (client and (client.client_kind or "").strip().upper() == "CHILD") else ("adult" if client is not None else None))
+    )
+    (
+        selected_quote_template,
+        selected_quote_template_version,
+        selected_terms_template,
+        selected_terms_template_version,
+        selected_binding,
+    ) = _resolve_document_templates(
+        db,
+        prospect_type=prospect_type_for_document,
+        context_type=payload.context_type,
+        activity_family=activity_family_for_document,
+        activity_id=activity_id_for_document,
+        quote_type_id=payload.quote_type_id,
+        language=resolved_language,
+        currency=payload.currency,
+        quote_template=selected_quote_template,
+        quote_template_version=selected_quote_template_version,
+        terms_template=selected_terms_template,
+        terms_template_version=selected_terms_template_version,
+    )
+    if selected_binding is not None:
+        quote_meta["document_binding_id"] = str(selected_binding.id)
+    if selected_quote_template is not None:
+        quote_meta["quote_template_uuid"] = str(selected_quote_template.id)
+    if selected_quote_template_version is not None:
+        quote_meta["quote_template_version_id"] = str(selected_quote_template_version.id)
+    if selected_terms_template is not None:
+        quote_meta["terms_template_id"] = str(selected_terms_template.id)
+    if selected_terms_template_version is not None:
+        quote_meta["terms_template_version_id"] = str(selected_terms_template_version.id)
 
     row = Quote(
         quote_number=_new_quote_number(),
@@ -1076,13 +1456,7 @@ def create_quote(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CGV version not found")
         row.cgv_snapshot = {"id": str(selected_cgv.id), "version_label": selected_cgv.version_label, "content": selected_cgv.content}
     elif selected_terms_template_version is not None:
-        content_snapshot = selected_terms_template_version.content_snapshot or {}
-        row.cgv_snapshot = {
-            "terms_template_id": str(selected_terms_template.id) if selected_terms_template is not None else None,
-            "terms_template_version_id": str(selected_terms_template_version.id),
-            "version_label": str(content_snapshot.get("version_label") or f"terms-v{selected_terms_template_version.version_number}"),
-            "content": str(content_snapshot.get("content") or ""),
-        }
+        row.cgv_snapshot = _cgv_snapshot_from_terms_version(selected_terms_template_version)
     elif not row.cgv_snapshot:
         cgv = db.scalar(select(CgvVersion).where(CgvVersion.is_active.is_(True)).order_by(CgvVersion.created_at.desc()).limit(1))
         if cgv is not None:
@@ -1189,13 +1563,7 @@ def update_quote(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Terms version does not match template")
         row.terms_template_id = selected_terms_template_version.terms_template_id
         row.terms_template_version_id = selected_terms_template_version.id
-        content_snapshot = selected_terms_template_version.content_snapshot or {}
-        row.cgv_snapshot = {
-            "terms_template_id": str(selected_terms_template_version.terms_template_id),
-            "terms_template_version_id": str(selected_terms_template_version.id),
-            "version_label": str(content_snapshot.get("version_label") or f"terms-v{selected_terms_template_version.version_number}"),
-            "content": str(content_snapshot.get("content") or ""),
-        }
+        row.cgv_snapshot = _cgv_snapshot_from_terms_version(selected_terms_template_version)
         document_dirty = True
     if payload.quote_template_id is not None:
         selected_template = resolve_quote_template_for_quote(db, template_id=payload.quote_template_id)
@@ -1267,6 +1635,93 @@ def update_quote(
                 "currency": row.currency,
             }
         document_dirty = True
+
+    document_fields = {
+        "quote_template_uuid",
+        "quote_template_version_id",
+        "terms_template_id",
+        "terms_template_version_id",
+        "quote_template_id",
+        "cgv_version_id",
+    }
+    explicit_document_override = any(field in payload.model_fields_set for field in document_fields)
+    if not explicit_document_override and (
+        row.quote_template_id is None
+        or row.quote_template_version_id is None
+        or row.terms_template_id is None
+        or row.terms_template_version_id is None
+    ):
+        existing_quote_template = (
+            db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == row.quote_template_id))
+            if row.quote_template_id is not None
+            else None
+        )
+        existing_quote_template_version = (
+            db.scalar(select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == row.quote_template_version_id))
+            if row.quote_template_version_id is not None
+            else None
+        )
+        existing_terms_template = (
+            db.scalar(select(TermsTemplate).where(TermsTemplate.id == row.terms_template_id))
+            if row.terms_template_id is not None
+            else None
+        )
+        existing_terms_template_version = (
+            db.scalar(select(TermsTemplateVersion).where(TermsTemplateVersion.id == row.terms_template_version_id))
+            if row.terms_template_version_id is not None
+            else None
+        )
+        quote_lines_for_context = payload.lines if payload.lines is not None else _load_quote_lines(db, row.id)
+        activity_ids_for_context = [
+            item.activity_id if isinstance(item, QuoteLineIn) else item.activity_id
+            for item in quote_lines_for_context
+            if getattr(item, "activity_id", None) is not None
+        ]
+        activity_id_for_document, activity_family_for_document = _quote_activity_context(
+            db, activity_ids=[item for item in activity_ids_for_context if item is not None]
+        )
+        language_for_document = (row.language or str((row.meta or {}).get("language") or "")).strip().lower() or None
+        prospect_type_for_document = _quote_prospect_type_for_context(
+            db,
+            prospect_id=row.prospect_id,
+            client_id=row.client_id,
+        )
+        (
+            resolved_quote_template,
+            resolved_quote_template_version,
+            resolved_terms_template,
+            resolved_terms_template_version,
+            resolved_binding,
+        ) = _resolve_document_templates(
+            db,
+            prospect_type=prospect_type_for_document,
+            context_type=row.context_type,
+            activity_family=activity_family_for_document,
+            activity_id=activity_id_for_document,
+            quote_type_id=row.quote_type_id,
+            language=language_for_document,
+            currency=row.currency,
+            quote_template=existing_quote_template,
+            quote_template_version=existing_quote_template_version,
+            terms_template=existing_terms_template,
+            terms_template_version=existing_terms_template_version,
+        )
+        if resolved_quote_template is not None and row.quote_template_id is None:
+            row.quote_template_id = resolved_quote_template.id
+            document_dirty = True
+        if resolved_quote_template_version is not None and row.quote_template_version_id is None:
+            row.quote_template_version_id = resolved_quote_template_version.id
+            document_dirty = True
+        if resolved_terms_template is not None and row.terms_template_id is None:
+            row.terms_template_id = resolved_terms_template.id
+            document_dirty = True
+        if resolved_terms_template_version is not None and row.terms_template_version_id is None:
+            row.terms_template_version_id = resolved_terms_template_version.id
+            row.cgv_snapshot = _cgv_snapshot_from_terms_version(resolved_terms_template_version)
+            document_dirty = True
+        if resolved_binding is not None:
+            row.meta = {**(row.meta or {}), "document_binding_id": str(resolved_binding.id)}
+            document_dirty = True
 
     if document_dirty:
         row.document_status = "stale"
@@ -2072,6 +2527,624 @@ def delete_admin_quote_template(
     deleted = delete_quote_template(db, template_id=template_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
+    db.commit()
+
+
+@router.get("/quote-templates-v2", response_model=list[QuoteTemplateV2Out])
+def list_quote_templates_v2(
+    active_only: bool = Query(default=False),
+    language: str | None = Query(default=None),
+    target: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[QuoteTemplateV2Out]:
+    stmt = select(QuoteTemplate)
+    if active_only:
+        stmt = stmt.where(QuoteTemplate.is_active.is_(True))
+    if language:
+        stmt = stmt.where(func.lower(QuoteTemplate.language) == language.strip().lower())
+    if target:
+        stmt = stmt.where(func.lower(func.coalesce(QuoteTemplate.target, "")) == target.strip().lower())
+    if status_filter:
+        stmt = stmt.where(func.lower(QuoteTemplate.status) == status_filter.strip().lower())
+    rows = db.scalars(stmt.order_by(QuoteTemplate.updated_at.desc())).all()
+    return [_quote_template_v2_out(db, row) for row in rows]
+
+
+@router.post("/quote-templates-v2", response_model=QuoteTemplateV2Out, status_code=status.HTTP_201_CREATED)
+def create_quote_template_v2(
+    payload: QuoteTemplateV2UpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteTemplateV2Out:
+    now = _utcnow()
+    normalized_language = payload.language.strip().lower()
+    if payload.is_default:
+        _clear_quote_template_default_flag(db, language=normalized_language)
+
+    row = QuoteTemplate(
+        code=payload.code.strip(),
+        name=payload.name.strip(),
+        template_type=payload.template_type.strip(),
+        target=payload.target.strip().lower() if payload.target else None,
+        language=normalized_language,
+        description=payload.description,
+        is_active=payload.is_active,
+        is_default=payload.is_default,
+        status="published" if payload.publish_now else payload.status.strip().lower(),
+        current_version_id=None,
+        created_at=now,
+        updated_at=now,
+        archived_at=None,
+    )
+    db.add(row)
+    db.flush()
+
+    version = QuoteTemplateVersion(
+        quote_template_id=row.id,
+        version_number=_next_quote_template_version_number(db, row.id),
+        content_snapshot={
+            "subject_template": payload.subject_template,
+            "body_template": payload.body_template,
+        },
+        is_active_version=payload.publish_now,
+        published_at=now if payload.publish_now else None,
+        changelog=payload.changelog,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(version)
+    db.flush()
+
+    if payload.publish_now:
+        row.current_version_id = version.id
+    row.updated_at = now
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote template code already exists") from exc
+    db.refresh(row)
+    return _quote_template_v2_out(db, row)
+
+
+@router.patch("/quote-templates-v2/{template_id}", response_model=QuoteTemplateV2Out)
+def update_quote_template_v2(
+    template_id: UUID,
+    payload: QuoteTemplateV2UpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteTemplateV2Out:
+    row = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == template_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
+
+    now = _utcnow()
+    normalized_language = payload.language.strip().lower()
+    if payload.is_default:
+        _clear_quote_template_default_flag(db, language=normalized_language, except_id=row.id)
+
+    row.code = payload.code.strip()
+    row.name = payload.name.strip()
+    row.template_type = payload.template_type.strip()
+    row.target = payload.target.strip().lower() if payload.target else None
+    row.language = normalized_language
+    row.description = payload.description
+    row.is_active = payload.is_active
+    row.is_default = payload.is_default
+    row.status = "published" if payload.publish_now else payload.status.strip().lower()
+    row.archived_at = None if row.status != "archived" else (row.archived_at or now)
+
+    if payload.publish_now:
+        active_versions = db.scalars(
+            select(QuoteTemplateVersion)
+            .where(
+                QuoteTemplateVersion.quote_template_id == row.id,
+                QuoteTemplateVersion.is_active_version.is_(True),
+            )
+            .with_for_update()
+        ).all()
+        for version_row in active_versions:
+            version_row.is_active_version = False
+            version_row.updated_at = now
+            db.add(version_row)
+
+    version = QuoteTemplateVersion(
+        quote_template_id=row.id,
+        version_number=_next_quote_template_version_number(db, row.id),
+        content_snapshot={
+            "subject_template": payload.subject_template,
+            "body_template": payload.body_template,
+        },
+        is_active_version=payload.publish_now,
+        published_at=now if payload.publish_now else None,
+        changelog=payload.changelog,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(version)
+    db.flush()
+    if payload.publish_now:
+        row.current_version_id = version.id
+    row.updated_at = now
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote template code already exists") from exc
+    db.refresh(row)
+    return _quote_template_v2_out(db, row)
+
+
+@router.get("/quote-templates-v2/{template_id}/versions", response_model=list[QuoteTemplateVersionOut])
+def list_quote_template_v2_versions(
+    template_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[QuoteTemplateVersionOut]:
+    exists_row = db.scalar(select(QuoteTemplate.id).where(QuoteTemplate.id == template_id))
+    if exists_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
+    rows = db.scalars(
+        select(QuoteTemplateVersion)
+        .where(QuoteTemplateVersion.quote_template_id == template_id)
+        .order_by(QuoteTemplateVersion.version_number.desc())
+    ).all()
+    return [_quote_template_version_out(row) for row in rows]
+
+
+@router.post("/quote-templates-v2/{template_id}/versions", response_model=QuoteTemplateVersionOut, status_code=status.HTTP_201_CREATED)
+def publish_quote_template_v2_version(
+    template_id: UUID,
+    payload: QuoteTemplateVersionPublishRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteTemplateVersionOut:
+    template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == template_id).with_for_update())
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
+    now = _utcnow()
+
+    if payload.activate:
+        active_versions = db.scalars(
+            select(QuoteTemplateVersion)
+            .where(
+                QuoteTemplateVersion.quote_template_id == template.id,
+                QuoteTemplateVersion.is_active_version.is_(True),
+            )
+            .with_for_update()
+        ).all()
+        for row in active_versions:
+            row.is_active_version = False
+            row.updated_at = now
+            db.add(row)
+
+    version = QuoteTemplateVersion(
+        quote_template_id=template.id,
+        version_number=_next_quote_template_version_number(db, template.id),
+        content_snapshot={
+            "subject_template": payload.subject_template,
+            "body_template": payload.body_template,
+        },
+        is_active_version=payload.activate,
+        published_at=now if payload.activate else None,
+        changelog=payload.changelog,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(version)
+    db.flush()
+    if payload.activate:
+        template.current_version_id = version.id
+        template.status = "published"
+    template.updated_at = now
+    db.add(template)
+    db.commit()
+    db.refresh(version)
+    return _quote_template_version_out(version)
+
+
+@router.delete("/quote-templates-v2/{template_id}", status_code=status.HTTP_200_OK)
+def archive_quote_template_v2(
+    template_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> None:
+    row = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == template_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
+    row.is_active = False
+    row.is_default = False
+    row.status = "archived"
+    row.archived_at = _utcnow()
+    row.updated_at = _utcnow()
+    db.add(row)
+    db.commit()
+
+
+@router.get("/terms-templates", response_model=list[TermsTemplateOut])
+def list_terms_templates(
+    active_only: bool = Query(default=False),
+    language: str | None = Query(default=None),
+    target: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[TermsTemplateOut]:
+    stmt = select(TermsTemplate)
+    if active_only:
+        stmt = stmt.where(TermsTemplate.is_active.is_(True))
+    if language:
+        stmt = stmt.where(func.lower(TermsTemplate.language) == language.strip().lower())
+    if target:
+        stmt = stmt.where(func.lower(func.coalesce(TermsTemplate.target, "")) == target.strip().lower())
+    if status_filter:
+        stmt = stmt.where(func.lower(TermsTemplate.status) == status_filter.strip().lower())
+    rows = db.scalars(stmt.order_by(TermsTemplate.updated_at.desc())).all()
+    return [_terms_template_out(db, row) for row in rows]
+
+
+@router.post("/terms-templates", response_model=TermsTemplateOut, status_code=status.HTTP_201_CREATED)
+def create_terms_template(
+    payload: TermsTemplateUpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TermsTemplateOut:
+    now = _utcnow()
+    row = TermsTemplate(
+        code=payload.code.strip(),
+        name=payload.name.strip(),
+        terms_type=payload.terms_type.strip(),
+        target=payload.target.strip().lower() if payload.target else None,
+        language=payload.language.strip().lower(),
+        description=payload.description,
+        is_active=payload.is_active,
+        status="published" if payload.publish_now else payload.status.strip().lower(),
+        current_version_id=None,
+        created_at=now,
+        updated_at=now,
+        archived_at=None,
+    )
+    db.add(row)
+    db.flush()
+
+    version = TermsTemplateVersion(
+        terms_template_id=row.id,
+        version_number=_next_terms_template_version_number(db, row.id),
+        content_snapshot={
+            "version_label": payload.version_label,
+            "content": payload.content,
+        },
+        is_active_version=payload.publish_now,
+        published_at=now if payload.publish_now else None,
+        changelog=payload.changelog,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(version)
+    db.flush()
+    if payload.publish_now:
+        row.current_version_id = version.id
+    row.updated_at = now
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Terms template code already exists") from exc
+    db.refresh(row)
+    return _terms_template_out(db, row)
+
+
+@router.patch("/terms-templates/{template_id}", response_model=TermsTemplateOut)
+def update_terms_template(
+    template_id: UUID,
+    payload: TermsTemplateUpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TermsTemplateOut:
+    row = db.scalar(select(TermsTemplate).where(TermsTemplate.id == template_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
+
+    now = _utcnow()
+    row.code = payload.code.strip()
+    row.name = payload.name.strip()
+    row.terms_type = payload.terms_type.strip()
+    row.target = payload.target.strip().lower() if payload.target else None
+    row.language = payload.language.strip().lower()
+    row.description = payload.description
+    row.is_active = payload.is_active
+    row.status = "published" if payload.publish_now else payload.status.strip().lower()
+    row.archived_at = None if row.status != "archived" else (row.archived_at or now)
+
+    if payload.publish_now:
+        active_versions = db.scalars(
+            select(TermsTemplateVersion)
+            .where(
+                TermsTemplateVersion.terms_template_id == row.id,
+                TermsTemplateVersion.is_active_version.is_(True),
+            )
+            .with_for_update()
+        ).all()
+        for version_row in active_versions:
+            version_row.is_active_version = False
+            version_row.updated_at = now
+            db.add(version_row)
+
+    version = TermsTemplateVersion(
+        terms_template_id=row.id,
+        version_number=_next_terms_template_version_number(db, row.id),
+        content_snapshot={
+            "version_label": payload.version_label,
+            "content": payload.content,
+        },
+        is_active_version=payload.publish_now,
+        published_at=now if payload.publish_now else None,
+        changelog=payload.changelog,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(version)
+    db.flush()
+    if payload.publish_now:
+        row.current_version_id = version.id
+    row.updated_at = now
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Terms template code already exists") from exc
+    db.refresh(row)
+    return _terms_template_out(db, row)
+
+
+@router.get("/terms-templates/{template_id}/versions", response_model=list[TermsTemplateVersionOut])
+def list_terms_template_versions(
+    template_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[TermsTemplateVersionOut]:
+    exists_row = db.scalar(select(TermsTemplate.id).where(TermsTemplate.id == template_id))
+    if exists_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
+    rows = db.scalars(
+        select(TermsTemplateVersion)
+        .where(TermsTemplateVersion.terms_template_id == template_id)
+        .order_by(TermsTemplateVersion.version_number.desc())
+    ).all()
+    return [_terms_template_version_out(row) for row in rows]
+
+
+@router.post("/terms-templates/{template_id}/versions", response_model=TermsTemplateVersionOut, status_code=status.HTTP_201_CREATED)
+def publish_terms_template_version(
+    template_id: UUID,
+    payload: TermsTemplateVersionPublishRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TermsTemplateVersionOut:
+    template = db.scalar(select(TermsTemplate).where(TermsTemplate.id == template_id).with_for_update())
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
+    now = _utcnow()
+
+    if payload.activate:
+        active_versions = db.scalars(
+            select(TermsTemplateVersion)
+            .where(
+                TermsTemplateVersion.terms_template_id == template.id,
+                TermsTemplateVersion.is_active_version.is_(True),
+            )
+            .with_for_update()
+        ).all()
+        for row in active_versions:
+            row.is_active_version = False
+            row.updated_at = now
+            db.add(row)
+
+    version = TermsTemplateVersion(
+        terms_template_id=template.id,
+        version_number=_next_terms_template_version_number(db, template.id),
+        content_snapshot={
+            "version_label": payload.version_label,
+            "content": payload.content,
+        },
+        is_active_version=payload.activate,
+        published_at=now if payload.activate else None,
+        changelog=payload.changelog,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(version)
+    db.flush()
+    if payload.activate:
+        template.current_version_id = version.id
+        template.status = "published"
+    template.updated_at = now
+    db.add(template)
+    db.commit()
+    db.refresh(version)
+    return _terms_template_version_out(version)
+
+
+@router.delete("/terms-templates/{template_id}", status_code=status.HTTP_200_OK)
+def archive_terms_template(
+    template_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> None:
+    row = db.scalar(select(TermsTemplate).where(TermsTemplate.id == template_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
+    row.is_active = False
+    row.status = "archived"
+    row.archived_at = _utcnow()
+    row.updated_at = _utcnow()
+    db.add(row)
+    db.commit()
+
+
+@router.get("/quote-document-bindings", response_model=list[QuoteDocumentBindingOut])
+def list_quote_document_bindings(
+    active_only: bool = Query(default=False),
+    language: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[QuoteDocumentBindingOut]:
+    stmt = select(QuoteDocumentBinding)
+    if active_only:
+        stmt = stmt.where(QuoteDocumentBinding.is_active.is_(True))
+    if language:
+        stmt = stmt.where(func.lower(func.coalesce(QuoteDocumentBinding.language, "")) == language.strip().lower())
+    rows = db.scalars(
+        stmt.order_by(QuoteDocumentBinding.priority.asc(), QuoteDocumentBinding.updated_at.desc())
+    ).all()
+    return [_quote_document_binding_out(row) for row in rows]
+
+
+@router.post("/quote-document-bindings", response_model=QuoteDocumentBindingOut, status_code=status.HTTP_201_CREATED)
+def create_quote_document_binding(
+    payload: QuoteDocumentBindingUpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDocumentBindingOut:
+    quote_template_id = payload.quote_template_id
+    quote_template_version_id = payload.quote_template_version_id
+    terms_template_id = payload.terms_template_id
+    terms_template_version_id = payload.terms_template_version_id
+
+    if quote_template_version_id is not None:
+        version = db.scalar(select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == quote_template_version_id))
+        if version is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template version not found")
+        if quote_template_id is not None and version.quote_template_id != quote_template_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Quote template version does not match quote_template_id")
+        quote_template_id = version.quote_template_id
+    if quote_template_id is not None:
+        template = db.scalar(select(QuoteTemplate.id).where(QuoteTemplate.id == quote_template_id))
+        if template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
+
+    if terms_template_version_id is not None:
+        version = db.scalar(select(TermsTemplateVersion).where(TermsTemplateVersion.id == terms_template_version_id))
+        if version is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template version not found")
+        if terms_template_id is not None and version.terms_template_id != terms_template_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Terms template version does not match terms_template_id")
+        terms_template_id = version.terms_template_id
+    if terms_template_id is not None:
+        template = db.scalar(select(TermsTemplate.id).where(TermsTemplate.id == terms_template_id))
+        if template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
+
+    now = _utcnow()
+    row = QuoteDocumentBinding(
+        prospect_type=_normalized_match_value(payload.prospect_type),
+        context_type=_normalized_match_value(payload.context_type),
+        activity_family=_normalized_match_value(payload.activity_family),
+        activity_id=payload.activity_id,
+        quote_type_id=payload.quote_type_id,
+        language=_normalized_match_value(payload.language),
+        currency=_normalized_match_value(payload.currency.upper() if payload.currency else None),
+        quote_template_id=quote_template_id,
+        quote_template_version_id=quote_template_version_id,
+        terms_template_id=terms_template_id,
+        terms_template_version_id=terms_template_version_id,
+        priority=payload.priority,
+        is_active=payload.is_active,
+        notes=payload.notes,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote document binding already exists for this scope") from exc
+    db.refresh(row)
+    return _quote_document_binding_out(row)
+
+
+@router.patch("/quote-document-bindings/{binding_id}", response_model=QuoteDocumentBindingOut)
+def update_quote_document_binding(
+    binding_id: UUID,
+    payload: QuoteDocumentBindingUpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDocumentBindingOut:
+    row = db.scalar(select(QuoteDocumentBinding).where(QuoteDocumentBinding.id == binding_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote document binding not found")
+
+    quote_template_id = payload.quote_template_id
+    quote_template_version_id = payload.quote_template_version_id
+    terms_template_id = payload.terms_template_id
+    terms_template_version_id = payload.terms_template_version_id
+
+    if quote_template_version_id is not None:
+        version = db.scalar(select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == quote_template_version_id))
+        if version is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template version not found")
+        if quote_template_id is not None and version.quote_template_id != quote_template_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Quote template version does not match quote_template_id")
+        quote_template_id = version.quote_template_id
+    if quote_template_id is not None:
+        template = db.scalar(select(QuoteTemplate.id).where(QuoteTemplate.id == quote_template_id))
+        if template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
+
+    if terms_template_version_id is not None:
+        version = db.scalar(select(TermsTemplateVersion).where(TermsTemplateVersion.id == terms_template_version_id))
+        if version is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template version not found")
+        if terms_template_id is not None and version.terms_template_id != terms_template_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Terms template version does not match terms_template_id")
+        terms_template_id = version.terms_template_id
+    if terms_template_id is not None:
+        template = db.scalar(select(TermsTemplate.id).where(TermsTemplate.id == terms_template_id))
+        if template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
+
+    row.prospect_type = _normalized_match_value(payload.prospect_type)
+    row.context_type = _normalized_match_value(payload.context_type)
+    row.activity_family = _normalized_match_value(payload.activity_family)
+    row.activity_id = payload.activity_id
+    row.quote_type_id = payload.quote_type_id
+    row.language = _normalized_match_value(payload.language)
+    row.currency = _normalized_match_value(payload.currency.upper() if payload.currency else None)
+    row.quote_template_id = quote_template_id
+    row.quote_template_version_id = quote_template_version_id
+    row.terms_template_id = terms_template_id
+    row.terms_template_version_id = terms_template_version_id
+    row.priority = payload.priority
+    row.is_active = payload.is_active
+    row.notes = payload.notes
+    row.updated_at = _utcnow()
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote document binding already exists for this scope") from exc
+    db.refresh(row)
+    return _quote_document_binding_out(row)
+
+
+@router.delete("/quote-document-bindings/{binding_id}", status_code=status.HTTP_200_OK)
+def delete_quote_document_binding(
+    binding_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> None:
+    row = db.scalar(select(QuoteDocumentBinding).where(QuoteDocumentBinding.id == binding_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote document binding not found")
+    db.delete(row)
     db.commit()
 
 

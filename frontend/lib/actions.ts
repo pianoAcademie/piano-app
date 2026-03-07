@@ -10083,6 +10083,420 @@ export async function deleteAdminQuoteTemplateConfigAction(formData: FormData): 
   redirect(appendQueryMessage(returnTo, "ok", "Template devis supprime"));
 }
 
+export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const templateType = String(formData.get("template_type") ?? "quote_body").trim();
+  const target = optionalField(formData, "target");
+  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const description = optionalField(formData, "description");
+  const subjectTemplate = String(formData.get("subject_template") ?? "").trim();
+  const bodyTemplate = String(formData.get("body_template") ?? "").trim();
+  const changelog = optionalField(formData, "changelog");
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const isDefault = parseCheckboxFlag(formData, "is_default", false);
+  const publishNow = parseCheckboxFlag(formData, "publish_now", true);
+  const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
+  const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
+
+  if (!code || !name || !subjectTemplate || !bodyTemplate) {
+    redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/quote-templates-v2",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        code,
+        name,
+        template_type: templateType || "quote_body",
+        target,
+        language,
+        description,
+        is_active: isActive,
+        is_default: isDefault,
+        status: normalizedStatus,
+        subject_template: subjectTemplate,
+        body_template: bodyTemplate,
+        changelog,
+        publish_now: publishNow,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template documentaire cree"));
+}
+
+export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
+  const templateId = parseUuid(String(formData.get("template_id") ?? ""));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const templateType = String(formData.get("template_type") ?? "quote_body").trim();
+  const target = optionalField(formData, "target");
+  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const description = optionalField(formData, "description");
+  const subjectTemplate = String(formData.get("subject_template") ?? "").trim();
+  const bodyTemplate = String(formData.get("body_template") ?? "").trim();
+  const changelog = optionalField(formData, "changelog");
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const isDefault = parseCheckboxFlag(formData, "is_default", false);
+  const publishNow = parseCheckboxFlag(formData, "publish_now", true);
+  const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
+  const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
+
+  if (!templateId || !code || !name || !subjectTemplate || !bodyTemplate) {
+    redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-templates-v2/${encodeURIComponent(templateId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        code,
+        name,
+        template_type: templateType || "quote_body",
+        target,
+        language,
+        description,
+        is_active: isActive,
+        is_default: isDefault,
+        status: normalizedStatus,
+        subject_template: subjectTemplate,
+        body_template: bodyTemplate,
+        changelog,
+        publish_now: publishNow,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template documentaire mis a jour"));
+}
+
+export async function deleteAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
+  const templateId = parseUuid(String(formData.get("template_id") ?? ""));
+  if (!templateId) {
+    redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-templates-v2/${encodeURIComponent(templateId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template documentaire archive"));
+}
+
+export async function createAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const termsType = String(formData.get("terms_type") ?? "cgv").trim();
+  const target = optionalField(formData, "target");
+  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const description = optionalField(formData, "description");
+  const versionLabel = String(formData.get("version_label") ?? "").trim();
+  const content = String(formData.get("content") ?? "").trim();
+  const changelog = optionalField(formData, "changelog");
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const publishNow = parseCheckboxFlag(formData, "publish_now", true);
+  const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
+  const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
+  if (!code || !name || !versionLabel || !content) {
+    redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/terms-templates",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        code,
+        name,
+        terms_type: termsType || "cgv",
+        target,
+        language,
+        description,
+        is_active: isActive,
+        status: normalizedStatus,
+        version_label: versionLabel,
+        content,
+        changelog,
+        publish_now: publishNow,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template CGV cree"));
+}
+
+export async function updateAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
+  const templateId = parseUuid(String(formData.get("template_id") ?? ""));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const termsType = String(formData.get("terms_type") ?? "cgv").trim();
+  const target = optionalField(formData, "target");
+  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const description = optionalField(formData, "description");
+  const versionLabel = String(formData.get("version_label") ?? "").trim();
+  const content = String(formData.get("content") ?? "").trim();
+  const changelog = optionalField(formData, "changelog");
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const publishNow = parseCheckboxFlag(formData, "publish_now", true);
+  const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
+  const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
+  if (!templateId || !code || !name || !versionLabel || !content) {
+    redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/terms-templates/${encodeURIComponent(templateId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        code,
+        name,
+        terms_type: termsType || "cgv",
+        target,
+        language,
+        description,
+        is_active: isActive,
+        status: normalizedStatus,
+        version_label: versionLabel,
+        content,
+        changelog,
+        publish_now: publishNow,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template CGV mis a jour"));
+}
+
+export async function deleteAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
+  const templateId = parseUuid(String(formData.get("template_id") ?? ""));
+  if (!templateId) {
+    redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/terms-templates/${encodeURIComponent(templateId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template CGV archive"));
+}
+
+export async function createAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_bindings"));
+  const prospectType = optionalField(formData, "prospect_type");
+  const contextType = optionalField(formData, "context_type");
+  const activityFamily = optionalField(formData, "activity_family");
+  const activityId = parseUuid(String(formData.get("activity_id") ?? ""));
+  const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
+  const language = optionalField(formData, "language");
+  const currency = optionalField(formData, "currency")?.toUpperCase() || null;
+  const quoteTemplateId = parseUuid(String(formData.get("quote_template_id") ?? ""));
+  const quoteTemplateVersionId = parseUuid(String(formData.get("quote_template_version_id") ?? ""));
+  const termsTemplateId = parseUuid(String(formData.get("terms_template_id") ?? ""));
+  const termsTemplateVersionId = parseUuid(String(formData.get("terms_template_version_id") ?? ""));
+  const priority = parseNonNegativeInt(String(formData.get("priority") ?? "100")) ?? 100;
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const notes = optionalField(formData, "notes");
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/quote-document-bindings",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        prospect_type: prospectType,
+        context_type: contextType,
+        activity_family: activityFamily,
+        activity_id: activityId,
+        quote_type_id: quoteTypeId,
+        language,
+        currency,
+        quote_template_id: quoteTemplateId,
+        quote_template_version_id: quoteTemplateVersionId,
+        terms_template_id: termsTemplateId,
+        terms_template_version_id: termsTemplateVersionId,
+        priority,
+        is_active: isActive,
+        notes,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Regle de selection ajoutee"));
+}
+
+export async function updateAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_bindings"));
+  const bindingId = parseUuid(String(formData.get("binding_id") ?? ""));
+  const prospectType = optionalField(formData, "prospect_type");
+  const contextType = optionalField(formData, "context_type");
+  const activityFamily = optionalField(formData, "activity_family");
+  const activityId = parseUuid(String(formData.get("activity_id") ?? ""));
+  const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
+  const language = optionalField(formData, "language");
+  const currency = optionalField(formData, "currency")?.toUpperCase() || null;
+  const quoteTemplateId = parseUuid(String(formData.get("quote_template_id") ?? ""));
+  const quoteTemplateVersionId = parseUuid(String(formData.get("quote_template_version_id") ?? ""));
+  const termsTemplateId = parseUuid(String(formData.get("terms_template_id") ?? ""));
+  const termsTemplateVersionId = parseUuid(String(formData.get("terms_template_version_id") ?? ""));
+  const priority = parseNonNegativeInt(String(formData.get("priority") ?? "100")) ?? 100;
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const notes = optionalField(formData, "notes");
+  if (!bindingId) {
+    redirect(appendQueryMessage(returnTo, "error", "Regle de selection invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-document-bindings/${encodeURIComponent(bindingId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        prospect_type: prospectType,
+        context_type: contextType,
+        activity_family: activityFamily,
+        activity_id: activityId,
+        quote_type_id: quoteTypeId,
+        language,
+        currency,
+        quote_template_id: quoteTemplateId,
+        quote_template_version_id: quoteTemplateVersionId,
+        terms_template_id: termsTemplateId,
+        terms_template_version_id: termsTemplateVersionId,
+        priority,
+        is_active: isActive,
+        notes,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Regle de selection mise a jour"));
+}
+
+export async function deleteAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_bindings"));
+  const bindingId = parseUuid(String(formData.get("binding_id") ?? ""));
+  if (!bindingId) {
+    redirect(appendQueryMessage(returnTo, "error", "Regle de selection invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-document-bindings/${encodeURIComponent(bindingId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Regle de selection supprimee"));
+}
+
 async function runPublicQuoteAction({
   action,
   quoteId,

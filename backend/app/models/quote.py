@@ -264,6 +264,7 @@ class QuoteTemplate(Base):
     language: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'fr'"))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'draft'"))
     current_version_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))

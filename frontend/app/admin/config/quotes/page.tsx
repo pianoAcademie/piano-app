@@ -4,16 +4,25 @@ import { redirect } from "next/navigation";
 
 import {
   createAdminQuoteTemplateConfigAction,
+  createAdminQuoteTemplateV2ConfigAction,
   createAdminCgvVersionConfigAction,
+  createAdminTermsTemplateConfigAction,
+  createAdminQuoteDocumentBindingConfigAction,
   createAdminPricingCatalogConfigAction,
   createAdminQuoteTypeConfigAction,
   deleteAdminQuoteTemplateConfigAction,
+  deleteAdminQuoteTemplateV2ConfigAction,
   deleteAdminCgvVersionConfigAction,
+  deleteAdminTermsTemplateConfigAction,
+  deleteAdminQuoteDocumentBindingConfigAction,
   deleteAdminPricingCatalogConfigAction,
   deleteAdminQuoteTypeConfigAction,
   deleteAdminSolfegeLevelRuleConfigAction,
   updateAdminQuoteTemplateConfigAction,
+  updateAdminQuoteTemplateV2ConfigAction,
   updateAdminCgvVersionConfigAction,
+  updateAdminTermsTemplateConfigAction,
+  updateAdminQuoteDocumentBindingConfigAction,
   updateAdminPricingCatalogConfigAction,
   updateAdminQuoteTypeConfigAction,
   upsertAdminSolfegeLevelRuleConfigAction,
@@ -24,7 +33,7 @@ import type { LocationOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-type QuotesConfigTab = "types" | "catalogs" | "cgv" | "templates" | "variables" | "solfege";
+type QuotesConfigTab = "types" | "catalogs" | "cgv" | "templates" | "variables" | "solfege" | "doc_templates" | "doc_terms" | "doc_bindings";
 
 type QuoteTypeOut = {
   id: string;
@@ -67,6 +76,70 @@ type QuoteTemplateOut = {
   updated_at: string;
 };
 
+type QuoteTemplateV2Out = {
+  id: string;
+  code: string;
+  name: string;
+  template_type: string;
+  target: string | null;
+  language: string;
+  description: string | null;
+  is_active: boolean;
+  is_default: boolean;
+  status: string;
+  current_version_id: string | null;
+  current_version_number: number | null;
+  updated_at: string;
+};
+
+type TermsTemplateOut = {
+  id: string;
+  code: string;
+  name: string;
+  terms_type: string;
+  target: string | null;
+  language: string;
+  description: string | null;
+  is_active: boolean;
+  status: string;
+  current_version_id: string | null;
+  current_version_number: number | null;
+  updated_at: string;
+};
+
+type QuoteDocumentBindingOut = {
+  id: string;
+  prospect_type: string | null;
+  context_type: string | null;
+  activity_family: string | null;
+  activity_id: string | null;
+  quote_type_id: string | null;
+  language: string | null;
+  currency: string | null;
+  quote_template_id: string | null;
+  quote_template_version_id: string | null;
+  terms_template_id: string | null;
+  terms_template_version_id: string | null;
+  priority: number;
+  is_active: boolean;
+  notes: string | null;
+  updated_at: string;
+};
+
+type QuoteTemplateVersionOut = {
+  id: string;
+  version_number: number;
+  content_snapshot: Record<string, unknown>;
+  is_active_version: boolean;
+};
+
+type TermsTemplateVersionOut = {
+  id: string;
+  version_number: number;
+  content_snapshot: Record<string, unknown>;
+  is_active_version: boolean;
+};
+
 type QuoteTemplateVariableOut = {
   key: string;
   label: string;
@@ -96,7 +169,16 @@ function readParam(params: SearchParams, key: string): string {
 
 function parseTab(raw: string): QuotesConfigTab {
   const value = raw.trim().toLowerCase();
-  if (value === "catalogs" || value === "cgv" || value === "templates" || value === "variables" || value === "solfege") {
+  if (
+    value === "catalogs" ||
+    value === "cgv" ||
+    value === "templates" ||
+    value === "variables" ||
+    value === "solfege" ||
+    value === "doc_templates" ||
+    value === "doc_terms" ||
+    value === "doc_bindings"
+  ) {
     return value;
   }
   return "types";
@@ -181,7 +263,18 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
 
-  const [quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, templateVariablesResult, solfegeRulesResult, locationsResult] = await Promise.all([
+  const [
+    quoteTypesResult,
+    catalogsResult,
+    cgvVersionsResult,
+    quoteTemplatesResult,
+    templateVariablesResult,
+    solfegeRulesResult,
+    locationsResult,
+    quoteTemplatesV2Result,
+    termsTemplatesResult,
+    quoteDocumentBindingsResult,
+  ] = await Promise.all([
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
     backendRequest<CgvVersionOut[]>("/api/v1/cgv-versions", {}, token),
@@ -189,6 +282,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     backendRequest<QuoteTemplateVariableOut[]>("/api/v1/quote-template-variables", {}, token),
     backendRequest<SolfegeLevelRuleOut[]>("/api/v1/solfege-level-rules", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
+    backendRequest<QuoteTemplateV2Out[]>("/api/v1/quote-templates-v2", {}, token),
+    backendRequest<TermsTemplateOut[]>("/api/v1/terms-templates", {}, token),
+    backendRequest<QuoteDocumentBindingOut[]>("/api/v1/quote-document-bindings", {}, token),
   ]);
 
   const loadErrors: string[] = [];
@@ -234,8 +330,64 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         loadErrors.push(`Lieux: ${locationsResult.message}`);
         return [] as LocationOut[];
       })();
+  const quoteTemplatesV2 = quoteTemplatesV2Result.ok
+    ? quoteTemplatesV2Result.data
+    : (() => {
+        loadErrors.push(`Templates documentaires: ${quoteTemplatesV2Result.message}`);
+        return [] as QuoteTemplateV2Out[];
+      })();
+  const termsTemplates = termsTemplatesResult.ok
+    ? termsTemplatesResult.data
+    : (() => {
+        loadErrors.push(`Templates CGV: ${termsTemplatesResult.message}`);
+        return [] as TermsTemplateOut[];
+      })();
+  const quoteDocumentBindings = quoteDocumentBindingsResult.ok
+    ? quoteDocumentBindingsResult.data
+    : (() => {
+        loadErrors.push(`Regles de selection documentaire: ${quoteDocumentBindingsResult.message}`);
+        return [] as QuoteDocumentBindingOut[];
+      })();
 
   const locationById = new Map(locations.map((row) => [row.id, row.name]));
+  const quoteTemplateVersionPrefill = new Map<string, { subject: string; body: string; versionNumber: number | null }>();
+  const termsTemplateVersionPrefill = new Map<string, { versionLabel: string; content: string; versionNumber: number | null }>();
+  await Promise.all(
+    quoteTemplatesV2.map(async (row) => {
+      const result = await backendRequest<QuoteTemplateVersionOut[]>(
+        `/api/v1/quote-templates-v2/${encodeURIComponent(row.id)}/versions`,
+        {},
+        token,
+      );
+      if (!result.ok || result.data.length === 0) {
+        return;
+      }
+      const active = result.data.find((item) => item.is_active_version) ?? result.data[0];
+      quoteTemplateVersionPrefill.set(row.id, {
+        subject: String(active.content_snapshot?.subject_template || ""),
+        body: String(active.content_snapshot?.body_template || ""),
+        versionNumber: active.version_number ?? null,
+      });
+    }),
+  );
+  await Promise.all(
+    termsTemplates.map(async (row) => {
+      const result = await backendRequest<TermsTemplateVersionOut[]>(
+        `/api/v1/terms-templates/${encodeURIComponent(row.id)}/versions`,
+        {},
+        token,
+      );
+      if (!result.ok || result.data.length === 0) {
+        return;
+      }
+      const active = result.data.find((item) => item.is_active_version) ?? result.data[0];
+      termsTemplateVersionPrefill.set(row.id, {
+        versionLabel: String(active.content_snapshot?.version_label || ""),
+        content: String(active.content_snapshot?.content || ""),
+        versionNumber: active.version_number ?? null,
+      });
+    }),
+  );
   const returnPath = buildQuotesConfigHref(tab);
 
   return (
@@ -272,6 +424,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
           <Link className={`config-sub-link ${tab === "catalogs" ? "active" : ""}`} href={buildQuotesConfigHref("catalogs")}>Catalogues de prix</Link>
           <Link className={`config-sub-link ${tab === "cgv" ? "active" : ""}`} href={buildQuotesConfigHref("cgv")}>CGV</Link>
           <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates</Link>
+          <Link className={`config-sub-link ${tab === "doc_templates" ? "active" : ""}`} href={buildQuotesConfigHref("doc_templates")}>Templates documentaires</Link>
+          <Link className={`config-sub-link ${tab === "doc_terms" ? "active" : ""}`} href={buildQuotesConfigHref("doc_terms")}>Templates CGV</Link>
+          <Link className={`config-sub-link ${tab === "doc_bindings" ? "active" : ""}`} href={buildQuotesConfigHref("doc_bindings")}>Regles de selection</Link>
           <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>Variables</Link>
           <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>Creneaux solfege</Link>
         </nav>
@@ -639,6 +794,525 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 </details>
               </article>
             ))}
+          </div>
+        </section>
+      ) : null}
+
+      {tab === "doc_templates" ? (
+        <section className="card">
+          <h3>Templates documentaires (V2)</h3>
+          <p className="muted">Chaque mise a jour publie une nouvelle version figee du template de devis.</p>
+          <form action={createAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
+            <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
+            <label>
+              Code
+              <input type="text" name="code" required maxLength={80} placeholder="QUOTE_CHILD_COLLECTIVE" />
+            </label>
+            <label>
+              Nom
+              <input type="text" name="name" required maxLength={180} placeholder="Template enfant collectif" />
+            </label>
+            <label>
+              Type
+              <input type="text" name="template_type" defaultValue="quote_body" maxLength={40} />
+            </label>
+            <label>
+              Cible
+              <input type="text" name="target" maxLength={40} placeholder="adult | child_collective | eveil" />
+            </label>
+            <label>
+              Langue
+              <input type="text" name="language" defaultValue="fr" required maxLength={8} />
+            </label>
+            <label>
+              Statut
+              <select name="status" defaultValue="draft">
+                <option value="draft">Brouillon</option>
+                <option value="published">Publie</option>
+                <option value="archived">Archive</option>
+              </select>
+            </label>
+            <label className="span-2">
+              Description interne
+              <input type="text" name="description" maxLength={2000} />
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="is_default" />
+              Defaut (langue)
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="is_active" defaultChecked />
+              Actif
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="publish_now" defaultChecked />
+              Publier maintenant
+            </label>
+            <label className="span-2">
+              Changelog
+              <input type="text" name="changelog" maxLength={2000} placeholder="v1 initiale" />
+            </label>
+            <div className="span-2">
+              <QuoteTemplateEditor
+                subjectName="subject_template"
+                bodyName="body_template"
+                defaultSubject="Votre devis {quote_number} Piano Academie"
+                defaultBody={"Bonjour {recipient_name},\n\nVotre devis {quote_number} est pret.\nTotal: {total_ttc} {currency}.\nExpiration: {expires_at}."}
+                variables={templateVariables}
+              />
+            </div>
+            <div className="row span-2">
+              <button type="submit">Creer le template documentaire</button>
+            </div>
+          </form>
+
+          <div className="list top-gap-sm">
+            {quoteTemplatesV2.length === 0 ? <p className="muted">Aucun template documentaire.</p> : null}
+            {quoteTemplatesV2.map((row) => {
+              const prefill = quoteTemplateVersionPrefill.get(row.id);
+              return (
+                <article key={row.id} className="item">
+                  <div className="row spread wrap gap-sm">
+                    <div>
+                      <strong>{row.name}</strong>
+                      <p className="muted">
+                        {row.code} · cible {row.target || "-"} · langue {row.language.toUpperCase()} · v{row.current_version_number ?? "-"} · Maj: {dateTimeLabel(row.updated_at)}
+                      </p>
+                    </div>
+                    <div className="row wrap gap-sm">
+                      {row.is_default ? <span className="badge">Defaut</span> : null}
+                      <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.status}</span>
+                    </div>
+                  </div>
+                  <details>
+                    <summary className="mode-link">Modifier / publier nouvelle version</summary>
+                    <form action={updateAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
+                      <input type="hidden" name="template_id" value={row.id} />
+                      <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
+                      <label>
+                        Code
+                        <input type="text" name="code" defaultValue={row.code} required maxLength={80} />
+                      </label>
+                      <label>
+                        Nom
+                        <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
+                      </label>
+                      <label>
+                        Type
+                        <input type="text" name="template_type" defaultValue={row.template_type} maxLength={40} />
+                      </label>
+                      <label>
+                        Cible
+                        <input type="text" name="target" defaultValue={row.target ?? ""} maxLength={40} />
+                      </label>
+                      <label>
+                        Langue
+                        <input type="text" name="language" defaultValue={row.language} required maxLength={8} />
+                      </label>
+                      <label>
+                        Statut
+                        <select name="status" defaultValue={row.status || "draft"}>
+                          <option value="draft">Brouillon</option>
+                          <option value="published">Publie</option>
+                          <option value="archived">Archive</option>
+                        </select>
+                      </label>
+                      <label className="span-2">
+                        Description interne
+                        <input type="text" name="description" defaultValue={row.description ?? ""} maxLength={2000} />
+                      </label>
+                      <label className="checkline">
+                        <input type="checkbox" name="is_default" defaultChecked={row.is_default} />
+                        Defaut (langue)
+                      </label>
+                      <label className="checkline">
+                        <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
+                        Actif
+                      </label>
+                      <label className="checkline">
+                        <input type="checkbox" name="publish_now" defaultChecked />
+                        Publier maintenant
+                      </label>
+                      <label className="span-2">
+                        Changelog
+                        <input type="text" name="changelog" maxLength={2000} placeholder="Nouvelle version" />
+                      </label>
+                      <div className="span-2">
+                        <QuoteTemplateEditor
+                          subjectName="subject_template"
+                          bodyName="body_template"
+                          defaultSubject={prefill?.subject || `Devis {quote_number}`}
+                          defaultBody={prefill?.body || "Contenu du template"}
+                          variables={templateVariables}
+                        />
+                      </div>
+                      <div className="row span-2">
+                        <button type="submit">Enregistrer</button>
+                      </div>
+                    </form>
+                    <form action={deleteAdminQuoteTemplateV2ConfigAction} className="row top-gap-sm">
+                      <input type="hidden" name="template_id" value={row.id} />
+                      <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
+                      <button type="submit" className="danger">Archiver</button>
+                    </form>
+                  </details>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {tab === "doc_terms" ? (
+        <section className="card">
+          <h3>Templates CGV (V2)</h3>
+          <p className="muted">Les CGV sont versionnees et snapshottees dans chaque devis envoye.</p>
+          <form action={createAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
+            <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
+            <label>
+              Code
+              <input type="text" name="code" required maxLength={80} placeholder="CGV_CHILD_COLLECTIVE" />
+            </label>
+            <label>
+              Nom
+              <input type="text" name="name" required maxLength={180} placeholder="CGV enfants collectifs" />
+            </label>
+            <label>
+              Type
+              <input type="text" name="terms_type" defaultValue="cgv" maxLength={40} />
+            </label>
+            <label>
+              Cible
+              <input type="text" name="target" maxLength={40} placeholder="adult | child_collective | eveil" />
+            </label>
+            <label>
+              Langue
+              <input type="text" name="language" defaultValue="fr" required maxLength={8} />
+            </label>
+            <label>
+              Statut
+              <select name="status" defaultValue="draft">
+                <option value="draft">Brouillon</option>
+                <option value="published">Publie</option>
+                <option value="archived">Archive</option>
+              </select>
+            </label>
+            <label>
+              Label version
+              <input type="text" name="version_label" required maxLength={80} placeholder="CGV 2026.1" />
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="is_active" defaultChecked />
+              Actif
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="publish_now" defaultChecked />
+              Publier maintenant
+            </label>
+            <label className="span-2">
+              Description interne
+              <input type="text" name="description" maxLength={2000} />
+            </label>
+            <label className="span-2">
+              Changelog
+              <input type="text" name="changelog" maxLength={2000} />
+            </label>
+            <label className="span-2">
+              Contenu CGV
+              <textarea name="content" rows={10} required />
+            </label>
+            <div className="row span-2">
+              <button type="submit">Creer le template CGV</button>
+            </div>
+          </form>
+
+          <div className="list top-gap-sm">
+            {termsTemplates.length === 0 ? <p className="muted">Aucun template CGV.</p> : null}
+            {termsTemplates.map((row) => {
+              const prefill = termsTemplateVersionPrefill.get(row.id);
+              return (
+                <article key={row.id} className="item">
+                  <div className="row spread wrap gap-sm">
+                    <div>
+                      <strong>{row.name}</strong>
+                      <p className="muted">
+                        {row.code} · {row.terms_type} · cible {row.target || "-"} · langue {row.language.toUpperCase()} · v{row.current_version_number ?? "-"} · Maj: {dateTimeLabel(row.updated_at)}
+                      </p>
+                    </div>
+                    <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.status}</span>
+                  </div>
+                  <details>
+                    <summary className="mode-link">Modifier / publier nouvelle version</summary>
+                    <form action={updateAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
+                      <input type="hidden" name="template_id" value={row.id} />
+                      <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
+                      <label>
+                        Code
+                        <input type="text" name="code" defaultValue={row.code} required maxLength={80} />
+                      </label>
+                      <label>
+                        Nom
+                        <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
+                      </label>
+                      <label>
+                        Type
+                        <input type="text" name="terms_type" defaultValue={row.terms_type} maxLength={40} />
+                      </label>
+                      <label>
+                        Cible
+                        <input type="text" name="target" defaultValue={row.target ?? ""} maxLength={40} />
+                      </label>
+                      <label>
+                        Langue
+                        <input type="text" name="language" defaultValue={row.language} required maxLength={8} />
+                      </label>
+                      <label>
+                        Statut
+                        <select name="status" defaultValue={row.status || "draft"}>
+                          <option value="draft">Brouillon</option>
+                          <option value="published">Publie</option>
+                          <option value="archived">Archive</option>
+                        </select>
+                      </label>
+                      <label>
+                        Label version
+                        <input type="text" name="version_label" defaultValue={prefill?.versionLabel || "CGV"} required maxLength={80} />
+                      </label>
+                      <label className="checkline">
+                        <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
+                        Actif
+                      </label>
+                      <label className="checkline">
+                        <input type="checkbox" name="publish_now" defaultChecked />
+                        Publier maintenant
+                      </label>
+                      <label className="span-2">
+                        Description interne
+                        <input type="text" name="description" defaultValue={row.description ?? ""} maxLength={2000} />
+                      </label>
+                      <label className="span-2">
+                        Changelog
+                        <input type="text" name="changelog" maxLength={2000} />
+                      </label>
+                      <label className="span-2">
+                        Contenu CGV
+                        <textarea name="content" rows={10} defaultValue={prefill?.content || ""} required />
+                      </label>
+                      <div className="row span-2">
+                        <button type="submit">Enregistrer</button>
+                      </div>
+                    </form>
+                    <form action={deleteAdminTermsTemplateConfigAction} className="row top-gap-sm">
+                      <input type="hidden" name="template_id" value={row.id} />
+                      <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
+                      <button type="submit" className="danger">Archiver</button>
+                    </form>
+                  </details>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {tab === "doc_bindings" ? (
+        <section className="card">
+          <h3>Regles de selection documentaire</h3>
+          <p className="muted">Associez un contexte de devis a un couple Template devis + Template CGV.</p>
+          <form action={createAdminQuoteDocumentBindingConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
+            <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_bindings")} />
+            <label>
+              Type prospect
+              <select name="prospect_type" defaultValue="">
+                <option value="">Tous</option>
+                <option value="adult">Adulte</option>
+                <option value="child">Enfant</option>
+              </select>
+            </label>
+            <label>
+              Contexte
+              <select name="context_type" defaultValue="">
+                <option value="">Tous</option>
+                <option value="acquisition">Acquisition</option>
+                <option value="active_client">Client actif</option>
+              </select>
+            </label>
+            <label>
+              Famille activite
+              <input type="text" name="activity_family" maxLength={80} placeholder="piano_collectif" />
+            </label>
+            <label>
+              Langue
+              <input type="text" name="language" maxLength={8} placeholder="fr" />
+            </label>
+            <label>
+              Devise
+              <input type="text" name="currency" maxLength={3} placeholder="EUR" />
+            </label>
+            <label>
+              Type de devis
+              <select name="quote_type_id" defaultValue="">
+                <option value="">Tous</option>
+                {quoteTypes.map((row) => (
+                  <option key={row.id} value={row.id}>{row.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="span-2">
+              Template devis
+              <select name="quote_template_id" defaultValue="">
+                <option value="">Aucun</option>
+                {quoteTemplatesV2.map((row) => (
+                  <option key={row.id} value={row.id}>{row.name} ({row.language.toUpperCase()})</option>
+                ))}
+              </select>
+            </label>
+            <label className="span-2">
+              Template CGV
+              <select name="terms_template_id" defaultValue="">
+                <option value="">Aucun</option>
+                {termsTemplates.map((row) => (
+                  <option key={row.id} value={row.id}>{row.name} ({row.language.toUpperCase()})</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Priorite
+              <input type="number" name="priority" min={0} max={9999} defaultValue={100} />
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="is_active" defaultChecked />
+              Active
+            </label>
+            <label className="span-4">
+              Notes
+              <input type="text" name="notes" maxLength={2000} />
+            </label>
+            <div className="row span-4">
+              <button type="submit">Ajouter la regle</button>
+            </div>
+          </form>
+
+          <div className="table-wrap top-gap-sm">
+            <table className="table compact">
+              <thead>
+                <tr>
+                  <th>Scope</th>
+                  <th>Template devis</th>
+                  <th>Template CGV</th>
+                  <th>Priorite</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quoteDocumentBindings.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="muted">Aucune regle.</td>
+                  </tr>
+                ) : (
+                  quoteDocumentBindings.map((row) => (
+                    <tr key={row.id}>
+                      <td>
+                        <strong>{row.prospect_type || "Tous"}</strong>
+                        <div className="muted">{row.context_type || "Tous contextes"} · {row.language || "toutes langues"} · {row.currency || "toutes devises"}</div>
+                        <div className="muted">Activite: {row.activity_family || "toutes"} · Type devis: {row.quote_type_id ? quoteTypes.find((item) => item.id === row.quote_type_id)?.name || row.quote_type_id : "tous"}</div>
+                      </td>
+                      <td>{quoteTemplatesV2.find((item) => item.id === row.quote_template_id)?.name || "-"}</td>
+                      <td>{termsTemplates.find((item) => item.id === row.terms_template_id)?.name || "-"}</td>
+                      <td>{row.priority}</td>
+                      <td>
+                        <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Active" : "Inactive"}</span>
+                      </td>
+                      <td>
+                        <details>
+                          <summary className="mode-link">Modifier</summary>
+                          <form action={updateAdminQuoteDocumentBindingConfigAction} className="grid config-form-grid top-gap-sm">
+                            <input type="hidden" name="binding_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_bindings")} />
+                            <label>
+                              Type prospect
+                              <select name="prospect_type" defaultValue={row.prospect_type || ""}>
+                                <option value="">Tous</option>
+                                <option value="adult">Adulte</option>
+                                <option value="child">Enfant</option>
+                              </select>
+                            </label>
+                            <label>
+                              Contexte
+                              <select name="context_type" defaultValue={row.context_type || ""}>
+                                <option value="">Tous</option>
+                                <option value="acquisition">Acquisition</option>
+                                <option value="active_client">Client actif</option>
+                              </select>
+                            </label>
+                            <label>
+                              Famille activite
+                              <input type="text" name="activity_family" defaultValue={row.activity_family || ""} maxLength={80} />
+                            </label>
+                            <label>
+                              Langue
+                              <input type="text" name="language" defaultValue={row.language || ""} maxLength={8} />
+                            </label>
+                            <label>
+                              Devise
+                              <input type="text" name="currency" defaultValue={row.currency || ""} maxLength={3} />
+                            </label>
+                            <label>
+                              Type de devis
+                              <select name="quote_type_id" defaultValue={row.quote_type_id || ""}>
+                                <option value="">Tous</option>
+                                {quoteTypes.map((qt) => (
+                                  <option key={qt.id} value={qt.id}>{qt.name}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Template devis
+                              <select name="quote_template_id" defaultValue={row.quote_template_id || ""}>
+                                <option value="">Aucun</option>
+                                {quoteTemplatesV2.map((tpl) => (
+                                  <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Template CGV
+                              <select name="terms_template_id" defaultValue={row.terms_template_id || ""}>
+                                <option value="">Aucun</option>
+                                {termsTemplates.map((tpl) => (
+                                  <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Priorite
+                              <input type="number" name="priority" min={0} max={9999} defaultValue={row.priority} />
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
+                              Active
+                            </label>
+                            <label>
+                              Notes
+                              <input type="text" name="notes" defaultValue={row.notes || ""} maxLength={2000} />
+                            </label>
+                            <div className="row">
+                              <button type="submit">Enregistrer</button>
+                            </div>
+                          </form>
+                          <form action={deleteAdminQuoteDocumentBindingConfigAction} className="row top-gap-sm">
+                            <input type="hidden" name="binding_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_bindings")} />
+                            <button type="submit" className="danger">Supprimer</button>
+                          </form>
+                        </details>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </section>
       ) : null}
