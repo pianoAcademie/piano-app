@@ -6972,6 +6972,17 @@ button.danger {
   color: #1f334d;
 }
 
+.statement-list-head h3 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.statement-list-count {
+  margin-left: 0;
+}
+
 .statement-service-list {
   display: grid;
   gap: 10px;
@@ -6981,23 +6992,93 @@ button.danger {
   border: 1px solid #e4e9f1;
   border-radius: 10px;
   background: #f8fbff;
-  padding: 10px;
+  padding: 10px 12px;
   display: grid;
+  gap: 6px;
+}
+
+.statement-service-card:has(input:checked) {
+  border-color: #b8d2f9;
+  background: #edf4ff;
+}
+
+.statement-service-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 8px;
 }
 
 .statement-line-check {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  min-width: 0;
+  flex: 1;
   gap: 8px;
   font-size: 13px;
   color: #314862;
+  cursor: pointer;
+}
+
+.statement-line-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.statement-line-check-text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.statement-line-check-text strong {
+  font-size: 16px;
+  line-height: 1.2;
+  color: #15263d;
+}
+
+.statement-line-check-text small {
+  font-size: 12px;
+  color: #50627b;
+}
+
+.statement-payor-badge {
+  align-self: center;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statement-service-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: #5b6e87;
+  font-size: 13px;
+}
+
+.statement-service-context span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .statement-service-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
+.statement-service-grid small {
+  font-size: 12px;
+  color: #4d6079;
+}
+
+.statement-service-grid small strong {
+  color: #243a55;
 }
 
 .statement-validation-actions {
@@ -7092,6 +7173,16 @@ button.danger {
   .statement-summary-grid,
   .statement-service-grid {
     grid-template-columns: 1fr;
+  }
+
+  .statement-service-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .statement-payor-badge {
+    max-width: 100%;
+    width: fit-content;
   }
 
   .coach-agenda-grid.agenda-grid-month,

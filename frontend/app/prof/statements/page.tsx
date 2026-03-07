@@ -78,6 +78,7 @@ export default async function TeacherStatementsPage({
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
   const monthLabel = MONTH_OPTIONS.find((option) => option.value === month)?.label ?? String(month);
+  const statementsMonthHref = `/prof/statements?year=${year}&month=${month}`;
 
   const [statementsResult, invoicesResult] = await Promise.all([
     backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements?year=${year}&month=${month}`, {}, token),
@@ -118,6 +119,29 @@ export default async function TeacherStatementsPage({
           </div>
         }
       />
+
+      <section className="card prof-nav teacher-desktop-nav" aria-label="Navigation professeur">
+        <Link className="prof-nav-link" href={profTabHref("overview")}>
+          <span aria-hidden>🗂</span>
+          A traiter
+        </Link>
+        <Link className="prof-nav-link" href={profTabHref("planning")}>
+          <span aria-hidden>📅</span>
+          Planning
+        </Link>
+        <Link className="prof-nav-link" href={profTabHref("catalog")}>
+          <span aria-hidden>📦</span>
+          Produits
+        </Link>
+        <Link className="prof-nav-link" href={profTabHref("finance")}>
+          <span aria-hidden>💶</span>
+          Solde
+        </Link>
+        <Link className="prof-nav-link active" href={statementsMonthHref}>
+          <span aria-hidden>🧾</span>
+          Releves
+        </Link>
+      </section>
 
       <BottomTabs
         activeId="statements"
@@ -166,13 +190,13 @@ export default async function TeacherStatementsPage({
           <form action={teacherApproveStatementsAction}>
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
-            <input type="hidden" name="return_to" value={`/prof/statements?year=${year}&month=${month}`} />
+            <input type="hidden" name="return_to" value={statementsMonthHref} />
             <button type="submit">Approuver et generer</button>
           </form>
           <form action={teacherDisputeStatementsAction} className="teacher-dispute-form">
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
-            <input type="hidden" name="return_to" value={`/prof/statements?year=${year}&month=${month}`} />
+            <input type="hidden" name="return_to" value={statementsMonthHref} />
             <input type="text" name="message" placeholder="Motif de litige" required />
             <button type="submit" className="ghost">
               Signaler litige
@@ -222,7 +246,7 @@ export default async function TeacherStatementsPage({
               ) : null}
 
               <div className="row top-gap-sm">
-                <Link className="mode-link" href={`/prof/statements/${year}/${month}`}>
+                <Link className="mode-link" href={`/prof/statements/${year}/${month}?from=${encodeURIComponent(statementsMonthHref)}`}>
                   Voir detail
                 </Link>
               </div>
@@ -247,7 +271,7 @@ export default async function TeacherStatementsPage({
                     </Link>
                     <form action={teacherSendInvoiceToAccountingAction}>
                       <input type="hidden" name="invoice_id" value={invoice.id} />
-                      <input type="hidden" name="return_to" value={`/prof/statements?year=${year}&month=${month}`} />
+                      <input type="hidden" name="return_to" value={statementsMonthHref} />
                       <button type="submit" className="ghost">
                         Envoyer compta
                       </button>
@@ -255,13 +279,13 @@ export default async function TeacherStatementsPage({
                     {invoice.status === "cancelled" ? (
                       <form action={teacherUncancelInvoiceAction}>
                         <input type="hidden" name="invoice_id" value={invoice.id} />
-                        <input type="hidden" name="return_to" value={`/prof/statements?year=${year}&month=${month}`} />
+                        <input type="hidden" name="return_to" value={statementsMonthHref} />
                         <button type="submit">Reactiver</button>
                       </form>
                     ) : (
                       <form action={teacherCancelInvoiceAction}>
                         <input type="hidden" name="invoice_id" value={invoice.id} />
-                        <input type="hidden" name="return_to" value={`/prof/statements?year=${year}&month=${month}`} />
+                        <input type="hidden" name="return_to" value={statementsMonthHref} />
                         <button type="submit" className="danger">
                           Annuler
                         </button>

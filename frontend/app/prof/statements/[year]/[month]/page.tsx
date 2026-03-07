@@ -51,6 +51,14 @@ function profTabHref(tab: string): string {
   return `/prof?tab=${encodeURIComponent(tab)}`;
 }
 
+function readQueryParam(searchParams: Record<string, string | string[] | undefined>, key: string): string {
+  const value = searchParams[key];
+  if (Array.isArray(value)) {
+    return value[0] ?? "";
+  }
+  return value ?? "";
+}
+
 function toDateFr(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -220,6 +228,7 @@ export default async function TeacherStatementMonthDetailPage({
   const ok = Array.isArray(searchParams.ok) ? searchParams.ok[0] : (searchParams.ok ?? "");
   const error = Array.isArray(searchParams.error) ? searchParams.error[0] : (searchParams.error ?? "");
   const impersonationNameHint = Array.isArray(searchParams.imp_name) ? searchParams.imp_name[0] ?? "" : searchParams.imp_name ?? "";
+  const backToRaw = readQueryParam(searchParams, "from").trim();
   const statementsResult = await backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements/${year}/${month}`, {}, token);
   const statements = statementsResult.ok ? statementsResult.data : [];
 
@@ -238,7 +247,10 @@ export default async function TeacherStatementMonthDetailPage({
   const globalStatus = statusValues[0] ? statusLabel(statusValues[0]) : "A verifier";
   const globalStatusTone = statusValues[0] ? statusTone(statusValues[0]) : "status-off";
   const billingUnlocked = isValidatedForBilling(statusValues);
+  const statementsMonthHref = `/prof/statements?year=${year}&month=${month}`;
+  const safeBackHref = backToRaw.startsWith("/prof/statements") ? backToRaw : statementsMonthHref;
   const monthPath = `/prof/statements/${year}/${month}`;
+  const monthPathWithContext = `${monthPath}?from=${encodeURIComponent(safeBackHref)}`;
   const disputePanelHref = "#statement-dispute-modal";
   const missingPanelHref = "#statement-missing-modal";
 
@@ -248,7 +260,7 @@ export default async function TeacherStatementMonthDetailPage({
         title="Releve de prestations"
         subtitle={`${monthLabel} ${year}`}
         trailing={
-          <Link className="mode-link teacher-header-link" href={`/prof/statements?year=${year}&month=${month}`}>
+          <Link className="mode-link teacher-header-link" href={safeBackHref}>
             Retour releves
           </Link>
         }
@@ -265,6 +277,29 @@ export default async function TeacherStatementMonthDetailPage({
           </div>
         }
       />
+
+      <section className="card prof-nav teacher-desktop-nav" aria-label="Navigation professeur">
+        <Link className="prof-nav-link" href={profTabHref("overview")}>
+          <span aria-hidden>🗂</span>
+          A traiter
+        </Link>
+        <Link className="prof-nav-link" href={profTabHref("planning")}>
+          <span aria-hidden>📅</span>
+          Planning
+        </Link>
+        <Link className="prof-nav-link" href={profTabHref("catalog")}>
+          <span aria-hidden>📦</span>
+          Produits
+        </Link>
+        <Link className="prof-nav-link" href={profTabHref("finance")}>
+          <span aria-hidden>💶</span>
+          Solde
+        </Link>
+        <Link className="prof-nav-link active" href={safeBackHref}>
+          <span aria-hidden>🧾</span>
+          Releves
+        </Link>
+      </section>
 
       <BottomTabs
         activeId="statements"
@@ -318,29 +353,36 @@ export default async function TeacherStatementMonthDetailPage({
       </article>
 
       <article className="card">
-        <div className="row spread">
-          <h3>Prestations du releve</h3>
-          <span className="badge">{services.length}</span>
+        <div className="row spread statement-list-head">
+          <h3>
+            Prestations du releve
+            <span className="badge statement-list-count">{services.length}</span>
+          </h3>
+          <small className="muted">Cochez les lignes a signaler.</small>
         </div>
         {services.length === 0 ? (
           <p className="muted">Aucune prestation detaillee sur cette periode.</p>
         ) : (
           <div className="statement-service-list">
-            {services.map((row) => {
+            {services.map((row, index) => {
+              const checkboxId = `statement-line-${index}`;
               const lineLabel = `${row.payorName} | ${row.courseLabel} | ${row.dateLabel} ${row.timeLabel}`;
               return (
                 <article key={row.rowId} className="statement-service-card">
-                  <label className="statement-line-check">
-                    <input type="checkbox" name="selected_lines" value={lineLabel} form="statement-dispute-form" />
-                    <span>Selectionner cette ligne</span>
-                  </label>
-                  <div className="row spread">
-                    <strong>{row.courseLabel}</strong>
-                    <span className="badge">{row.payorName}</span>
+                  <div className="statement-service-head">
+                    <label className="statement-line-check" htmlFor={checkboxId}>
+                      <input id={checkboxId} type="checkbox" name="selected_lines" value={lineLabel} form="statement-dispute-form" />
+                      <span className="statement-line-check-text">
+                        <strong>{row.courseLabel}</strong>
+                        <small>{row.dateLabel} · {row.timeLabel}</small>
+                      </span>
+                    </label>
+                    <span className="badge statement-payor-badge">{row.payorName}</span>
                   </div>
-                  <p className="muted">{row.dateLabel} · {row.timeLabel}</p>
-                  <p className="muted">{row.studentOrGroup}</p>
-                  <p className="muted">{row.locationOrMode}</p>
+                  <div className="statement-service-context">
+                    {row.studentOrGroup !== "-" ? <span>{row.studentOrGroup}</span> : null}
+                    {row.locationOrMode !== "-" ? <span>{row.locationOrMode}</span> : null}
+                  </div>
                   <div className="statement-service-grid">
                     <small>Duree: <strong>{row.durationMinutes} min</strong></small>
                     <small>Taux HT: <strong>{row.rateHt} EUR</strong></small>
@@ -378,7 +420,7 @@ export default async function TeacherStatementMonthDetailPage({
           <form action={teacherApproveStatementsOnlyAction}>
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
-            <input type="hidden" name="return_to" value={`/prof/statements/${year}/${month}`} />
+            <input type="hidden" name="return_to" value={monthPathWithContext} />
             <button type="submit">Approuver le releve</button>
           </form>
 
@@ -387,7 +429,7 @@ export default async function TeacherStatementMonthDetailPage({
               <form action={teacherGenerateStatementsInvoiceAction}>
                 <input type="hidden" name="year" value={year} />
                 <input type="hidden" name="month" value={month} />
-                <input type="hidden" name="return_to" value={`/prof/statements/${year}/${month}`} />
+                <input type="hidden" name="return_to" value={monthPathWithContext} />
                 <button type="submit" className="ghost">Generer ma facture (modele Piano Academie)</button>
               </form>
               <a className="mode-link" href={`/prof/statements/${year}/${month}/export`}>
@@ -410,7 +452,7 @@ export default async function TeacherStatementMonthDetailPage({
           <form id="statement-dispute-form" action={teacherDisputeSelectedLinesAction} className="grid top-gap-sm">
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
-            <input type="hidden" name="return_to" value={monthPath} />
+            <input type="hidden" name="return_to" value={monthPathWithContext} />
             <label>
               Commentaire (obligatoire)
               <textarea
@@ -436,7 +478,7 @@ export default async function TeacherStatementMonthDetailPage({
           <form action={teacherReportMissingServiceAction} className="grid top-gap-sm">
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
-            <input type="hidden" name="return_to" value={monthPath} />
+            <input type="hidden" name="return_to" value={monthPathWithContext} />
             <label>
               Date (obligatoire)
               <input type="date" name="service_date" required />
