@@ -18,6 +18,7 @@ type RouteParams = {
 type ProspectOut = {
   id: string;
   status: string;
+  parent_prospect_id: string | null;
   first_name: string | null;
   last_name: string | null;
   email: string;
@@ -105,9 +106,10 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
   const error = readParam(searchParams, "error");
   const returnTo = safeReturnPath(readParam(searchParams, "return_to") || "/admin/prospects");
 
-  const [prospectResult, quotesResult] = await Promise.all([
+  const [prospectResult, quotesResult, parentsResult] = await Promise.all([
     backendRequest<ProspectOut>(`/api/v1/prospects/${encodeURIComponent(prospectId)}`, {}, token),
     backendRequest<QuoteOut[]>("/api/v1/quotes?limit=1000", {}, token),
+    backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000&prospect_type=adult", {}, token),
   ]);
 
   if (!prospectResult.ok) {
@@ -125,6 +127,17 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
   }
 
   const prospect = prospectResult.data;
+  const parentCandidates = (parentsResult.ok ? parentsResult.data : [])
+    .filter((row) => row.id !== prospect.id)
+    .filter((row) => String(row.meta?.prospect_type || "adult").toLowerCase() !== "child")
+    .map((row) => ({
+      id: row.id,
+      first_name: row.first_name,
+      last_name: row.last_name,
+      email: row.email,
+      phone: row.phone,
+      address: typeof row.meta?.adult_address === "string" ? row.meta.adult_address : null,
+    }));
   const linkedQuotes = (quotesResult.ok ? quotesResult.data : [])
     .filter((row) => row.prospect_id === prospect.id)
     .sort((a, b) => {
@@ -151,9 +164,16 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
       {!quotesResult.ok ? <section className="flash-err">Erreur devis: {quotesResult.message}</section> : null}
+      {!parentsResult.ok ? <section className="flash-err">Erreur recherche parents: {parentsResult.message}</section> : null}
 
       <section className="card">
-        <AdminProspectForm mode="edit" returnTo={returnTo} submitAction={updateAdminProspectAction} initial={prospect} />
+        <AdminProspectForm
+          mode="edit"
+          returnTo={returnTo}
+          submitAction={updateAdminProspectAction}
+          initial={prospect}
+          parentCandidates={parentCandidates}
+        />
       </section>
 
       <section className="card">

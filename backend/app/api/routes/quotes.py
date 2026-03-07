@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -121,6 +121,7 @@ def _prospect_out(row: Prospect) -> ProspectOut:
     return ProspectOut(
         id=row.id,
         linked_client_id=row.linked_client_id,
+        parent_prospect_id=row.parent_prospect_id,
         status=row.status,
         first_name=row.first_name,
         last_name=row.last_name,
@@ -333,6 +334,22 @@ def _parse_iso_datetime(raw: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _normalized_prospect_type(meta: dict[str, object] | None) -> str:
+    value = str((meta or {}).get("prospect_type") or "").strip().lower()
+    return "child" if value == "child" else "adult"
+
+
+def _ensure_parent_prospect(db: Session, parent_prospect_id: UUID, *, current_prospect_id: UUID | None = None) -> Prospect:
+    if current_prospect_id is not None and parent_prospect_id == current_prospect_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Parent prospect cannot be self")
+    parent = db.scalar(select(Prospect).where(Prospect.id == parent_prospect_id))
+    if parent is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Parent prospect not found")
+    if _normalized_prospect_type(parent.meta or {}) == "child":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Parent prospect must be adult")
+    return parent
 
 
 def _quote_template_out(row: dict[str, object]) -> QuoteTemplateOut:
@@ -576,6 +593,7 @@ def _ensure_public_token(quote: Quote) -> None:
 def list_prospects(
     q: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
+    prospect_type_filter: str | None = Query(default=None, alias="prospect_type"),
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
@@ -593,6 +611,11 @@ def list_prospects(
                 Prospect.phone.ilike(pattern),
             )
         )
+    normalized_type = (prospect_type_filter or "").strip().lower()
+    if normalized_type == "child":
+        stmt = stmt.where(func.coalesce(Prospect.meta["prospect_type"].astext, "adult") == "child")
+    elif normalized_type == "adult":
+        stmt = stmt.where(func.coalesce(Prospect.meta["prospect_type"].astext, "adult") != "child")
     rows = db.scalars(stmt.order_by(Prospect.created_at.desc()).limit(limit)).all()
     return [_prospect_out(row) for row in rows]
 
@@ -604,13 +627,25 @@ def create_prospect(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> ProspectOut:
     email = payload.email.strip().lower()
-    existing = db.scalar(select(Prospect).where(Prospect.email == email))
-    if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect already exists")
+    prospect_type = _normalized_prospect_type(payload.meta)
+    if prospect_type != "child":
+        existing = db.scalar(
+            select(Prospect).where(
+                Prospect.email == email,
+                func.coalesce(Prospect.meta["prospect_type"].astext, "adult") != "child",
+            )
+        )
+        if existing is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect already exists")
+    if payload.parent_prospect_id is not None:
+        if prospect_type != "child":
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="parent_prospect_id is only allowed for child prospects")
+        _ensure_parent_prospect(db, payload.parent_prospect_id)
 
     now = _utcnow()
     row = Prospect(
         linked_client_id=payload.linked_client_id,
+        parent_prospect_id=payload.parent_prospect_id,
         status="active",
         first_name=payload.first_name,
         last_name=payload.last_name,
@@ -653,18 +688,32 @@ def update_prospect(
 
     if payload.linked_client_id is not None:
         row.linked_client_id = payload.linked_client_id
+    if "parent_prospect_id" in payload.model_fields_set:
+        next_parent_id = payload.parent_prospect_id
+        if next_parent_id is not None:
+            _ensure_parent_prospect(db, next_parent_id, current_prospect_id=row.id)
+        row.parent_prospect_id = next_parent_id
     if payload.status is not None:
         row.status = payload.status.strip()
     if payload.first_name is not None:
         row.first_name = payload.first_name
     if payload.last_name is not None:
         row.last_name = payload.last_name
-    if payload.email is not None:
-        email = payload.email.strip().lower()
-        duplicate = db.scalar(select(Prospect.id).where(Prospect.email == email, Prospect.id != row.id).limit(1))
+    next_meta = payload.meta if payload.meta is not None else (row.meta or {})
+    next_type = _normalized_prospect_type(next_meta)
+    next_email = (payload.email.strip().lower() if payload.email is not None else (row.email or "").strip().lower())
+    if next_type != "child":
+        duplicate = db.scalar(
+            select(Prospect.id).where(
+                Prospect.email == next_email,
+                Prospect.id != row.id,
+                func.coalesce(Prospect.meta["prospect_type"].astext, "adult") != "child",
+            ).limit(1)
+        )
         if duplicate is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect email already used")
-        row.email = email
+    if payload.email is not None:
+        row.email = next_email
     if payload.phone is not None:
         row.phone = payload.phone
     if payload.source is not None:
@@ -673,6 +722,8 @@ def update_prospect(
         row.notes = payload.notes
     if payload.meta is not None:
         row.meta = payload.meta
+    if row.parent_prospect_id is not None and _normalized_prospect_type(row.meta or {}) != "child":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only child prospects can keep parent_prospect_id")
     row.updated_at = _utcnow()
     db.add(row)
     db.commit()
@@ -693,7 +744,12 @@ def create_prospect_from_client(
     if existing is not None:
         return _prospect_out(existing)
 
-    existing_by_email = db.scalar(select(Prospect).where(Prospect.email == user.email).limit(1))
+    existing_by_email = db.scalar(
+        select(Prospect).where(
+            Prospect.email == user.email,
+            func.coalesce(Prospect.meta["prospect_type"].astext, "adult") != "child",
+        ).limit(1)
+    )
     if existing_by_email is not None:
         existing_by_email.linked_client_id = client_id
         existing_by_email.updated_at = _utcnow()

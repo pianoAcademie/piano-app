@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 class ProspectOut(BaseModel):
     id: UUID
     linked_client_id: UUID | None = None
+    parent_prospect_id: UUID | None = None
     status: str
     first_name: str | None = None
     last_name: str | None = None
@@ -25,6 +26,7 @@ class ProspectOut(BaseModel):
 
 class ProspectCreateRequest(BaseModel):
     linked_client_id: UUID | None = None
+    parent_prospect_id: UUID | None = None
     first_name: str | None = Field(default=None, max_length=120)
     last_name: str | None = Field(default=None, max_length=120)
     email: str = Field(min_length=3, max_length=255)
@@ -36,6 +38,7 @@ class ProspectCreateRequest(BaseModel):
 
 class ProspectUpdateRequest(BaseModel):
     linked_client_id: UUID | None = None
+    parent_prospect_id: UUID | None = None
     status: str | None = Field(default=None, max_length=32)
     first_name: str | None = Field(default=None, max_length=120)
     last_name: str | None = Field(default=None, max_length=120)

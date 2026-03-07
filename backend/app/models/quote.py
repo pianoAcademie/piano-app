@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,7 +13,14 @@ from app.db.base import Base
 
 class Prospect(Base):
     __tablename__ = "prospects"
-    __table_args__ = (UniqueConstraint("email", name="uq_prospects_email"),)
+    __table_args__ = (
+        Index(
+            "uq_prospects_email_adult",
+            "email",
+            unique=True,
+            postgresql_where=text("coalesce(meta->>'prospect_type','adult') <> 'child'"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -24,6 +31,11 @@ class Prospect(Base):
     linked_client_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    parent_prospect_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("prospects.id", ondelete="SET NULL"),
         nullable=True,
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'active'"))
@@ -436,4 +448,3 @@ class QuoteAcceptanceFollowup(Base):
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
-

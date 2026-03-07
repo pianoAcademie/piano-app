@@ -1,12 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import SearchMultiSelect from "./search-multi-select";
 
 type ProspectStatus = "active" | "converted" | "archived" | "lost" | "new";
+type ParentMode = "new_parent" | "existing_parent";
 
 type ProspectInitial = {
   id?: string;
   status?: string;
+  parent_prospect_id?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   email?: string | null;
@@ -16,21 +19,41 @@ type ProspectInitial = {
   meta?: Record<string, unknown>;
 };
 
+type ParentCandidate = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+  phone: string | null;
+  address: string | null;
+};
+
 type AdminProspectFormProps = {
   mode: "create" | "edit";
   returnTo: string;
   submitAction: (formData: FormData) => Promise<void>;
   initial?: ProspectInitial;
+  parentCandidates: ParentCandidate[];
 };
 
 function stringFromUnknown(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-export default function AdminProspectForm({ mode, returnTo, submitAction, initial }: AdminProspectFormProps): JSX.Element {
+function displayName(firstName: string | null, lastName: string | null, fallback: string): string {
+  const value = [firstName, lastName].filter(Boolean).join(" ").trim();
+  return value || fallback;
+}
+
+export default function AdminProspectForm({ mode, returnTo, submitAction, initial, parentCandidates }: AdminProspectFormProps): JSX.Element {
   const initialMeta = (initial?.meta ?? {}) as Record<string, unknown>;
   const initialType = String(initialMeta.prospect_type || "").trim().toLowerCase() === "child" ? "child" : "adult";
   const [prospectType, setProspectType] = useState<"adult" | "child">(initialType);
+  const initialParentProspectId = (initial?.parent_prospect_id ?? stringFromUnknown(initialMeta.parent_existing_prospect_id)).trim();
+  const initialParentModeRaw = stringFromUnknown(initialMeta.parent_referent_mode).toLowerCase();
+  const initialParentMode: ParentMode = initialParentProspectId || initialParentModeRaw === "existing_parent" ? "existing_parent" : "new_parent";
+  const [parentMode, setParentMode] = useState<ParentMode>(initialParentMode);
+  const [selectedParentId, setSelectedParentId] = useState<string>(initialParentProspectId);
 
   const childMeta = useMemo(() => {
     const raw = initialMeta.child;
@@ -41,6 +64,18 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
     const raw = initialMeta.parent_referent;
     return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   }, [initialMeta.parent_referent]);
+  const selectedParent = useMemo(
+    () => parentCandidates.find((row) => row.id === selectedParentId) ?? null,
+    [parentCandidates, selectedParentId],
+  );
+  const parentOptions = useMemo(
+    () =>
+      parentCandidates.map((row) => ({
+        id: row.id,
+        label: `${displayName(row.first_name, row.last_name, row.email)} · ${row.email}${row.phone ? ` · ${row.phone}` : ""}`,
+      })),
+    [parentCandidates],
+  );
 
   const defaultAdultAddress = stringFromUnknown(initialMeta.adult_address);
 
@@ -125,32 +160,107 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
 
           <section className="card span-2">
             <h4>Parent referent</h4>
-            <div className="grid cols-3 top-gap-sm">
-              <label>
-                Civilite
-                <input type="text" name="parent_title" placeholder="Mme/M." defaultValue={stringFromUnknown(parentMeta.title)} />
-              </label>
-              <label>
-                Prenom parent
-                <input type="text" name="parent_first_name" required defaultValue={stringFromUnknown(parentMeta.first_name)} />
-              </label>
-              <label>
-                Nom parent
-                <input type="text" name="parent_last_name" required defaultValue={stringFromUnknown(parentMeta.last_name)} />
-              </label>
-              <label>
-                Email parent
-                <input type="email" name="parent_email" required defaultValue={stringFromUnknown(parentMeta.email) || (initial?.email ?? "")} />
-              </label>
-              <label>
-                Telephone parent
-                <input type="text" name="parent_phone" defaultValue={stringFromUnknown(parentMeta.phone) || (initial?.phone ?? "")} />
-              </label>
-              <label>
-                Adresse parent
-                <input type="text" name="parent_address" defaultValue={stringFromUnknown(parentMeta.address)} />
-              </label>
-            </div>
+            <fieldset className="top-gap-sm">
+              <legend>Mode parent referent</legend>
+              <div className="row wrap gap-sm">
+                <label className="checkline">
+                  <input
+                    type="radio"
+                    name="parent_referent_mode"
+                    value="new_parent"
+                    checked={parentMode === "new_parent"}
+                    onChange={() => {
+                      setParentMode("new_parent");
+                      setSelectedParentId("");
+                    }}
+                  />
+                  Nouveau parent referent
+                </label>
+                <label className="checkline">
+                  <input
+                    type="radio"
+                    name="parent_referent_mode"
+                    value="existing_parent"
+                    checked={parentMode === "existing_parent"}
+                    onChange={() => setParentMode("existing_parent")}
+                  />
+                  Rattacher a un parent existant
+                </label>
+              </div>
+            </fieldset>
+
+            {parentMode === "existing_parent" ? (
+              <div className="top-gap-sm">
+                <SearchMultiSelect
+                  label="Rechercher un parent"
+                  name="parent_existing_prospect_id"
+                  options={parentOptions}
+                  selectedIds={selectedParentId ? [selectedParentId] : []}
+                  onSelectionChange={(ids) => setSelectedParentId(ids[0] ?? "")}
+                  placeholder="Prenom, nom, email, telephone..."
+                  emptySelectionLabel="Aucun parent selectionne."
+                  maxSelections={1}
+                  requiredSelection
+                  requiredSelectionMessage="Veuillez selectionner un parent existant ou revenir au mode nouveau parent referent."
+                />
+                {selectedParent ? (
+                  <>
+                    <input type="hidden" name="parent_existing_email" value={selectedParent.email} />
+                    <input type="hidden" name="parent_existing_first_name" value={selectedParent.first_name ?? ""} />
+                    <input type="hidden" name="parent_existing_last_name" value={selectedParent.last_name ?? ""} />
+                    <input type="hidden" name="parent_existing_phone" value={selectedParent.phone ?? ""} />
+                    <input type="hidden" name="parent_existing_address" value={selectedParent.address ?? ""} />
+                    <article className="item top-gap-sm">
+                      <strong>Parent selectionne</strong>
+                      <p className="muted">
+                        {displayName(selectedParent.first_name, selectedParent.last_name, selectedParent.email)}
+                        {" · "}
+                        {selectedParent.email}
+                      </p>
+                      <p className="muted">
+                        Tel: {selectedParent.phone || "-"}
+                        {" · "}
+                        Adresse: {selectedParent.address || "-"}
+                      </p>
+                    </article>
+                  </>
+                ) : (
+                  <p className="muted top-gap-sm">Aucun parent trouve ? Passez en mode nouveau parent referent.</p>
+                )}
+              </div>
+            ) : (
+              <div className="grid cols-3 top-gap-sm">
+                <label>
+                  Civilite
+                  <input type="text" name="parent_title" placeholder="Mme/M." defaultValue={stringFromUnknown(parentMeta.title)} />
+                </label>
+                <label>
+                  Prenom parent
+                  <input type="text" name="parent_first_name" required={parentMode === "new_parent"} defaultValue={stringFromUnknown(parentMeta.first_name)} />
+                </label>
+                <label>
+                  Nom parent
+                  <input type="text" name="parent_last_name" required={parentMode === "new_parent"} defaultValue={stringFromUnknown(parentMeta.last_name)} />
+                </label>
+                <label>
+                  Email parent
+                  <input
+                    type="email"
+                    name="parent_email"
+                    required={parentMode === "new_parent"}
+                    defaultValue={stringFromUnknown(parentMeta.email) || (initial?.email ?? "")}
+                  />
+                </label>
+                <label>
+                  Telephone parent
+                  <input type="text" name="parent_phone" defaultValue={stringFromUnknown(parentMeta.phone) || (initial?.phone ?? "")} />
+                </label>
+                <label>
+                  Adresse parent
+                  <input type="text" name="parent_address" defaultValue={stringFromUnknown(parentMeta.address)} />
+                </label>
+              </div>
+            )}
           </section>
         </>
       )}

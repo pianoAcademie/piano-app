@@ -17,6 +17,8 @@ type Props = {
   emptySelectionLabel?: string;
   maxSelections?: number;
   requiredSelection?: boolean;
+  requiredSelectionMessage?: string;
+  onSelectionChange?: (ids: string[]) => void;
 };
 
 function normalize(value: string): string {
@@ -36,6 +38,8 @@ export default function SearchMultiSelect({
   emptySelectionLabel = "Aucune selection.",
   maxSelections,
   requiredSelection = false,
+  requiredSelectionMessage = "Selection obligatoire.",
+  onSelectionChange,
 }: Props): JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
@@ -47,6 +51,9 @@ export default function SearchMultiSelect({
   const [selected, setSelected] = useState<string[]>(
     () => Array.from(new Set(selectedIds.filter((id) => optionById.has(id)))),
   );
+  useEffect(() => {
+    setSelected(Array.from(new Set(selectedIds.filter((id) => optionById.has(id)))));
+  }, [selectedIds, optionById]);
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const selectedOptions = useMemo(
@@ -83,17 +90,21 @@ export default function SearchMultiSelect({
         return;
       }
       event.preventDefault();
-      setSelectionError("Selectionnez un eleve dans la liste.");
+      setSelectionError(requiredSelectionMessage);
     };
     form.addEventListener("submit", onSubmit);
     return () => form.removeEventListener("submit", onSubmit);
-  }, [requiredSelection, selected]);
+  }, [requiredSelection, requiredSelectionMessage, selected]);
 
   useEffect(() => {
     if (selected.length > 0 && selectionError) {
       setSelectionError("");
     }
   }, [selected, selectionError]);
+
+  useEffect(() => {
+    onSelectionChange?.(selected);
+  }, [onSelectionChange, selected]);
 
   const addSelected = (id: string): void => {
     if (!optionById.has(id)) {

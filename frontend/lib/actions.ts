@@ -9259,6 +9259,7 @@ type ProspectPayload = {
   last_name: string | null;
   email: string;
   phone: string | null;
+  parent_prospect_id: string | null;
   source: string | null;
   notes: string | null;
   meta: Record<string, unknown>;
@@ -9266,6 +9267,9 @@ type ProspectPayload = {
 
 function buildProspectPayloadFromForm(formData: FormData): ProspectPayload | null {
   const prospectType = String(formData.get("prospect_type") ?? "adult").trim().toLowerCase() === "child" ? "child" : "adult";
+  const parentMode = String(formData.get("parent_referent_mode") ?? "new_parent").trim().toLowerCase() === "existing_parent"
+    ? "existing_parent"
+    : "new_parent";
   const source = optionalField(formData, "source");
   const notes = optionalField(formData, "notes");
 
@@ -9283,6 +9287,7 @@ function buildProspectPayloadFromForm(formData: FormData): ProspectPayload | nul
       last_name: lastName,
       email,
       phone,
+      parent_prospect_id: null,
       source,
       notes,
       meta: {
@@ -9295,13 +9300,56 @@ function buildProspectPayloadFromForm(formData: FormData): ProspectPayload | nul
   const childFirstName = String(formData.get("child_first_name") ?? "").trim();
   const childLastName = String(formData.get("child_last_name") ?? "").trim();
   const childBirthDate = optionalField(formData, "child_birth_date");
+  if (!childFirstName || !childLastName) {
+    return null;
+  }
+
+  if (parentMode === "existing_parent") {
+    const parentProspectId = parseUuid(String(formData.get("parent_existing_prospect_id") ?? ""));
+    const parentEmail = String(formData.get("parent_existing_email") ?? "").trim().toLowerCase();
+    const parentFirstName = optionalField(formData, "parent_existing_first_name");
+    const parentLastName = optionalField(formData, "parent_existing_last_name");
+    const parentPhone = optionalField(formData, "parent_existing_phone");
+    const parentAddress = optionalField(formData, "parent_existing_address");
+    if (!parentProspectId || !parentEmail || !parentEmail.includes("@")) {
+      return null;
+    }
+    return {
+      first_name: childFirstName,
+      last_name: childLastName,
+      email: parentEmail,
+      phone: parentPhone,
+      parent_prospect_id: parentProspectId,
+      source,
+      notes,
+      meta: {
+        prospect_type: "child",
+        parent_referent_mode: "existing_parent",
+        parent_existing_prospect_id: parentProspectId,
+        child: {
+          first_name: childFirstName,
+          last_name: childLastName,
+          birth_date: childBirthDate,
+        },
+        parent_referent: {
+          title: null,
+          first_name: parentFirstName,
+          last_name: parentLastName,
+          email: parentEmail,
+          phone: parentPhone,
+          address: parentAddress,
+        },
+      },
+    };
+  }
+
   const parentTitle = optionalField(formData, "parent_title");
   const parentFirstName = String(formData.get("parent_first_name") ?? "").trim();
   const parentLastName = String(formData.get("parent_last_name") ?? "").trim();
   const parentEmail = String(formData.get("parent_email") ?? "").trim().toLowerCase();
   const parentPhone = optionalField(formData, "parent_phone");
   const parentAddress = optionalField(formData, "parent_address");
-  if (!childFirstName || !childLastName || !parentFirstName || !parentLastName || !parentEmail || !parentEmail.includes("@")) {
+  if (!parentFirstName || !parentLastName || !parentEmail || !parentEmail.includes("@")) {
     return null;
   }
 
@@ -9310,10 +9358,12 @@ function buildProspectPayloadFromForm(formData: FormData): ProspectPayload | nul
     last_name: childLastName,
     email: parentEmail,
     phone: parentPhone,
+    parent_prospect_id: null,
     source,
     notes,
     meta: {
       prospect_type: "child",
+      parent_referent_mode: "new_parent",
       child: {
         first_name: childFirstName,
         last_name: childLastName,
@@ -9389,6 +9439,7 @@ export async function updateAdminProspectAction(formData: FormData): Promise<voi
     last_name: payload.last_name,
     email: payload.email,
     phone: payload.phone,
+    parent_prospect_id: payload.parent_prospect_id,
     source: payload.source,
     notes: payload.notes,
     meta: payload.meta,
