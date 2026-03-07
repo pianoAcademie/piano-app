@@ -22,6 +22,11 @@ type ProspectOut = {
   created_at: string;
 };
 
+type QuoteOut = {
+  id: string;
+  prospect_id: string | null;
+};
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -106,8 +111,19 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
   if (status) query.set("status", status);
   query.set("limit", "1000");
 
-  const prospectsResult = await backendRequest<ProspectOut[]>(`/api/v1/prospects?${query.toString()}`, {}, token);
+  const [prospectsResult, quotesResult] = await Promise.all([
+    backendRequest<ProspectOut[]>(`/api/v1/prospects?${query.toString()}`, {}, token),
+    backendRequest<QuoteOut[]>("/api/v1/quotes?limit=1000", {}, token),
+  ]);
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
+  const quotes = quotesResult.ok ? quotesResult.data : [];
+  const quoteCountByProspect = new Map<string, number>();
+  for (const row of quotes) {
+    if (!row.prospect_id) {
+      continue;
+    }
+    quoteCountByProspect.set(row.prospect_id, (quoteCountByProspect.get(row.prospect_id) ?? 0) + 1);
+  }
 
   const filteredProspects = prospects.filter((row) => {
     const rowType = prospectType(row.meta || {});
@@ -140,6 +156,7 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
       </section>
 
       {!prospectsResult.ok ? <section className="flash-err">Erreur prospects: {prospectsResult.message}</section> : null}
+      {!quotesResult.ok ? <section className="flash-err">Erreur devis: {quotesResult.message}</section> : null}
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
 
@@ -192,6 +209,7 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
                 <th>Email principal</th>
                 <th>Telephone principal</th>
                 <th>Parent referent</th>
+                <th>Nb devis</th>
                 <th>Statut</th>
                 <th>Date creation</th>
                 <th>Actions</th>
@@ -200,7 +218,7 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
             <tbody>
               {filteredProspects.length === 0 ? (
                 <tr>
-                  <td colSpan={8}><p className="muted">Aucun prospect sur ces filtres.</p></td>
+                  <td colSpan={9}><p className="muted">Aucun prospect sur ces filtres.</p></td>
                 </tr>
               ) : (
                 filteredProspects.map((row) => {
@@ -214,6 +232,7 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
                       <td>{row.email}</td>
                       <td>{row.phone || "-"}</td>
                       <td>{parentLabel(row.meta || {})}</td>
+                      <td>{quoteCountByProspect.get(row.id) ?? 0}</td>
                       <td><span className="status-pill status-off">{row.status}</span></td>
                       <td>{formatDate(row.created_at)}</td>
                       <td>

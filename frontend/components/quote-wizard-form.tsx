@@ -261,6 +261,7 @@ export default function QuoteWizardForm({
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(quoteTemplates.find((item) => item.is_default)?.id ?? quoteTemplates[0]?.id ?? "");
   const [language, setLanguage] = useState<string>("fr");
   const [currency, setCurrency] = useState<string>("EUR");
+  const [tvaRate, setTvaRate] = useState<string>("20");
   const [estimatedLevel, setEstimatedLevel] = useState<string>("");
   const [lines, setLines] = useState<WizardLine[]>([]);
 
@@ -500,6 +501,18 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
+              TVA (%)
+              <input
+                type="number"
+                name="tva_rate"
+                min={0}
+                max={100}
+                step="0.01"
+                value={tvaRate}
+                onChange={(event) => setTvaRate(event.target.value)}
+              />
+            </label>
+            <label>
               Delai expiration (jours)
               <input type="number" name="expiry_days" min={1} max={120} defaultValue={10} required />
             </label>
@@ -664,6 +677,8 @@ export default function QuoteWizardForm({
         <article className="card quote-summary-card">
           <h3>Resume sticky</h3>
           <p className="muted">Contexte: <strong>{contextType === "acquisition" ? "Acquisition" : "Client actif"}</strong></p>
+          <p className="muted">Devise: <strong>{currency}</strong> · Langue: <strong>{language.toUpperCase()}</strong></p>
+          <p className="muted">TVA: <strong>{tvaRate || "0"} %</strong></p>
           <p className="muted">Lignes: <strong>{lines.length}</strong></p>
           <p className="muted">Seances estimees: <strong>{sessionsCount}</strong></p>
           <p className="quote-total">Total estime: {toMoney(String(total))}</p>

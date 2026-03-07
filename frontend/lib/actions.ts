@@ -8703,6 +8703,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const language = languageRaw ? languageRaw.slice(0, 8) : null;
   const currencyRaw = String(formData.get("currency") ?? "EUR").trim().toUpperCase();
   const currency = currencyRaw.length === 3 ? currencyRaw : "EUR";
+  const tvaRateRaw = String(formData.get("tva_rate") ?? "").trim();
   const expiryDays = parsePositiveInt(String(formData.get("expiry_days") ?? "10")) ?? 10;
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
   const estimatedSolfegeLevel = String(formData.get("estimated_solfege_level") ?? "").trim() || null;
@@ -8719,6 +8720,14 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
 
   if (cgvVersionIdRaw && !cgvVersionId) {
     redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
+  }
+  let tvaRate: string | null = null;
+  if (tvaRateRaw) {
+    const parsedTva = Number(tvaRateRaw);
+    if (!Number.isFinite(parsedTva) || parsedTva < 0 || parsedTva > 100) {
+      redirect(appendQueryMessage(returnTo, "error", "TVA invalide"));
+    }
+    tvaRate = parsedTva.toFixed(2);
   }
 
   if (contextType === "acquisition" && !prospectId) {
@@ -8765,6 +8774,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     school_year_label: schoolYearLabel,
     currency,
     language,
+    meta: tvaRate ? { tva_rate: tvaRate } : {},
     expiry_days: expiryDays,
     estimated_solfege_level: estimatedSolfegeLevel,
     calendar_snapshot: calendarSnapshot,
@@ -8855,6 +8865,98 @@ export async function duplicateQuoteAction(formData: FormData): Promise<void> {
   }
   revalidatePath("/admin/quotes");
   redirect(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent("/admin/quotes")}&ok=${encodeURIComponent("Nouvelle version creee")}`);
+}
+
+export async function updateQuoteSettingsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
+  const pricingCatalogId = parseUuid(String(formData.get("pricing_catalog_id") ?? ""));
+  const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
+  const cgvVersionIdRaw = String(formData.get("cgv_version_id") ?? "").trim();
+  const cgvVersionId = cgvVersionIdRaw ? parseUuid(cgvVersionIdRaw) : null;
+  const quoteTemplateIdRaw = String(formData.get("quote_template_id") ?? "").trim();
+  const quoteTemplateId = quoteTemplateIdRaw || null;
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
+  const currencyRaw = String(formData.get("currency") ?? "EUR").trim().toUpperCase();
+  const currency = currencyRaw.length === 3 ? currencyRaw : "EUR";
+  const languageRaw = String(formData.get("language") ?? "").trim().toLowerCase();
+  const language = languageRaw ? languageRaw.slice(0, 8) : null;
+  const expiryDays = parsePositiveInt(String(formData.get("expiry_days") ?? "")) ?? null;
+  const estimatedSolfegeLevelRaw = String(formData.get("estimated_solfege_level") ?? "").trim();
+  const estimatedSolfegeLevel = estimatedSolfegeLevelRaw || null;
+  const tvaRateRaw = String(formData.get("tva_rate") ?? "").trim();
+
+  if (cgvVersionIdRaw && !cgvVersionId) {
+    redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
+  }
+  if (expiryDays !== null && (expiryDays < 1 || expiryDays > 120)) {
+    redirect(appendQueryMessage(returnTo, "error", "Delai expiration invalide"));
+  }
+
+  let meta: Record<string, unknown> = {};
+  const currentMetaRaw = String(formData.get("current_meta_json") ?? "").trim();
+  if (currentMetaRaw) {
+    try {
+      const parsed = JSON.parse(currentMetaRaw) as unknown;
+      if (parsed && typeof parsed === "object") {
+        meta = parsed as Record<string, unknown>;
+      }
+    } catch {
+      meta = {};
+    }
+  }
+  if (tvaRateRaw) {
+    const parsedTva = Number(tvaRateRaw);
+    if (!Number.isFinite(parsedTva) || parsedTva < 0 || parsedTva > 100) {
+      redirect(appendQueryMessage(returnTo, "error", "TVA invalide"));
+    }
+    meta.tva_rate = parsedTva.toFixed(2);
+  } else {
+    delete meta.tva_rate;
+  }
+
+  const payload: Record<string, unknown> = {
+    quote_type_id: quoteTypeId,
+    pricing_catalog_id: pricingCatalogId,
+    payment_plan_id: paymentPlanId,
+    quote_template_id: quoteTemplateId,
+    cgv_version_id: cgvVersionId,
+    school_year_label: schoolYearLabel || null,
+    currency,
+    language,
+    estimated_solfege_level: estimatedSolfegeLevel,
+    meta,
+  };
+  if (expiryDays !== null) {
+    payload.expiry_days = expiryDays;
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Parametres devis mis a jour"));
 }
 
 type ProspectPayload = {

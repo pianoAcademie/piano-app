@@ -9,6 +9,7 @@ import {
   finalizeQuoteFollowupAction,
   selectQuoteFollowupSlotAction,
   sendQuoteAction,
+  updateQuoteSettingsAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import type { AdminClientOut } from "../../../../lib/types";
@@ -43,8 +44,12 @@ type QuoteOut = {
   quote_number: string;
   status: string;
   context_type: string;
+  quote_type_id: string | null;
+  pricing_catalog_id: string | null;
+  payment_plan_id: string | null;
   currency: string;
   total_ttc: string;
+  expiry_days: number;
   created_at: string;
   expires_at: string | null;
   sent_at: string | null;
@@ -56,6 +61,8 @@ type QuoteOut = {
   estimated_solfege_level: string | null;
   calendar_snapshot: Record<string, unknown>;
   payment_terms_snapshot: Record<string, unknown>;
+  cgv_snapshot: Record<string, unknown>;
+  meta: Record<string, unknown>;
   public_token: string | null;
   pdf_token: string | null;
 };
@@ -81,6 +88,28 @@ type PaymentPlanOut = {
   id: string;
   name: string;
   payment_method: string;
+};
+
+type QuoteTypeOut = {
+  id: string;
+  name: string;
+};
+
+type PricingCatalogOut = {
+  id: string;
+  name: string;
+};
+
+type CgvVersionOut = {
+  id: string;
+  version_label: string;
+};
+
+type QuoteTemplateOut = {
+  id: string;
+  code: string;
+  name: string;
+  language: string;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -147,6 +176,14 @@ function safeBackPath(raw: string): string {
   return "/admin/quotes";
 }
 
+function readStringMeta(meta: Record<string, unknown>, key: string, fallback = ""): string {
+  const raw = meta[key];
+  if (typeof raw === "string" && raw.trim()) {
+    return raw.trim();
+  }
+  return fallback;
+}
+
 export default async function AdminQuoteDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -162,10 +199,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, prospectsResult, clientsResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, prospectsResult, clientsResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
+    backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
+    backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
+    backendRequest<CgvVersionOut[]>("/api/v1/cgv-versions", {}, token),
+    backendRequest<QuoteTemplateOut[]>("/api/v1/quote-templates?active_only=true", {}, token),
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
   ]);
@@ -188,6 +229,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const followups = followupsResult.ok ? followupsResult.data : [];
   const activeFollowup = followups[0] ?? null;
   const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
+  const quoteTypes = quoteTypesResult.ok ? quoteTypesResult.data : [];
+  const catalogs = catalogsResult.ok ? catalogsResult.data : [];
+  const cgvVersions = cgvVersionsResult.ok ? cgvVersionsResult.data : [];
+  const quoteTemplates = quoteTemplatesResult.ok ? quoteTemplatesResult.data : [];
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
 
@@ -201,6 +246,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ownerName = owner
     ? displayName(owner.first_name, owner.last_name, owner.email)
     : "-";
+  const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
+  const quoteTemplateId = readStringMeta(detail.quote.meta || {}, "template_id");
+  const tvaRate = readStringMeta(detail.quote.meta || {}, "tva_rate", "20.00");
 
   const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
 
@@ -274,6 +322,106 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             PDF admin
           </Link>
         </div>
+      </section>
+
+      <section className="card">
+        <h3>Parametres du devis</h3>
+        <p className="muted">Devise, TVA, langue, template, CGV et referentiels metier du devis.</p>
+        <form action={updateQuoteSettingsAction} className="grid cols-3 config-form-grid top-gap-sm">
+          <input type="hidden" name="quote_id" value={detail.quote.id} />
+          <input type="hidden" name="return_to" value={selfPath} />
+          <input type="hidden" name="current_meta_json" value={JSON.stringify(detail.quote.meta || {})} />
+          <label>
+            Type devis
+            <select name="quote_type_id" defaultValue={detail.quote.quote_type_id || ""} disabled={detail.quote.status !== "created"}>
+              <option value="">Aucun</option>
+              {quoteTypes.map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Catalogue prix
+            <select name="pricing_catalog_id" defaultValue={detail.quote.pricing_catalog_id || ""} disabled={detail.quote.status !== "created"}>
+              <option value="">Aucun</option>
+              {catalogs.map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Plan paiement
+            <select name="payment_plan_id" defaultValue={detail.quote.payment_plan_id || ""} disabled={detail.quote.status !== "created"}>
+              <option value="">Aucun</option>
+              {paymentPlans.map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Template
+            <select name="quote_template_id" defaultValue={quoteTemplateId} disabled={detail.quote.status !== "created"}>
+              <option value="">Aucun</option>
+              {quoteTemplates.map((row) => (
+                <option key={row.id} value={row.id}>{row.name} ({row.code})</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            CGV
+            <select name="cgv_version_id" defaultValue="" disabled={detail.quote.status !== "created"}>
+              <option value="">Conserver snapshot actuel</option>
+              {cgvVersions.map((row) => (
+                <option key={row.id} value={row.id}>{row.version_label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Langue
+            <select name="language" defaultValue={quoteLanguage} disabled={detail.quote.status !== "created"}>
+              <option value="fr">Francais</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label>
+            Devise
+            <select name="currency" defaultValue={detail.quote.currency || "EUR"} disabled={detail.quote.status !== "created"}>
+              <option value="EUR">EUR</option>
+              <option value="USD">USD</option>
+              <option value="GBP">GBP</option>
+            </select>
+          </label>
+          <label>
+            TVA (%)
+            <input type="number" name="tva_rate" min={0} max={100} step="0.01" defaultValue={tvaRate} disabled={detail.quote.status !== "created"} />
+          </label>
+          <label>
+            Delai expiration (jours)
+            <input type="number" name="expiry_days" min={1} max={120} defaultValue={detail.quote.expiry_days} disabled={detail.quote.status !== "created"} />
+          </label>
+          <label>
+            Annee scolaire
+            <input type="text" name="school_year_label" defaultValue={detail.quote.school_year_label ?? ""} disabled={detail.quote.status !== "created"} />
+          </label>
+          <label>
+            Niveau solfege
+            <select name="estimated_solfege_level" defaultValue={detail.quote.estimated_solfege_level ?? ""} disabled={detail.quote.status !== "created"}>
+              <option value="">Non applicable</option>
+              <option value="1">Niveau 1</option>
+              <option value="2">Niveau 2</option>
+              <option value="3">Niveau 3</option>
+              <option value="4">Niveau 4</option>
+              <option value="5">Niveau 5</option>
+            </select>
+          </label>
+          <div className="row span-3 top-gap-sm">
+            <button type="submit" disabled={detail.quote.status !== "created"}>Enregistrer parametres</button>
+            {detail.quote.status !== "created" ? <small className="muted">Le devis est immuable apres envoi.</small> : null}
+          </div>
+        </form>
+        <p className="muted top-gap-sm">
+          CGV snapshot active: <strong>{String(detail.quote.cgv_snapshot?.version_label || "-")}</strong>
+        </p>
       </section>
 
       <section className="card">
