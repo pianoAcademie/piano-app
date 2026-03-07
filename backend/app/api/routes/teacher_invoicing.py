@@ -379,7 +379,7 @@ def _mark_statements_with_message(
     message: str,
     source: str,
     message_type: str,
-    metadata: dict[str, Any],
+    message_meta: dict[str, Any],
     event_type: str,
     payload: dict[str, Any],
 ) -> list[TeacherStatementOut]:
@@ -398,7 +398,7 @@ def _mark_statements_with_message(
                 source=source,
                 message_type=message_type,
                 status="a_traiter",
-                metadata=metadata,
+                meta=message_meta,
                 related_entity_type="teacher_monthly_statement",
                 related_entity_id=statement.id,
                 updated_at=now,
@@ -659,7 +659,7 @@ def dispute_teacher_statement_month(
         message=message,
         source="releves_professeur",
         message_type="erreur_releve",
-        metadata={
+        message_meta={
             "scope": "month",
             "year": year,
             "month": month,
@@ -708,7 +708,7 @@ def dispute_teacher_statement_selected_lines(
         message=message,
         source="releves_professeur",
         message_type="erreur_lignes_releve",
-        metadata={
+        message_meta={
             "scope": "selected_lines",
             "year": year,
             "month": month,
@@ -807,7 +807,7 @@ def report_teacher_statement_missing_service(
         message=message,
         source="releves_professeur",
         message_type="prestation_manquante",
-        metadata={
+        message_meta={
             "scope": "missing_service",
             "year": year,
             "month": month,

@@ -49,7 +49,7 @@ def _row_to_out(row: TeacherStatementMessage, professor: Professor | None) -> Ad
         handled_by_user_id=row.handled_by_user_id,
         related_entity_type=row.related_entity_type,
         related_entity_id=row.related_entity_id,
-        metadata=row.metadata or {},
+        metadata=row.meta or {},
     )
 
 

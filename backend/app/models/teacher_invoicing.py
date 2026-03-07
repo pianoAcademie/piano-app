@@ -187,7 +187,8 @@ class TeacherStatementMessage(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'releves_professeur'"))
     message_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'erreur_releve'"))
     status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'a_traiter'"))
-    metadata: Mapped[dict[str, object]] = mapped_column(
+    meta: Mapped[dict[str, object]] = mapped_column(
+        "metadata",
         JSONB,
         nullable=False,
         server_default=text("'{}'::jsonb"),
