@@ -30,6 +30,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/teacher-invoicing", label: "Facturation professeurs", icon: "🧾" },
       { href: "/admin/subscriptions", label: "Abonnements", icon: "🔁" },
       { href: "/admin/quotes", label: "Devis", icon: "📑" },
+      { href: "/admin/prospects", label: "Prospects", icon: "🧲" },
       { href: "/admin/products", label: "Produits", icon: "📦" },
     ],
   },

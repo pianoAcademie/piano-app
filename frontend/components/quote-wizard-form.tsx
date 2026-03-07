@@ -35,6 +35,14 @@ type CgvOption = {
   version_label: string;
 };
 
+type QuoteTemplateOption = {
+  id: string;
+  name: string;
+  code: string;
+  language: string;
+  is_default: boolean;
+};
+
 type LocationOption = {
   id: string;
   name: string;
@@ -75,6 +83,7 @@ type QuoteWizardFormProps = {
   catalogs: CatalogOption[];
   paymentPlans: PaymentPlanOption[];
   cgvVersions: CgvOption[];
+  quoteTemplates: QuoteTemplateOption[];
   locations: LocationOption[];
   activities: ActivityOption[];
   products: ProductOption[];
@@ -206,6 +215,24 @@ function countEstimatedSessions(startDate: string, endDate: string, weekdays: nu
   return count;
 }
 
+function addMinutesToTime(startTime: string, deltaMinutes: number): string {
+  const match = startTime.trim().match(/^(\d{2}):(\d{2})$/);
+  if (!match) {
+    return startTime;
+  }
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return startTime;
+  }
+  const total = (hours * 60 + minutes + Math.max(0, deltaMinutes)) % (24 * 60);
+  const outHours = Math.floor(total / 60)
+    .toString()
+    .padStart(2, "0");
+  const outMinutes = (total % 60).toString().padStart(2, "0");
+  return `${outHours}:${outMinutes}`;
+}
+
 export default function QuoteWizardForm({
   returnTo,
   prospects,
@@ -214,6 +241,7 @@ export default function QuoteWizardForm({
   catalogs,
   paymentPlans,
   cgvVersions,
+  quoteTemplates,
   locations,
   activities,
   products,
@@ -228,8 +256,11 @@ export default function QuoteWizardForm({
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [weekdays, setWeekdays] = useState<number[]>([0]);
+  const [selectedCalendarActivityId, setSelectedCalendarActivityId] = useState<string>(activities[0]?.id ?? "");
   const [startTime, setStartTime] = useState<string>("17:00");
-  const [endTime, setEndTime] = useState<string>("18:00");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(quoteTemplates.find((item) => item.is_default)?.id ?? quoteTemplates[0]?.id ?? "");
+  const [language, setLanguage] = useState<string>("fr");
+  const [currency, setCurrency] = useState<string>("EUR");
   const [estimatedLevel, setEstimatedLevel] = useState<string>("");
   const [lines, setLines] = useState<WizardLine[]>([]);
 
@@ -240,6 +271,14 @@ export default function QuoteWizardForm({
   const selectedSolfegeRule = useMemo(
     () => solfegeRules.find((rule) => String(rule.level_code) === String(estimatedLevel)),
     [solfegeRules, estimatedLevel],
+  );
+  const selectedCalendarActivity = useMemo(
+    () => activities.find((activity) => activity.id === selectedCalendarActivityId) ?? null,
+    [activities, selectedCalendarActivityId],
+  );
+  const endTime = useMemo(
+    () => addMinutesToTime(startTime, selectedCalendarActivity?.duration_minutes ?? 60),
+    [startTime, selectedCalendarActivity],
   );
 
   const linesJson = useMemo(
@@ -402,6 +441,24 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
+              Template devis
+              <select name="quote_template_id" value={selectedTemplateId} onChange={(event) => {
+                const nextId = event.target.value;
+                setSelectedTemplateId(nextId);
+                const template = quoteTemplates.find((item) => item.id === nextId);
+                if (template?.language) {
+                  setLanguage(template.language.toLowerCase());
+                }
+              }}>
+                <option value="">Aucun</option>
+                {quoteTemplates.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} ({item.code})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Plan de paiement
               <select name="payment_plan_id" defaultValue={paymentPlans[0]?.id ?? ""}>
                 <option value="">Aucun</option>
@@ -428,6 +485,21 @@ export default function QuoteWizardForm({
               <input type="text" name="school_year_label" placeholder="2026-2027" />
             </label>
             <label>
+              Devise
+              <select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value)}>
+                <option value="EUR">EUR</option>
+                <option value="USD">USD</option>
+                <option value="GBP">GBP</option>
+              </select>
+            </label>
+            <label>
+              Langue
+              <select name="language" value={language} onChange={(event) => setLanguage(event.target.value)}>
+                <option value="fr">Francais</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <label>
               Delai expiration (jours)
               <input type="number" name="expiry_days" min={1} max={120} defaultValue={10} required />
             </label>
@@ -450,7 +522,7 @@ export default function QuoteWizardForm({
             </label>
             <label>
               Activite planning
-              <select name="calendar_activity_id" defaultValue={activities[0]?.id ?? ""}>
+              <select name="calendar_activity_id" value={selectedCalendarActivityId} onChange={(event) => setSelectedCalendarActivityId(event.target.value)}>
                 <option value="">Aucune</option>
                 {activities.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -473,7 +545,8 @@ export default function QuoteWizardForm({
             </label>
             <label>
               Heure fin
-              <input type="time" name="calendar_end_time" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
+              <input type="time" name="calendar_end_time_display" value={endTime} readOnly />
+              <input type="hidden" name="calendar_end_time" value={endTime} />
             </label>
           </div>
           <div className="row wrap gap-sm top-gap-sm">

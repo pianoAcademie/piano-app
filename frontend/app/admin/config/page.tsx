@@ -58,6 +58,7 @@ type SearchParams = Record<string, string | string[] | undefined>;
 type ConfigMainSection =
   | "params"
   | "formulas"
+  | "quotes"
   | "activities"
   | "legal-entities"
   | "promo"
@@ -73,6 +74,7 @@ type ConfigSection =
   | "params-payments"
   | "params-messaging"
   | "formulas"
+  | "quotes"
   | "activities"
   | "legal-entities"
   | "promo"
@@ -113,6 +115,7 @@ type MessagingTabItem = {
 const MAIN_NAV_ITEMS: MainNavItem[] = [
   { key: "params", label: "Parametres", section: "params-account" },
   { key: "formulas", label: "Les formules", section: "formulas" },
+  { key: "quotes", label: "Devis", section: "quotes" },
   { key: "activities", label: "Activites", section: "activities" },
   { key: "legal-entities", label: "Entites legales", section: "legal-entities" },
   { key: "promo", label: "Code promo", section: "promo" },
@@ -167,6 +170,7 @@ function parseSection(raw: string): ConfigSection {
     value === "params-payments" ||
     value === "params-messaging" ||
     value === "formulas" ||
+    value === "quotes" ||
     value === "activities" ||
     value === "legal-entities" ||
     value === "promo" ||
@@ -189,6 +193,7 @@ function toMainSection(section: ConfigSection): ConfigMainSection {
     case "params-messaging":
       return "params";
     case "formulas":
+    case "quotes":
     case "activities":
     case "legal-entities":
     case "promo":
@@ -344,6 +349,23 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     }
     const suffix = redirectParams.toString();
     redirect(suffix ? `/admin/config/formulas?${suffix}` : "/admin/config/formulas");
+  }
+  if (section === "quotes") {
+    const redirectParams = new URLSearchParams();
+    const tab = readParam(params, "tab").trim();
+    const ok = readParam(params, "ok").trim();
+    const error = readParam(params, "error").trim();
+    if (tab) {
+      redirectParams.set("tab", tab);
+    }
+    if (ok) {
+      redirectParams.set("ok", ok);
+    }
+    if (error) {
+      redirectParams.set("error", error);
+    }
+    const suffix = redirectParams.toString();
+    redirect(suffix ? `/admin/config/quotes?${suffix}` : "/admin/config/quotes");
   }
   const mainSection = toMainSection(section);
 
@@ -557,6 +579,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       | "params-payments"
       | "params-messaging"
       | "formulas"
+      | "quotes"
       | "activities"
       | "legal-entities"
       | "credit-types"
@@ -597,7 +620,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           <nav className="config-main-nav">
             {MAIN_NAV_ITEMS.map((item) => {
               const isActive = mainSection === item.key;
-              const href = item.key === "formulas" ? "/admin/config/formulas" : buildConfigHref(item.section);
+              const href =
+                item.key === "formulas"
+                  ? "/admin/config/formulas"
+                  : item.key === "quotes"
+                  ? "/admin/config/quotes"
+                  : buildConfigHref(item.section);
 
               return (
                 <Link key={item.key} className={`config-main-link ${isActive ? "active" : ""}`} href={href}>

@@ -2,19 +2,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import CopyLinkButton from "../../../components/copy-link-button";
-import QuoteWizardForm from "../../../components/quote-wizard-form";
-import {
-  changeQuoteFollowupPaymentMethodAction,
-  createQuoteDraftAction,
-  createQuoteProspectAction,
-  duplicateQuoteAction,
-  finalizeQuoteFollowupAction,
-  selectQuoteFollowupSlotAction,
-  sendQuoteAction,
-} from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
-import type { AdminActivityOut, AdminCatalogKitOut, AdminCatalogProductOut, AdminClientOut, LocationOut } from "../../../lib/types";
+import type { AdminClientOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -23,15 +12,8 @@ type ProspectOut = {
   first_name: string | null;
   last_name: string | null;
   email: string;
-};
-
-type QuoteLineOut = {
-  id: string;
-  line_type: string;
-  title: string;
-  quantity: string;
-  unit_price_ttc: string;
-  amount_ttc: string;
+  phone: string | null;
+  meta: Record<string, unknown>;
 };
 
 type QuoteOut = {
@@ -43,63 +25,14 @@ type QuoteOut = {
   total_ttc: string;
   created_at: string;
   expires_at: string | null;
-  sent_at: string | null;
-  approved_at: string | null;
+  quote_type: string;
   prospect_id: string | null;
   client_id: string | null;
-  quote_type: string;
   school_year_label: string | null;
   estimated_solfege_level: string | null;
   calendar_snapshot: Record<string, unknown>;
-  payment_terms_snapshot: Record<string, unknown>;
-  public_token: string | null;
-  pdf_token: string | null;
-};
-
-type QuoteDetailOut = {
-  quote: QuoteOut;
-  lines: QuoteLineOut[];
-};
-
-type QuoteFollowupOut = {
-  id: string;
-  quote_id: string;
-  target_client_id: string | null;
-  status: string;
-  payment_method_status: string;
-  solfege_slot_status: string;
-  payload: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-};
-
-type QuoteTypeOut = {
-  id: string;
-  name: string;
-};
-
-type PricingCatalogOut = {
-  id: string;
-  name: string;
-};
-
-type PaymentPlanOut = {
-  id: string;
-  name: string;
-  payment_method: string;
-};
-
-type CgvVersionOut = {
-  id: string;
-  version_label: string;
-};
-
-type SolfegeLevelRuleOut = {
-  id: string;
-  level_code: string;
-  duration_minutes: number;
-  allowed_weekdays: number[];
-  allowed_time_slots: Array<Record<string, unknown>>;
+  cgv_snapshot: Record<string, unknown>;
+  meta: Record<string, unknown>;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -150,28 +83,121 @@ function displayName(firstName: string | null, lastName: string | null, fallback
   return value || fallback;
 }
 
-function getScheduleItems(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
-  const raw = snapshot.schedule;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
-}
-
-function getCalendarSessions(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
+function getCalendarSessionsCount(snapshot: Record<string, unknown>): number {
   const raw = snapshot.sessions;
   if (!Array.isArray(raw)) {
-    return [];
+    return 0;
   }
-  return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+  return raw.length;
 }
 
-function quotesBasePath(statusFilter: string, contextFilter: string, query: string): string {
-  const params = new URLSearchParams();
-  if (statusFilter) params.set("status", statusFilter);
-  if (contextFilter) params.set("context_type", contextFilter);
-  if (query) params.set("q", query);
-  const value = params.toString();
+function parseIsoDateOnly(raw: string): Date | null {
+  const value = raw.trim();
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseDecimal(raw: string): number | null {
+  const value = raw.trim();
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
+function languageLabel(meta: Record<string, unknown>): string {
+  const language = typeof meta.language === "string" ? meta.language.trim().toLowerCase() : "";
+  return language || "fr";
+}
+
+function templateLabel(meta: Record<string, unknown>): string {
+  const options = [meta.template_name, meta.template_code, meta.template_id];
+  for (const candidate of options) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return "-";
+}
+
+function cgvLabel(snapshot: Record<string, unknown>): string {
+  const label = snapshot.version_label;
+  if (typeof label === "string" && label.trim()) {
+    return label.trim();
+  }
+  return "-";
+}
+
+function prospectTypeLabelFromMeta(meta: Record<string, unknown>): "adult" | "child" | "-" {
+  const value = typeof meta.prospect_type === "string" ? meta.prospect_type.trim().toLowerCase() : "";
+  if (value === "adult" || value === "child") {
+    return value;
+  }
+  return "-";
+}
+
+function prospectTypeLabelFromClient(client: AdminClientOut | undefined): "adult" | "child" | "-" {
+  if (!client) {
+    return "-";
+  }
+  const value = String(client.client_kind || "").trim().toUpperCase();
+  if (value === "ADULT") {
+    return "adult";
+  }
+  if (value === "CHILD") {
+    return "child";
+  }
+  return "-";
+}
+
+function buildQuotesListHref(params: {
+  status: string;
+  contextType: string;
+  q: string;
+  prospectType: string;
+  currency: string;
+  quoteType: string;
+  schoolYear: string;
+  language: string;
+  template: string;
+  cgv: string;
+  hasSolfege: string;
+  minTotal: string;
+  maxTotal: string;
+  createdFrom: string;
+  createdTo: string;
+  expiresFrom: string;
+  expiresTo: string;
+}): string {
+  const sp = new URLSearchParams();
+  if (params.status) sp.set("status", params.status);
+  if (params.contextType) sp.set("context_type", params.contextType);
+  if (params.q) sp.set("q", params.q);
+  if (params.prospectType) sp.set("prospect_type", params.prospectType);
+  if (params.currency) sp.set("currency", params.currency);
+  if (params.quoteType) sp.set("quote_type", params.quoteType);
+  if (params.schoolYear) sp.set("school_year", params.schoolYear);
+  if (params.language) sp.set("language", params.language);
+  if (params.template) sp.set("template", params.template);
+  if (params.cgv) sp.set("cgv", params.cgv);
+  if (params.hasSolfege) sp.set("has_solfege", params.hasSolfege);
+  if (params.minTotal) sp.set("min_total", params.minTotal);
+  if (params.maxTotal) sp.set("max_total", params.maxTotal);
+  if (params.createdFrom) sp.set("created_from", params.createdFrom);
+  if (params.createdTo) sp.set("created_to", params.createdTo);
+  if (params.expiresFrom) sp.set("expires_from", params.expiresFrom);
+  if (params.expiresTo) sp.set("expires_to", params.expiresTo);
+  const value = sp.toString();
   return value ? `/admin/quotes?${value}` : "/admin/quotes";
 }
 
@@ -184,146 +210,195 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const statusFilter = readParam(searchParams, "status");
   const contextFilter = readParam(searchParams, "context_type");
   const query = readParam(searchParams, "q");
-  const selectedQuoteId = readParam(searchParams, "quote_id");
-  const selectedProspectId = readParam(searchParams, "prospect_id");
+  const prospectTypeFilter = readParam(searchParams, "prospect_type").trim().toLowerCase();
+  const currencyFilter = readParam(searchParams, "currency").trim().toUpperCase();
+  const quoteTypeFilter = readParam(searchParams, "quote_type").trim().toLowerCase();
+  const schoolYearFilter = readParam(searchParams, "school_year").trim().toLowerCase();
+  const languageFilter = readParam(searchParams, "language").trim().toLowerCase();
+  const templateFilter = readParam(searchParams, "template").trim().toLowerCase();
+  const cgvFilter = readParam(searchParams, "cgv").trim().toLowerCase();
+  const hasSolfegeFilter = readParam(searchParams, "has_solfege").trim().toLowerCase();
+  const minTotalFilterRaw = readParam(searchParams, "min_total");
+  const maxTotalFilterRaw = readParam(searchParams, "max_total");
+  const createdFromFilterRaw = readParam(searchParams, "created_from");
+  const createdToFilterRaw = readParam(searchParams, "created_to");
+  const expiresFromFilterRaw = readParam(searchParams, "expires_from");
+  const expiresToFilterRaw = readParam(searchParams, "expires_to");
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
+
+  const minTotalFilter = parseDecimal(minTotalFilterRaw);
+  const maxTotalFilter = parseDecimal(maxTotalFilterRaw);
+  const createdFromFilter = parseIsoDateOnly(createdFromFilterRaw);
+  const createdToFilter = parseIsoDateOnly(createdToFilterRaw);
+  const expiresFromFilter = parseIsoDateOnly(expiresFromFilterRaw);
+  const expiresToFilter = parseIsoDateOnly(expiresToFilterRaw);
 
   const listQuery = new URLSearchParams();
   if (statusFilter) listQuery.set("status", statusFilter);
   if (contextFilter) listQuery.set("context_type", contextFilter);
-  if (query) listQuery.set("q", query);
-  listQuery.set("limit", "300");
+  listQuery.set("limit", "1000");
 
-  const [
-    prospectsResult,
-    clientsResult,
-    quoteTypesResult,
-    catalogsResult,
-    paymentPlansResult,
-    cgvVersionsResult,
-    locationsResult,
-    activitiesResult,
-    productsResult,
-    kitsResult,
-    solfegeRulesResult,
-    quotesResult,
-  ] = await Promise.all([
-    backendRequest<ProspectOut[]>("/api/v1/prospects", {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=500&include_archived=false", {}, token),
-    backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
-    backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
-    backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
-    backendRequest<CgvVersionOut[]>("/api/v1/cgv-versions", {}, token),
-    backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
-    backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
-    backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
-    backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
-    backendRequest<SolfegeLevelRuleOut[]>("/api/v1/solfege-level-rules", {}, token),
+  const [prospectsResult, clientsResult, quotesResult] = await Promise.all([
+    backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
+    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=false", {}, token),
     backendRequest<QuoteOut[]>(`/api/v1/quotes?${listQuery.toString()}`, {}, token),
   ]);
 
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
-  const quoteTypes = quoteTypesResult.ok ? quoteTypesResult.data : [];
-  const catalogs = catalogsResult.ok ? catalogsResult.data : [];
-  const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
-  const cgvVersions = cgvVersionsResult.ok ? cgvVersionsResult.data : [];
-  const locations = locationsResult.ok ? locationsResult.data : [];
-  const activities = activitiesResult.ok ? activitiesResult.data : [];
-  const products = productsResult.ok ? productsResult.data : [];
-  const kits = kitsResult.ok ? kitsResult.data : [];
-  const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
   const quotes = quotesResult.ok ? quotesResult.data : [];
-
-  let detailResult: Awaited<ReturnType<typeof backendRequest<QuoteDetailOut>>> | null = null;
-  let followupsResult: Awaited<ReturnType<typeof backendRequest<QuoteFollowupOut[]>>> | null = null;
-  if (selectedQuoteId) {
-    detailResult = await backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(selectedQuoteId)}`, {}, token);
-    followupsResult = await backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(selectedQuoteId)}`, {}, token);
-  }
-
-  const selectedDetail = detailResult && detailResult.ok ? detailResult.data : null;
-  const followups = followupsResult && followupsResult.ok ? followupsResult.data : [];
-  const activeFollowup = followups[0] ?? null;
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
 
-  const basePath = quotesBasePath(statusFilter, contextFilter, query);
+  const filteredQuotes = quotes.filter((row) => {
+    const owner = row.context_type === "acquisition"
+      ? prospectById.get(row.prospect_id || "")
+      : clientById.get(row.client_id || "");
+
+    const ownerName = owner ? displayName(owner.first_name, owner.last_name, owner.email) : "";
+    const ownerPhone = owner
+      ? "phone" in owner
+        ? String(owner.phone || "")
+        : [String(owner.phone || ""), String(owner.mobile_phone_1 || ""), String(owner.mobile_phone_2 || "")].join(" ")
+      : "";
+
+    const textHaystack = [row.quote_number, ownerName, owner?.email || "", ownerPhone]
+      .join(" ")
+      .toLowerCase();
+    if (query && !textHaystack.includes(query.trim().toLowerCase())) {
+      return false;
+    }
+
+    const rowProspectType = row.context_type === "acquisition"
+      ? prospectTypeLabelFromMeta((owner as ProspectOut | undefined)?.meta || {})
+      : prospectTypeLabelFromClient(owner as AdminClientOut | undefined);
+    if (prospectTypeFilter && rowProspectType !== prospectTypeFilter) {
+      return false;
+    }
+
+    if (currencyFilter && (row.currency || "").toUpperCase() !== currencyFilter) {
+      return false;
+    }
+
+    if (quoteTypeFilter && (row.quote_type || "").trim().toLowerCase() !== quoteTypeFilter) {
+      return false;
+    }
+
+    if (schoolYearFilter && !(row.school_year_label || "").trim().toLowerCase().includes(schoolYearFilter)) {
+      return false;
+    }
+
+    const rowLanguage = languageLabel(row.meta || {});
+    if (languageFilter && rowLanguage !== languageFilter) {
+      return false;
+    }
+
+    const rowTemplate = templateLabel(row.meta || {}).toLowerCase();
+    if (templateFilter && !rowTemplate.includes(templateFilter)) {
+      return false;
+    }
+
+    const rowCgv = cgvLabel(row.cgv_snapshot || {}).toLowerCase();
+    if (cgvFilter && !rowCgv.includes(cgvFilter)) {
+      return false;
+    }
+
+    const rowHasSolfege = Boolean((row.estimated_solfege_level || "").trim());
+    if (hasSolfegeFilter === "yes" && !rowHasSolfege) {
+      return false;
+    }
+    if (hasSolfegeFilter === "no" && rowHasSolfege) {
+      return false;
+    }
+
+    const total = Number(row.total_ttc);
+    if (minTotalFilter !== null && Number.isFinite(total) && total < minTotalFilter) {
+      return false;
+    }
+    if (maxTotalFilter !== null && Number.isFinite(total) && total > maxTotalFilter) {
+      return false;
+    }
+
+    const createdAt = new Date(row.created_at);
+    if (createdFromFilter && (!Number.isFinite(createdAt.getTime()) || createdAt < createdFromFilter)) {
+      return false;
+    }
+    if (createdToFilter) {
+      const createdToLimit = new Date(createdToFilter.getTime() + 24 * 60 * 60 * 1000);
+      if (!Number.isFinite(createdAt.getTime()) || createdAt >= createdToLimit) {
+        return false;
+      }
+    }
+
+    if (expiresFromFilter || expiresToFilter) {
+      if (!row.expires_at) {
+        return false;
+      }
+      const expiresAt = new Date(row.expires_at);
+      if (expiresFromFilter && (!Number.isFinite(expiresAt.getTime()) || expiresAt < expiresFromFilter)) {
+        return false;
+      }
+      if (expiresToFilter) {
+        const expiresToLimit = new Date(expiresToFilter.getTime() + 24 * 60 * 60 * 1000);
+        if (!Number.isFinite(expiresAt.getTime()) || expiresAt >= expiresToLimit) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  });
+
+  const currentListHref = buildQuotesListHref({
+    status: statusFilter,
+    contextType: contextFilter,
+    q: query,
+    prospectType: prospectTypeFilter,
+    currency: currencyFilter,
+    quoteType: quoteTypeFilter,
+    schoolYear: schoolYearFilter,
+    language: languageFilter,
+    template: templateFilter,
+    cgv: cgvFilter,
+    hasSolfege: hasSolfegeFilter,
+    minTotal: minTotalFilterRaw,
+    maxTotal: maxTotalFilterRaw,
+    createdFrom: createdFromFilterRaw,
+    createdTo: createdToFilterRaw,
+    expiresFrom: expiresFromFilterRaw,
+    expiresTo: expiresToFilterRaw,
+  });
+
+  const currencyValues = Array.from(new Set(quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean))).sort();
+  const quoteTypeValues = Array.from(new Set(quotes.map((row) => (row.quote_type || "").trim()).filter(Boolean))).sort();
 
   return (
     <section className="admin-page-grid">
       <section className="card">
-        <h2>Devis</h2>
-        <p className="muted">Wizard BO, envoi public, actions sticky et suivi post-approbation dans un seul espace.</p>
+        <div className="row spread wrap gap-sm">
+          <div>
+            <h2>Devis</h2>
+            <p className="muted">Retrouvez, filtrez et ouvrez les devis sans melanger la creation ni les prospects.</p>
+          </div>
+          <div className="row wrap gap-sm">
+            <Link className="ghost" href="/admin/prospects">
+              Voir prospects
+            </Link>
+            <Link className="ghost" href="/admin/config/quotes">
+              Configurer devis
+            </Link>
+            <Link className="mode-link" href="/admin/quotes/new">
+              Nouveau devis
+            </Link>
+          </div>
+        </div>
       </section>
 
       {!quotesResult.ok ? <section className="flash-err">Erreur devis: {quotesResult.message}</section> : null}
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
-
-      <section className="card">
-        <h3>Nouveau prospect rapide</h3>
-        <form action={createQuoteProspectAction} className="grid cols-4 top-gap-sm">
-          <input type="hidden" name="return_to" value={basePath} />
-          <label>
-            Prenom
-            <input type="text" name="prospect_first_name" placeholder="Prenom" />
-          </label>
-          <label>
-            Nom
-            <input type="text" name="prospect_last_name" placeholder="Nom" />
-          </label>
-          <label>
-            Email
-            <input type="email" name="prospect_email" placeholder="email@exemple.com" required />
-          </label>
-          <label>
-            Telephone
-            <input type="text" name="prospect_phone" placeholder="06..." />
-          </label>
-          <div className="row end cols-span-4 top-gap-sm">
-            <button type="submit">Creer prospect</button>
-          </div>
-        </form>
-      </section>
-
-      <QuoteWizardForm
-        returnTo={basePath}
-        prospects={prospects.map((row) => ({
-          id: row.id,
-          label: displayName(row.first_name, row.last_name, row.email),
-          email: row.email,
-        }))}
-        clients={clients.map((row) => ({
-          id: row.id,
-          label: displayName(row.first_name, row.last_name, row.email),
-          email: row.email,
-        }))}
-        quoteTypes={quoteTypes.map((row) => ({ id: row.id, name: row.name }))}
-        catalogs={catalogs.map((row) => ({ id: row.id, name: row.name }))}
-        paymentPlans={paymentPlans.map((row) => ({ id: row.id, name: row.name, payment_method: row.payment_method }))}
-        cgvVersions={cgvVersions.map((row) => ({ id: row.id, version_label: row.version_label }))}
-        locations={locations.map((row) => ({ id: row.id, name: row.name }))}
-        activities={activities.map((row) => ({
-          id: row.id,
-          name: row.name,
-          duration_minutes: row.duration_minutes,
-          default_course_rate_ttc: row.default_course_rate_ttc,
-        }))}
-        products={products.map((row) => ({ id: row.id, title: row.title, price_incl_vat: row.price_incl_vat }))}
-        kits={kits.map((row) => ({ id: row.id, title: row.title, effective_price_ttc: row.price_effective_incl_vat }))}
-        solfegeRules={solfegeRules.map((row) => ({
-          id: row.id,
-          level_code: row.level_code,
-          duration_minutes: row.duration_minutes,
-          allowed_weekdays: row.allowed_weekdays,
-          allowed_time_slots: row.allowed_time_slots,
-        }))}
-        defaultProspectId={selectedProspectId}
-        createAction={createQuoteDraftAction}
-      />
 
       <section className="card">
         <h3>Liste des devis</h3>
@@ -332,13 +407,13 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
             Statut
             <select name="status" defaultValue={statusFilter}>
               <option value="">Tous</option>
-              <option value="created">created</option>
-              <option value="sent">sent</option>
-              <option value="change_requested">change_requested</option>
-              <option value="approved">approved</option>
-              <option value="rejected">rejected</option>
-              <option value="expired">expired</option>
-              <option value="cancelled">cancelled</option>
+              <option value="created">Brouillon</option>
+              <option value="sent">Envoye</option>
+              <option value="change_requested">Demande modif</option>
+              <option value="approved">Accepte</option>
+              <option value="rejected">Refuse</option>
+              <option value="expired">Expire</option>
+              <option value="cancelled">Annule</option>
             </select>
           </label>
           <label>
@@ -349,10 +424,88 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
               <option value="active_client">Client actif</option>
             </select>
           </label>
-          <label className="cols-span-2">
-            Recherche (numero)
-            <input type="text" name="q" defaultValue={query} placeholder="DV-..." />
+          <label>
+            Type prospect
+            <select name="prospect_type" defaultValue={prospectTypeFilter}>
+              <option value="">Tous</option>
+              <option value="adult">Adulte</option>
+              <option value="child">Enfant</option>
+            </select>
           </label>
+          <label>
+            Avec solfege
+            <select name="has_solfege" defaultValue={hasSolfegeFilter}>
+              <option value="">Tous</option>
+              <option value="yes">Oui</option>
+              <option value="no">Non</option>
+            </select>
+          </label>
+
+          <label className="cols-span-2">
+            Recherche (numero, prospect, email, telephone)
+            <input type="text" name="q" defaultValue={query} placeholder="DV-..., nom, email..." />
+          </label>
+          <label>
+            Devise
+            <select name="currency" defaultValue={currencyFilter}>
+              <option value="">Toutes</option>
+              {currencyValues.map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Type devis
+            <select name="quote_type" defaultValue={quoteTypeFilter}>
+              <option value="">Tous</option>
+              {quoteTypeValues.map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Annee scolaire
+            <input type="text" name="school_year" defaultValue={schoolYearFilter} placeholder="2026-2027" />
+          </label>
+          <label>
+            Langue
+            <input type="text" name="language" defaultValue={languageFilter} placeholder="fr" />
+          </label>
+          <label>
+            Template
+            <input type="text" name="template" defaultValue={templateFilter} placeholder="template code" />
+          </label>
+          <label>
+            CGV
+            <input type="text" name="cgv" defaultValue={cgvFilter} placeholder="CGV 2026" />
+          </label>
+
+          <label>
+            Total min TTC
+            <input type="number" name="min_total" min={0} step="0.01" defaultValue={minTotalFilterRaw} />
+          </label>
+          <label>
+            Total max TTC
+            <input type="number" name="max_total" min={0} step="0.01" defaultValue={maxTotalFilterRaw} />
+          </label>
+          <label>
+            Cree du
+            <input type="date" name="created_from" defaultValue={createdFromFilterRaw} />
+          </label>
+          <label>
+            Cree au
+            <input type="date" name="created_to" defaultValue={createdToFilterRaw} />
+          </label>
+          <label>
+            Expire du
+            <input type="date" name="expires_from" defaultValue={expiresFromFilterRaw} />
+          </label>
+          <label>
+            Expire au
+            <input type="date" name="expires_to" defaultValue={expiresToFilterRaw} />
+          </label>
+
           <div className="row end cols-span-4 top-gap-sm">
             <button type="submit">Filtrer</button>
             <a className="ghost" href="/admin/quotes">Reset</a>
@@ -364,38 +517,38 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
             <thead>
               <tr>
                 <th>Numero</th>
-                <th>Contexte</th>
                 <th>Prospect / client</th>
+                <th>Type prospect</th>
+                <th>Contexte</th>
+                <th>Total TTC</th>
+                <th>Langue</th>
+                <th>Template</th>
+                <th>CGV</th>
                 <th>Statut</th>
-                <th>Total</th>
                 <th>Creation</th>
                 <th>Expiration</th>
+                <th>Activites</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {quotes.length === 0 ? (
+              {filteredQuotes.length === 0 ? (
                 <tr>
-                  <td colSpan={8}><p className="muted">Aucun devis sur ces filtres.</p></td>
+                  <td colSpan={13}><p className="muted">Aucun devis sur ces filtres.</p></td>
                 </tr>
               ) : (
-                quotes.map((row) => {
-                  const quoteParams = new URLSearchParams();
-                  if (statusFilter) quoteParams.set("status", statusFilter);
-                  if (contextFilter) quoteParams.set("context_type", contextFilter);
-                  if (query) quoteParams.set("q", query);
-                  quoteParams.set("quote_id", row.id);
-
+                filteredQuotes.map((row) => {
                   const owner = row.context_type === "acquisition"
                     ? prospectById.get(row.prospect_id || "")
                     : clientById.get(row.client_id || "");
                   const ownerName = owner
-                    ? displayName(
-                        owner.first_name,
-                        owner.last_name,
-                        owner.email,
-                      )
+                    ? displayName(owner.first_name, owner.last_name, owner.email)
                     : "-";
+
+                  const rowProspectType = row.context_type === "acquisition"
+                    ? prospectTypeLabelFromMeta((owner as ProspectOut | undefined)?.meta || {})
+                    : prospectTypeLabelFromClient(owner as AdminClientOut | undefined);
+                  const detailHref = `/admin/quotes/${row.id}?back=${encodeURIComponent(currentListHref)}`;
 
                   return (
                     <tr key={row.id}>
@@ -404,18 +557,23 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                         <br />
                         <small className="muted">{row.quote_type}</small>
                       </td>
-                      <td>{labelForContext(row.context_type)}</td>
                       <td>
                         <strong>{ownerName}</strong>
                         <br />
                         <small className="muted">{owner?.email ?? "-"}</small>
                       </td>
-                      <td><span className={`status-pill ${quoteStatusClass(row.status)}`}>{row.status}</span></td>
+                      <td>{rowProspectType === "-" ? "-" : rowProspectType === "adult" ? "Adulte" : "Enfant"}</td>
+                      <td>{labelForContext(row.context_type)}</td>
                       <td>{formatAmount(row.total_ttc, row.currency)}</td>
+                      <td>{languageLabel(row.meta || {}).toUpperCase()}</td>
+                      <td>{templateLabel(row.meta || {})}</td>
+                      <td>{cgvLabel(row.cgv_snapshot || {})}</td>
+                      <td><span className={`status-pill ${quoteStatusClass(row.status)}`}>{row.status}</span></td>
                       <td>{formatDate(row.created_at)}</td>
                       <td>{formatDate(row.expires_at)}</td>
+                      <td>{getCalendarSessionsCount(row.calendar_snapshot)}</td>
                       <td>
-                        <a className="ghost" href={`/admin/quotes?${quoteParams.toString()}`}>Detail</a>
+                        <Link className="ghost" href={detailHref}>Ouvrir</Link>
                       </td>
                     </tr>
                   );
@@ -425,208 +583,6 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
           </table>
         </div>
       </section>
-
-      {selectedQuoteId ? (
-        <section className="modal-overlay">
-          <article className="modal-panel modal-panel-wide quote-detail-panel">
-            <a className="modal-close-x" href={basePath} aria-label="Fermer">×</a>
-            {!selectedDetail ? (
-              <section className="card modal-card">
-                <h3>Detail devis</h3>
-                <p className="flash-err">{detailResult?.ok === false ? detailResult.message : "Devis introuvable"}</p>
-              </section>
-            ) : (
-              <>
-                <header className="activity-modal-header">
-                  <h2 className="modal-title">Devis {selectedDetail.quote.quote_number}</h2>
-                  <p className="muted">
-                    {labelForContext(selectedDetail.quote.context_type)} · {selectedDetail.quote.status} · {formatAmount(selectedDetail.quote.total_ttc, selectedDetail.quote.currency)}
-                  </p>
-                </header>
-
-                <section className="card modal-card">
-                  <h3>Actions</h3>
-                  <div className="row wrap gap-sm top-gap-sm">
-                    {selectedDetail.quote.status === "created" ? (
-                      <form action={sendQuoteAction} className="row wrap gap-sm">
-                        <input type="hidden" name="quote_id" value={selectedDetail.quote.id} />
-                        <input type="hidden" name="return_to" value={`/admin/quotes?quote_id=${encodeURIComponent(selectedDetail.quote.id)}`} />
-                        <input type="email" name="recipient_email" placeholder="Email destinataire (optionnel)" />
-                        <button type="submit">Envoyer le devis</button>
-                      </form>
-                    ) : null}
-
-                    <form action={duplicateQuoteAction}>
-                      <input type="hidden" name="quote_id" value={selectedDetail.quote.id} />
-                      <input type="hidden" name="return_to" value={basePath} />
-                      <button type="submit" className="ghost">Dupliquer en nouvelle version</button>
-                    </form>
-
-                    {selectedDetail.quote.public_token ? (
-                      <>
-                        <Link
-                          className="ghost"
-                          href={`/q/${selectedDetail.quote.id}?t=${encodeURIComponent(selectedDetail.quote.public_token)}`}
-                          target="_blank"
-                        >
-                          Ouvrir page publique
-                        </Link>
-                        <CopyLinkButton
-                          value={`${process.env.NEXT_PUBLIC_FRONTEND_URL ?? "http://localhost:3000"}/q/${selectedDetail.quote.id}?t=${selectedDetail.quote.public_token}`}
-                          label="Copier lien public"
-                        />
-                      </>
-                    ) : (
-                      <small className="muted">Le lien public sera disponible apres envoi.</small>
-                    )}
-
-                    {selectedDetail.quote.pdf_token ? (
-                      <Link
-                        className="ghost"
-                        href={`/q/${selectedDetail.quote.id}/pdf?t=${encodeURIComponent(selectedDetail.quote.pdf_token)}`}
-                        target="_blank"
-                      >
-                        PDF public
-                      </Link>
-                    ) : null}
-                    <Link className="ghost" href={`/admin/quotes/${selectedDetail.quote.id}/pdf`} target="_blank">
-                      PDF admin
-                    </Link>
-                  </div>
-                </section>
-
-                <section className="card modal-card">
-                  <h3>Calendrier previsionnel</h3>
-                  <p className="muted">{getCalendarSessions(selectedDetail.quote.calendar_snapshot).length} seances calculees.</p>
-                  <div className="quote-public-lines top-gap-sm">
-                    {getCalendarSessions(selectedDetail.quote.calendar_snapshot).slice(0, 12).map((session, index) => (
-                      <article key={`session-${index}`} className="quote-public-line-item">
-                        <strong>{String(session.date ?? "-")}</strong>
-                        <span>{String(session.start_time ?? "--:--")} - {String(session.end_time ?? "--:--")}</span>
-                        <small className="muted">{String(session.modality ?? "")}</small>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="card modal-card">
-                  <h3>Lignes du devis</h3>
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Type</th>
-                          <th>Intitule</th>
-                          <th>Quantite</th>
-                          <th>PU TTC</th>
-                          <th>Montant TTC</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedDetail.lines.length === 0 ? (
-                          <tr><td colSpan={5}>Aucune ligne</td></tr>
-                        ) : (
-                          selectedDetail.lines.map((row) => (
-                            <tr key={row.id}>
-                              <td>{row.line_type}</td>
-                              <td>{row.title}</td>
-                              <td>{row.quantity}</td>
-                              <td>{formatAmount(row.unit_price_ttc, selectedDetail.quote.currency)}</td>
-                              <td>{formatAmount(row.amount_ttc, selectedDetail.quote.currency)}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-
-                <section className="card modal-card">
-                  <h3>Parcours post-approbation</h3>
-                  {activeFollowup ? (
-                    <>
-                      <p className="muted">
-                        Statut follow-up: <strong>{activeFollowup.status}</strong> · Paiement: <strong>{activeFollowup.payment_method_status}</strong> · Solfege: <strong>{activeFollowup.solfege_slot_status}</strong>
-                      </p>
-
-                      <div className="grid cols-2 top-gap-sm">
-                        <form action={selectQuoteFollowupSlotAction} className="card quote-followup-form">
-                          <h4>Selectionner / modifier le creneau solfege</h4>
-                          <input type="hidden" name="followup_id" value={activeFollowup.id} />
-                          <input type="hidden" name="return_to" value={`/admin/quotes?quote_id=${encodeURIComponent(selectedDetail.quote.id)}`} />
-                          <label>
-                            Date
-                            <input type="date" name="slot_date" required />
-                          </label>
-                          <label>
-                            Debut
-                            <input type="time" name="slot_start_time" required />
-                          </label>
-                          <label>
-                            Fin
-                            <input type="time" name="slot_end_time" required />
-                          </label>
-                          <button type="submit">Enregistrer creneau</button>
-                        </form>
-
-                        <form action={changeQuoteFollowupPaymentMethodAction} className="card quote-followup-form">
-                          <h4>Changer le mode de paiement</h4>
-                          <input type="hidden" name="followup_id" value={activeFollowup.id} />
-                          <input type="hidden" name="return_to" value={`/admin/quotes?quote_id=${encodeURIComponent(selectedDetail.quote.id)}`} />
-                          <label>
-                            Methode
-                            <select name="payment_method_code" required>
-                              <option value="">Selectionner</option>
-                              {Array.from(new Set(paymentPlans.map((row) => row.payment_method))).map((method) => (
-                                <option key={method} value={method}>{method}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Plan de paiement (optionnel)
-                            <select name="payment_plan_id" defaultValue="">
-                              <option value="">Aucun</option>
-                              {paymentPlans.map((row) => (
-                                <option key={row.id} value={row.id}>{row.name}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <button type="submit">Mettre a jour paiement</button>
-                        </form>
-                      </div>
-
-                      <form action={finalizeQuoteFollowupAction} className="row top-gap-sm">
-                        <input type="hidden" name="followup_id" value={activeFollowup.id} />
-                        <input type="hidden" name="return_to" value={`/admin/quotes?quote_id=${encodeURIComponent(selectedDetail.quote.id)}`} />
-                        <button type="submit">Finaliser le parcours post-approbation</button>
-                      </form>
-                    </>
-                  ) : (
-                    <p className="muted">Aucun follow-up actif pour ce devis. Il sera cree automatiquement apres approbation du devis.</p>
-                  )}
-                </section>
-
-                <section className="card modal-card">
-                  <h3>Echeancier snapshot</h3>
-                  <div className="quote-public-lines top-gap-sm">
-                    {getScheduleItems(selectedDetail.quote.payment_terms_snapshot).length === 0 ? (
-                      <p className="muted">Aucun echeancier.</p>
-                    ) : (
-                      getScheduleItems(selectedDetail.quote.payment_terms_snapshot).map((item, index) => (
-                        <article key={`schedule-${index}`} className="quote-public-line-item">
-                          <strong>{String(item.label ?? `Echeance ${index + 1}`)}</strong>
-                          <span>{String(item.due_label ?? item.due_type ?? "-")}</span>
-                          <small>{String(item.amount_ttc ?? "0")} {selectedDetail.quote.currency}</small>
-                        </article>
-                      ))
-                    )}
-                  </div>
-                </section>
-              </>
-            )}
-          </article>
-        </section>
-      ) : null}
     </section>
   );
 }

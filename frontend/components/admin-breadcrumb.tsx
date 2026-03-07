@@ -13,6 +13,7 @@ const CONFIG_SECTION_LABELS: Record<string, string> = {
   "params-subscriptions": "Parametrage abonnements",
   "params-payments": "Moyens de paiement",
   formulas: "Formules",
+  quotes: "Devis",
   activities: "Activites",
   promo: "Code promo",
   products: "Produits",
@@ -60,6 +61,15 @@ function labelForSegment(segment: string, previous: string): string | null {
   if (segment === "quotes") {
     return "Devis";
   }
+  if (segment === "prospects") {
+    return "Prospects";
+  }
+  if (segment === "new" && previous === "quotes") {
+    return "Nouveau devis";
+  }
+  if (segment === "new" && previous === "prospects") {
+    return "Nouveau prospect";
+  }
   if (segment === "communications") {
     return "Communications";
   }
@@ -102,6 +112,9 @@ function labelForSegment(segment: string, previous: string): string | null {
   }
   if (previous === "quotes" && looksLikeId(segment)) {
     return "Detail devis";
+  }
+  if (previous === "prospects" && looksLikeId(segment)) {
+    return "Detail prospect";
   }
 
   if (looksLikeId(segment)) {

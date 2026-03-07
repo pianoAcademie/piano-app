@@ -8567,6 +8567,14 @@ function safeAdminQuotesPath(path: string, fallback = "/admin/quotes"): string {
   return fallback;
 }
 
+function safeAdminProspectsPath(path: string, fallback = "/admin/prospects"): string {
+  const value = path.trim();
+  if (value.startsWith("/admin/prospects") || value.startsWith("/admin/quotes")) {
+    return value;
+  }
+  return fallback;
+}
+
 function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
   const value = raw.trim();
   if (!value) {
@@ -8686,7 +8694,15 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
   const pricingCatalogId = parseUuid(String(formData.get("pricing_catalog_id") ?? ""));
   const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
+  const cgvVersionIdRaw = String(formData.get("cgv_version_id") ?? "").trim();
+  const cgvVersionId = cgvVersionIdRaw ? parseUuid(cgvVersionIdRaw) : null;
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const quoteTemplateIdRaw = String(formData.get("quote_template_id") ?? "").trim();
+  const quoteTemplateId = quoteTemplateIdRaw || null;
+  const languageRaw = String(formData.get("language") ?? "").trim().toLowerCase();
+  const language = languageRaw ? languageRaw.slice(0, 8) : null;
+  const currencyRaw = String(formData.get("currency") ?? "EUR").trim().toUpperCase();
+  const currency = currencyRaw.length === 3 ? currencyRaw : "EUR";
   const expiryDays = parsePositiveInt(String(formData.get("expiry_days") ?? "10")) ?? 10;
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
   const estimatedSolfegeLevel = String(formData.get("estimated_solfege_level") ?? "").trim() || null;
@@ -8700,6 +8716,10 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     .map((entry) => Number.parseInt(String(entry), 10))
     .filter((value) => Number.isFinite(value) && value >= 0 && value <= 6);
   const lines = parseQuoteWizardLines(String(formData.get("lines_json") ?? ""));
+
+  if (cgvVersionIdRaw && !cgvVersionId) {
+    redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
+  }
 
   if (contextType === "acquisition" && !prospectId) {
     redirect(appendQueryMessage(returnTo, "error", "Selectionner un prospect pour un devis acquisition"));
@@ -8740,8 +8760,11 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     client_id: contextType === "active_client" ? clientId : null,
     location_id: locationId,
     payment_plan_id: paymentPlanId,
+    quote_template_id: quoteTemplateId,
+    cgv_version_id: cgvVersionId,
     school_year_label: schoolYearLabel,
-    currency: "EUR",
+    currency,
+    language,
     expiry_days: expiryDays,
     estimated_solfege_level: estimatedSolfegeLevel,
     calendar_snapshot: calendarSnapshot,
@@ -8774,7 +8797,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   }
 
   revalidatePath("/admin/quotes");
-  redirect(`/admin/quotes?quote_id=${encodeURIComponent(result.data.quote.id)}&ok=${encodeURIComponent("Devis brouillon cree")}`);
+  redirect(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent("/admin/quotes")}&ok=${encodeURIComponent("Devis brouillon cree")}`);
 }
 
 export async function sendQuoteAction(formData: FormData): Promise<void> {
@@ -8804,7 +8827,8 @@ export async function sendQuoteAction(formData: FormData): Promise<void> {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/quotes");
-  redirect(`/admin/quotes?quote_id=${encodeURIComponent(quoteId)}&ok=${encodeURIComponent("Devis envoye")}`);
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Devis envoye"));
 }
 
 export async function duplicateQuoteAction(formData: FormData): Promise<void> {
@@ -8830,7 +8854,755 @@ export async function duplicateQuoteAction(formData: FormData): Promise<void> {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/quotes");
-  redirect(`/admin/quotes?quote_id=${encodeURIComponent(result.data.quote.id)}&ok=${encodeURIComponent("Nouvelle version creee")}`);
+  redirect(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent("/admin/quotes")}&ok=${encodeURIComponent("Nouvelle version creee")}`);
+}
+
+type ProspectPayload = {
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+  phone: string | null;
+  source: string | null;
+  notes: string | null;
+  meta: Record<string, unknown>;
+};
+
+function buildProspectPayloadFromForm(formData: FormData): ProspectPayload | null {
+  const prospectType = String(formData.get("prospect_type") ?? "adult").trim().toLowerCase() === "child" ? "child" : "adult";
+  const source = optionalField(formData, "source");
+  const notes = optionalField(formData, "notes");
+
+  if (prospectType === "adult") {
+    const firstName = String(formData.get("adult_first_name") ?? "").trim();
+    const lastName = String(formData.get("adult_last_name") ?? "").trim();
+    const email = String(formData.get("adult_email") ?? "").trim().toLowerCase();
+    const phone = optionalField(formData, "adult_phone");
+    const address = optionalField(formData, "adult_address");
+    if (!firstName || !lastName || !email || !email.includes("@")) {
+      return null;
+    }
+    return {
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      phone,
+      source,
+      notes,
+      meta: {
+        prospect_type: "adult",
+        adult_address: address,
+      },
+    };
+  }
+
+  const childFirstName = String(formData.get("child_first_name") ?? "").trim();
+  const childLastName = String(formData.get("child_last_name") ?? "").trim();
+  const childBirthDate = optionalField(formData, "child_birth_date");
+  const parentTitle = optionalField(formData, "parent_title");
+  const parentFirstName = String(formData.get("parent_first_name") ?? "").trim();
+  const parentLastName = String(formData.get("parent_last_name") ?? "").trim();
+  const parentEmail = String(formData.get("parent_email") ?? "").trim().toLowerCase();
+  const parentPhone = optionalField(formData, "parent_phone");
+  const parentAddress = optionalField(formData, "parent_address");
+  if (!childFirstName || !childLastName || !parentFirstName || !parentLastName || !parentEmail || !parentEmail.includes("@")) {
+    return null;
+  }
+
+  return {
+    first_name: childFirstName,
+    last_name: childLastName,
+    email: parentEmail,
+    phone: parentPhone,
+    source,
+    notes,
+    meta: {
+      prospect_type: "child",
+      child: {
+        first_name: childFirstName,
+        last_name: childLastName,
+        birth_date: childBirthDate,
+      },
+      parent_referent: {
+        title: parentTitle,
+        first_name: parentFirstName,
+        last_name: parentLastName,
+        email: parentEmail,
+        phone: parentPhone,
+        address: parentAddress,
+      },
+    },
+  };
+}
+
+export async function createAdminProspectAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminProspectsPath(String(formData.get("return_to") ?? "/admin/prospects"));
+  const payload = buildProspectPayloadFromForm(formData);
+  if (!payload) {
+    redirect(appendQueryMessage(returnTo, "error", "Champs prospect invalides"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    "/api/v1/prospects",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/prospects");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Prospect cree"));
+}
+
+export async function updateAdminProspectAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const prospectId = String(formData.get("prospect_id") ?? "").trim();
+  const returnTo = safeAdminProspectsPath(String(formData.get("return_to") ?? "/admin/prospects"));
+  if (!prospectId) {
+    redirect(appendQueryMessage(returnTo, "error", "Prospect introuvable"));
+  }
+
+  const payload = buildProspectPayloadFromForm(formData);
+  if (!payload) {
+    redirect(appendQueryMessage(returnTo, "error", "Champs prospect invalides"));
+  }
+
+  const status = String(formData.get("status") ?? "").trim().toLowerCase();
+  const normalizedStatus = status === "active" || status === "new" || status === "lost" || status === "converted" || status === "archived"
+    ? status
+    : null;
+
+  const patchPayload: Record<string, unknown> = {
+    first_name: payload.first_name,
+    last_name: payload.last_name,
+    email: payload.email,
+    phone: payload.phone,
+    source: payload.source,
+    notes: payload.notes,
+    meta: payload.meta,
+  };
+  if (normalizedStatus) {
+    patchPayload.status = normalizedStatus;
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/prospects/${encodeURIComponent(prospectId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(patchPayload),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/prospects");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Prospect mis a jour"));
+}
+
+function safeAdminConfigQuotesPath(path: string, fallback = "/admin/config/quotes"): string {
+  const value = path.trim();
+  if (value.startsWith("/admin/config/quotes")) {
+    return value;
+  }
+  return fallback;
+}
+
+function parseUtcEndOfDate(dateRaw: string): string | null {
+  const datePart = dateRaw.trim();
+  if (!datePart) {
+    return null;
+  }
+  const parsed = new Date(`${datePart}T23:59:59Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString();
+}
+
+function parseWeekdaysCsv(raw: string): number[] | null {
+  const value = raw.trim();
+  if (!value) {
+    return [];
+  }
+  const out: number[] = [];
+  for (const chunk of value.split(/[,\s;]+/)) {
+    const token = chunk.trim();
+    if (!token) {
+      continue;
+    }
+    const parsed = Number.parseInt(token, 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 6) {
+      return null;
+    }
+    if (!out.includes(parsed)) {
+      out.push(parsed);
+    }
+  }
+  return out.sort((a, b) => a - b);
+}
+
+function parseTimeSlotsCsv(raw: string): Array<{ start_time: string; end_time: string }> | null {
+  const value = raw.trim();
+  if (!value) {
+    return [];
+  }
+  const out: Array<{ start_time: string; end_time: string }> = [];
+  for (const chunk of value.split(/[;,]+/)) {
+    const token = chunk.trim();
+    if (!token) {
+      continue;
+    }
+    const match = token.match(/^([01]\d|2[0-3]):([0-5]\d)\s*-\s*([01]\d|2[0-3]):([0-5]\d)$/);
+    if (!match) {
+      return null;
+    }
+    const start = `${match[1]}:${match[2]}`;
+    const end = `${match[3]}:${match[4]}`;
+    out.push({ start_time: start, end_time: end });
+  }
+  return out;
+}
+
+export async function createAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=types"));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const description = optionalField(formData, "description");
+  const defaultExpiryDays = parsePositiveInt(String(formData.get("default_expiry_days") ?? "")) ?? null;
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+
+  if (!code || !name || defaultExpiryDays === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Champs type de devis invalides"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/quote-types",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        code,
+        name,
+        description,
+        default_expiry_days: defaultExpiryDays,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Type de devis cree"));
+}
+
+export async function updateAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=types"));
+  const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const description = optionalField(formData, "description");
+  const defaultExpiryDays = parsePositiveInt(String(formData.get("default_expiry_days") ?? "")) ?? null;
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  if (!quoteTypeId || !code || !name || defaultExpiryDays === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Type de devis invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-types/${encodeURIComponent(quoteTypeId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        code,
+        name,
+        description,
+        default_expiry_days: defaultExpiryDays,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Type de devis mis a jour"));
+}
+
+export async function deleteAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=types"));
+  const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
+  if (!quoteTypeId) {
+    redirect(appendQueryMessage(returnTo, "error", "Type de devis invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-types/${encodeURIComponent(quoteTypeId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Type de devis supprime"));
+}
+
+export async function createAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
+  const name = String(formData.get("name") ?? "").trim();
+  const schoolYearLabel = optionalField(formData, "school_year_label");
+  const effectiveFromRaw = parseDateOnly(String(formData.get("effective_from") ?? ""));
+  const effectiveToRaw = parseDateOnly(String(formData.get("effective_to") ?? ""));
+  const isDefault = parseCheckboxFlag(formData, "is_default", false);
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+
+  if (!name || !effectiveFromRaw) {
+    redirect(appendQueryMessage(returnTo, "error", "Nom et date de debut obligatoires"));
+  }
+  const effectiveFrom = parseUtcStartOfDate(effectiveFromRaw);
+  const effectiveTo = effectiveToRaw ? parseUtcEndOfDate(effectiveToRaw) : null;
+  if (!effectiveFrom || (effectiveToRaw && !effectiveTo)) {
+    redirect(appendQueryMessage(returnTo, "error", "Dates de catalogue invalides"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/pricing-catalogs",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        school_year_label: schoolYearLabel,
+        effective_from: effectiveFrom,
+        effective_to: effectiveTo,
+        is_default: isDefault,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Catalogue de prix cree"));
+}
+
+export async function updateAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
+  const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
+  const name = String(formData.get("name") ?? "").trim();
+  const schoolYearLabel = optionalField(formData, "school_year_label");
+  const effectiveFromRaw = parseDateOnly(String(formData.get("effective_from") ?? ""));
+  const effectiveToRaw = parseDateOnly(String(formData.get("effective_to") ?? ""));
+  const isDefault = parseCheckboxFlag(formData, "is_default", false);
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+
+  if (!catalogId || !name || !effectiveFromRaw) {
+    redirect(appendQueryMessage(returnTo, "error", "Catalogue de prix invalide"));
+  }
+  const effectiveFrom = parseUtcStartOfDate(effectiveFromRaw);
+  const effectiveTo = effectiveToRaw ? parseUtcEndOfDate(effectiveToRaw) : null;
+  if (!effectiveFrom || (effectiveToRaw && !effectiveTo)) {
+    redirect(appendQueryMessage(returnTo, "error", "Dates de catalogue invalides"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/pricing-catalogs/${encodeURIComponent(catalogId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        name,
+        school_year_label: schoolYearLabel,
+        effective_from: effectiveFrom,
+        effective_to: effectiveTo,
+        is_default: isDefault,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Catalogue de prix mis a jour"));
+}
+
+export async function deleteAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
+  const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
+  if (!catalogId) {
+    redirect(appendQueryMessage(returnTo, "error", "Catalogue de prix invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/pricing-catalogs/${encodeURIComponent(catalogId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Catalogue de prix supprime"));
+}
+
+export async function createAdminCgvVersionConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=cgv"));
+  const versionLabel = String(formData.get("version_label") ?? "").trim();
+  const content = String(formData.get("content") ?? "").trim();
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  if (!versionLabel || !content) {
+    redirect(appendQueryMessage(returnTo, "error", "Version et contenu CGV obligatoires"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/cgv-versions",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        version_label: versionLabel,
+        content,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Version CGV creee"));
+}
+
+export async function updateAdminCgvVersionConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=cgv"));
+  const cgvId = parseUuid(String(formData.get("cgv_id") ?? ""));
+  const versionLabel = String(formData.get("version_label") ?? "").trim();
+  const content = String(formData.get("content") ?? "").trim();
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  if (!cgvId || !versionLabel || !content) {
+    redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/cgv-versions/${encodeURIComponent(cgvId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        version_label: versionLabel,
+        content,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Version CGV mise a jour"));
+}
+
+export async function deleteAdminCgvVersionConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=cgv"));
+  const cgvId = parseUuid(String(formData.get("cgv_id") ?? ""));
+  if (!cgvId) {
+    redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/cgv-versions/${encodeURIComponent(cgvId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Version CGV supprimee"));
+}
+
+export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=solfege"));
+  const levelCode = String(formData.get("level_code") ?? "").trim();
+  const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? "")) ?? null;
+  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const modalityRaw = String(formData.get("modality") ?? "").trim().toUpperCase();
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const weekdays = parseWeekdaysCsv(String(formData.get("allowed_weekdays_csv") ?? ""));
+  const timeSlots = parseTimeSlotsCsv(String(formData.get("allowed_time_slots_csv") ?? ""));
+
+  if (!levelCode || durationMinutes === null || durationMinutes < 10 || durationMinutes > 180) {
+    redirect(appendQueryMessage(returnTo, "error", "Niveau ou duree solfege invalide"));
+  }
+  if (weekdays === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Jours autorises invalides (0..6)"));
+  }
+  if (timeSlots === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Format creneaux invalide (HH:MM-HH:MM)"));
+  }
+
+  const modality = modalityRaw === "ONLINE" || modalityRaw === "ONSITE" || modalityRaw === "ANY" ? modalityRaw : null;
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/solfege-level-rules",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        level_code: levelCode,
+        duration_minutes: durationMinutes,
+        allowed_weekdays: weekdays,
+        allowed_time_slots: timeSlots,
+        location_id: locationId,
+        modality,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Regle solfege enregistree"));
+}
+
+export async function deleteAdminSolfegeLevelRuleConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=solfege"));
+  const ruleId = parseUuid(String(formData.get("rule_id") ?? ""));
+  if (!ruleId) {
+    redirect(appendQueryMessage(returnTo, "error", "Regle solfege invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/solfege-level-rules/${encodeURIComponent(ruleId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Regle solfege supprimee"));
+}
+
+export async function createAdminQuoteTemplateConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=templates"));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const subjectTemplate = String(formData.get("subject_template") ?? "").trim();
+  const bodyTemplate = String(formData.get("body_template") ?? "").trim();
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const isDefault = parseCheckboxFlag(formData, "is_default", false);
+  if (!code || !name || !subjectTemplate || !bodyTemplate) {
+    redirect(appendQueryMessage(returnTo, "error", "Champs template devis invalides"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/quote-templates",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        code,
+        name,
+        language,
+        subject_template: subjectTemplate,
+        body_template: bodyTemplate,
+        is_active: isActive,
+        is_default: isDefault,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template devis cree"));
+}
+
+export async function updateAdminQuoteTemplateConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=templates"));
+  const templateId = String(formData.get("template_id") ?? "").trim();
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const subjectTemplate = String(formData.get("subject_template") ?? "").trim();
+  const bodyTemplate = String(formData.get("body_template") ?? "").trim();
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const isDefault = parseCheckboxFlag(formData, "is_default", false);
+  if (!templateId || !code || !name || !subjectTemplate || !bodyTemplate) {
+    redirect(appendQueryMessage(returnTo, "error", "Template devis invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-templates/${encodeURIComponent(templateId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        code,
+        name,
+        language,
+        subject_template: subjectTemplate,
+        body_template: bodyTemplate,
+        is_active: isActive,
+        is_default: isDefault,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template devis mis a jour"));
+}
+
+export async function deleteAdminQuoteTemplateConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=templates"));
+  const templateId = String(formData.get("template_id") ?? "").trim();
+  if (!templateId) {
+    redirect(appendQueryMessage(returnTo, "error", "Template devis invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-templates/${encodeURIComponent(templateId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template devis supprime"));
 }
 
 async function runPublicQuoteAction({
