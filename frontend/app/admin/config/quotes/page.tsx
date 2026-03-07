@@ -24,7 +24,7 @@ import type { LocationOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-type QuotesConfigTab = "types" | "catalogs" | "cgv" | "templates" | "solfege";
+type QuotesConfigTab = "types" | "catalogs" | "cgv" | "templates" | "variables" | "solfege";
 
 type QuoteTypeOut = {
   id: string;
@@ -96,7 +96,7 @@ function readParam(params: SearchParams, key: string): string {
 
 function parseTab(raw: string): QuotesConfigTab {
   const value = raw.trim().toLowerCase();
-  if (value === "catalogs" || value === "cgv" || value === "templates" || value === "solfege") {
+  if (value === "catalogs" || value === "cgv" || value === "templates" || value === "variables" || value === "solfege") {
     return value;
   }
   return "types";
@@ -272,6 +272,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
           <Link className={`config-sub-link ${tab === "catalogs" ? "active" : ""}`} href={buildQuotesConfigHref("catalogs")}>Catalogues de prix</Link>
           <Link className={`config-sub-link ${tab === "cgv" ? "active" : ""}`} href={buildQuotesConfigHref("cgv")}>CGV</Link>
           <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates</Link>
+          <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>Variables</Link>
           <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>Creneaux solfege</Link>
         </nav>
       </section>
@@ -539,7 +540,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       {tab === "templates" ? (
         <section className="card">
           <h3>Templates de devis</h3>
-          <p className="muted">Variables disponibles: {templateVariables.length}</p>
+          <p className="muted">
+            Variables disponibles: {templateVariables.length} · <Link className="mode-link" href={buildQuotesConfigHref("variables")}>Voir les variables</Link>
+          </p>
           <form action={createAdminQuoteTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("templates")} />
             <label>
@@ -783,22 +786,24 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         </section>
       ) : null}
 
-      <section className="card">
-        <h3>Variables de devis disponibles</h3>
-        <p className="muted">Variables supportees dans les templates de devis.</p>
-        <div className="list">
-          {templateVariables.map((item) => (
-            <article key={item.key} className="item">
-              <p><code>{`{${item.key}}`}</code></p>
-              <p className="muted">{item.label} - {item.description}</p>
-              <p className="muted">Exemple: {item.example}</p>
-            </article>
-          ))}
-        </div>
-        <div className="row top-gap-sm">
-          <Link className="ghost" href={returnPath}>Actualiser</Link>
-        </div>
-      </section>
+      {tab === "variables" ? (
+        <section className="card">
+          <h3>Variables de devis disponibles</h3>
+          <p className="muted">Variables supportees dans les templates de devis.</p>
+          <div className="list">
+            {templateVariables.map((item) => (
+              <article key={item.key} className="item">
+                <p><code>{`{${item.key}}`}</code></p>
+                <p className="muted">{item.label} - {item.description}</p>
+                <p className="muted">Exemple: {item.example}</p>
+              </article>
+            ))}
+          </div>
+          <div className="row top-gap-sm">
+            <Link className="ghost" href={returnPath}>Actualiser</Link>
+          </div>
+        </section>
+      ) : null}
     </section>
   );
 }
