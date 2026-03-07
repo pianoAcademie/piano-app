@@ -173,10 +173,10 @@ class TeacherStatementMessage(Base):
         nullable=False,
         server_default=text("gen_random_uuid()"),
     )
-    statement_id: Mapped[UUID] = mapped_column(
+    statement_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("teacher_monthly_statements.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     teacher_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -184,8 +184,27 @@ class TeacherStatementMessage(Base):
         nullable=False,
     )
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'open'"))
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'releves_professeur'"))
+    message_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'erreur_releve'"))
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'a_traiter'"))
+    metadata: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    related_entity_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    related_entity_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    handled_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),

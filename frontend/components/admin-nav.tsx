@@ -37,6 +37,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: "Communication",
     items: [
+      { href: "/admin/a-traiter", label: "A traiter", icon: "📥" },
       { href: "/admin/communications", label: "Communications", icon: "✉️" },
       { href: "/admin/notifications/jobs", label: "Monitoring jobs", icon: "🧭" },
       { href: "/admin/notifications/incidents", label: "Incidents", icon: "🚨" },

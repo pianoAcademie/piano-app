@@ -10,6 +10,7 @@ from app.api.routes import (
     admin_config,
     admin_notifications,
     admin_subscriptions,
+    admin_to_process,
     admin_pricing,
     admin_teacher_invoices,
     auth,
@@ -39,6 +40,7 @@ api_router.include_router(admin_collaborators.router, tags=["admin-collaborators
 api_router.include_router(admin_pricing.router, tags=["admin-pricing"])
 api_router.include_router(admin_notifications.router, tags=["admin-notifications"])
 api_router.include_router(admin_subscriptions.router, tags=["admin-subscriptions"])
+api_router.include_router(admin_to_process.router, tags=["admin-to-process"])
 api_router.include_router(admin_teacher_invoices.router, tags=["admin-teacher-invoices"])
 api_router.include_router(reports.router, tags=["admin-reports"])
 api_router.include_router(catalogue.router, tags=["catalogue"])

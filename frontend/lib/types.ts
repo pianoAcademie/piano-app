@@ -1048,6 +1048,30 @@ export type TeacherApproveStatementsOut = {
   blocked_missing_sessions: TeacherStatementMissingSessionOut[];
 };
 
+export type AdminToProcessStatus = "a_traiter" | "en_cours" | "termine";
+
+export type AdminToProcessMessageOut = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  source: string;
+  message_type: string;
+  status: AdminToProcessStatus;
+  message_body: string;
+  teacher_id: string | null;
+  teacher_name: string | null;
+  handled_by_user_id: string | null;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type AdminToProcessStatusUpdateOut = {
+  id: string;
+  status: AdminToProcessStatus;
+  updated_at: string;
+};
+
 export type AdminSessionOut = {
   id: string;
   course_type_id: string;
