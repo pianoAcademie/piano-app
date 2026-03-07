@@ -193,6 +193,11 @@ function readStringMeta(meta: Record<string, unknown>, key: string, fallback = "
   return fallback;
 }
 
+function normalizeLang(value: string | null | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized || "fr";
+}
+
 function readObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -321,6 +326,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
   const selectedSolfegeSlot = getSelectedSolfegeSlot(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
+  const languageQuoteTemplates = quoteTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
+  const selectedTemplate = quoteTemplates.find((row) => row.id === quoteTemplateId);
+  const templateOptions = (() => {
+    if (!selectedTemplate) {
+      return languageQuoteTemplates;
+    }
+    if (languageQuoteTemplates.some((row) => row.id === selectedTemplate.id)) {
+      return languageQuoteTemplates;
+    }
+    return [selectedTemplate, ...languageQuoteTemplates];
+  })();
 
   const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
 
@@ -434,7 +450,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             Template
             <select name="quote_template_id" defaultValue={quoteTemplateId} disabled={detail.quote.status !== "created"}>
               <option value="">Aucun</option>
-              {quoteTemplates.map((row) => (
+              {templateOptions.map((row) => (
                 <option key={row.id} value={row.id}>{row.name} ({row.code})</option>
               ))}
             </select>
@@ -493,6 +509,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         </form>
         <p className="muted top-gap-sm">
           CGV snapshot active: <strong>{String(detail.quote.cgv_snapshot?.version_label || "-")}</strong>
+        </p>
+        <p className="muted">
+          Templates affiches pour la langue: <strong>{quoteLanguage.toUpperCase()}</strong>
         </p>
       </section>
 

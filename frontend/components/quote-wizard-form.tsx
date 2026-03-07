@@ -100,6 +100,11 @@ type SolfegeSlotOption = {
   label: string;
 };
 
+function normalizeLang(value: string | null | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized || "fr";
+}
+
 type QuoteWizardFormProps = {
   returnTo: string;
   prospects: ProspectOption[];
@@ -289,11 +294,12 @@ export default function QuoteWizardForm({
   defaultProspectId,
   createAction,
 }: QuoteWizardFormProps): JSX.Element {
+  const defaultTemplate = quoteTemplates.find((item) => item.is_default) ?? quoteTemplates[0] ?? null;
   const [contextType, setContextType] = useState<"acquisition" | "active_client">("acquisition");
   const [selectedProspectId, setSelectedProspectId] = useState<string>(defaultProspectId || "");
   const [selectedClientId, setSelectedClientId] = useState<string>("");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(quoteTemplates.find((item) => item.is_default)?.id ?? quoteTemplates[0]?.id ?? "");
-  const [language, setLanguage] = useState<string>("fr");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultTemplate?.id ?? "");
+  const [language, setLanguage] = useState<string>(normalizeLang(defaultTemplate?.language));
   const [currency, setCurrency] = useState<string>("EUR");
   const [tvaRate, setTvaRate] = useState<string>("20");
   const [estimatedLevel, setEstimatedLevel] = useState<string>("");
@@ -350,6 +356,10 @@ export default function QuoteWizardForm({
   const selectedSolfegeSlot = useMemo(
     () => solfegeSlotOptions.find((item) => item.key === selectedSolfegeSlotKey) ?? null,
     [solfegeSlotOptions, selectedSolfegeSlotKey],
+  );
+  const languageTemplates = useMemo(
+    () => quoteTemplates.filter((item) => normalizeLang(item.language) === normalizeLang(language)),
+    [quoteTemplates, language],
   );
 
   const planningBlocksJson = useMemo(
@@ -581,8 +591,8 @@ export default function QuoteWizardForm({
                   setLanguage(template.language.toLowerCase());
                 }
               }}>
-                <option value="">Aucun</option>
-                {quoteTemplates.map((item) => (
+              <option value="">Aucun</option>
+                {languageTemplates.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name} ({item.code})
                   </option>
@@ -625,7 +635,23 @@ export default function QuoteWizardForm({
             </label>
             <label>
               Langue
-              <select name="language" value={language} onChange={(event) => setLanguage(event.target.value)}>
+              <select
+                name="language"
+                value={language}
+                onChange={(event) => {
+                  const nextLanguage = normalizeLang(event.target.value);
+                  setLanguage(nextLanguage);
+                  const currentTemplate = quoteTemplates.find((item) => item.id === selectedTemplateId);
+                  if (currentTemplate && normalizeLang(currentTemplate.language) === nextLanguage) {
+                    return;
+                  }
+                  const fallbackTemplate =
+                    quoteTemplates.find((item) => item.is_default && normalizeLang(item.language) === nextLanguage) ??
+                    quoteTemplates.find((item) => normalizeLang(item.language) === nextLanguage) ??
+                    null;
+                  setSelectedTemplateId(fallbackTemplate?.id ?? "");
+                }}
+              >
                 <option value="fr">Francais</option>
                 <option value="en">English</option>
               </select>
