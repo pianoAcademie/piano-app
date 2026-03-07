@@ -8606,6 +8606,7 @@ type QuoteWizardLinePayload = {
   kit_id: string | null;
   title: string;
   quantity: string;
+  vat_rate: string;
   unit_price_ttc: string;
   sort_order: number;
 };
@@ -8646,6 +8647,7 @@ function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
       const lineType = String(row.line_type ?? "").trim().toLowerCase();
       const title = String(row.title ?? "").trim();
       const quantity = String(row.quantity ?? "").trim();
+      const vatRate = String(row.vat_rate ?? "").trim();
       const unitPrice = String(row.unit_price_ttc ?? "").trim();
       const sortOrder = Number.parseInt(String(row.sort_order ?? "0"), 10);
       if ((lineCategory !== "service" && lineCategory !== "product") || (lineType !== "item" && lineType !== "discount" && lineType !== "surcharge")) {
@@ -8658,6 +8660,9 @@ function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
         continue;
       }
       if (!Number.isFinite(Number(unitPrice))) {
+        continue;
+      }
+      if (vatRate && (!Number.isFinite(Number(vatRate)) || Number(vatRate) < 0 || Number(vatRate) > 100)) {
         continue;
       }
       const activityId = parseUuid(String(row.activity_id ?? "")) ?? null;
@@ -8682,6 +8687,7 @@ function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
         kit_id: kitId,
         title,
         quantity,
+        vat_rate: vatRate || "0",
         unit_price_ttc: unitPrice,
         sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
       });
@@ -8863,6 +8869,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
       kit_id: line.kit_id,
       title: line.title,
       quantity: line.quantity,
+      vat_rate: line.vat_rate,
       unit_price_ttc: line.unit_price_ttc,
       pricing_unit: line.line_category === "service" ? "session" : "item",
       sort_order: line.sort_order,
@@ -8997,8 +9004,10 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   const languageRaw = String(formData.get("language") ?? "").trim().toLowerCase();
   const language = languageRaw ? languageRaw.slice(0, 8) : null;
   const expiryDays = parsePositiveInt(String(formData.get("expiry_days") ?? "")) ?? null;
+  const hasEstimatedSolfegeLevel = formData.has("estimated_solfege_level");
   const estimatedSolfegeLevelRaw = String(formData.get("estimated_solfege_level") ?? "").trim();
   const estimatedSolfegeLevel = estimatedSolfegeLevelRaw || null;
+  const hasTvaRate = formData.has("tva_rate");
   const tvaRateRaw = String(formData.get("tva_rate") ?? "").trim();
 
   if (cgvVersionIdRaw && !cgvVersionId) {
@@ -9020,14 +9029,16 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
       meta = {};
     }
   }
-  if (tvaRateRaw) {
-    const parsedTva = Number(tvaRateRaw);
-    if (!Number.isFinite(parsedTva) || parsedTva < 0 || parsedTva > 100) {
-      redirect(appendQueryMessage(returnTo, "error", "TVA invalide"));
+  if (hasTvaRate) {
+    if (tvaRateRaw) {
+      const parsedTva = Number(tvaRateRaw);
+      if (!Number.isFinite(parsedTva) || parsedTva < 0 || parsedTva > 100) {
+        redirect(appendQueryMessage(returnTo, "error", "TVA invalide"));
+      }
+      meta.tva_rate = parsedTva.toFixed(2);
+    } else {
+      delete meta.tva_rate;
     }
-    meta.tva_rate = parsedTva.toFixed(2);
-  } else {
-    delete meta.tva_rate;
   }
 
   const payload: Record<string, unknown> = {
@@ -9039,10 +9050,14 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     school_year_label: schoolYearLabel || null,
     currency,
     language,
-    vat_rate: tvaRateRaw ? Number(tvaRateRaw).toFixed(2) : null,
-    estimated_solfege_level: estimatedSolfegeLevel,
     meta,
   };
+  if (hasTvaRate) {
+    payload.vat_rate = tvaRateRaw ? Number(tvaRateRaw).toFixed(2) : null;
+  }
+  if (hasEstimatedSolfegeLevel) {
+    payload.estimated_solfege_level = estimatedSolfegeLevel;
+  }
   if (expiryDays !== null) {
     payload.expiry_days = expiryDays;
   }
@@ -9088,6 +9103,7 @@ export async function updateQuoteLinesAction(formData: FormData): Promise<void> 
       kit_id: line.kit_id,
       title: line.title,
       quantity: line.quantity,
+      vat_rate: line.vat_rate,
       unit_price_ttc: line.unit_price_ttc,
       pricing_unit: line.line_category === "service" ? "session" : "item",
       sort_order: line.sort_order,
@@ -9566,19 +9582,62 @@ function parseUtcEndOfDate(dateRaw: string): string | null {
   return parsed.toISOString();
 }
 
-function parseWeekdaysCsv(raw: string): number[] | null {
-  const value = raw.trim();
-  if (!value) {
-    return [];
-  }
+const WEEKDAY_TOKEN_MAP: Record<string, number> = {
+  lundi: 0,
+  lun: 0,
+  monday: 0,
+  mon: 0,
+  mardi: 1,
+  mar: 1,
+  tuesday: 1,
+  tue: 1,
+  mer: 2,
+  mercredi: 2,
+  wednesday: 2,
+  wed: 2,
+  jeudi: 3,
+  jeu: 3,
+  thursday: 3,
+  thu: 3,
+  vendredi: 4,
+  ven: 4,
+  friday: 4,
+  fri: 4,
+  samedi: 5,
+  sam: 5,
+  saturday: 5,
+  sat: 5,
+  dimanche: 6,
+  dim: 6,
+  sunday: 6,
+  sun: 6,
+};
+
+function normalizeWeekdayToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function parseWeekdayValues(values: string[]): number[] | null {
   const out: number[] = [];
-  for (const chunk of value.split(/[,\s;]+/)) {
-    const token = chunk.trim();
+  for (const raw of values) {
+    const token = normalizeWeekdayToken(raw);
     if (!token) {
       continue;
     }
-    const parsed = Number.parseInt(token, 10);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 6) {
+    let parsed: number | null = null;
+    if (/^\d+$/.test(token)) {
+      const value = Number.parseInt(token, 10);
+      if (Number.isFinite(value) && value >= 0 && value <= 6) {
+        parsed = value;
+      }
+    } else if (Object.prototype.hasOwnProperty.call(WEEKDAY_TOKEN_MAP, token)) {
+      parsed = WEEKDAY_TOKEN_MAP[token];
+    }
+    if (parsed === null) {
       return null;
     }
     if (!out.includes(parsed)) {
@@ -9586,6 +9645,14 @@ function parseWeekdaysCsv(raw: string): number[] | null {
     }
   }
   return out.sort((a, b) => a - b);
+}
+
+function parseWeekdaysCsv(raw: string): number[] | null {
+  const value = raw.trim();
+  if (!value) {
+    return [];
+  }
+  return parseWeekdayValues(value.split(/[,\s;]+/));
 }
 
 function parseTimeSlotsCsv(raw: string): Array<{ start_time: string; end_time: string }> | null {
@@ -9610,6 +9677,22 @@ function parseTimeSlotsCsv(raw: string): Array<{ start_time: string; end_time: s
   return out;
 }
 
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  const value = raw.trim();
+  if (!value) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function createAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -9618,13 +9701,13 @@ export async function createAdminQuoteTypeConfigAction(formData: FormData): Prom
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=types"));
-  const code = String(formData.get("code") ?? "").trim();
+  const code = optionalField(formData, "code");
   const name = String(formData.get("name") ?? "").trim();
   const description = optionalField(formData, "description");
   const defaultExpiryDays = parsePositiveInt(String(formData.get("default_expiry_days") ?? "")) ?? null;
   const isActive = parseCheckboxFlag(formData, "is_active", true);
 
-  if (!code || !name || defaultExpiryDays === null) {
+  if (!name || defaultExpiryDays === null) {
     redirect(appendQueryMessage(returnTo, "error", "Champs type de devis invalides"));
   }
 
@@ -9660,12 +9743,12 @@ export async function updateAdminQuoteTypeConfigAction(formData: FormData): Prom
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=types"));
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
-  const code = String(formData.get("code") ?? "").trim();
+  const code = optionalField(formData, "code");
   const name = String(formData.get("name") ?? "").trim();
   const description = optionalField(formData, "description");
   const defaultExpiryDays = parsePositiveInt(String(formData.get("default_expiry_days") ?? "")) ?? null;
   const isActive = parseCheckboxFlag(formData, "is_active", true);
-  if (!quoteTypeId || !code || !name || defaultExpiryDays === null) {
+  if (!quoteTypeId || !name || defaultExpiryDays === null) {
     redirect(appendQueryMessage(returnTo, "error", "Type de devis invalide"));
   }
 
@@ -9841,6 +9924,119 @@ export async function deleteAdminPricingCatalogConfigAction(formData: FormData):
   redirect(appendQueryMessage(returnTo, "ok", "Catalogue de prix supprime"));
 }
 
+export async function createAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=payment_plans"));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const paymentMethod = String(formData.get("payment_method") ?? "").trim();
+  const scheduleType = String(formData.get("schedule_type") ?? "").trim();
+  const scheduleRules = parseJsonObject(String(formData.get("schedule_rules_json") ?? ""));
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+
+  if (!code || !name || !paymentMethod || !scheduleType || scheduleRules === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide (verifier le JSON)"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/payment-plans",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        code,
+        name,
+        payment_method: paymentMethod,
+        schedule_type: scheduleType,
+        schedule_rules: scheduleRules,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Plan de paiement cree"));
+}
+
+export async function updateAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=payment_plans"));
+  const planId = parseUuid(String(formData.get("plan_id") ?? ""));
+  const code = String(formData.get("code") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const paymentMethod = String(formData.get("payment_method") ?? "").trim();
+  const scheduleType = String(formData.get("schedule_type") ?? "").trim();
+  const scheduleRules = parseJsonObject(String(formData.get("schedule_rules_json") ?? ""));
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+
+  if (!planId || !code || !name || !paymentMethod || !scheduleType || scheduleRules === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide (verifier le JSON)"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/payment-plans/${encodeURIComponent(planId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        code,
+        name,
+        payment_method: paymentMethod,
+        schedule_type: scheduleType,
+        schedule_rules: scheduleRules,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Plan de paiement mis a jour"));
+}
+
+export async function deleteAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=payment_plans"));
+  const planId = parseUuid(String(formData.get("plan_id") ?? ""));
+  if (!planId) {
+    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/payment-plans/${encodeURIComponent(planId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Plan de paiement supprime"));
+}
+
 export async function createAdminCgvVersionConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -9953,14 +10149,20 @@ export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
   const modalityRaw = String(formData.get("modality") ?? "").trim().toUpperCase();
   const isActive = parseCheckboxFlag(formData, "is_active", true);
-  const weekdays = parseWeekdaysCsv(String(formData.get("allowed_weekdays_csv") ?? ""));
+  const weekdayTokens = formData
+    .getAll("allowed_weekday")
+    .map((entry) => String(entry).trim())
+    .filter((entry) => entry.length > 0);
+  const weekdays = weekdayTokens.length > 0
+    ? parseWeekdayValues(weekdayTokens)
+    : parseWeekdaysCsv(String(formData.get("allowed_weekdays_csv") ?? ""));
   const timeSlots = parseTimeSlotsCsv(String(formData.get("allowed_time_slots_csv") ?? ""));
 
   if (!levelCode || durationMinutes === null || durationMinutes < 10 || durationMinutes > 180) {
     redirect(appendQueryMessage(returnTo, "error", "Niveau ou duree solfege invalide"));
   }
   if (weekdays === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Jours autorises invalides (0..6)"));
+    redirect(appendQueryMessage(returnTo, "error", "Jours autorises invalides"));
   }
   if (timeSlots === null) {
     redirect(appendQueryMessage(returnTo, "error", "Format creneaux invalide (HH:MM-HH:MM)"));

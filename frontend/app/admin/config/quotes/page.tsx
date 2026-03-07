@@ -8,6 +8,7 @@ import {
   createAdminCgvVersionConfigAction,
   createAdminTermsTemplateConfigAction,
   createAdminQuoteDocumentBindingConfigAction,
+  createAdminPaymentPlanConfigAction,
   createAdminPricingCatalogConfigAction,
   createAdminQuoteTypeConfigAction,
   deleteAdminQuoteTemplateConfigAction,
@@ -15,6 +16,7 @@ import {
   deleteAdminCgvVersionConfigAction,
   deleteAdminTermsTemplateConfigAction,
   deleteAdminQuoteDocumentBindingConfigAction,
+  deleteAdminPaymentPlanConfigAction,
   deleteAdminPricingCatalogConfigAction,
   deleteAdminQuoteTypeConfigAction,
   deleteAdminSolfegeLevelRuleConfigAction,
@@ -23,6 +25,7 @@ import {
   updateAdminCgvVersionConfigAction,
   updateAdminTermsTemplateConfigAction,
   updateAdminQuoteDocumentBindingConfigAction,
+  updateAdminPaymentPlanConfigAction,
   updateAdminPricingCatalogConfigAction,
   updateAdminQuoteTypeConfigAction,
   upsertAdminSolfegeLevelRuleConfigAction,
@@ -34,7 +37,17 @@ import type { LocationOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-type QuotesConfigTab = "types" | "catalogs" | "cgv" | "templates" | "variables" | "solfege" | "doc_templates" | "doc_terms" | "doc_bindings";
+type QuotesConfigTab =
+  | "types"
+  | "catalogs"
+  | "payment_plans"
+  | "cgv"
+  | "templates"
+  | "variables"
+  | "solfege"
+  | "doc_templates"
+  | "doc_terms"
+  | "doc_bindings";
 
 type QuoteTypeOut = {
   id: string;
@@ -53,6 +66,17 @@ type PricingCatalogOut = {
   effective_from: string;
   effective_to: string | null;
   is_default: boolean;
+  is_active: boolean;
+  updated_at: string;
+};
+
+type PaymentPlanOut = {
+  id: string;
+  code: string;
+  name: string;
+  payment_method: string;
+  schedule_type: string;
+  schedule_rules: Record<string, unknown>;
   is_active: boolean;
   updated_at: string;
 };
@@ -172,6 +196,7 @@ function parseTab(raw: string): QuotesConfigTab {
   const value = raw.trim().toLowerCase();
   if (
     value === "catalogs" ||
+    value === "payment_plans" ||
     value === "cgv" ||
     value === "templates" ||
     value === "variables" ||
@@ -215,11 +240,23 @@ function dateTimeLabel(value: string | null): string {
   return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 }
 
+const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 0, label: "Lundi" },
+  { value: 1, label: "Mardi" },
+  { value: 2, label: "Mercredi" },
+  { value: 3, label: "Jeudi" },
+  { value: 4, label: "Vendredi" },
+  { value: 5, label: "Samedi" },
+  { value: 6, label: "Dimanche" },
+];
+
 function weekdaysLabel(days: number[]): string {
   if (!days.length) {
     return "Tous";
   }
-  return days.join(", ");
+  return days
+    .map((day) => WEEKDAY_OPTIONS.find((option) => option.value === day)?.label ?? String(day))
+    .join(", ");
 }
 
 function modalityLabel(value: string | null): string {
@@ -267,6 +304,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   const [
     quoteTypesResult,
     catalogsResult,
+    paymentPlansResult,
     cgvVersionsResult,
     quoteTemplatesResult,
     templateVariablesResult,
@@ -278,6 +316,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   ] = await Promise.all([
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
+    backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
     backendRequest<CgvVersionOut[]>("/api/v1/cgv-versions", {}, token),
     backendRequest<QuoteTemplateOut[]>("/api/v1/quote-templates", {}, token),
     backendRequest<QuoteTemplateVariableOut[]>("/api/v1/quote-template-variables", {}, token),
@@ -306,6 +345,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     : (() => {
         loadErrors.push(`CGV: ${cgvVersionsResult.message}`);
         return [] as CgvVersionOut[];
+      })();
+  const paymentPlans = paymentPlansResult.ok
+    ? paymentPlansResult.data
+    : (() => {
+        loadErrors.push(`Plans de paiement: ${paymentPlansResult.message}`);
+        return [] as PaymentPlanOut[];
       })();
   const quoteTemplates = quoteTemplatesResult.ok
     ? quoteTemplatesResult.data
@@ -397,7 +442,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         <div className="row spread wrap gap-sm">
           <div>
             <h2>Configuration Devis</h2>
-            <p className="muted">Administrez les referentiels de devis: types, catalogues, CGV, templates et creneaux solfege.</p>
+            <p className="muted">Administrez les referentiels metier et documentaires des devis: types, catalogues, modeles, CGV et creneaux solfege.</p>
           </div>
           <div className="row wrap gap-sm">
             <Link className="ghost" href="/admin/config">Retour Configuration</Link>
@@ -423,25 +468,23 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         <nav className="config-sub-nav">
           <Link className={`config-sub-link ${tab === "types" ? "active" : ""}`} href={buildQuotesConfigHref("types")}>Types de devis</Link>
           <Link className={`config-sub-link ${tab === "catalogs" ? "active" : ""}`} href={buildQuotesConfigHref("catalogs")}>Catalogues de prix</Link>
+          <Link className={`config-sub-link ${tab === "payment_plans" ? "active" : ""}`} href={buildQuotesConfigHref("payment_plans")}>Plans de paiement</Link>
           <Link className={`config-sub-link ${tab === "cgv" ? "active" : ""}`} href={buildQuotesConfigHref("cgv")}>CGV</Link>
-          <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates</Link>
-          <Link className={`config-sub-link ${tab === "doc_templates" ? "active" : ""}`} href={buildQuotesConfigHref("doc_templates")}>Templates documentaires</Link>
-          <Link className={`config-sub-link ${tab === "doc_terms" ? "active" : ""}`} href={buildQuotesConfigHref("doc_terms")}>Templates CGV</Link>
-          <Link className={`config-sub-link ${tab === "doc_bindings" ? "active" : ""}`} href={buildQuotesConfigHref("doc_bindings")}>Regles de selection</Link>
-          <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>Variables</Link>
-          <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>Creneaux solfege</Link>
+          <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates email (legacy)</Link>
+          <Link className={`config-sub-link ${tab === "doc_templates" ? "active" : ""}`} href={buildQuotesConfigHref("doc_templates")}>Modeles de devis</Link>
+          <Link className={`config-sub-link ${tab === "doc_terms" ? "active" : ""}`} href={buildQuotesConfigHref("doc_terms")}>Modeles de CGV</Link>
+          <Link className={`config-sub-link ${tab === "doc_bindings" ? "active" : ""}`} href={buildQuotesConfigHref("doc_bindings")}>Regles d association documentaire</Link>
+          <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>Variables documentaires</Link>
+          <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>Creneaux de solfege</Link>
         </nav>
       </section>
 
       {tab === "types" ? (
         <section className="card">
           <h3>Types de devis</h3>
+          <p className="muted">Le code technique est genere automatiquement a partir du nom.</p>
           <form action={createAdminQuoteTypeConfigAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("types")} />
-            <label>
-              Code
-              <input type="text" name="code" required maxLength={60} placeholder="FORFAIT_STANDARD" />
-            </label>
             <label className="span-2">
               Nom
               <input type="text" name="name" required maxLength={180} placeholder="Forfait standard" />
@@ -480,10 +523,6 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                   <form action={updateAdminQuoteTypeConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
                     <input type="hidden" name="quote_type_id" value={row.id} />
                     <input type="hidden" name="return_to" value={buildQuotesConfigHref("types")} />
-                    <label>
-                      Code
-                      <input type="text" name="code" defaultValue={row.code} required maxLength={60} />
-                    </label>
                     <label className="span-2">
                       Nom
                       <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
@@ -626,6 +665,116 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         </section>
       ) : null}
 
+      {tab === "payment_plans" ? (
+        <section className="card">
+          <h3>Plans de paiement</h3>
+          <p className="muted">Ce referentiel alimente le champ Plan de paiement dans la creation et l edition des devis.</p>
+          <form action={createAdminPaymentPlanConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
+            <input type="hidden" name="return_to" value={buildQuotesConfigHref("payment_plans")} />
+            <label>
+              Code
+              <input type="text" name="code" required maxLength={60} placeholder="CHEQUE_2" />
+            </label>
+            <label>
+              Nom
+              <input type="text" name="name" required maxLength={180} placeholder="Cheque en 2 fois" />
+            </label>
+            <label>
+              Methode de paiement
+              <input type="text" name="payment_method" required maxLength={40} placeholder="CHEQUE_2" />
+            </label>
+            <label>
+              Type d echeancier
+              <input type="text" name="schedule_type" required maxLength={40} placeholder="fixed_months" />
+            </label>
+            <label className="span-4">
+              Regles JSON
+              <textarea name="schedule_rules_json" rows={4} defaultValue={"{}"} />
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="is_active" defaultChecked />
+              Actif
+            </label>
+            <div className="row span-4">
+              <button type="submit">Ajouter le plan</button>
+            </div>
+          </form>
+
+          <div className="table-wrap top-gap-sm">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Nom</th>
+                  <th>Methode</th>
+                  <th>Type</th>
+                  <th>Regles</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paymentPlans.length === 0 ? (
+                  <tr><td colSpan={7}><p className="muted">Aucun plan de paiement.</p></td></tr>
+                ) : (
+                  paymentPlans.map((row) => (
+                    <tr key={row.id}>
+                      <td><strong>{row.code}</strong></td>
+                      <td>{row.name}</td>
+                      <td>{row.payment_method}</td>
+                      <td>{row.schedule_type}</td>
+                      <td><code>{JSON.stringify(row.schedule_rules || {})}</code></td>
+                      <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span></td>
+                      <td>
+                        <details>
+                          <summary className="mode-link">Modifier</summary>
+                          <form action={updateAdminPaymentPlanConfigAction} className="grid config-form-grid top-gap-sm">
+                            <input type="hidden" name="plan_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("payment_plans")} />
+                            <label>
+                              Code
+                              <input type="text" name="code" defaultValue={row.code} required maxLength={60} />
+                            </label>
+                            <label>
+                              Nom
+                              <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
+                            </label>
+                            <label>
+                              Methode de paiement
+                              <input type="text" name="payment_method" defaultValue={row.payment_method} required maxLength={40} />
+                            </label>
+                            <label>
+                              Type d echeancier
+                              <input type="text" name="schedule_type" defaultValue={row.schedule_type} required maxLength={40} />
+                            </label>
+                            <label className="span-4">
+                              Regles JSON
+                              <textarea name="schedule_rules_json" rows={4} defaultValue={JSON.stringify(row.schedule_rules || {}, null, 2)} />
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
+                              Actif
+                            </label>
+                            <div className="row">
+                              <button type="submit">Enregistrer</button>
+                            </div>
+                          </form>
+                          <form action={deleteAdminPaymentPlanConfigAction} className="row top-gap-sm">
+                            <input type="hidden" name="plan_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("payment_plans")} />
+                            <button type="submit" className="danger">Supprimer</button>
+                          </form>
+                        </details>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
       {tab === "cgv" ? (
         <section className="card">
           <h3>CGV applicables aux devis</h3>
@@ -701,7 +850,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "templates" ? (
         <section className="card">
-          <h3>Templates de devis</h3>
+          <h3>Templates email devis (legacy)</h3>
           <p className="muted">
             Variables disponibles: {templateVariables.length} · <Link className="mode-link" href={buildQuotesConfigHref("variables")}>Voir les variables</Link>
           </p>
@@ -809,7 +958,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "doc_templates" ? (
         <section className="card">
-          <h3>Templates documentaires (V2)</h3>
+          <h3>Modeles de devis (document principal)</h3>
           <p className="muted">Chaque mise a jour publie une nouvelle version figee du template de devis.</p>
           <form action={createAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
@@ -979,7 +1128,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "doc_terms" ? (
         <section className="card">
-          <h3>Templates CGV (V2)</h3>
+          <h3>Modeles de CGV (annexe juridique)</h3>
           <p className="muted">Les CGV sont versionnees et snapshottees dans chaque devis envoye.</p>
           <form action={createAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
@@ -1139,8 +1288,8 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "doc_bindings" ? (
         <section className="card">
-          <h3>Regles de selection documentaire</h3>
-          <p className="muted">Associez un contexte de devis a un couple Template devis + Template CGV.</p>
+          <h3>Regles d association documentaire</h3>
+          <p className="muted">Associez un contexte metier a un couple Modele de devis + Modele de CGV.</p>
           <form action={createAdminQuoteDocumentBindingConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_bindings")} />
             <label>
@@ -1341,8 +1490,8 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "solfege" ? (
         <section className="card">
-          <h3>Creneaux solfege par niveau</h3>
-          <p className="muted">Formats attendus: jours = 0,1,2 (0 dimanche) ; creneaux = 09:00-09:30, 14:00-14:45.</p>
+          <h3>Creneaux de solfege par niveau</h3>
+          <p className="muted">Configurez les jours et creneaux en langage metier (ex: mardi 17:05-17:35).</p>
           <form action={upsertAdminSolfegeLevelRuleConfigAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
             <label>
@@ -1376,13 +1525,20 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 <option value="ONSITE">Presentiel</option>
               </select>
             </label>
-            <label className="span-2">
-              Jours autorises (0..6)
-              <input type="text" name="allowed_weekdays_csv" placeholder="1,3,5" />
-            </label>
+            <fieldset className="span-2">
+              <legend>Jours autorises</legend>
+              <div className="row wrap gap-sm">
+                {WEEKDAY_OPTIONS.map((day) => (
+                  <label key={`create-day-${day.value}`} className="checkline">
+                    <input type="checkbox" name="allowed_weekday" value={day.value} />
+                    {day.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <label className="span-2">
               Creneaux autorises (HH:MM-HH:MM)
-              <input type="text" name="allowed_time_slots_csv" placeholder="09:00-09:30, 14:00-14:45" />
+              <input type="text" name="allowed_time_slots_csv" placeholder="17:05-17:35, 18:05-18:35" />
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
@@ -1450,10 +1606,22 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 <option value="ONSITE">Presentiel</option>
                               </select>
                             </label>
-                            <label>
-                              Jours autorises (0..6)
-                              <input type="text" name="allowed_weekdays_csv" defaultValue={row.allowed_weekdays.join(",")} />
-                            </label>
+                            <fieldset>
+                              <legend>Jours autorises</legend>
+                              <div className="row wrap gap-sm">
+                                {WEEKDAY_OPTIONS.map((day) => (
+                                  <label key={`${row.id}-day-${day.value}`} className="checkline">
+                                    <input
+                                      type="checkbox"
+                                      name="allowed_weekday"
+                                      value={day.value}
+                                      defaultChecked={row.allowed_weekdays.includes(day.value)}
+                                    />
+                                    {day.label}
+                                  </label>
+                                ))}
+                              </div>
+                            </fieldset>
                             <label>
                               Creneaux autorises
                               <input type="text" name="allowed_time_slots_csv" defaultValue={solfegeSlotsCsv(row.allowed_time_slots)} />

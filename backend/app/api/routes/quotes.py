@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import io
+import re
 import secrets
 from uuid import UUID
 
@@ -116,12 +117,62 @@ def _q2(value: Decimal) -> Decimal:
     return Decimal(value or Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _q3(value: Decimal) -> Decimal:
+    return Decimal(value or Decimal("0")).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+
+def _decimal_or_none(value: object | None) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        parsed = Decimal(str(value))
+    except Exception:
+        return None
+    if not parsed.is_finite():
+        return None
+    return parsed
+
+
+def _split_ttc(unit_price_ttc: Decimal, vat_rate: Decimal) -> tuple[Decimal, Decimal]:
+    normalized_vat = _q3(vat_rate if vat_rate > Decimal("0") else Decimal("0"))
+    if normalized_vat <= Decimal("0"):
+        return _q2(unit_price_ttc), Decimal("0.00")
+    divisor = Decimal("1.00") + (normalized_vat / Decimal("100"))
+    unit_ht = _q2(unit_price_ttc / divisor)
+    unit_vat = _q2(unit_price_ttc - unit_ht)
+    return unit_ht, unit_vat
+
+
 def _new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
 def _new_quote_number() -> str:
     return f"DV-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(2).upper()}"
+
+
+def _quote_type_code_from_name(name: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", (name or "").strip().upper()).strip("_")
+    if not normalized:
+        normalized = "QUOTE_TYPE"
+    return normalized[:60]
+
+
+def _next_available_quote_type_code(db: Session, *, base_code: str, exclude_id: UUID | None = None) -> str:
+    root = (base_code or "QUOTE_TYPE").strip().upper() or "QUOTE_TYPE"
+    root = root[:60]
+    candidate = root
+    index = 2
+    while True:
+        stmt = select(QuoteType.id).where(func.upper(QuoteType.code) == candidate.upper())
+        if exclude_id is not None:
+            stmt = stmt.where(QuoteType.id != exclude_id)
+        existing = db.scalar(stmt.limit(1))
+        if existing is None:
+            return candidate
+        suffix = f"_{index}"
+        candidate = f"{root[: max(1, 60 - len(suffix))]}{suffix}"
+        index += 1
 
 
 def _time_from_hhmm(value: str, *, field: str) -> time:
@@ -170,7 +221,12 @@ def _line_out(row: QuoteLine) -> QuoteLineOut:
         duration_minutes=row.duration_minutes,
         pricing_unit=row.pricing_unit,
         quantity=_q2(Decimal(row.quantity or 0)),
+        vat_rate=_q3(Decimal(row.vat_rate or 0)),
+        unit_price_ht=_q2(Decimal(row.unit_price_ht or 0)),
+        unit_vat_amount=_q2(Decimal(row.unit_vat_amount or 0)),
         unit_price_ttc=_q2(Decimal(row.unit_price_ttc or 0)),
+        amount_ht=_q2(Decimal(row.amount_ht or 0)),
+        amount_vat=_q2(Decimal(row.amount_vat or 0)),
         amount_ttc=_q2(Decimal(row.amount_ttc or 0)),
         sort_order=int(row.sort_order or 0),
         meta=row.meta or {},
@@ -914,6 +970,7 @@ def _effective_item_price(
         if unit_price <= Decimal("0"):
             unit_price = _q2(Decimal(product.price_incl_vat or 0))
             meta["pricing_source"] = "product_price_incl_vat"
+        meta["default_vat_rate"] = str(_q3(Decimal(product.vat_rate or 0)))
 
     if line.kit_id is not None:
         kit = db.scalar(select(CatalogKit).where(CatalogKit.id == line.kit_id, CatalogKit.active.is_(True)))
@@ -941,6 +998,7 @@ def _effective_item_price(
             else:
                 unit_price = _q2(Decimal(kit.price_incl_vat or 0))
             meta["pricing_source"] = "kit_price"
+        meta["default_vat_rate"] = str(_q3(Decimal(kit.vat_rate or 0)))
 
     return code, title, description, duration, unit_price, meta
 
@@ -975,6 +1033,15 @@ def _materialize_quote_lines(
             amount = _q2(abs(amount))
             unit_price = _q2(abs(unit_price))
 
+        fallback_vat_rate = _decimal_or_none(meta.get("default_vat_rate"))
+        quote_vat_rate = quote.vat_rate if quote.vat_rate is not None else _extract_vat_rate(quote.meta or {})
+        vat_rate = item.vat_rate if item.vat_rate is not None else fallback_vat_rate if fallback_vat_rate is not None else quote_vat_rate
+        normalized_vat_rate = _q3(vat_rate if vat_rate is not None else Decimal("0"))
+        unit_price_ht, unit_vat_amount = _split_ttc(unit_price, normalized_vat_rate)
+        amount_ht = _q2(unit_price_ht * quantity)
+        amount_vat = _q2(unit_vat_amount * quantity)
+        amount = _q2(amount_ht + amount_vat)
+
         row = QuoteLine(
             quote_id=quote.id,
             line_category=item.line_category,
@@ -990,7 +1057,12 @@ def _materialize_quote_lines(
             duration_minutes=duration,
             pricing_unit=item.pricing_unit,
             quantity=quantity,
+            vat_rate=normalized_vat_rate,
+            unit_price_ht=unit_price_ht,
+            unit_vat_amount=unit_vat_amount,
             unit_price_ttc=unit_price,
+            amount_ht=amount_ht,
+            amount_vat=amount_vat,
             amount_ttc=amount,
             sort_order=int(item.sort_order),
             meta=meta,
@@ -3168,8 +3240,11 @@ def create_quote_type(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteTypeOut:
     now = _utcnow()
+    requested_code = (payload.code or "").strip().upper()
+    base_code = requested_code or _quote_type_code_from_name(payload.name)
+    generated_code = _next_available_quote_type_code(db, base_code=base_code)
     row = QuoteType(
-        code=payload.code.strip(),
+        code=generated_code,
         name=payload.name.strip(),
         description=payload.description,
         default_expiry_days=payload.default_expiry_days,
@@ -3197,7 +3272,15 @@ def update_quote_type(
     row = db.scalar(select(QuoteType).where(QuoteType.id == quote_type_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote type not found")
-    row.code = payload.code.strip()
+    requested_code = (payload.code or "").strip().upper()
+    if requested_code:
+        row.code = _next_available_quote_type_code(db, base_code=requested_code, exclude_id=row.id)
+    elif not (row.code or "").strip():
+        row.code = _next_available_quote_type_code(
+            db,
+            base_code=_quote_type_code_from_name(payload.name),
+            exclude_id=row.id,
+        )
     row.name = payload.name.strip()
     row.description = payload.description
     row.default_expiry_days = payload.default_expiry_days

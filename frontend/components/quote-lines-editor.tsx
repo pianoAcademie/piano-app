@@ -13,12 +13,14 @@ type ProductOption = {
   id: string;
   title: string;
   price_incl_vat: string;
+  vat_rate: string;
 };
 
 type KitOption = {
   id: string;
   title: string;
   effective_price_ttc: string;
+  vat_rate: string;
 };
 
 type InitialQuoteLine = {
@@ -31,6 +33,7 @@ type InitialQuoteLine = {
   kit_id: string | null;
   title: string;
   quantity: string;
+  vat_rate: string;
   unit_price_ttc: string;
 };
 
@@ -42,6 +45,7 @@ type EditableLine = {
   refId: string;
   title: string;
   quantity: string;
+  vatRate: string;
   unitPrice: string;
 };
 
@@ -66,6 +70,38 @@ function lineAmount(line: EditableLine): number {
   return qty * price;
 }
 
+function lineVatRate(line: EditableLine): number {
+  const value = Number(line.vatRate);
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return value;
+}
+
+function lineUnitHt(line: EditableLine): number {
+  const ttc = Number(line.unitPrice);
+  const rate = lineVatRate(line);
+  if (!Number.isFinite(ttc)) {
+    return 0;
+  }
+  if (rate <= 0) {
+    return ttc;
+  }
+  return ttc / (1 + rate / 100);
+}
+
+function lineUnitVat(line: EditableLine): number {
+  return Number(line.unitPrice) - lineUnitHt(line);
+}
+
+function lineAmountHt(line: EditableLine): number {
+  return lineUnitHt(line) * Number(line.quantity || "0");
+}
+
+function lineAmountVat(line: EditableLine): number {
+  return lineUnitVat(line) * Number(line.quantity || "0");
+}
+
 function toMoney(value: number, currency = "EUR"): string {
   if (!Number.isFinite(value)) {
     return `0,00 ${(currency || "EUR").toUpperCase()}`;
@@ -85,6 +121,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       master_item_type: "discount_rule",
       title: line.title || "Remise",
       quantity: line.quantity || "1",
+      vat_rate: line.vatRate || "0",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
       sort_order: index,
     };
@@ -96,6 +133,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       master_item_type: "surcharge_rule",
       title: line.title || "Supplement",
       quantity: line.quantity || "1",
+      vat_rate: line.vatRate || "0",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
       sort_order: index,
     };
@@ -108,6 +146,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       activity_id: line.refId || null,
       title: line.title || "Activite",
       quantity: line.quantity || "1",
+      vat_rate: line.vatRate || "0",
       unit_price_ttc: line.unitPrice || "0",
       sort_order: index,
     };
@@ -120,6 +159,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       kit_id: line.refId || null,
       title: line.title || "Kit",
       quantity: line.quantity || "1",
+      vat_rate: line.vatRate || "0",
       unit_price_ttc: line.unitPrice || "0",
       sort_order: index,
     };
@@ -131,6 +171,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
     product_id: line.refId || null,
     title: line.title || "Produit",
     quantity: line.quantity || "1",
+    vat_rate: line.vatRate || "0",
     unit_price_ttc: line.unitPrice || "0",
     sort_order: index,
   };
@@ -201,6 +242,7 @@ export default function QuoteLinesEditor({
       refId: inferRefId(row),
       title: row.title || "",
       quantity: row.quantity || "1",
+      vatRate: row.vat_rate || "0",
       unitPrice: row.unit_price_ttc || "0",
     })),
   );
@@ -218,6 +260,7 @@ export default function QuoteLinesEditor({
         refId: "",
         title: "",
         quantity: "1",
+        vatRate: "0",
         unitPrice: "0",
       },
     ]);
@@ -241,6 +284,7 @@ export default function QuoteLinesEditor({
       updateLine(uid, {
         refId,
         title: activity?.name ?? "Activite",
+        vatRate: "0",
         unitPrice: activity?.default_course_rate_ttc ?? "0",
       });
       return;
@@ -250,6 +294,7 @@ export default function QuoteLinesEditor({
       updateLine(uid, {
         refId,
         title: product?.title ?? "Produit",
+        vatRate: product?.vat_rate ?? "0",
         unitPrice: product?.price_incl_vat ?? "0",
       });
       return;
@@ -258,6 +303,7 @@ export default function QuoteLinesEditor({
     updateLine(uid, {
       refId,
       title: kit?.title ?? "Kit",
+      vatRate: kit?.vat_rate ?? "0",
       unitPrice: kit?.effective_price_ttc ?? "0",
     });
   }
@@ -303,14 +349,28 @@ export default function QuoteLinesEditor({
                 </select>
               </label>
             ) : null}
-            <div className="grid cols-3 top-gap-sm">
-              <label className="span-3">
+            <div className="grid cols-4 top-gap-sm">
+              <label className="span-4">
                 Intitule
                 <input type="text" value={line.title} onChange={(event) => updateLine(line.uid, { title: event.target.value })} required disabled={!editable} />
               </label>
               <label>
                 Quantite
                 <input type="number" min={0.01} step="0.01" value={line.quantity} onChange={(event) => updateLine(line.uid, { quantity: event.target.value })} required disabled={!editable} />
+              </label>
+              <label>
+                TVA (%)
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  value={line.vatRate}
+                  onChange={(event) => updateLine(line.uid, { vatRate: event.target.value })}
+                  required
+                  readOnly={isCatalogKind(line.kind)}
+                  disabled={!editable}
+                />
               </label>
               <label>
                 Prix TTC
@@ -325,13 +385,21 @@ export default function QuoteLinesEditor({
                 />
               </label>
               <div className="quote-line-amount">
-                <span>Montant</span>
+                <span>Montant TTC</span>
                 <strong>{toMoney(lineAmount(line), currency)}</strong>
+              </div>
+              <div className="quote-line-amount">
+                <span>Montant HT</span>
+                <strong>{toMoney(lineAmountHt(line), currency)}</strong>
+              </div>
+              <div className="quote-line-amount">
+                <span>Montant TVA</span>
+                <strong>{toMoney(lineAmountVat(line), currency)}</strong>
               </div>
             </div>
             {isCatalogKind(line.kind) ? (
               <small className="muted">
-                Prix catalogue applique automatiquement depuis la base. Utilisez une remise ou un supplement pour ajuster.
+                Prix catalogue et TVA appliquees automatiquement depuis la base. Utilisez une remise ou un supplement pour ajuster.
               </small>
             ) : null}
           </article>
@@ -339,7 +407,9 @@ export default function QuoteLinesEditor({
       </div>
 
       <div className="row spread wrap top-gap-sm">
-        <p className="quote-total">Total estime: {toMoney(total, currency)}</p>
+        <p className="quote-total">
+          Total estime TTC: {toMoney(total, currency)} · HT: {toMoney(lines.reduce((sum, line) => sum + lineAmountHt(line), 0), currency)} · TVA: {toMoney(lines.reduce((sum, line) => sum + lineAmountVat(line), 0), currency)}
+        </p>
         <button type="submit" disabled={!editable}>Enregistrer les lignes</button>
       </div>
       {!editable ? <p className="muted top-gap-sm">Le devis est immuable apres envoi.</p> : null}

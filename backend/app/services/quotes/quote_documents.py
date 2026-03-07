@@ -237,22 +237,22 @@ def _as_html_fragment(content: str) -> str:
 def _build_template_values(*, db: Session | None, quote: Quote, lines: list[QuoteLine]) -> tuple[dict[str, str], set[str]]:
     currency = (quote.currency or "EUR").upper()
     services, products, kits = _line_groups(lines)
-    total_ttc = Decimal(quote.total_ttc or 0)
-    vat_rate = Decimal(quote.vat_rate or 0)
-    if vat_rate > Decimal("0"):
-        total_ht = (total_ttc / (Decimal("1") + (vat_rate / Decimal("100")))).quantize(Decimal("0.01"))
-        vat_amount = (total_ttc - total_ht).quantize(Decimal("0.01"))
+    total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
+    total_ht = sum((Decimal(getattr(line, "amount_ht", Decimal("0")) or Decimal("0")) for line in lines), Decimal("0.00")).quantize(Decimal("0.01"))
+    vat_amount = sum((Decimal(getattr(line, "amount_vat", Decimal("0")) or Decimal("0")) for line in lines), Decimal("0.00")).quantize(Decimal("0.01"))
+    if total_ht <= Decimal("0.00"):
+        vat_rate = Decimal("0.00")
     else:
-        total_ht = total_ttc.quantize(Decimal("0.01"))
-        vat_amount = Decimal("0.00")
+        vat_rate = ((vat_amount / total_ht) * Decimal("100")).quantize(Decimal("0.01"))
 
     services_table_html = _table_html(
-        ["Activite", "Quantite", "Duree", "PU TTC", "Montant TTC"],
+        ["Activite", "Quantite", "Duree", "TVA", "PU TTC", "Montant TTC"],
         [
             [
                 line.title or "-",
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
+                f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
             ]
@@ -261,11 +261,12 @@ def _build_template_values(*, db: Session | None, quote: Quote, lines: list[Quot
         empty_label="Aucune activite.",
     )
     products_table_html = _table_html(
-        ["Produit", "Quantite", "PU TTC", "Montant TTC"],
+        ["Produit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
             [
                 line.title or "-",
                 _decimal_str(Decimal(line.quantity or 0)),
+                f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
             ]
@@ -274,11 +275,12 @@ def _build_template_values(*, db: Session | None, quote: Quote, lines: list[Quot
         empty_label="Aucun produit.",
     )
     kits_table_html = _table_html(
-        ["Kit", "Quantite", "PU TTC", "Montant TTC"],
+        ["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
             [
                 line.title or "-",
                 _decimal_str(Decimal(line.quantity or 0)),
+                f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
             ]
@@ -287,12 +289,13 @@ def _build_template_values(*, db: Session | None, quote: Quote, lines: list[Quot
         empty_label="Aucun kit.",
     )
     lines_table_html = _table_html(
-        ["Categorie", "Intitule", "Quantite", "PU TTC", "Montant TTC"],
+        ["Categorie", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
             [
                 "Service" if (line.line_category or "").lower() == "service" else ("Kit" if line.kit_id else "Produit"),
                 line.title or "-",
                 _decimal_str(Decimal(line.quantity or 0)),
+                f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
             ]

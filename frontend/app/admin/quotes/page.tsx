@@ -603,7 +603,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                       <td>{getCalendarSessionsCount(row.calendar_snapshot)}</td>
                       <td>
                         <div className="row wrap gap-xs">
-                          <Link className="ghost" href={detailHref}>Ouvrir</Link>
+                          <Link className="ghost" href={detailHref}>{row.status === "created" ? "Modifier" : "Ouvrir"}</Link>
                           {row.status === "created" ? (
                             <form action={sendQuoteAction}>
                               <input type="hidden" name="quote_id" value={row.id} />

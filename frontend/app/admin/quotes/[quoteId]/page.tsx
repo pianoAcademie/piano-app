@@ -46,7 +46,12 @@ type QuoteLineOut = {
   kit_id: string | null;
   title: string;
   quantity: string;
+  vat_rate: string;
+  unit_price_ht: string;
+  unit_vat_amount: string;
   unit_price_ttc: string;
+  amount_ht: string;
+  amount_vat: string;
   amount_ttc: string;
 };
 
@@ -373,7 +378,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = readStringMeta(detail.quote.meta || {}, "template_id");
   const quoteCgvVersionId = readStringMeta(detail.quote.meta || {}, "cgv_version_id") || readStringMeta(detail.quote.cgv_snapshot || {}, "id");
-  const tvaRate = readStringMeta(detail.quote.meta || {}, "tva_rate", "20.00");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
   const selectedSolfegeSlot = getSelectedSolfegeSlot(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
@@ -488,7 +492,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
       <section className="card">
         <h3>Parametres du devis</h3>
-        <p className="muted">Devise, TVA, langue, template, CGV et referentiels metier du devis.</p>
+        <p className="muted">Devise, langue, templates, CGV et referentiels metier du devis.</p>
         <form action={updateQuoteSettingsAction} className="grid cols-3 config-form-grid top-gap-sm">
           <input type="hidden" name="quote_id" value={detail.quote.id} />
           <input type="hidden" name="return_to" value={selfPath} />
@@ -554,27 +558,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             </select>
           </label>
           <label>
-            TVA (%)
-            <input type="number" name="tva_rate" min={0} max={100} step="0.01" defaultValue={tvaRate} disabled={detail.quote.status !== "created"} />
-          </label>
-          <label>
             Delai expiration (jours)
             <input type="number" name="expiry_days" min={1} max={120} defaultValue={detail.quote.expiry_days} disabled={detail.quote.status !== "created"} />
           </label>
           <label>
             Annee scolaire
             <input type="text" name="school_year_label" defaultValue={detail.quote.school_year_label ?? ""} disabled={detail.quote.status !== "created"} />
-          </label>
-          <label>
-            Niveau solfege
-            <select name="estimated_solfege_level" defaultValue={detail.quote.estimated_solfege_level ?? ""} disabled={detail.quote.status !== "created"}>
-              <option value="">Non applicable</option>
-              <option value="1">Niveau 1</option>
-              <option value="2">Niveau 2</option>
-              <option value="3">Niveau 3</option>
-              <option value="4">Niveau 4</option>
-              <option value="5">Niveau 5</option>
-            </select>
           </label>
           <div className="row span-3 top-gap-sm">
             <button type="submit" disabled={detail.quote.status !== "created"}>Enregistrer parametres</button>
@@ -605,7 +594,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <p><strong>Creation:</strong> {formatDate(detail.quote.created_at)}</p>
           <p><strong>Envoi:</strong> {formatDate(detail.quote.sent_at)}</p>
           <p><strong>Expiration:</strong> {formatDate(detail.quote.expires_at)}</p>
-          <p><strong>Solfege:</strong> {detail.quote.estimated_solfege_level ? `Niveau ${detail.quote.estimated_solfege_level}` : "Non"}</p>
+          <p><strong>Solfege:</strong> {selectedSolfegeSlot ? "Configure (voir section dediee)" : "Non configure"}</p>
         </div>
       </section>
 
@@ -698,11 +687,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             id: row.id,
             title: row.title,
             price_incl_vat: row.price_incl_vat,
+            vat_rate: row.vat_rate,
           }))}
           kits={kits.map((row) => ({
             id: row.id,
             title: row.title,
             effective_price_ttc: row.price_effective_incl_vat,
+            vat_rate: row.vat_rate,
           }))}
           saveAction={updateQuoteLinesAction}
         />

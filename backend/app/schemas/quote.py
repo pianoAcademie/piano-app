@@ -63,6 +63,7 @@ class QuoteLineIn(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=1, le=600)
     pricing_unit: Literal["hour", "session", "item", "fixed"] = "item"
     quantity: Decimal = Field(default=Decimal("1"), ge=Decimal("0.01"))
+    vat_rate: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
     unit_price_ttc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     sort_order: int = Field(default=0, ge=0)
     meta: dict[str, object] = Field(default_factory=dict)
@@ -84,7 +85,12 @@ class QuoteLineOut(BaseModel):
     duration_minutes: int | None = None
     pricing_unit: str
     quantity: Decimal
+    vat_rate: Decimal
+    unit_price_ht: Decimal
+    unit_vat_amount: Decimal
     unit_price_ttc: Decimal
+    amount_ht: Decimal
+    amount_vat: Decimal
     amount_ttc: Decimal
     sort_order: int
     meta: dict[str, object] = Field(default_factory=dict)
@@ -279,7 +285,7 @@ class QuoteTypeOut(BaseModel):
 
 
 class QuoteTypeUpsertRequest(BaseModel):
-    code: str = Field(min_length=1, max_length=60)
+    code: str | None = Field(default=None, min_length=1, max_length=60)
     name: str = Field(min_length=1, max_length=180)
     description: str | None = None
     default_expiry_days: int = Field(default=10, ge=1, le=120)
