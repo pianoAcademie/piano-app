@@ -8,7 +8,7 @@ from io import StringIO
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -805,6 +805,96 @@ def report_teacher_statement_missing_service(
         message=message,
     )
     return out
+
+
+@router.post("/statements/{year}/{month}/send-external-invoice", response_model=list[TeacherStatementOut])
+async def send_teacher_external_invoice(
+    year: int,
+    month: int,
+    payor_legal_entity_id: str = Form(...),
+    note: str | None = Form(default=None),
+    invoice_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[TeacherStatementOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+
+    try:
+        payor_id = UUID(payor_legal_entity_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payor legal entity invalid") from exc
+
+    statement_row = next((item for item in rows if item[0].payor_legal_entity_id == payor_id), None)
+    if statement_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Statement not found for selected payor")
+    statement, computed = statement_row
+    if statement.status not in {"validated", "approved", "exported", "invoice_generated", "closed"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le releve doit etre approuve avant envoi d une facture externe",
+        )
+
+    file_name = (invoice_file.filename or "facture.pdf").strip()
+    if not file_name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Le fichier doit etre un PDF")
+    file_content = await invoice_file.read()
+    if not file_content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Fichier PDF vide")
+    max_size = 10 * 1024 * 1024
+    if len(file_content) > max_size:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Fichier PDF trop volumineux (max 10 Mo)")
+
+    payor = db.scalar(select(LegalEntity).where(LegalEntity.id == computed.payor_legal_entity_id))
+    if payor is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payor legal entity not found")
+
+    destination_email = _resolve_accounting_email(db, payor=payor)
+    sender = resolve_sender_profile(db, sender_kind="TEACHER")
+    note_text = (note or "").strip()
+    send_email(
+        to_email=destination_email,
+        subject=f"Facture externe professeur - {invoice_period_label(year=year, month=month)}",
+        body=(
+            f"Facture externe transmise par {professor.first_name} {professor.last_name}\n"
+            f"Periode: {invoice_period_label(year=year, month=month)}\n"
+            f"Entite payeur: {computed.payor_legal_entity_name}\n"
+            f"Total TTC releve: {computed.totals_ttc} {computed.currency}\n"
+            f"Note: {note_text or '-'}"
+        ),
+        context="TEACHER_EXTERNAL_INVOICE_TO_ACCOUNTING",
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
+        attachments=[(file_name, file_content, "application/pdf")],
+        sender_user_id=current_user.id,
+        professor_id=professor.id,
+    )
+
+    now = _utcnow()
+    statement.status = "exported"
+    statement.updated_at = now
+    db.add(statement)
+    _log_audit(
+        db,
+        event_type="teacher_statement_external_invoice_sent",
+        actor_user_id=current_user.id,
+        teacher_id=professor.id,
+        statement_id=statement.id,
+        payload={
+            "payor_legal_entity_id": str(computed.payor_legal_entity_id),
+            "payor_legal_entity_name": computed.payor_legal_entity_name,
+            "destination_email": destination_email,
+            "file_name": file_name,
+            "file_size_bytes": len(file_content),
+            "note": note_text,
+        },
+    )
+    db.commit()
+    return [_statement_out(row, computed_row) for row, computed_row in rows]
 
 
 @router.post("/statements/{year}/{month}/approve-only", response_model=list[TeacherStatementOut])

@@ -1618,6 +1618,47 @@ export async function teacherSendInvoiceToAccountingAction(formData: FormData): 
   redirect(appendQueryMessage(returnTo, "ok", "Facture envoyee a la comptabilite"));
 }
 
+export async function teacherSendExternalInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
+  const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
+  const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
+  const payorLegalEntityId = String(formData.get("payor_legal_entity_id") ?? "").trim();
+  const note = optionalField(formData, "note");
+  const invoiceFile = formData.get("invoice_file");
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !payorLegalEntityId) {
+    redirect(appendQueryMessage(returnTo, "error", "Periode ou payeur invalide"));
+  }
+  if (!(invoiceFile instanceof File) || invoiceFile.size <= 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Veuillez selectionner un PDF de facture"));
+  }
+
+  const payload = new FormData();
+  payload.set("payor_legal_entity_id", payorLegalEntityId);
+  payload.set("invoice_file", invoiceFile);
+  if (note) {
+    payload.set("note", note);
+  }
+
+  const result = await backendRequest<TeacherStatementOut[]>(
+    `/api/v1/teacher/statements/${year}/${month}/send-external-invoice`,
+    {
+      method: "POST",
+      body: payload,
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof/statements");
+  revalidatePath(`/prof/statements/${year}/${month}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Facture externe envoyee a la comptabilite"));
+}
+
 export async function createAdminSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

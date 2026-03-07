@@ -7,6 +7,8 @@ import {
   teacherDisputeSelectedLinesAction,
   teacherGenerateStatementsInvoiceAction,
   teacherReportMissingServiceAction,
+  teacherSendExternalInvoiceAction,
+  teacherSendInvoiceToAccountingAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../lib/auth-cookies";
@@ -15,7 +17,7 @@ import BottomTabs from "../../../components/teacher-ui/bottom-tabs";
 import PageHeaderMobile from "../../../components/teacher-ui/page-header-mobile";
 import TeacherMissingServiceForm, { type MissingServiceActivityOption, type MissingServiceLocationOption } from "../../../components/teacher-missing-service-form";
 import PortalImpersonationBanner from "../../../components/portal-impersonation-banner";
-import type { CourseTypeOut, LocationOut, ProfessorContractGridOut, TeacherStatementOut } from "../../../lib/types";
+import type { CourseTypeOut, LocationOut, ProfessorContractGridOut, TeacherInvoiceOut, TeacherStatementOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -254,11 +256,13 @@ export default async function TeacherStatementsPage({
     courseTypesResult,
     locationsResult,
     contractGridsResult,
+    invoicesResult,
   ] = await Promise.all([
     backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements/${year}/${month}`, {}, token),
     backendRequest<CourseTypeOut[]>("/api/v1/course-types?active=true", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token),
     backendRequest<ProfessorContractGridOut[]>("/api/v1/professors/me/contract-grids", {}, token),
+    backendRequest<TeacherInvoiceOut[]>(`/api/v1/teacher/invoices?year=${year}&month=${month}`, {}, token),
   ]);
 
   const statements = statementsResult.ok ? statementsResult.data : [];
@@ -295,6 +299,11 @@ export default async function TeacherStatementsPage({
     : notice === "dispute_sent"
       ? "Votre signalement de probleme a bien ete envoye."
       : "";
+  const monthInvoices = invoicesResult.ok ? invoicesResult.data : [];
+  const externalPayorOptions = statements.map((statement) => ({
+    id: statement.payor_legal_entity_id,
+    label: statement.payor_legal_entity_name,
+  }));
 
   const gridLineByCourseTypeId = new Map<string, ProfessorContractGridOut["lines"][number]>();
   if (contractGridsResult.ok) {
@@ -419,6 +428,7 @@ export default async function TeacherStatementsPage({
       {!courseTypesResult.ok ? <AlertCard tone="error">Erreur prestations: {courseTypesResult.message}</AlertCard> : null}
       {!locationsResult.ok ? <AlertCard tone="error">Erreur lieux: {locationsResult.message}</AlertCard> : null}
       {!contractGridsResult.ok ? <AlertCard tone="error">Erreur grille contractuelle: {contractGridsResult.message}</AlertCard> : null}
+      {!invoicesResult.ok ? <AlertCard tone="error">Erreur factures: {invoicesResult.message}</AlertCard> : null}
 
       <article className="card statement-month-switcher">
         <div className="row spread">
@@ -550,9 +560,76 @@ export default async function TeacherStatementsPage({
                 Generer ma facture (modele Piano Academie)
               </button>
             </form>
-            <a className="mode-link" href={`/prof/statements/${year}/${month}/export`}>
-              Exporter les prestations (modele personnel)
-            </a>
+            <details className="statement-external-billing">
+              <summary>Facturation externe (modele personnel)</summary>
+              <p className="muted">Exportez vos prestations puis emettez votre facture depuis votre propre logiciel.</p>
+              <a className="mode-link" href={`/prof/statements/${year}/${month}/export`}>
+                Exporter les prestations
+              </a>
+              {externalPayorOptions.length > 0 ? (
+                <form action={teacherSendExternalInvoiceAction} className="grid top-gap-sm teacher-form-stack statement-external-send-form">
+                  <input type="hidden" name="year" value={year} />
+                  <input type="hidden" name="month" value={month} />
+                  <input type="hidden" name="return_to" value={statementsMonthHref} />
+                  <label>
+                    Entite destinataire
+                    <select name="payor_legal_entity_id" required>
+                      {externalPayorOptions.map((payor) => (
+                        <option key={payor.id} value={payor.id}>
+                          {payor.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Facture PDF
+                    <input type="file" name="invoice_file" accept="application/pdf,.pdf" required />
+                  </label>
+                  <label>
+                    Note (optionnelle)
+                    <textarea name="note" rows={3} maxLength={1000} placeholder="Informations utiles pour la comptabilite" />
+                  </label>
+                  <button type="submit">Envoyer la facture externe a la comptabilite</button>
+                </form>
+              ) : null}
+            </details>
+            {monthInvoices.length > 0 ? (
+              <section className="statement-generated-invoices">
+                <h4>Factures generees sur cette periode</h4>
+                <div className="statement-generated-list">
+                  {monthInvoices.map((invoice) => (
+                    <article key={invoice.id} className="statement-generated-card">
+                      <div className="row spread statement-generated-head">
+                        <strong>{invoice.invoice_number}</strong>
+                        <span className={`status-pill ${invoice.status === "sent_to_accounting" ? "status-ok" : "status-off"}`}>
+                          {invoice.status === "sent_to_accounting" ? "Envoyee comptabilite" : "Generee"}
+                        </span>
+                      </div>
+                      <small className="muted">
+                        Date: {invoice.invoice_date} • TTC: {invoice.totals_ttc} EUR
+                      </small>
+                      <div className="statement-generated-actions">
+                        <Link className="mode-link" href={`/prof/invoices/${invoice.id}`}>
+                          Ouvrir
+                        </Link>
+                        <a className="mode-link" href={`/api/v1/teacher/invoices/${invoice.id}/pdf`}>
+                          PDF
+                        </a>
+                        {invoice.status === "sent_to_accounting" ? (
+                          <small className="muted">Facture deja envoyee a la comptabilite.</small>
+                        ) : (
+                          <form action={teacherSendInvoiceToAccountingAction}>
+                            <input type="hidden" name="invoice_id" value={invoice.id} />
+                            <input type="hidden" name="return_to" value={statementsMonthHref} />
+                            <button type="submit">Envoyer a la comptabilite</button>
+                          </form>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
           </div>
         ) : (
           <p className="muted">Facturation verrouillee: le releve doit etre approuve avant generation ou export.</p>
