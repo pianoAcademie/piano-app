@@ -8795,6 +8795,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     school_year_label: schoolYearLabel,
     currency,
     language,
+    vat_rate: tvaRate,
     meta: {
       ...(tvaRate ? { tva_rate: tvaRate } : {}),
       ...(parsedSolfegeSlot ? { selected_solfege_slot: parsedSolfegeSlot } : {}),
@@ -8863,6 +8864,34 @@ export async function sendQuoteAction(formData: FormData): Promise<void> {
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
   redirect(appendQueryMessage(returnTo, "ok", "Devis envoye"));
+}
+
+export async function regenerateQuoteDocumentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const result = await backendRequest<{ quote_id: string; document_status: string }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/document/regenerate`,
+    { method: "POST" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Document devis regenere"));
 }
 
 export async function duplicateQuoteAction(formData: FormData): Promise<void> {
@@ -8959,6 +8988,7 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     school_year_label: schoolYearLabel || null,
     currency,
     language,
+    vat_rate: tvaRateRaw ? Number(tvaRateRaw).toFixed(2) : null,
     estimated_solfege_level: estimatedSolfegeLevel,
     meta,
   };

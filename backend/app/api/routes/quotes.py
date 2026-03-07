@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+import hashlib
 import io
 import secrets
 from uuid import UUID
@@ -26,11 +27,16 @@ from app.models.quote import (
     Prospect,
     Quote,
     QuoteAcceptanceFollowup,
+    QuoteDocumentSnapshot,
     QuoteEmailOutbox,
     QuoteEvent,
     QuoteLine,
+    QuoteTemplate,
+    QuoteTemplateVersion,
     QuoteType,
     SolfegeLevelRule,
+    TermsTemplate,
+    TermsTemplateVersion,
 )
 from app.models.user import ClientStatus, User, UserRole
 from app.schemas.quote import (
@@ -76,7 +82,7 @@ from app.services.email_delivery import send_email
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.quotes.payment_plan_engine import PaymentPlanScheduleInput, build_payment_schedule
-from app.services.quotes.quote_documents import render_quote_pdf
+from app.services.quotes.quote_documents import render_quote_parts_html
 from app.services.quotes.template_registry import (
     delete_quote_template,
     find_quote_template,
@@ -86,6 +92,7 @@ from app.services.quotes.template_registry import (
     upsert_quote_template,
 )
 from app.services.security import hash_password
+from app.services.teacher_invoice_documents import render_teacher_invoice_pdf_from_html
 
 router = APIRouter()
 
@@ -162,6 +169,9 @@ def _line_out(row: QuoteLine) -> QuoteLineOut:
 
 
 def _quote_out(row: Quote) -> QuoteOut:
+    meta = row.meta or {}
+    fallback_language = str(meta.get("language") or "").strip().lower() or None
+    fallback_vat = _extract_vat_rate(meta)
     return QuoteOut(
         id=row.id,
         quote_number=row.quote_number,
@@ -173,6 +183,10 @@ def _quote_out(row: Quote) -> QuoteOut:
         client_id=row.client_id,
         location_id=row.location_id,
         payment_plan_id=row.payment_plan_id,
+        quote_template_id=row.quote_template_id,
+        quote_template_version_id=row.quote_template_version_id,
+        terms_template_id=row.terms_template_id,
+        terms_template_version_id=row.terms_template_version_id,
         status=row.status,
         public_token=row.public_token,
         pdf_token=row.pdf_token,
@@ -188,6 +202,8 @@ def _quote_out(row: Quote) -> QuoteOut:
         expired_at=row.expired_at,
         cancelled_at=row.cancelled_at,
         school_year_label=row.school_year_label,
+        language=row.language or fallback_language,
+        vat_rate=_q2(Decimal(row.vat_rate or 0)) if row.vat_rate is not None else fallback_vat,
         estimated_solfege_level=row.estimated_solfege_level,
         solfege_duration_minutes=row.solfege_duration_minutes,
         selected_solfege_slot=row.selected_solfege_slot or {},
@@ -195,7 +211,11 @@ def _quote_out(row: Quote) -> QuoteOut:
         payment_terms_snapshot=row.payment_terms_snapshot or {},
         cgv_snapshot=row.cgv_snapshot or {},
         price_snapshot=row.price_snapshot or {},
-        meta=row.meta or {},
+        meta=meta,
+        document_status=row.document_status,
+        document_snapshot_id=row.document_snapshot_id,
+        document_hash=row.document_hash,
+        document_generated_at=row.document_generated_at,
         reminder_sent_at=row.reminder_sent_at,
         created_by_user_id=row.created_by_user_id,
         created_at=row.created_at,
@@ -422,6 +442,73 @@ def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: D
             currency=(quote.currency or "EUR").upper(),
         )
     )
+
+
+def _extract_vat_rate(meta: dict[str, object] | None) -> Decimal | None:
+    if not meta:
+        return None
+    raw = str(meta.get("tva_rate") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = Decimal(raw)
+    except Exception:
+        return None
+    if value < Decimal("0") or value > Decimal("100"):
+        return None
+    return value.quantize(Decimal("0.01"))
+
+
+def _freeze_quote_document_snapshot(db: Session, *, quote: Quote, lines: list[QuoteLine], state: str) -> QuoteDocumentSnapshot:
+    body_html, terms_html, combined_html = render_quote_parts_html(quote=quote, lines=lines)
+    document_hash = hashlib.sha256(combined_html.encode("utf-8")).hexdigest()
+    existing = db.scalar(
+        select(QuoteDocumentSnapshot)
+        .where(
+            QuoteDocumentSnapshot.quote_id == quote.id,
+            QuoteDocumentSnapshot.snapshot_kind == "combined",
+            QuoteDocumentSnapshot.document_hash == document_hash,
+        )
+        .order_by(QuoteDocumentSnapshot.created_at.desc())
+        .limit(1)
+    )
+    now = _utcnow()
+    if existing is None:
+        existing = QuoteDocumentSnapshot(
+            quote_id=quote.id,
+            snapshot_kind="combined",
+            language=quote.language,
+            currency=quote.currency,
+            vat_rate=quote.vat_rate,
+            quote_template_id=quote.quote_template_id,
+            quote_template_version_id=quote.quote_template_version_id,
+            terms_template_id=quote.terms_template_id,
+            terms_template_version_id=quote.terms_template_version_id,
+            quote_body_snapshot=body_html,
+            terms_body_snapshot=terms_html,
+            combined_html_snapshot=combined_html,
+            document_hash=document_hash,
+            created_at=now,
+        )
+        db.add(existing)
+        db.flush()
+
+    quote.document_snapshot_id = existing.id
+    quote.document_hash = existing.document_hash
+    quote.document_generated_at = now
+    quote.document_status = state
+    quote.updated_at = now
+    db.add(quote)
+    return existing
+
+
+def _resolve_quote_pdf_bytes(db: Session, *, quote: Quote, lines: list[QuoteLine], freeze_state: str) -> bytes:
+    if quote.document_snapshot_id:
+        snapshot = db.scalar(select(QuoteDocumentSnapshot).where(QuoteDocumentSnapshot.id == quote.document_snapshot_id))
+        if snapshot is not None and snapshot.combined_html_snapshot:
+            return render_teacher_invoice_pdf_from_html(snapshot.combined_html_snapshot)
+    snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state=freeze_state)
+    return render_teacher_invoice_pdf_from_html(snapshot.combined_html_snapshot)
 
 
 def _effective_item_price(
@@ -872,6 +959,44 @@ def create_quote(
         if client is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
+    selected_quote_template = None
+    if payload.quote_template_uuid is not None:
+        selected_quote_template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == payload.quote_template_uuid))
+        if selected_quote_template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template UUID not found")
+    selected_quote_template_version = None
+    if payload.quote_template_version_id is not None:
+        selected_quote_template_version = db.scalar(
+            select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == payload.quote_template_version_id)
+        )
+        if selected_quote_template_version is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template version not found")
+        if payload.quote_template_uuid is not None and selected_quote_template_version.quote_template_id != payload.quote_template_uuid:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Template version does not match template")
+        if selected_quote_template is None:
+            selected_quote_template = db.scalar(
+                select(QuoteTemplate).where(QuoteTemplate.id == selected_quote_template_version.quote_template_id)
+            )
+
+    selected_terms_template = None
+    if payload.terms_template_id is not None:
+        selected_terms_template = db.scalar(select(TermsTemplate).where(TermsTemplate.id == payload.terms_template_id))
+        if selected_terms_template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
+    selected_terms_template_version = None
+    if payload.terms_template_version_id is not None:
+        selected_terms_template_version = db.scalar(
+            select(TermsTemplateVersion).where(TermsTemplateVersion.id == payload.terms_template_version_id)
+        )
+        if selected_terms_template_version is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template version not found")
+        if payload.terms_template_id is not None and selected_terms_template_version.terms_template_id != payload.terms_template_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Terms version does not match template")
+        if selected_terms_template is None:
+            selected_terms_template = db.scalar(
+                select(TermsTemplate).where(TermsTemplate.id == selected_terms_template_version.terms_template_id)
+            )
+
     selected_template = resolve_quote_template_for_quote(db, template_id=payload.quote_template_id)
     if payload.quote_template_id and selected_template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
@@ -882,6 +1007,8 @@ def create_quote(
     quote_meta = dict(payload.meta or {})
     if payload.language is not None and payload.language.strip():
         quote_meta["language"] = payload.language.strip().lower()
+    if payload.vat_rate is not None:
+        quote_meta["tva_rate"] = str(payload.vat_rate)
     if selected_template is not None:
         quote_meta["template_id"] = selected_template["id"]
         quote_meta["template_code"] = selected_template["code"]
@@ -889,6 +1016,11 @@ def create_quote(
         quote_meta["template_language"] = selected_template["language"]
         quote_meta["template_subject"] = selected_template["subject_template"]
         quote_meta["template_body"] = selected_template["body_template"]
+    resolved_language = (
+        payload.language.strip().lower()
+        if payload.language is not None and payload.language.strip()
+        else str(selected_template.get("language") or "").strip().lower() if selected_template is not None else None
+    )
 
     row = Quote(
         quote_number=_new_quote_number(),
@@ -900,6 +1032,10 @@ def create_quote(
         client_id=payload.client_id,
         location_id=payload.location_id,
         payment_plan_id=payload.payment_plan_id,
+        quote_template_id=selected_quote_template.id if selected_quote_template is not None else None,
+        quote_template_version_id=selected_quote_template_version.id if selected_quote_template_version is not None else None,
+        terms_template_id=selected_terms_template.id if selected_terms_template is not None else None,
+        terms_template_version_id=selected_terms_template_version.id if selected_terms_template_version is not None else None,
         status="created",
         version_number=1,
         currency=payload.currency.upper(),
@@ -907,6 +1043,8 @@ def create_quote(
         expiry_days=int(payload.expiry_days),
         expires_at=expires_at,
         school_year_label=payload.school_year_label,
+        language=resolved_language or None,
+        vat_rate=payload.vat_rate if payload.vat_rate is not None else _extract_vat_rate(quote_meta),
         estimated_solfege_level=payload.estimated_solfege_level,
         selected_solfege_slot=payload.selected_solfege_slot,
         calendar_snapshot=payload.calendar_snapshot,
@@ -936,11 +1074,19 @@ def create_quote(
         selected_cgv = db.scalar(select(CgvVersion).where(CgvVersion.id == payload.cgv_version_id))
         if selected_cgv is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CGV version not found")
-        row.cgv_snapshot = {"version_label": selected_cgv.version_label, "content": selected_cgv.content}
+        row.cgv_snapshot = {"id": str(selected_cgv.id), "version_label": selected_cgv.version_label, "content": selected_cgv.content}
+    elif selected_terms_template_version is not None:
+        content_snapshot = selected_terms_template_version.content_snapshot or {}
+        row.cgv_snapshot = {
+            "terms_template_id": str(selected_terms_template.id) if selected_terms_template is not None else None,
+            "terms_template_version_id": str(selected_terms_template_version.id),
+            "version_label": str(content_snapshot.get("version_label") or f"terms-v{selected_terms_template_version.version_number}"),
+            "content": str(content_snapshot.get("content") or ""),
+        }
     elif not row.cgv_snapshot:
         cgv = db.scalar(select(CgvVersion).where(CgvVersion.is_active.is_(True)).order_by(CgvVersion.created_at.desc()).limit(1))
         if cgv is not None:
-            row.cgv_snapshot = {"version_label": cgv.version_label, "content": cgv.content}
+            row.cgv_snapshot = {"id": str(cgv.id), "version_label": cgv.version_label, "content": cgv.content}
 
     db.add(row)
     db.flush()
@@ -991,17 +1137,66 @@ def update_quote(
 ) -> QuoteDetailOut:
     row = _load_quote(db, quote_id, lock=True)
     _ensure_quote_editable(row)
+    document_dirty = False
 
     if payload.quote_type is not None:
         row.quote_type = payload.quote_type
+        document_dirty = True
     if payload.quote_type_id is not None:
         row.quote_type_id = payload.quote_type_id
+        document_dirty = True
     if payload.pricing_catalog_id is not None:
         row.pricing_catalog_id = payload.pricing_catalog_id
+        document_dirty = True
     if payload.location_id is not None:
         row.location_id = payload.location_id
+        document_dirty = True
     if payload.payment_plan_id is not None:
         row.payment_plan_id = payload.payment_plan_id
+        document_dirty = True
+    if payload.quote_template_uuid is not None:
+        selected_quote_template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == payload.quote_template_uuid))
+        if selected_quote_template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template UUID not found")
+        row.quote_template_id = selected_quote_template.id
+        row.quote_template_version_id = None
+        document_dirty = True
+    if payload.quote_template_version_id is not None:
+        selected_quote_template_version = db.scalar(
+            select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == payload.quote_template_version_id)
+        )
+        if selected_quote_template_version is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template version not found")
+        if row.quote_template_id is not None and selected_quote_template_version.quote_template_id != row.quote_template_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Template version does not match template")
+        row.quote_template_id = selected_quote_template_version.quote_template_id
+        row.quote_template_version_id = selected_quote_template_version.id
+        document_dirty = True
+    if payload.terms_template_id is not None:
+        selected_terms_template = db.scalar(select(TermsTemplate).where(TermsTemplate.id == payload.terms_template_id))
+        if selected_terms_template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
+        row.terms_template_id = selected_terms_template.id
+        row.terms_template_version_id = None
+        document_dirty = True
+    if payload.terms_template_version_id is not None:
+        selected_terms_template_version = db.scalar(
+            select(TermsTemplateVersion).where(TermsTemplateVersion.id == payload.terms_template_version_id)
+        )
+        if selected_terms_template_version is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template version not found")
+        if row.terms_template_id is not None and selected_terms_template_version.terms_template_id != row.terms_template_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Terms version does not match template")
+        row.terms_template_id = selected_terms_template_version.terms_template_id
+        row.terms_template_version_id = selected_terms_template_version.id
+        content_snapshot = selected_terms_template_version.content_snapshot or {}
+        row.cgv_snapshot = {
+            "terms_template_id": str(selected_terms_template_version.terms_template_id),
+            "terms_template_version_id": str(selected_terms_template_version.id),
+            "version_label": str(content_snapshot.get("version_label") or f"terms-v{selected_terms_template_version.version_number}"),
+            "content": str(content_snapshot.get("content") or ""),
+        }
+        document_dirty = True
     if payload.quote_template_id is not None:
         selected_template = resolve_quote_template_for_quote(db, template_id=payload.quote_template_id)
         if payload.quote_template_id and selected_template is None:
@@ -1016,34 +1211,53 @@ def update_quote(
                 "template_subject": selected_template["subject_template"],
                 "template_body": selected_template["body_template"],
             }
+            document_dirty = True
     if payload.school_year_label is not None:
         row.school_year_label = payload.school_year_label
+        document_dirty = True
     if payload.currency is not None:
         row.currency = payload.currency.upper()
+        document_dirty = True
     if payload.language is not None and payload.language.strip():
-        row.meta = {**(row.meta or {}), "language": payload.language.strip().lower()}
+        normalized_language = payload.language.strip().lower()
+        row.meta = {**(row.meta or {}), "language": normalized_language}
+        row.language = normalized_language
+        document_dirty = True
+    if payload.vat_rate is not None:
+        row.vat_rate = payload.vat_rate
+        row.meta = {**(row.meta or {}), "tva_rate": str(payload.vat_rate)}
+        document_dirty = True
     if payload.expiry_days is not None:
         row.expiry_days = int(payload.expiry_days)
         row.expires_at = _utcnow() + timedelta(days=int(payload.expiry_days))
+        document_dirty = True
     if payload.estimated_solfege_level is not None:
         row.estimated_solfege_level = payload.estimated_solfege_level
+        document_dirty = True
     if payload.selected_solfege_slot is not None:
         row.selected_solfege_slot = payload.selected_solfege_slot
+        document_dirty = True
     if payload.calendar_snapshot is not None:
         row.calendar_snapshot = payload.calendar_snapshot
+        document_dirty = True
     if payload.payment_terms_snapshot is not None:
         row.payment_terms_snapshot = payload.payment_terms_snapshot
+        document_dirty = True
     if payload.cgv_snapshot is not None:
         row.cgv_snapshot = payload.cgv_snapshot
+        document_dirty = True
     if payload.cgv_version_id is not None:
         selected_cgv = db.scalar(select(CgvVersion).where(CgvVersion.id == payload.cgv_version_id))
         if selected_cgv is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CGV version not found")
-        row.cgv_snapshot = {"version_label": selected_cgv.version_label, "content": selected_cgv.content}
+        row.cgv_snapshot = {"id": str(selected_cgv.id), "version_label": selected_cgv.version_label, "content": selected_cgv.content}
+        document_dirty = True
     if payload.price_snapshot is not None:
         row.price_snapshot = payload.price_snapshot
     if payload.meta is not None:
         row.meta = payload.meta
+        row.vat_rate = _extract_vat_rate(row.meta or {})
+        document_dirty = True
 
     if payload.lines is not None:
         total = _materialize_quote_lines(db, quote=row, lines_in=payload.lines)
@@ -1052,6 +1266,13 @@ def update_quote(
                 "schedule": _build_payment_schedule_for_quote(db, row, total_ttc=total),
                 "currency": row.currency,
             }
+        document_dirty = True
+
+    if document_dirty:
+        row.document_status = "stale"
+        row.document_hash = None
+        row.document_generated_at = None
+        row.document_snapshot_id = None
 
     row.updated_at = _utcnow()
     db.add(row)
@@ -1160,13 +1381,64 @@ def generate_quote_pdf(
 ) -> StreamingResponse:
     quote = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
-    pdf_bytes = render_quote_pdf(quote=quote, lines=lines)
+    pdf_bytes = _resolve_quote_pdf_bytes(db, quote=quote, lines=lines, freeze_state="generated")
+    db.commit()
     filename = f"devis-{quote.quote_number}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
+
+
+@router.get("/quotes/{quote_id}/document-preview")
+def preview_quote_document(
+    quote_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict[str, object]:
+    quote = _load_quote(db, quote_id)
+    lines = _load_quote_lines(db, quote_id)
+    body_html, terms_html, combined_html = render_quote_parts_html(quote=quote, lines=lines)
+    document_hash = hashlib.sha256(combined_html.encode("utf-8")).hexdigest()
+    return {
+        "quote_id": str(quote.id),
+        "document_hash": document_hash,
+        "document_status": quote.document_status,
+        "document_snapshot_id": str(quote.document_snapshot_id) if quote.document_snapshot_id else None,
+        "quote_body_html": body_html,
+        "terms_html": terms_html,
+        "combined_html": combined_html,
+    }
+
+
+@router.post("/quotes/{quote_id}/document/regenerate")
+def regenerate_quote_document(
+    quote_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict[str, object]:
+    quote = _load_quote(db, quote_id, lock=True)
+    _ensure_quote_editable(quote)
+    lines = _load_quote_lines(db, quote.id)
+    snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="generated")
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_document_regenerated",
+            actor_type="admin",
+            payload={"snapshot_id": str(snapshot.id), "document_hash": snapshot.document_hash},
+            created_at=_utcnow(),
+        )
+    )
+    db.commit()
+    return {
+        "quote_id": str(quote.id),
+        "document_status": quote.document_status,
+        "document_snapshot_id": str(snapshot.id),
+        "document_hash": snapshot.document_hash,
+        "generated_at": quote.document_generated_at.isoformat() if quote.document_generated_at else None,
+    }
 
 
 @router.get("/quotes/{quote_id}/pdf")
@@ -1177,7 +1449,8 @@ def download_quote_pdf(
 ) -> StreamingResponse:
     quote = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
-    pdf_bytes = render_quote_pdf(quote=quote, lines=lines)
+    pdf_bytes = _resolve_quote_pdf_bytes(db, quote=quote, lines=lines, freeze_state="generated")
+    db.commit()
     filename = f"devis-{quote.quote_number}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -1272,6 +1545,8 @@ def send_quote(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No recipient email resolved for quote")
 
     quote.meta = {**(quote.meta or {}), "recipient_email": recipient}
+    lines = _load_quote_lines(db, quote.id)
+    snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     db.add(quote)
     db.add(
         QuoteEvent(
@@ -1279,7 +1554,7 @@ def send_quote(
             event_type="quote_sent",
             actor_type="admin",
             actor_id=current_user.id,
-            payload={"recipient_email": recipient},
+            payload={"recipient_email": recipient, "document_snapshot_id": str(snapshot.id), "document_hash": snapshot.document_hash},
             created_at=now,
         )
     )
@@ -1306,9 +1581,21 @@ def resend_quote(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No recipient email resolved for quote")
 
     quote.meta = {**(quote.meta or {}), "recipient_email": recipient}
+    lines = _load_quote_lines(db, quote.id)
+    snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     quote.updated_at = _utcnow()
     db.add(quote)
     _send_quote_email(db, quote=quote, recipient_email=recipient, kind="quote_resend", actor_id=current_user.id)
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_resent",
+            actor_type="admin",
+            actor_id=current_user.id,
+            payload={"recipient_email": recipient, "document_snapshot_id": str(snapshot.id), "document_hash": snapshot.document_hash},
+            created_at=_utcnow(),
+        )
+    )
     db.commit()
     db.refresh(quote)
     return _quote_detail_out(db, quote)
@@ -1430,20 +1717,24 @@ def public_approve_quote(
     followup.updated_at = now
     db.add(followup)
 
+    lines = _load_quote_lines(db, quote.id)
+    snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     db.add(
         QuoteEvent(
             quote_id=quote.id,
             event_type="quote_approved",
             actor_type="prospect",
-            payload={"target_client_id": str(target_client_id) if target_client_id else None},
+            payload={
+                "target_client_id": str(target_client_id) if target_client_id else None,
+                "document_snapshot_id": str(snapshot.id),
+                "document_hash": snapshot.document_hash,
+            },
             created_at=now,
         )
     )
-
     db.add(quote)
     db.commit()
     db.refresh(quote)
-    lines = _load_quote_lines(db, quote.id)
     return QuotePublicOut(
         quote=_quote_out(quote),
         lines=[_line_out(row) for row in lines],
@@ -1533,7 +1824,8 @@ def public_quote_pdf(
     if quote.pdf_token != t:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid PDF token")
     lines = _load_quote_lines(db, quote.id)
-    pdf_bytes = render_quote_pdf(quote=quote, lines=lines)
+    pdf_bytes = _resolve_quote_pdf_bytes(db, quote=quote, lines=lines, freeze_state="frozen")
+    db.commit()
     filename = f"devis-{quote.quote_number}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

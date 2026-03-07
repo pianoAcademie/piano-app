@@ -247,6 +247,163 @@ class CgvVersion(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
 
 
+class QuoteTemplate(Base):
+    __tablename__ = "quote_templates"
+    __table_args__ = (UniqueConstraint("code", name="uq_quote_templates_code"),)
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    code: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    template_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default=text("'quote_body'"))
+    target: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    language: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'fr'"))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'draft'"))
+    current_version_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QuoteTemplateVersion(Base):
+    __tablename__ = "quote_template_versions"
+    __table_args__ = (UniqueConstraint("quote_template_id", "version_number", name="uq_quote_template_versions_number"),)
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    quote_template_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    is_active_version: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    changelog: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class TermsTemplate(Base):
+    __tablename__ = "terms_templates"
+    __table_args__ = (UniqueConstraint("code", name="uq_terms_templates_code"),)
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    code: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    terms_type: Mapped[str] = mapped_column(String(40), nullable=False, server_default=text("'cgv'"))
+    target: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    language: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'fr'"))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'draft'"))
+    current_version_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TermsTemplateVersion(Base):
+    __tablename__ = "terms_template_versions"
+    __table_args__ = (UniqueConstraint("terms_template_id", "version_number", name="uq_terms_template_versions_number"),)
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    terms_template_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("terms_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    is_active_version: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    changelog: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class QuoteDocumentBinding(Base):
+    __tablename__ = "quote_document_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "prospect_type",
+            "context_type",
+            "activity_family",
+            "language",
+            "is_active",
+            name="uq_quote_document_bindings_scope",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    prospect_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    context_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    activity_family: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    activity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("course_types.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quote_type_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_types.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    language: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    quote_template_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quote_template_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_template_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    terms_template_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("terms_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    terms_template_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("terms_template_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("100"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
 class Quote(Base):
     __tablename__ = "quotes"
     __table_args__ = (UniqueConstraint("quote_number", name="uq_quotes_quote_number"),)
@@ -290,6 +447,26 @@ class Quote(Base):
         ForeignKey("payment_plans.id", ondelete="SET NULL"),
         nullable=True,
     )
+    quote_template_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quote_template_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_template_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    terms_template_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("terms_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    terms_template_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("terms_template_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'created'"))
     version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     parent_quote_id: Mapped[UUID | None] = mapped_column(
@@ -307,6 +484,8 @@ class Quote(Base):
     expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     school_year_label: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    vat_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     estimated_solfege_level: Mapped[str | None] = mapped_column(String(10), nullable=True)
     solfege_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     selected_solfege_slot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
@@ -315,6 +494,10 @@ class Quote(Base):
     cgv_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     price_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     meta: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    document_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'stale'"))
+    document_snapshot_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    document_hash: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    document_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     public_token: Mapped[str | None] = mapped_column(String(160), nullable=True, unique=True)
     pdf_token: Mapped[str | None] = mapped_column(String(160), nullable=True, unique=True)
     pdf_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -326,6 +509,54 @@ class Quote(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class QuoteDocumentSnapshot(Base):
+    __tablename__ = "quote_document_snapshots"
+    __table_args__ = (
+        UniqueConstraint("quote_id", "snapshot_kind", "document_hash", name="uq_quote_document_snapshots_hash"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    quote_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quotes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    snapshot_kind: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'combined'"))
+    language: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    vat_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    quote_template_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quote_template_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_template_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    terms_template_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("terms_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    terms_template_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("terms_template_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quote_body_snapshot: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    terms_body_snapshot: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    combined_html_snapshot: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''"))
+    document_hash: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
 
 
 class QuoteLine(Base):

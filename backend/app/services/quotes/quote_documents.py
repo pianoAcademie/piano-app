@@ -16,7 +16,7 @@ def _money(value: Decimal, currency: str) -> str:
     return f"{amount} {currency}"
 
 
-def render_quote_html(*, quote: Quote, lines: list[QuoteLine]) -> str:
+def _render_quote_body_html(*, quote: Quote, lines: list[QuoteLine]) -> str:
     currency = (quote.currency or "EUR").upper()
     line_rows = "".join(
         (
@@ -34,8 +34,6 @@ def render_quote_html(*, quote: Quote, lines: list[QuoteLine]) -> str:
 
     calendar_snapshot = quote.calendar_snapshot or {}
     payment_terms = quote.payment_terms_snapshot or {}
-    cgv_snapshot = quote.cgv_snapshot or {}
-
     expires_at = quote.expires_at.strftime("%d/%m/%Y") if quote.expires_at else "-"
     sent_at = quote.sent_at.strftime("%d/%m/%Y %H:%M") if quote.sent_at else "-"
     generated_at = _utcnow().strftime("%d/%m/%Y %H:%M")
@@ -64,11 +62,7 @@ def render_quote_html(*, quote: Quote, lines: list[QuoteLine]) -> str:
     if not payment_schedule_html:
         payment_schedule_html = "<li>Paiement a definir</li>"
 
-    cgv_label = cgv_snapshot.get("version_label") or "Version non precisee"
-    cgv_content = str(cgv_snapshot.get("content") or "").strip()[:2000]
-
     return (
-        "<html><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
         f"<h1>Devis {quote.quote_number}</h1>"
         f"<p><strong>Statut :</strong> {quote.status}</p>"
         f"<p><strong>Date envoi :</strong> {sent_at}</p>"
@@ -84,14 +78,51 @@ def render_quote_html(*, quote: Quote, lines: list[QuoteLine]) -> str:
         f"<ul>{calendar_html}</ul>"
         "<h2>Echeancier</h2>"
         f"<ul>{payment_schedule_html}</ul>"
+    )
+
+
+def _render_quote_terms_html(*, quote: Quote) -> str:
+    cgv_snapshot = quote.cgv_snapshot or {}
+    cgv_label = cgv_snapshot.get("version_label") or "Version non precisee"
+    cgv_content = str(cgv_snapshot.get("content") or "").strip()
+    return (
+        "<section>"
         "<h2>Conditions generales</h2>"
         f"<p><strong>{cgv_label}</strong></p>"
         f"<p>{cgv_content or 'Aucune CGV snapshottee.'}</p>"
+        "</section>"
+    )
+
+
+def render_quote_combined_html(*, quote: Quote, lines: list[QuoteLine]) -> str:
+    body_html = _render_quote_body_html(quote=quote, lines=lines)
+    terms_html = _render_quote_terms_html(quote=quote)
+    return (
+        "<html><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
+        f"<section>{body_html}</section>"
+        "<div style='page-break-before:always;'></div>"
+        f"{terms_html}"
         "</body></html>"
     )
 
 
-def render_quote_pdf(*, quote: Quote, lines: list[QuoteLine]) -> bytes:
-    html = render_quote_html(quote=quote, lines=lines)
-    return render_teacher_invoice_pdf_from_html(html)
+def render_quote_html(*, quote: Quote, lines: list[QuoteLine]) -> str:
+    return render_quote_combined_html(quote=quote, lines=lines)
 
+
+def render_quote_parts_html(*, quote: Quote, lines: list[QuoteLine]) -> tuple[str, str, str]:
+    body_html = _render_quote_body_html(quote=quote, lines=lines)
+    terms_html = _render_quote_terms_html(quote=quote)
+    combined_html = (
+        "<html><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
+        f"<section>{body_html}</section>"
+        "<div style='page-break-before:always;'></div>"
+        f"{terms_html}"
+        "</body></html>"
+    )
+    return body_html, terms_html, combined_html
+
+
+def render_quote_pdf(*, quote: Quote, lines: list[QuoteLine]) -> bytes:
+    html = render_quote_combined_html(quote=quote, lines=lines)
+    return render_teacher_invoice_pdf_from_html(html)

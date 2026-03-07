@@ -103,6 +103,10 @@ class QuoteOut(BaseModel):
     client_id: UUID | None = None
     location_id: UUID | None = None
     payment_plan_id: UUID | None = None
+    quote_template_id: UUID | None = None
+    quote_template_version_id: UUID | None = None
+    terms_template_id: UUID | None = None
+    terms_template_version_id: UUID | None = None
     status: str
     public_token: str | None = None
     pdf_token: str | None = None
@@ -118,6 +122,8 @@ class QuoteOut(BaseModel):
     expired_at: datetime | None = None
     cancelled_at: datetime | None = None
     school_year_label: str | None = None
+    language: str | None = None
+    vat_rate: Decimal | None = None
     estimated_solfege_level: str | None = None
     solfege_duration_minutes: int | None = None
     selected_solfege_slot: dict[str, object] = Field(default_factory=dict)
@@ -126,6 +132,10 @@ class QuoteOut(BaseModel):
     cgv_snapshot: dict[str, object] = Field(default_factory=dict)
     price_snapshot: dict[str, object] = Field(default_factory=dict)
     meta: dict[str, object] = Field(default_factory=dict)
+    document_status: str = "stale"
+    document_snapshot_id: UUID | None = None
+    document_hash: str | None = None
+    document_generated_at: datetime | None = None
     reminder_sent_at: datetime | None = None
     created_by_user_id: UUID | None = None
     created_at: datetime
@@ -146,11 +156,16 @@ class QuoteCreateRequest(BaseModel):
     client_id: UUID | None = None
     location_id: UUID | None = None
     payment_plan_id: UUID | None = None
+    quote_template_uuid: UUID | None = None
+    quote_template_version_id: UUID | None = None
+    terms_template_id: UUID | None = None
+    terms_template_version_id: UUID | None = None
     quote_template_id: str | None = Field(default=None, max_length=80)
     cgv_version_id: UUID | None = None
     school_year_label: str | None = Field(default=None, max_length=40)
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     language: str | None = Field(default=None, max_length=8)
+    vat_rate: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
     expiry_days: int = Field(default=10, ge=1, le=120)
     quote_date: date | None = None
     estimated_solfege_level: str | None = Field(default=None, max_length=10)
@@ -169,11 +184,16 @@ class QuoteUpdateRequest(BaseModel):
     pricing_catalog_id: UUID | None = None
     location_id: UUID | None = None
     payment_plan_id: UUID | None = None
+    quote_template_uuid: UUID | None = None
+    quote_template_version_id: UUID | None = None
+    terms_template_id: UUID | None = None
+    terms_template_version_id: UUID | None = None
     quote_template_id: str | None = Field(default=None, max_length=80)
     cgv_version_id: UUID | None = None
     school_year_label: str | None = Field(default=None, max_length=40)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     language: str | None = Field(default=None, max_length=8)
+    vat_rate: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
     expiry_days: int | None = Field(default=None, ge=1, le=120)
     estimated_solfege_level: str | None = Field(default=None, max_length=10)
     selected_solfege_slot: dict[str, object] | None = None

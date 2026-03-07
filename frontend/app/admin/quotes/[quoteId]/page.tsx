@@ -10,6 +10,7 @@ import {
   changeQuoteFollowupPaymentMethodAction,
   duplicateQuoteAction,
   finalizeQuoteFollowupAction,
+  regenerateQuoteDocumentAction,
   selectQuoteFollowupSlotAction,
   sendQuoteAction,
   updateQuoteLinesAction,
@@ -57,7 +58,12 @@ type QuoteOut = {
   quote_type_id: string | null;
   pricing_catalog_id: string | null;
   payment_plan_id: string | null;
+  quote_template_id: string | null;
+  quote_template_version_id: string | null;
+  terms_template_id: string | null;
+  terms_template_version_id: string | null;
   currency: string;
+  language: string | null;
   total_ttc: string;
   expiry_days: number;
   created_at: string;
@@ -73,6 +79,10 @@ type QuoteOut = {
   payment_terms_snapshot: Record<string, unknown>;
   cgv_snapshot: Record<string, unknown>;
   meta: Record<string, unknown>;
+  document_status: string;
+  document_snapshot_id: string | null;
+  document_hash: string | null;
+  document_generated_at: string | null;
   public_token: string | null;
   pdf_token: string | null;
 };
@@ -463,6 +473,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <Link className="ghost" href={`/admin/quotes/${detail.quote.id}/pdf`} target="_blank">
             PDF admin
           </Link>
+          <form action={regenerateQuoteDocumentAction}>
+            <input type="hidden" name="quote_id" value={detail.quote.id} />
+            <input type="hidden" name="return_to" value={selfPath} />
+            <button type="submit" className="ghost" disabled={detail.quote.status !== "created"}>
+              Regenerer document
+            </button>
+          </form>
+          {detail.quote.status !== "created" ? (
+            <small className="muted">Regeneration reservee au brouillon.</small>
+          ) : null}
         </div>
       </section>
 
@@ -566,6 +586,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         </p>
         <p className="muted">
           Templates affiches pour la langue: <strong>{quoteLanguage.toUpperCase()}</strong>
+        </p>
+        <p className="muted">
+          Statut document: <strong>{detail.quote.document_status || "stale"}</strong>
+          {" · "}
+          Genere le: <strong>{formatDate(detail.quote.document_generated_at)}</strong>
+        </p>
+        <p className="muted">
+          Hash document: <strong>{detail.quote.document_hash || "-"}</strong>
         </p>
       </section>
 
