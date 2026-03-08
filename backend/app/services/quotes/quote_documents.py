@@ -127,13 +127,16 @@ def _account_logo_data_url(*, db: Session | None) -> str:
     return value
 
 
-def _brand_logo_html(*, db: Session | None) -> str:
+def _brand_logo_html(*, db: Session | None, variant: str = "header") -> str:
     logo_data_url = _account_logo_data_url(db=db)
     if logo_data_url:
+        width_px = "118" if variant == "cover" else "86"
         return (
             "<img "
             "class='quote-brand-logo-img' "
             f"src='{escape(logo_data_url)}' "
+            f"width='{width_px}' "
+            "style='display:block;width:auto;height:auto;' "
             "alt='Piano Academie'/>"
         )
     return "<div class='quote-brand-logo'>PIANO<br/>ACADEMIE</div>"
@@ -610,9 +613,53 @@ def _normalize_template_source(template: str) -> str:
     raw = (template or "").strip()
     if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
         raw = raw[1:-1].strip()
-    if "<" not in raw and "&lt;" in raw and "&gt;" in raw:
+    if any(token in raw for token in ("&lt;", "&gt;", "&#60;", "&#62;", "&#123;", "&#125;", "&#x7b;", "&#x7d;")):
         raw = html_unescape(raw)
     return raw
+
+
+_INLINE_FOOTER_RE = re.compile(
+    r"<table[^>]*class=['\"][^'\"]*quote-footer[^'\"]*['\"][^>]*>.*?</table>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_inline_footers(content: str) -> str:
+    return _INLINE_FOOTER_RE.sub("", content or "")
+
+
+def _pdf_shell_html(*, content_html: str, footer_html: str) -> str:
+    return (
+        "<html><head><meta charset='utf-8'/>"
+        "<style>"
+        "@page {"
+        "  size: A4;"
+        "  margin: 14mm 12mm 20mm 12mm;"
+        "  @frame content_frame { left: 12mm; top: 14mm; width: 186mm; height: 258mm; }"
+        "  @frame footer_frame { -pdf-frame-content: footer_content; left: 12mm; top: 276mm; width: 186mm; height: 12mm; }"
+        "}"
+        "body{font-family:Arial,Helvetica,sans-serif;color:#1f1f1f;font-size:11px;line-height:1.42;}"
+        "h1,h2,h3{color:#101828;margin:0 0 8px 0;}"
+        "p{margin:0 0 7px 0;}"
+        ".quote-page-break{page-break-before:always;}"
+        ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:avoid;}"
+        ".quote-table{width:100%;border-collapse:collapse;table-layout:fixed;margin:6px 0 10px 0;font-size:10.8px;}"
+        ".quote-table th{background:#e8edf5 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:6px 7px !important;text-align:left !important;font-weight:700 !important;}"
+        ".quote-table td{border:1px solid #d3dbe7 !important;padding:6px 7px !important;vertical-align:top;color:#111827 !important;word-wrap:break-word;}"
+        "thead{display:table-header-group;}"
+        "tfoot{display:table-footer-group;}"
+        "tr{page-break-inside:avoid;}"
+        ".quote-brand-logo-img{display:inline-block;max-width:92px;max-height:56px;object-fit:contain;}"
+        ".quote-footer{width:100%;border-collapse:collapse;padding-top:3mm;border-top:1px solid #ccd5e1;font-size:9.6px;color:#4b5563;}"
+        ".quote-footer td{vertical-align:top;}"
+        "</style>"
+        "</head><body>"
+        "<div id='footer_content'>"
+        f"{footer_html}"
+        "</div>"
+        f"{content_html}"
+        "</body></html>"
+    )
 
 
 def _build_template_values(
@@ -839,7 +886,8 @@ def _build_template_values(
             f"{payment_method_block_html}<p><strong>Consignes :</strong> {escape(payment_instruction)}</p>"
         )
 
-    brand_logo_html = _brand_logo_html(db=db)
+    brand_logo_html = _brand_logo_html(db=db, variant="header")
+    cover_logo_html = _brand_logo_html(db=db, variant="cover")
     header_standard_html = (
         "<table class='quote-header' width='100%' cellspacing='0' cellpadding='0'>"
         "<tr>"
@@ -850,7 +898,7 @@ def _build_template_values(
     )
     cover_page_standard_html = (
         "<section class='quote-cover'>"
-        f"{brand_logo_html}"
+        f"{cover_logo_html}"
         "<h1 class='quote-cover-title'>Dossier d inscription</h1>"
         f"<p class='quote-cover-subtitle'>Annee scolaire {escape(quote.school_year_label or '-')}</p>"
         f"<p class='quote-cover-name'>{escape(prospect_data.get('child_full_name') or recipient_name)}</p>"
@@ -1108,5 +1156,14 @@ def render_quote_pdf(
     lines: list[QuoteLine],
     audience: str = DEFAULT_AUDIENCE,
 ) -> bytes:
-    html = render_quote_combined_html(db=db, quote=quote, lines=lines, audience=audience)
-    return render_teacher_invoice_pdf_from_html(html)
+    body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
+    terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
+    values, _, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
+    footer_html = values.get("footer_standard_html", "")
+    content_html = (
+        f"<section>{_strip_inline_footers(body_html)}</section>"
+        "<div class='quote-page-break'></div>"
+        f"{_strip_inline_footers(terms_html)}"
+    )
+    pdf_html = _pdf_shell_html(content_html=content_html, footer_html=footer_html)
+    return render_teacher_invoice_pdf_from_html(pdf_html)
