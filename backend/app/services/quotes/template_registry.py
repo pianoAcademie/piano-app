@@ -119,6 +119,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "2 cheques: inscription + fevrier",
     },
     {
+        "key": "payment_instruction",
+        "label": "Consignes de paiement",
+        "description": "Consigne textuelle associee au plan de paiement (envoi cheques, adresse, etc.).",
+        "example": "Tous les cheques doivent etre envoyes en meme temps a Piano Academie.",
+    },
+    {
         "key": "cgv_version",
         "label": "Version CGV",
         "description": "Version CGV associee au devis.",

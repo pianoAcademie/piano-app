@@ -206,6 +206,117 @@ def _next_available_payment_plan_code(db: Session, *, base_code: str, exclude_id
         index += 1
 
 
+def _payment_method_label_from_code(method_code: str) -> str:
+    normalized = (method_code or "").strip().upper()
+    if normalized == "CARD":
+        return "Carte bancaire"
+    if normalized == "CARD_MONTHLY":
+        return "Carte bancaire mensuelle"
+    if normalized == "CHECK":
+        return "Cheque"
+    if normalized in {"CHECK_2", "CHEQUE_2", "CHEQUE_X2"}:
+        return "Cheque en 2 fois"
+    if normalized in {"CHECK_3", "CHEQUE_3", "CHEQUE_X3"}:
+        return "Cheque en 3 fois"
+    if normalized in {"CHECK_4", "CHEQUE_4", "CHEQUE_X4"}:
+        return "Cheque en 4 fois"
+    if normalized == "BANK_TRANSFER":
+        return "Virement bancaire"
+    if normalized == "CASH":
+        return "Especes"
+    if normalized == "CARD_4X_FEES":
+        return "4 fois avec frais"
+    return normalized or "Paiement"
+
+
+def _bool_or_default(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text_value = str(value).strip().lower()
+    if text_value in {"1", "true", "yes", "on", "oui"}:
+        return True
+    if text_value in {"0", "false", "no", "off", "non"}:
+        return False
+    return default
+
+
+def _build_payment_terms_snapshot_from_plan(
+    *,
+    quote: Quote,
+    plan: PaymentPlan,
+    total_ttc: Decimal,
+    registration_date: date,
+) -> dict[str, object]:
+    rules = dict(plan.schedule_rules or {})
+    payment_method_label = _payment_method_label_from_code(plan.payment_method)
+    schedule = build_payment_schedule(
+        PaymentPlanScheduleInput(
+            payment_method_code=plan.payment_method,
+            schedule_type=plan.schedule_type or "single",
+            schedule_rules=rules,
+            payment_method_label=payment_method_label,
+            total_ttc=total_ttc,
+            registration_date=registration_date,
+            currency=(quote.currency or "EUR").upper(),
+        )
+    )
+    installment_count = len(schedule)
+    visibility_raw = rules.get("schedule_visibility") if isinstance(rules.get("schedule_visibility"), dict) else {}
+    show_schedule_to_client_default = installment_count > 1
+    schedule_visibility = {
+        AUDIENCE_ADMIN_PREVIEW: _bool_or_default((visibility_raw or {}).get(AUDIENCE_ADMIN_PREVIEW), True),
+        AUDIENCE_PUBLIC_PAGE: _bool_or_default(
+            (visibility_raw or {}).get(AUDIENCE_PUBLIC_PAGE),
+            show_schedule_to_client_default,
+        ),
+        AUDIENCE_CLIENT_PDF: _bool_or_default(
+            (visibility_raw or {}).get(AUDIENCE_CLIENT_PDF),
+            show_schedule_to_client_default,
+        ),
+    }
+    check_submission_address = str(rules.get("check_submission_address") or "").strip()
+    check_submission_instruction = str(rules.get("check_submission_instruction") or "").strip()
+    normalized_payment_method = plan.payment_method.strip().upper()
+    is_check_family = normalized_payment_method in {
+        "CHECK",
+        "CHECK_2",
+        "CHECK_3",
+        "CHECK_4",
+        "CHEQUE_2",
+        "CHEQUE_3",
+        "CHEQUE_4",
+        "CHEQUE_X2",
+        "CHEQUE_X3",
+        "CHEQUE_X4",
+    }
+    collect_all_checks = _bool_or_default(rules.get("collect_all_checks_upfront"), is_check_family)
+    if not check_submission_instruction and collect_all_checks and is_check_family and installment_count > 1:
+        check_submission_instruction = "Tous les cheques doivent etre envoyes en meme temps."
+    if check_submission_address:
+        if check_submission_instruction:
+            check_submission_instruction = f"{check_submission_instruction} Adresse d envoi: {check_submission_address}"
+        else:
+            check_submission_instruction = f"Adresse d envoi des cheques: {check_submission_address}"
+    payment_schedule_summary = f"Paiement en {installment_count} fois" if installment_count > 1 else "Paiement en 1 fois"
+    return {
+        "schedule": schedule,
+        "currency": (quote.currency or "EUR").upper(),
+        "payment_plan_code": plan.code,
+        "payment_plan_name": plan.name,
+        "plan_name": plan.name,
+        "payment_method": plan.payment_method,
+        "payment_method_label": payment_method_label,
+        "schedule_type": plan.schedule_type,
+        "schedule_rules": rules,
+        "payment_schedule_summary": payment_schedule_summary,
+        "schedule_visibility": schedule_visibility,
+        "check_submission_address": check_submission_address,
+        "payment_instruction": check_submission_instruction,
+    }
+
+
 QUOTE_SCHOOL_CALENDARS_SETTING_KEY = "quote_school_calendars_v1"
 CALENDAR_DEPLOYMENT_BLOCK_PREFIX = "GEN:QUOTE_CAL_DEPLOY"
 CALENDAR_DEPLOYMENT_LEGACY_BLOCK_MARKER = "GEN:QUOTE_SCHOOL_CALENDAR_BLOCK"
@@ -1622,14 +1733,32 @@ def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: D
     plan = db.scalar(select(PaymentPlan).where(PaymentPlan.id == quote.payment_plan_id))
     if plan is None:
         return []
-    registration_date = _utcnow().date()
-    return build_payment_schedule(
-        PaymentPlanScheduleInput(
-            payment_method_code=plan.payment_method,
-            total_ttc=total_ttc,
-            registration_date=registration_date,
-            currency=(quote.currency or "EUR").upper(),
-        )
+    snapshot = _build_payment_terms_snapshot_from_plan(
+        quote=quote,
+        plan=plan,
+        total_ttc=total_ttc,
+        registration_date=_utcnow().date(),
+    )
+    return [item for item in _json_list(snapshot.get("schedule")) if isinstance(item, dict)]
+
+
+def _build_payment_terms_snapshot_for_quote(db: Session, quote: Quote, *, total_ttc: Decimal) -> dict[str, object]:
+    if quote.payment_plan_id is None:
+        return {
+            "schedule": [],
+            "currency": (quote.currency or "EUR").upper(),
+        }
+    plan = db.scalar(select(PaymentPlan).where(PaymentPlan.id == quote.payment_plan_id))
+    if plan is None:
+        return {
+            "schedule": [],
+            "currency": (quote.currency or "EUR").upper(),
+        }
+    return _build_payment_terms_snapshot_from_plan(
+        quote=quote,
+        plan=plan,
+        total_ttc=total_ttc,
+        registration_date=_utcnow().date(),
     )
 
 
@@ -2161,6 +2290,9 @@ def preview_quote_payment_schedule(
     schedule = build_payment_schedule(
         PaymentPlanScheduleInput(
             payment_method_code=payload.payment_method_code,
+            schedule_type=payload.schedule_type or "single",
+            schedule_rules=payload.schedule_rules or {},
+            payment_method_label=payload.payment_method_label,
             total_ttc=payload.total_ttc,
             registration_date=payload.registration_date,
             currency=payload.currency.upper(),
@@ -2336,10 +2468,7 @@ def create_quote(
 
     total = _materialize_quote_lines(db, quote=row, lines_in=payload.lines)
     if not row.payment_terms_snapshot:
-        row.payment_terms_snapshot = {
-            "schedule": _build_payment_schedule_for_quote(db, row, total_ttc=total),
-            "currency": row.currency,
-        }
+        row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total)
     if not row.price_snapshot:
         row.price_snapshot = {
             "catalog_id": str(row.pricing_catalog_id) if row.pricing_catalog_id else None,
@@ -2381,6 +2510,8 @@ def update_quote(
     row = _load_quote(db, quote_id, lock=True)
     _ensure_quote_editable(row)
     document_dirty = False
+    payment_plan_changed = False
+    computed_total: Decimal | None = None
 
     if payload.quote_type is not None:
         row.quote_type = payload.quote_type
@@ -2395,6 +2526,8 @@ def update_quote(
         row.location_id = payload.location_id
         document_dirty = True
     if payload.payment_plan_id is not None:
+        if row.payment_plan_id != payload.payment_plan_id:
+            payment_plan_changed = True
         row.payment_plan_id = payload.payment_plan_id
         document_dirty = True
     if payload.quote_template_uuid is not None:
@@ -2499,13 +2632,12 @@ def update_quote(
         document_dirty = True
 
     if payload.lines is not None:
-        total = _materialize_quote_lines(db, quote=row, lines_in=payload.lines)
-        if payload.payment_terms_snapshot is None:
-            row.payment_terms_snapshot = {
-                "schedule": _build_payment_schedule_for_quote(db, row, total_ttc=total),
-                "currency": row.currency,
-            }
+        computed_total = _materialize_quote_lines(db, quote=row, lines_in=payload.lines)
         document_dirty = True
+
+    if payload.payment_terms_snapshot is None and (payment_plan_changed or payload.lines is not None):
+        total_for_schedule = computed_total if computed_total is not None else _q2(Decimal(row.total_ttc or 0))
+        row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total_for_schedule)
 
     document_fields = {
         "quote_template_uuid",
@@ -2772,6 +2904,12 @@ def regenerate_quote_document(
             )
             if terms_version is not None:
                 quote.cgv_snapshot = _cgv_snapshot_from_terms_version(terms_version)
+    if quote.payment_plan_id is not None:
+        quote.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(
+            db,
+            quote,
+            total_ttc=_q2(Decimal(quote.total_ttc or 0)),
+        )
     lines = _load_quote_lines(db, quote.id)
     snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="generated")
     db.add(
@@ -3352,18 +3490,12 @@ def change_quote_followup_payment_method(
         if plan is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment plan not found")
         quote.payment_plan_id = plan.id
-        quote.payment_terms_snapshot = {
-            "schedule": build_payment_schedule(
-                PaymentPlanScheduleInput(
-                    payment_method_code=plan.payment_method,
-                    total_ttc=_q2(Decimal(quote.total_ttc or 0)),
-                    registration_date=_utcnow().date(),
-                    currency=(quote.currency or "EUR").upper(),
-                )
-            ),
-            "currency": quote.currency,
-            "payment_plan_code": plan.code,
-        }
+        quote.payment_terms_snapshot = _build_payment_terms_snapshot_from_plan(
+            quote=quote,
+            plan=plan,
+            total_ttc=_q2(Decimal(quote.total_ttc or 0)),
+            registration_date=_utcnow().date(),
+        )
     quote.updated_at = _utcnow()
 
     db.add_all([row, quote])
@@ -4936,8 +5068,8 @@ def create_payment_plan(
     row = PaymentPlan(
         code=generated_code,
         name=payload.name.strip(),
-        payment_method=payload.payment_method.strip(),
-        schedule_type=payload.schedule_type.strip(),
+        payment_method=payload.payment_method.strip().upper(),
+        schedule_type=payload.schedule_type.strip().lower(),
         schedule_rules=payload.schedule_rules,
         is_active=payload.is_active,
         created_at=now,
@@ -4967,8 +5099,8 @@ def update_payment_plan(
     base_code = requested_code or _payment_plan_code_from_name(payload.name)
     row.code = _next_available_payment_plan_code(db, base_code=base_code, exclude_id=row.id)
     row.name = payload.name.strip()
-    row.payment_method = payload.payment_method.strip()
-    row.schedule_type = payload.schedule_type.strip()
+    row.payment_method = payload.payment_method.strip().upper()
+    row.schedule_type = payload.schedule_type.strip().lower()
     row.schedule_rules = payload.schedule_rules
     row.is_active = payload.is_active
     row.updated_at = _utcnow()

@@ -9930,6 +9930,21 @@ function defaultInstallmentsForScheduleType(scheduleType: "single" | "split_2" |
   return 1;
 }
 
+function defaultDeferredMonthsForScheduleType(scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly"): number[] {
+  if (scheduleType === "split_2") return [2];
+  if (scheduleType === "split_3") return [12, 2];
+  if (scheduleType === "split_4") return [12, 2, 4];
+  return [];
+}
+
+function parseMonthNumber(raw: string): number | null {
+  const parsed = parseNonNegativeInt(raw);
+  if (parsed === null || parsed < 1 || parsed > 12) {
+    return null;
+  }
+  return parsed;
+}
+
 function normalizePaymentPlanPresetLabel(raw: string): string {
   const value = raw.trim();
   if (!value) {
@@ -9987,8 +10002,21 @@ function termsTemplateCodeFromName(name: string): string {
 function buildPaymentPlanRules(
   scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly",
   feePercent: number | null,
+  options: {
+    deferredMonths: Array<number | null>;
+    collectAllChecksUpfront: boolean;
+    checkSubmissionAddress: string | null;
+    checkSubmissionInstruction: string | null;
+    showSchedulePublic: boolean;
+    showSchedulePdf: boolean;
+  },
 ): Record<string, unknown> {
   const installments = defaultInstallmentsForScheduleType(scheduleType);
+  const deferredDefaults = defaultDeferredMonthsForScheduleType(scheduleType);
+  const deferredDueMonths = options.deferredMonths
+    .map((month, index) => month ?? deferredDefaults[index] ?? null)
+    .filter((month): month is number => month !== null && Number.isFinite(month) && month >= 1 && month <= 12);
+  const normalizedDeferredDueMonths = deferredDueMonths.slice(0, Math.max(0, installments - 1));
   return {
     installment_count: installments,
     cadence:
@@ -9999,6 +10027,15 @@ function buildPaymentPlanRules(
           : "manual_split",
     has_fees: feePercent !== null && feePercent > 0,
     fee_percent: feePercent !== null && feePercent > 0 ? Number(feePercent.toFixed(2)) : 0,
+    deferred_due_months: normalizedDeferredDueMonths,
+    collect_all_checks_upfront: options.collectAllChecksUpfront,
+    check_submission_address: options.checkSubmissionAddress ?? "",
+    check_submission_instruction: options.checkSubmissionInstruction ?? "",
+    schedule_visibility: {
+      admin_preview: true,
+      public_page: options.showSchedulePublic,
+      client_pdf: options.showSchedulePdf,
+    },
   };
 }
 
@@ -10409,15 +10446,38 @@ export async function createAdminPaymentPlanConfigAction(formData: FormData): Pr
   const feePercentRaw = String(formData.get("fee_percent") ?? "").trim().replace(",", ".");
   const feePercent = feePercentRaw ? Number(feePercentRaw) : null;
   const normalizedFeePercent = Number.isFinite(feePercent ?? NaN) ? Number(feePercent) : null;
+  const dueMonth2Raw = String(formData.get("due_month_2") ?? "").trim();
+  const dueMonth3Raw = String(formData.get("due_month_3") ?? "").trim();
+  const dueMonth4Raw = String(formData.get("due_month_4") ?? "").trim();
+  const dueMonth2 = dueMonth2Raw ? parseMonthNumber(dueMonth2Raw) : null;
+  const dueMonth3 = dueMonth3Raw ? parseMonthNumber(dueMonth3Raw) : null;
+  const dueMonth4 = dueMonth4Raw ? parseMonthNumber(dueMonth4Raw) : null;
+  const collectAllChecksUpfront = parseCheckboxFlag(formData, "collect_all_checks_upfront", paymentMethod === "CHECK");
+  const checkSubmissionAddress = optionalField(formData, "check_submission_address");
+  const checkSubmissionInstruction = optionalField(formData, "check_submission_instruction");
+  const showSchedulePublic = parseCheckboxFlag(formData, "show_schedule_public", scheduleType !== "single");
+  const showSchedulePdf = parseCheckboxFlag(formData, "show_schedule_pdf", scheduleType !== "single");
   const isActive = parseCheckboxFlag(formData, "is_active", true);
   const code = paymentPlanCodeFromName(name);
-  const scheduleRules = scheduleType ? buildPaymentPlanRules(scheduleType, normalizedFeePercent) : null;
+  const scheduleRules = scheduleType
+    ? buildPaymentPlanRules(scheduleType, normalizedFeePercent, {
+      deferredMonths: [dueMonth2, dueMonth3, dueMonth4],
+      collectAllChecksUpfront,
+      checkSubmissionAddress,
+      checkSubmissionInstruction,
+      showSchedulePublic,
+      showSchedulePdf,
+    })
+    : null;
 
   if (!name || !paymentMethod || !scheduleType || scheduleRules === null) {
     redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide"));
   }
   if (feePercentRaw && (normalizedFeePercent === null || normalizedFeePercent < 0 || normalizedFeePercent > 100)) {
     redirect(appendQueryMessage(returnTo, "error", "Frais invalides"));
+  }
+  if ((dueMonth2Raw && dueMonth2 === null) || (dueMonth3Raw && dueMonth3 === null) || (dueMonth4Raw && dueMonth4 === null)) {
+    redirect(appendQueryMessage(returnTo, "error", "Mois d encaissement invalides"));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -10462,15 +10522,38 @@ export async function updateAdminPaymentPlanConfigAction(formData: FormData): Pr
   const feePercentRaw = String(formData.get("fee_percent") ?? "").trim().replace(",", ".");
   const feePercent = feePercentRaw ? Number(feePercentRaw) : null;
   const normalizedFeePercent = Number.isFinite(feePercent ?? NaN) ? Number(feePercent) : null;
+  const dueMonth2Raw = String(formData.get("due_month_2") ?? "").trim();
+  const dueMonth3Raw = String(formData.get("due_month_3") ?? "").trim();
+  const dueMonth4Raw = String(formData.get("due_month_4") ?? "").trim();
+  const dueMonth2 = dueMonth2Raw ? parseMonthNumber(dueMonth2Raw) : null;
+  const dueMonth3 = dueMonth3Raw ? parseMonthNumber(dueMonth3Raw) : null;
+  const dueMonth4 = dueMonth4Raw ? parseMonthNumber(dueMonth4Raw) : null;
+  const collectAllChecksUpfront = parseCheckboxFlag(formData, "collect_all_checks_upfront", paymentMethod === "CHECK");
+  const checkSubmissionAddress = optionalField(formData, "check_submission_address");
+  const checkSubmissionInstruction = optionalField(formData, "check_submission_instruction");
+  const showSchedulePublic = parseCheckboxFlag(formData, "show_schedule_public", scheduleType !== "single");
+  const showSchedulePdf = parseCheckboxFlag(formData, "show_schedule_pdf", scheduleType !== "single");
   const isActive = parseCheckboxFlag(formData, "is_active", true);
   const code = paymentPlanCodeFromName(name);
-  const scheduleRules = scheduleType ? buildPaymentPlanRules(scheduleType, normalizedFeePercent) : null;
+  const scheduleRules = scheduleType
+    ? buildPaymentPlanRules(scheduleType, normalizedFeePercent, {
+      deferredMonths: [dueMonth2, dueMonth3, dueMonth4],
+      collectAllChecksUpfront,
+      checkSubmissionAddress,
+      checkSubmissionInstruction,
+      showSchedulePublic,
+      showSchedulePdf,
+    })
+    : null;
 
   if (!planId || !name || !paymentMethod || !scheduleType || scheduleRules === null) {
     redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide"));
   }
   if (feePercentRaw && (normalizedFeePercent === null || normalizedFeePercent < 0 || normalizedFeePercent > 100)) {
     redirect(appendQueryMessage(returnTo, "error", "Frais invalides"));
+  }
+  if ((dueMonth2Raw && dueMonth2 === null) || (dueMonth3Raw && dueMonth3 === null) || (dueMonth4Raw && dueMonth4 === null)) {
+    redirect(appendQueryMessage(returnTo, "error", "Mois d encaissement invalides"));
   }
 
   const result = await backendRequest<Record<string, unknown>>(

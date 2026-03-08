@@ -336,6 +336,20 @@ def _resolve_schedule_visibility_by_audience(*, quote: Quote) -> dict[str, bool]
         AUDIENCE_PUBLIC_PAGE: False,
         AUDIENCE_CLIENT_PDF: False,
     }
+    payment_snapshot = _json_object(quote.payment_terms_snapshot)
+    snapshot_visibility = _json_object(payment_snapshot.get("schedule_visibility"))
+    if snapshot_visibility:
+        return {
+            AUDIENCE_ADMIN_PREVIEW: _is_true(
+                snapshot_visibility.get(AUDIENCE_ADMIN_PREVIEW, default_visibility[AUDIENCE_ADMIN_PREVIEW])
+            ),
+            AUDIENCE_PUBLIC_PAGE: _is_true(
+                snapshot_visibility.get(AUDIENCE_PUBLIC_PAGE, default_visibility[AUDIENCE_PUBLIC_PAGE])
+            ),
+            AUDIENCE_CLIENT_PDF: _is_true(
+                snapshot_visibility.get(AUDIENCE_CLIENT_PDF, default_visibility[AUDIENCE_CLIENT_PDF])
+            ),
+        }
     meta = _json_object(quote.meta)
     visibility_root = _json_object(meta.get("document_visibility"))
     raw = _json_object(visibility_root.get("payment_schedule_detailed"))
@@ -352,7 +366,7 @@ def _resolve_schedule_visibility_by_audience(*, quote: Quote) -> dict[str, bool]
 
 def _resolve_payment_method_label(*, quote: Quote) -> str:
     snapshot = _json_object(quote.payment_terms_snapshot)
-    for key in ("payment_method_label", "plan_name", "payment_plan_name"):
+    for key in ("payment_method_label", "plan_name", "payment_plan_name", "payment_method"):
         value = str(snapshot.get(key) or "").strip()
         if value:
             return value
@@ -405,6 +419,7 @@ def _extract_document_context(
         payment_schedule_compact_notice = (
             f"Paiement en {len(schedule)} echeances. Le detail des echeances est communique separement."
         )
+    payment_instruction = str(_json_object(quote.payment_terms_snapshot).get("payment_instruction") or "").strip()
 
     prospect_type = str(prospect_data.get("prospect_type") or "adult").strip().lower()
     show_child_block = prospect_type == "child"
@@ -430,6 +445,7 @@ def _extract_document_context(
         "schedule_visibility": schedule_visibility,
         "payment_method_label": _resolve_payment_method_label(quote=quote),
         "payment_schedule_compact_notice": payment_schedule_compact_notice,
+        "payment_instruction": payment_instruction,
         "solfege_enabled": solfege_enabled,
         "solfege_level": str(quote.estimated_solfege_level or "").strip(),
         "solfege_duration_minutes": quote.solfege_duration_minutes,
@@ -624,9 +640,14 @@ def _build_template_values(
         if sessions
         else "Aucune seance planifiee"
     )
-    payment_schedule_summary = (
-        f"{len(schedule)} echeances" if schedule else "Paiement non planifie"
-    )
+    if schedule:
+        due_labels = ", ".join(
+            str(item.get("due_label") or item.get("due_type") or "-")
+            for item in schedule
+        )
+        payment_schedule_summary = f"{len(schedule)} echeances: {due_labels}"
+    else:
+        payment_schedule_summary = "Paiement non planifie"
 
     cgv_label, _ = _load_terms_template_content(db=db, quote=quote)
     prospect_data = document_context["prospect_data"]
@@ -701,7 +722,12 @@ def _build_template_values(
         if display_flags["showPassRecupSection"]
         else "<p>Option Pass Recup : non souscrite. Aucun rattrapage de cours n est inclus dans cette formule.</p>"
     )
+    payment_instruction = str(document_context.get("payment_instruction") or "").strip()
     payment_method_block_html = f"<p><strong>Mode de paiement :</strong> {escape(payment_method_label)}</p>"
+    if payment_instruction:
+        payment_method_block_html = (
+            f"{payment_method_block_html}<p><strong>Consignes :</strong> {escape(payment_instruction)}</p>"
+        )
 
     values: dict[str, str] = {
         "quote_number": quote.quote_number or "-",
@@ -719,6 +745,7 @@ def _build_template_values(
         "calendar_summary": calendar_summary,
         "payment_schedule_summary": payment_schedule_summary,
         "payment_method_label": payment_method_label,
+        "payment_instruction": payment_instruction,
         "payment_schedule_compact_notice": document_context["payment_schedule_compact_notice"] or "",
         "cgv_version": cgv_label or "-",
         "services_count": str(len(services)),

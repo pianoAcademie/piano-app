@@ -226,6 +226,9 @@ class QuoteCalendarPreviewRequest(BaseModel):
 
 class QuotePaymentSchedulePreviewRequest(BaseModel):
     payment_method_code: str = Field(min_length=2, max_length=40)
+    schedule_type: str | None = Field(default=None, max_length=40)
+    schedule_rules: dict[str, object] = Field(default_factory=dict)
+    payment_method_label: str | None = Field(default=None, max_length=180)
     total_ttc: Decimal = Field(ge=Decimal("0"))
     registration_date: date
     currency: str = Field(default="EUR", min_length=3, max_length=3)

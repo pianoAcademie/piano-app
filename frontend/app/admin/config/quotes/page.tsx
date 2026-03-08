@@ -241,6 +241,21 @@ const PAYMENT_SCHEDULE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "monthly", label: "Paiement mensuel" },
 ];
 
+const MONTH_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 1, label: "Janvier" },
+  { value: 2, label: "Fevrier" },
+  { value: 3, label: "Mars" },
+  { value: 4, label: "Avril" },
+  { value: 5, label: "Mai" },
+  { value: 6, label: "Juin" },
+  { value: 7, label: "Juillet" },
+  { value: 8, label: "Aout" },
+  { value: 9, label: "Septembre" },
+  { value: 10, label: "Octobre" },
+  { value: 11, label: "Novembre" },
+  { value: 12, label: "Decembre" },
+];
+
 function weekdaysLabel(days: number[]): string {
   if (!days.length) {
     return "Tous";
@@ -282,6 +297,23 @@ function paymentFeePercent(rules: Record<string, unknown>): string {
     return "0 %";
   }
   return `${raw.toFixed(2).replace(".", ",")} %`;
+}
+
+function paymentDeferredMonthValue(rules: Record<string, unknown>, index: number): string {
+  const monthsRaw = Array.isArray(rules.deferred_due_months) ? rules.deferred_due_months : [];
+  const value = Number.parseInt(String(monthsRaw[index] ?? ""), 10);
+  if (!Number.isFinite(value) || value < 1 || value > 12) {
+    return "";
+  }
+  return String(value);
+}
+
+function paymentScheduleVisibilityFlag(rules: Record<string, unknown>, key: "public_page" | "client_pdf"): boolean {
+  const raw = rules.schedule_visibility;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return true;
+  }
+  return Boolean((raw as Record<string, unknown>)[key]);
 }
 
 function modalityLabel(value: string | null): string {
@@ -785,6 +817,57 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               Frais (%)
               <input type="number" name="fee_percent" min={0} max={100} step="0.01" defaultValue="0" />
             </label>
+            <label>
+              Encaissement 2e echeance (mois)
+              <select name="due_month_2" defaultValue="2">
+                <option value="">Auto</option>
+                {MONTH_OPTIONS.map((option) => (
+                  <option key={`create-month2-${option.value}`} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Encaissement 3e echeance (mois)
+              <select name="due_month_3" defaultValue="2">
+                <option value="">Auto</option>
+                {MONTH_OPTIONS.map((option) => (
+                  <option key={`create-month3-${option.value}`} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Encaissement 4e echeance (mois)
+              <select name="due_month_4" defaultValue="4">
+                <option value="">Auto</option>
+                {MONTH_OPTIONS.map((option) => (
+                  <option key={`create-month4-${option.value}`} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="collect_all_checks_upfront" defaultChecked />
+              Tous les cheques envoyes en meme temps
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="show_schedule_public" defaultChecked />
+              Afficher l echeancier detaille (page publique)
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="show_schedule_pdf" defaultChecked />
+              Afficher l echeancier detaille (PDF client)
+            </label>
+            <label className="span-2">
+              Adresse de reception des cheques (optionnel)
+              <textarea name="check_submission_address" rows={2} placeholder="Piano Academie, [adresse postale]" />
+            </label>
+            <label className="span-2">
+              Consigne affichee dans le devis (optionnel)
+              <textarea
+                name="check_submission_instruction"
+                rows={2}
+                placeholder="Le 1er cheque est encaisse a reception. Le 2e cheque est encaisse debut fevrier."
+              />
+            </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
               Actif
@@ -803,13 +886,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                   <th>Echeancier</th>
                   <th>Echeances</th>
                   <th>Frais</th>
+                  <th>Consignes</th>
                   <th>Statut</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {paymentPlans.length === 0 ? (
-                  <tr><td colSpan={7}><p className="muted">Aucun plan de paiement.</p></td></tr>
+                  <tr><td colSpan={8}><p className="muted">Aucun plan de paiement.</p></td></tr>
                 ) : (
                   paymentPlans.map((row) => (
                     <tr key={row.id}>
@@ -821,6 +905,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       <td>{paymentScheduleTypeLabel(row.schedule_type)}</td>
                       <td>{paymentInstallmentCount(row.schedule_rules || {})}</td>
                       <td>{paymentFeePercent(row.schedule_rules || {})}</td>
+                      <td>
+                        {String((row.schedule_rules?.check_submission_instruction ?? "") || "").trim() || "-"}
+                      </td>
                       <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span></td>
                       <td>
                         <details>
@@ -876,6 +963,73 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 max={100}
                                 step="0.01"
                                 defaultValue={String(row.schedule_rules?.fee_percent ?? 0)}
+                              />
+                            </label>
+                            <label>
+                              Encaissement 2e echeance (mois)
+                              <select name="due_month_2" defaultValue={paymentDeferredMonthValue(row.schedule_rules || {}, 0)}>
+                                <option value="">Auto</option>
+                                {MONTH_OPTIONS.map((option) => (
+                                  <option key={`edit-${row.id}-month2-${option.value}`} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Encaissement 3e echeance (mois)
+                              <select name="due_month_3" defaultValue={paymentDeferredMonthValue(row.schedule_rules || {}, 1)}>
+                                <option value="">Auto</option>
+                                {MONTH_OPTIONS.map((option) => (
+                                  <option key={`edit-${row.id}-month3-${option.value}`} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Encaissement 4e echeance (mois)
+                              <select name="due_month_4" defaultValue={paymentDeferredMonthValue(row.schedule_rules || {}, 2)}>
+                                <option value="">Auto</option>
+                                {MONTH_OPTIONS.map((option) => (
+                                  <option key={`edit-${row.id}-month4-${option.value}`} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="checkline">
+                              <input
+                                type="checkbox"
+                                name="collect_all_checks_upfront"
+                                defaultChecked={Boolean(row.schedule_rules?.collect_all_checks_upfront ?? true)}
+                              />
+                              Tous les cheques envoyes en meme temps
+                            </label>
+                            <label className="checkline">
+                              <input
+                                type="checkbox"
+                                name="show_schedule_public"
+                                defaultChecked={paymentScheduleVisibilityFlag(row.schedule_rules || {}, "public_page")}
+                              />
+                              Afficher l echeancier detaille (page publique)
+                            </label>
+                            <label className="checkline">
+                              <input
+                                type="checkbox"
+                                name="show_schedule_pdf"
+                                defaultChecked={paymentScheduleVisibilityFlag(row.schedule_rules || {}, "client_pdf")}
+                              />
+                              Afficher l echeancier detaille (PDF client)
+                            </label>
+                            <label className="span-2">
+                              Adresse de reception des cheques (optionnel)
+                              <textarea
+                                name="check_submission_address"
+                                rows={2}
+                                defaultValue={String((row.schedule_rules?.check_submission_address ?? "") || "")}
+                              />
+                            </label>
+                            <label className="span-2">
+                              Consigne affichee dans le devis (optionnel)
+                              <textarea
+                                name="check_submission_instruction"
+                                rows={2}
+                                defaultValue={String((row.schedule_rules?.check_submission_instruction ?? "") || "")}
                               />
                             </label>
                             <label className="checkline">
