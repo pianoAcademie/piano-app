@@ -55,6 +55,25 @@ type QuoteSchoolCalendarGeneratedSlotOut = {
   end_at: string;
 };
 
+type QuoteSchoolCalendarDeploymentPreviewOut = {
+  calendar_id: string;
+  location_id: string;
+  deployment_status: string;
+  source_hash: string;
+  existing_generated_active_count: number;
+  summary: {
+    total_target_days: number;
+    vacation_days: number;
+    holiday_days: number;
+    closure_days: number;
+  };
+  would_create: number;
+  would_keep: number;
+  would_reactivate: number;
+  would_cancel: number;
+  sample_dates: string[];
+};
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -108,6 +127,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
   const generatedFor = readParam(params, "generated_for");
+  const previewGroupKey = readParam(params, "preview_group");
 
   const [quoteSchoolCalendarsResult, locationsResult] = await Promise.all([
     backendRequest<QuoteSchoolCalendarOut[]>("/api/v1/quote-school-calendars", {}, token),
@@ -149,6 +169,52 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       new Map(),
     ).values(),
   ).sort((a, b) => a.name.localeCompare(b.name, "fr"));
+
+  const previewGroup = groupedCalendars.find((group) => group.key === previewGroupKey) ?? null;
+  const groupPreviewRows = previewGroup
+    ? (
+        await Promise.all(
+          previewGroup.items.map(async (item) => {
+            const result = await backendRequest<QuoteSchoolCalendarDeploymentPreviewOut>(
+              `/api/v1/quote-school-calendars/${encodeURIComponent(item.id)}/deployment/preview`,
+              {},
+              token,
+            );
+            if (!result.ok) {
+              loadErrors.push(`Preview deploiement ${item.name} (${locationById.get(item.location_id) || item.location_id}): ${result.message}`);
+              return null;
+            }
+            return { calendar: item, preview: result.data };
+          }),
+        )
+      ).filter((entry): entry is { calendar: QuoteSchoolCalendarOut; preview: QuoteSchoolCalendarDeploymentPreviewOut } => entry !== null)
+    : [];
+
+  const groupPreviewTotals = groupPreviewRows.reduce(
+    (acc, row) => {
+      acc.totalTargetDays += Number(row.preview.summary?.total_target_days ?? 0);
+      acc.vacationDays += Number(row.preview.summary?.vacation_days ?? 0);
+      acc.holidayDays += Number(row.preview.summary?.holiday_days ?? 0);
+      acc.closureDays += Number(row.preview.summary?.closure_days ?? 0);
+      acc.wouldCreate += Number(row.preview.would_create ?? 0);
+      acc.wouldKeep += Number(row.preview.would_keep ?? 0);
+      acc.wouldReactivate += Number(row.preview.would_reactivate ?? 0);
+      acc.wouldCancel += Number(row.preview.would_cancel ?? 0);
+      acc.existingGenerated += Number(row.preview.existing_generated_active_count ?? 0);
+      return acc;
+    },
+    {
+      totalTargetDays: 0,
+      vacationDays: 0,
+      holidayDays: 0,
+      closureDays: 0,
+      wouldCreate: 0,
+      wouldKeep: 0,
+      wouldReactivate: 0,
+      wouldCancel: 0,
+      existingGenerated: 0,
+    },
+  );
   const selectedCalendar = quoteSchoolCalendars.find((row) => row.id === generatedFor) ?? null;
   const generatedSlotsResult = selectedCalendar
     ? await backendRequest<QuoteSchoolCalendarGeneratedSlotOut[]>(
@@ -308,6 +374,9 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                         <input type="hidden" name="return_to" value={returnPath} />
                         <button type="submit" className="ghost">Previsualiser</button>
                       </form>
+                      <Link className="ghost" href={`/admin/config/calendars?preview_group=${encodeURIComponent(group.key)}`}>
+                        Ouvrir preview detaillee
+                      </Link>
                       <form action={deployAdminQuoteSchoolCalendarGroupAction}>
                         {group.items.map((item) => (
                           <input key={`${group.key}-deploy-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
@@ -491,6 +560,89 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
           </table>
         </div>
       </section>
+
+      {previewGroup ? (
+        <section className="card">
+          <div className="row spread wrap gap-sm">
+            <h3>Previsualisation detaillee du deploiement</h3>
+            <Link className="ghost" href="/admin/config/calendars">Fermer</Link>
+          </div>
+          <p className="muted">
+            {previewGroup.name} · {previewGroup.school_year_label} · {previewGroup.items.length} locaux
+          </p>
+          <div className="row wrap gap-sm top-gap-sm">
+            <span className="status-pill status-info">Dates cibles: {groupPreviewTotals.totalTargetDays}</span>
+            <span className="status-pill status-info">Vacances: {groupPreviewTotals.vacationDays}</span>
+            <span className="status-pill status-info">Feries: {groupPreviewTotals.holidayDays}</span>
+            <span className="status-pill status-info">Fermetures: {groupPreviewTotals.closureDays}</span>
+            <span className="status-pill status-ok">A creer: {groupPreviewTotals.wouldCreate}</span>
+            <span className="status-pill status-ok">A reactiver: {groupPreviewTotals.wouldReactivate}</span>
+            <span className="status-pill status-warn">A retirer: {groupPreviewTotals.wouldCancel}</span>
+            <span className="status-pill status-info">Actifs existants: {groupPreviewTotals.existingGenerated}</span>
+          </div>
+
+          <div className="table-wrap top-gap-sm">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Local</th>
+                  <th>Dates cibles</th>
+                  <th>Vacances</th>
+                  <th>Feries</th>
+                  <th>Fermetures</th>
+                  <th>A creer</th>
+                  <th>A reactiver</th>
+                  <th>A retirer</th>
+                  <th>Actifs existants</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupPreviewRows.length === 0 ? (
+                  <tr><td colSpan={9}><p className="muted">Aucune donnee de preview disponible.</p></td></tr>
+                ) : (
+                  groupPreviewRows.map(({ calendar, preview }) => (
+                    <tr key={`preview-${calendar.id}`}>
+                      <td>{locationById.get(calendar.location_id) || calendar.location_id}</td>
+                      <td>{Number(preview.summary?.total_target_days ?? 0)}</td>
+                      <td>{Number(preview.summary?.vacation_days ?? 0)}</td>
+                      <td>{Number(preview.summary?.holiday_days ?? 0)}</td>
+                      <td>{Number(preview.summary?.closure_days ?? 0)}</td>
+                      <td>{Number(preview.would_create ?? 0)}</td>
+                      <td>{Number(preview.would_reactivate ?? 0)}</td>
+                      <td>{Number(preview.would_cancel ?? 0)}</td>
+                      <td>{Number(preview.existing_generated_active_count ?? 0)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="row wrap gap-sm top-gap-sm">
+            <form action={deployAdminQuoteSchoolCalendarGroupAction}>
+              {previewGroup.items.map((item) => (
+                <input key={`preview-deploy-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+              ))}
+              <input type="hidden" name="return_to" value={returnPath} />
+              <button type="submit">Confirmer et deployer</button>
+            </form>
+            <form action={syncAdminQuoteSchoolCalendarGroupAction}>
+              {previewGroup.items.map((item) => (
+                <input key={`preview-sync-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+              ))}
+              <input type="hidden" name="return_to" value={returnPath} />
+              <button type="submit" className="ghost">Resynchroniser ce groupe</button>
+            </form>
+            <form action={removeAdminQuoteSchoolCalendarGroupDeploymentAction}>
+              {previewGroup.items.map((item) => (
+                <input key={`preview-remove-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+              ))}
+              <input type="hidden" name="return_to" value={returnPath} />
+              <button type="submit" className="danger">Retirer les creneaux de ce groupe</button>
+            </form>
+          </div>
+        </section>
+      ) : null}
 
       {selectedCalendar ? (
         <section className="card">
