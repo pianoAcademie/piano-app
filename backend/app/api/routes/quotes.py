@@ -3655,6 +3655,81 @@ def archive_quote_template_v2(
     db.commit()
 
 
+@router.delete("/quote-templates-v2/{template_id}/permanent", status_code=status.HTTP_200_OK)
+def hard_delete_quote_template_v2(
+    template_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict[str, object]:
+    row = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == template_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
+
+    version_ids_stmt = select(QuoteTemplateVersion.id).where(QuoteTemplateVersion.quote_template_id == template_id)
+
+    blockers: list[str] = []
+    if row.is_default:
+        blockers.append("template marque comme modele par defaut")
+
+    binding_refs = int(
+        db.scalar(
+            select(func.count())
+            .select_from(QuoteDocumentBinding)
+            .where(
+                or_(
+                    QuoteDocumentBinding.quote_template_id == template_id,
+                    QuoteDocumentBinding.quote_template_version_id.in_(version_ids_stmt),
+                )
+            )
+        )
+        or 0
+    )
+    if binding_refs > 0:
+        blockers.append(f"{binding_refs} regle(s) d'association documentaire reference(nt) ce modele")
+
+    quote_refs = int(
+        db.scalar(
+            select(func.count())
+            .select_from(Quote)
+            .where(
+                or_(
+                    Quote.quote_template_id == template_id,
+                    Quote.quote_template_version_id.in_(version_ids_stmt),
+                )
+            )
+        )
+        or 0
+    )
+    if quote_refs > 0:
+        blockers.append(f"{quote_refs} devis reference(nt) ce modele")
+
+    snapshot_refs = int(
+        db.scalar(
+            select(func.count())
+            .select_from(QuoteDocumentSnapshot)
+            .where(
+                or_(
+                    QuoteDocumentSnapshot.quote_template_id == template_id,
+                    QuoteDocumentSnapshot.quote_template_version_id.in_(version_ids_stmt),
+                )
+            )
+        )
+        or 0
+    )
+    if snapshot_refs > 0:
+        blockers.append(f"{snapshot_refs} snapshot(s) documentaires reference(nt) ce modele")
+
+    if blockers:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Suppression definitive impossible: {', '.join(blockers)}. Archivez plutot le modele.",
+        )
+
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "template_id": str(template_id)}
+
+
 @router.get("/terms-templates", response_model=list[TermsTemplateOut])
 def list_terms_templates(
     active_only: bool = Query(default=False),

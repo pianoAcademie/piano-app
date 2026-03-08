@@ -11189,6 +11189,36 @@ export async function deleteAdminQuoteTemplateV2ConfigAction(formData: FormData)
   redirect(appendQueryMessage(returnTo, "ok", "Template documentaire archive"));
 }
 
+export async function hardDeleteAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
+  const templateId = parseUuid(String(formData.get("template_id") ?? ""));
+  const confirmation = String(formData.get("confirm_delete") ?? "").trim().toUpperCase();
+  if (!templateId) {
+    redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
+  }
+  if (confirmation !== "SUPPRIMER") {
+    redirect(appendQueryMessage(returnTo, "error", "Confirmation invalide: saisissez SUPPRIMER"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-templates-v2/${encodeURIComponent(templateId)}/permanent`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template documentaire supprime definitivement"));
+}
+
 export async function createAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
