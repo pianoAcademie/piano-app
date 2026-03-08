@@ -12,6 +12,7 @@ import {
   deleteAdminQuoteTemplateV2ConfigAction,
   hardDeleteAdminQuoteTemplateV2ConfigAction,
   deleteAdminTermsTemplateConfigAction,
+  hardDeleteAdminTermsTemplateConfigAction,
   deleteAdminQuoteDocumentBindingConfigAction,
   deleteAdminPaymentPlanConfigAction,
   deleteAdminPricingCatalogConfigAction,
@@ -1232,6 +1233,23 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
                       <button type="submit" className="danger">Archiver</button>
+                    </form>
+                    <form action={hardDeleteAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
+                      <input type="hidden" name="template_id" value={row.id} />
+                      <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
+                      <label className="span-2">
+                        Confirmation suppression definitive
+                        <input
+                          type="text"
+                          name="confirm_delete"
+                          required
+                          placeholder="Tapez SUPPRIMER pour confirmer"
+                          autoComplete="off"
+                        />
+                      </label>
+                      <div className="row span-2">
+                        <button type="submit" className="danger">Supprimer definitivement</button>
+                      </div>
                     </form>
                   </details>
                 </article>

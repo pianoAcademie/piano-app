@@ -11355,6 +11355,36 @@ export async function deleteAdminTermsTemplateConfigAction(formData: FormData): 
   redirect(appendQueryMessage(returnTo, "ok", "Template CGV archive"));
 }
 
+export async function hardDeleteAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
+  const templateId = parseUuid(String(formData.get("template_id") ?? ""));
+  const confirmation = String(formData.get("confirm_delete") ?? "").trim().toUpperCase();
+  if (!templateId) {
+    redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
+  }
+  if (confirmation !== "SUPPRIMER") {
+    redirect(appendQueryMessage(returnTo, "error", "Confirmation invalide: saisissez SUPPRIMER"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/terms-templates/${encodeURIComponent(templateId)}/permanent`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Template CGV supprime definitivement"));
+}
+
 export async function createAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
