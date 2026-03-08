@@ -32,14 +32,14 @@ type PaymentPlanOut = {
   payment_method: string;
 };
 
-type CgvVersionOut = {
+type TermsTemplateOut = {
   id: string;
-  version_label: string;
+  name: string;
+  language: string;
 };
 
-type QuoteTemplateOut = {
+type QuoteTemplateV2Out = {
   id: string;
-  code: string;
   name: string;
   language: string;
   is_default: boolean;
@@ -84,7 +84,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
     quoteTypesResult,
     catalogsResult,
     paymentPlansResult,
-    cgvVersionsResult,
+    termsTemplatesResult,
     quoteTemplatesResult,
     locationsResult,
     activitiesResult,
@@ -97,8 +97,8 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
-    backendRequest<CgvVersionOut[]>("/api/v1/cgv-versions", {}, token),
-    backendRequest<QuoteTemplateOut[]>("/api/v1/quote-templates?active_only=true", {}, token),
+    backendRequest<TermsTemplateOut[]>("/api/v1/terms-templates?active_only=true", {}, token),
+    backendRequest<QuoteTemplateV2Out[]>("/api/v1/quote-templates-v2?active_only=true", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
@@ -111,7 +111,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
   const quoteTypes = quoteTypesResult.ok ? quoteTypesResult.data : [];
   const catalogs = catalogsResult.ok ? catalogsResult.data : [];
   const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
-  const cgvVersions = cgvVersionsResult.ok ? cgvVersionsResult.data : [];
+  const termsTemplates = termsTemplatesResult.ok ? termsTemplatesResult.data : [];
   const quoteTemplates = quoteTemplatesResult.ok ? quoteTemplatesResult.data : [];
   const locations = locationsResult.ok ? locationsResult.data : [];
   const activities = activitiesResult.ok ? activitiesResult.data : [];
@@ -125,8 +125,8 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
   if (!quoteTypesResult.ok) loadErrors.push(`Types de devis: ${quoteTypesResult.message}`);
   if (!catalogsResult.ok) loadErrors.push(`Catalogues: ${catalogsResult.message}`);
   if (!paymentPlansResult.ok) loadErrors.push(`Plans de paiement: ${paymentPlansResult.message}`);
-  if (!cgvVersionsResult.ok) loadErrors.push(`CGV: ${cgvVersionsResult.message}`);
-  if (!quoteTemplatesResult.ok) loadErrors.push(`Templates: ${quoteTemplatesResult.message}`);
+  if (!termsTemplatesResult.ok) loadErrors.push(`Modeles de CGV: ${termsTemplatesResult.message}`);
+  if (!quoteTemplatesResult.ok) loadErrors.push(`Modeles de devis: ${quoteTemplatesResult.message}`);
   if (!locationsResult.ok) loadErrors.push(`Lieux: ${locationsResult.message}`);
   if (!activitiesResult.ok) loadErrors.push(`Activites: ${activitiesResult.message}`);
   if (!productsResult.ok) loadErrors.push(`Produits: ${productsResult.message}`);
@@ -180,10 +180,9 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
         quoteTypes={quoteTypes.map((row) => ({ id: row.id, name: row.name }))}
         catalogs={catalogs.map((row) => ({ id: row.id, name: row.name }))}
         paymentPlans={paymentPlans.map((row) => ({ id: row.id, name: row.name, payment_method: row.payment_method }))}
-        cgvVersions={cgvVersions.map((row) => ({ id: row.id, version_label: row.version_label }))}
+        termsTemplates={termsTemplates.map((row) => ({ id: row.id, name: row.name, language: row.language }))}
         quoteTemplates={quoteTemplates.map((row) => ({
           id: row.id,
-          code: row.code,
           name: row.name,
           language: row.language,
           is_default: row.is_default,

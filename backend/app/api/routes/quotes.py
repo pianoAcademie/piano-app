@@ -21,7 +21,6 @@ from app.models.catalog import CourseSession, CourseType, Location, SessionStatu
 from app.models.ops import AppSetting
 from app.models.product_catalog import CatalogKit, CatalogProduct
 from app.models.quote import (
-    CgvVersion,
     PaymentPlan,
     PricingActivityPrice,
     PricingCatalog,
@@ -44,8 +43,6 @@ from app.models.quote import (
 )
 from app.models.user import ClientStatus, User, UserRole
 from app.schemas.quote import (
-    CgvVersionOut,
-    CgvVersionUpsertRequest,
     PaymentPlanOut,
     PaymentPlanUpsertRequest,
     PricingActivityPriceOut,
@@ -83,10 +80,8 @@ from app.schemas.quote import (
     QuoteSendRequest,
     QuoteTypeOut,
     QuoteTypeUpsertRequest,
-    QuoteTemplateOut,
     QuoteTemplateV2Out,
     QuoteTemplateV2UpsertRequest,
-    QuoteTemplateUpsertRequest,
     QuoteTemplateVersionOut,
     QuoteTemplateVersionPublishRequest,
     QuoteTemplateVariableOut,
@@ -113,12 +108,7 @@ from app.services.quotes.quote_documents import (
     render_quote_parts_html,
 )
 from app.services.quotes.template_registry import (
-    delete_quote_template,
-    find_quote_template,
     list_quote_template_variables,
-    list_quote_templates,
-    resolve_quote_template_for_quote,
-    upsert_quote_template,
 )
 from app.services.security import hash_password
 from app.services.teacher_invoice_documents import render_teacher_invoice_pdf_from_html
@@ -1132,17 +1122,6 @@ def _payment_plan_out(row: PaymentPlan) -> PaymentPlanOut:
     )
 
 
-def _cgv_out(row: CgvVersion) -> CgvVersionOut:
-    return CgvVersionOut(
-        id=row.id,
-        version_label=row.version_label,
-        content=row.content,
-        is_active=bool(row.is_active),
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
-
-
 def _quote_type_out(row: QuoteType) -> QuoteTypeOut:
     return QuoteTypeOut(
         id=row.id,
@@ -1265,21 +1244,6 @@ def _ensure_parent_prospect(db: Session, parent_prospect_id: UUID, *, current_pr
     if _normalized_prospect_type(parent.meta or {}) == "child":
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Parent prospect must be adult")
     return parent
-
-
-def _quote_template_out(row: dict[str, object]) -> QuoteTemplateOut:
-    return QuoteTemplateOut(
-        id=str(row.get("id") or ""),
-        code=str(row.get("code") or ""),
-        name=str(row.get("name") or ""),
-        language=str(row.get("language") or "fr"),
-        subject_template=str(row.get("subject_template") or ""),
-        body_template=str(row.get("body_template") or ""),
-        is_active=bool(row.get("is_active", True)),
-        is_default=bool(row.get("is_default", False)),
-        created_at=_parse_iso_datetime(str(row.get("created_at") or _utcnow().isoformat())),
-        updated_at=_parse_iso_datetime(str(row.get("updated_at") or _utcnow().isoformat())),
-    )
 
 
 def _active_quote_template_version(db: Session, template_id: UUID, *, lock: bool = False) -> QuoteTemplateVersion | None:
@@ -2265,10 +2229,6 @@ def create_quote(
                 select(TermsTemplate).where(TermsTemplate.id == selected_terms_template_version.terms_template_id)
             )
 
-    selected_template = resolve_quote_template_for_quote(db, template_id=payload.quote_template_id)
-    if payload.quote_template_id and selected_template is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
-
     now = _utcnow()
     quote_dt = datetime.combine(payload.quote_date or now.date(), time(0, 0), tzinfo=timezone.utc)
     expires_at = quote_dt + timedelta(days=int(payload.expiry_days))
@@ -2277,17 +2237,10 @@ def create_quote(
         quote_meta["language"] = payload.language.strip().lower()
     if payload.vat_rate is not None:
         quote_meta["tva_rate"] = str(payload.vat_rate)
-    if selected_template is not None:
-        quote_meta["template_id"] = selected_template["id"]
-        quote_meta["template_code"] = selected_template["code"]
-        quote_meta["template_name"] = selected_template["name"]
-        quote_meta["template_language"] = selected_template["language"]
-        quote_meta["template_subject"] = selected_template["subject_template"]
-        quote_meta["template_body"] = selected_template["body_template"]
     resolved_language = (
         payload.language.strip().lower()
         if payload.language is not None and payload.language.strip()
-        else str(selected_template.get("language") or "").strip().lower() if selected_template is not None else None
+        else None
     )
     activity_ids = [line.activity_id for line in payload.lines if line.activity_id is not None]
     activity_id_for_document, activity_family_for_document = _quote_activity_context(db, activity_ids=activity_ids)
@@ -2375,17 +2328,8 @@ def create_quote(
         if solfege_rule is not None:
             row.solfege_duration_minutes = int(solfege_rule.duration_minutes)
 
-    if payload.cgv_version_id is not None:
-        selected_cgv = db.scalar(select(CgvVersion).where(CgvVersion.id == payload.cgv_version_id))
-        if selected_cgv is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CGV version not found")
-        row.cgv_snapshot = {"id": str(selected_cgv.id), "version_label": selected_cgv.version_label, "content": selected_cgv.content}
-    elif selected_terms_template_version is not None:
+    if selected_terms_template_version is not None:
         row.cgv_snapshot = _cgv_snapshot_from_terms_version(selected_terms_template_version)
-    elif not row.cgv_snapshot:
-        cgv = db.scalar(select(CgvVersion).where(CgvVersion.is_active.is_(True)).order_by(CgvVersion.created_at.desc()).limit(1))
-        if cgv is not None:
-            row.cgv_snapshot = {"id": str(cgv.id), "version_label": cgv.version_label, "content": cgv.content}
 
     db.add(row)
     db.flush()
@@ -2490,21 +2434,6 @@ def update_quote(
         row.terms_template_version_id = selected_terms_template_version.id
         row.cgv_snapshot = _cgv_snapshot_from_terms_version(selected_terms_template_version)
         document_dirty = True
-    if payload.quote_template_id is not None:
-        selected_template = resolve_quote_template_for_quote(db, template_id=payload.quote_template_id)
-        if payload.quote_template_id and selected_template is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
-        if selected_template is not None:
-            row.meta = {
-                **(row.meta or {}),
-                "template_id": selected_template["id"],
-                "template_code": selected_template["code"],
-                "template_name": selected_template["name"],
-                "template_language": selected_template["language"],
-                "template_subject": selected_template["subject_template"],
-                "template_body": selected_template["body_template"],
-            }
-            document_dirty = True
     if payload.school_year_label is not None:
         row.school_year_label = payload.school_year_label
         document_dirty = True
@@ -2539,12 +2468,6 @@ def update_quote(
     if payload.cgv_snapshot is not None:
         row.cgv_snapshot = payload.cgv_snapshot
         document_dirty = True
-    if payload.cgv_version_id is not None:
-        selected_cgv = db.scalar(select(CgvVersion).where(CgvVersion.id == payload.cgv_version_id))
-        if selected_cgv is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CGV version not found")
-        row.cgv_snapshot = {"id": str(selected_cgv.id), "version_label": selected_cgv.version_label, "content": selected_cgv.content}
-        document_dirty = True
     if payload.price_snapshot is not None:
         row.price_snapshot = payload.price_snapshot
     if payload.meta is not None:
@@ -2566,8 +2489,6 @@ def update_quote(
         "quote_template_version_id",
         "terms_template_id",
         "terms_template_version_id",
-        "quote_template_id",
-        "cgv_version_id",
     }
     explicit_document_override = any(field in payload.model_fields_set for field in document_fields)
     if not explicit_document_override and (
@@ -3446,74 +3367,6 @@ def get_quote_template_variables(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[QuoteTemplateVariableOut]:
     return [QuoteTemplateVariableOut(**item) for item in list_quote_template_variables()]
-
-
-@router.get("/quote-templates", response_model=list[QuoteTemplateOut])
-def list_admin_quote_templates(
-    active_only: bool = Query(default=False),
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> list[QuoteTemplateOut]:
-    rows = list_quote_templates(db, active_only=active_only)
-    return [_quote_template_out(row) for row in rows]
-
-
-@router.post("/quote-templates", response_model=QuoteTemplateOut, status_code=status.HTTP_201_CREATED)
-def create_admin_quote_template(
-    payload: QuoteTemplateUpsertRequest,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> QuoteTemplateOut:
-    row = upsert_quote_template(
-        db,
-        template_id=None,
-        code=payload.code,
-        name=payload.name,
-        language=payload.language,
-        subject_template=payload.subject_template,
-        body_template=payload.body_template,
-        is_active=payload.is_active,
-        is_default=payload.is_default,
-    )
-    db.commit()
-    return _quote_template_out(row)
-
-
-@router.patch("/quote-templates/{template_id}", response_model=QuoteTemplateOut)
-def update_admin_quote_template(
-    template_id: str,
-    payload: QuoteTemplateUpsertRequest,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> QuoteTemplateOut:
-    existing = find_quote_template(db, template_id=template_id)
-    if existing is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
-    row = upsert_quote_template(
-        db,
-        template_id=template_id,
-        code=payload.code,
-        name=payload.name,
-        language=payload.language,
-        subject_template=payload.subject_template,
-        body_template=payload.body_template,
-        is_active=payload.is_active,
-        is_default=payload.is_default,
-    )
-    db.commit()
-    return _quote_template_out(row)
-
-
-@router.delete("/quote-templates/{template_id}", status_code=status.HTTP_200_OK)
-def delete_admin_quote_template(
-    template_id: str,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> None:
-    deleted = delete_quote_template(db, template_id=template_id)
-    if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template not found")
-    db.commit()
 
 
 @router.get("/quote-templates-v2", response_model=list[QuoteTemplateV2Out])
@@ -4943,79 +4796,5 @@ def delete_payment_plan(
     in_use = db.scalar(select(Quote.id).where(Quote.payment_plan_id == row.id).limit(1))
     if in_use is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Payment plan is used by quotes")
-    db.delete(row)
-    db.commit()
-
-
-@router.get("/cgv-versions", response_model=list[CgvVersionOut])
-def list_cgv_versions(
-    active_only: bool = Query(default=False),
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> list[CgvVersionOut]:
-    stmt = select(CgvVersion)
-    if active_only:
-        stmt = stmt.where(CgvVersion.is_active.is_(True))
-    rows = db.scalars(stmt.order_by(CgvVersion.created_at.desc())).all()
-    return [_cgv_out(row) for row in rows]
-
-
-@router.post("/cgv-versions", response_model=CgvVersionOut, status_code=status.HTTP_201_CREATED)
-def create_cgv_version(
-    payload: CgvVersionUpsertRequest,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> CgvVersionOut:
-    now = _utcnow()
-    row = CgvVersion(
-        version_label=payload.version_label.strip(),
-        content=payload.content,
-        is_active=payload.is_active,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(row)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="CGV version label already exists") from exc
-    db.refresh(row)
-    return _cgv_out(row)
-
-
-@router.patch("/cgv-versions/{cgv_id}", response_model=CgvVersionOut)
-def update_cgv_version(
-    cgv_id: UUID,
-    payload: CgvVersionUpsertRequest,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> CgvVersionOut:
-    row = db.scalar(select(CgvVersion).where(CgvVersion.id == cgv_id).with_for_update())
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CGV version not found")
-    row.version_label = payload.version_label.strip()
-    row.content = payload.content
-    row.is_active = payload.is_active
-    row.updated_at = _utcnow()
-    db.add(row)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="CGV version label already exists") from exc
-    db.refresh(row)
-    return _cgv_out(row)
-
-
-@router.delete("/cgv-versions/{cgv_id}", status_code=status.HTTP_200_OK)
-def delete_cgv_version(
-    cgv_id: UUID,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> None:
-    row = db.scalar(select(CgvVersion).where(CgvVersion.id == cgv_id).with_for_update())
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="CGV version not found")
     db.delete(row)
     db.commit()

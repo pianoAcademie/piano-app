@@ -166,8 +166,6 @@ class QuoteCreateRequest(BaseModel):
     quote_template_version_id: UUID | None = None
     terms_template_id: UUID | None = None
     terms_template_version_id: UUID | None = None
-    quote_template_id: str | None = Field(default=None, max_length=80)
-    cgv_version_id: UUID | None = None
     school_year_label: str | None = Field(default=None, max_length=40)
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     language: str | None = Field(default=None, max_length=8)
@@ -194,8 +192,6 @@ class QuoteUpdateRequest(BaseModel):
     quote_template_version_id: UUID | None = None
     terms_template_id: UUID | None = None
     terms_template_version_id: UUID | None = None
-    quote_template_id: str | None = Field(default=None, max_length=80)
-    cgv_version_id: UUID | None = None
     school_year_label: str | None = Field(default=None, max_length=40)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     language: str | None = Field(default=None, max_length=8)
@@ -506,44 +502,6 @@ class PaymentPlanUpsertRequest(BaseModel):
     schedule_type: str = Field(min_length=2, max_length=40)
     schedule_rules: dict[str, object] = Field(default_factory=dict)
     is_active: bool = True
-
-
-class CgvVersionOut(BaseModel):
-    id: UUID
-    version_label: str
-    content: str
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-
-class CgvVersionUpsertRequest(BaseModel):
-    version_label: str = Field(min_length=1, max_length=80)
-    content: str = Field(min_length=1)
-    is_active: bool = True
-
-
-class QuoteTemplateOut(BaseModel):
-    id: str
-    code: str
-    name: str
-    language: str
-    subject_template: str
-    body_template: str
-    is_active: bool
-    is_default: bool
-    created_at: datetime
-    updated_at: datetime
-
-
-class QuoteTemplateUpsertRequest(BaseModel):
-    code: str = Field(min_length=1, max_length=80)
-    name: str = Field(min_length=1, max_length=180)
-    language: str = Field(default="fr", min_length=2, max_length=8)
-    subject_template: str = Field(min_length=1, max_length=255)
-    body_template: str = Field(min_length=1, max_length=20000)
-    is_active: bool = True
-    is_default: bool = False
 
 
 class QuoteTemplateVariableOut(BaseModel):

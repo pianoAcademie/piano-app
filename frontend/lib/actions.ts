@@ -8765,11 +8765,9 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
   const pricingCatalogId = parseUuid(String(formData.get("pricing_catalog_id") ?? ""));
   const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
-  const cgvVersionIdRaw = String(formData.get("cgv_version_id") ?? "").trim();
-  const cgvVersionId = cgvVersionIdRaw ? parseUuid(cgvVersionIdRaw) : null;
+  const termsTemplateId = parseUuid(String(formData.get("terms_template_id") ?? ""));
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
-  const quoteTemplateIdRaw = String(formData.get("quote_template_id") ?? "").trim();
-  const quoteTemplateId = quoteTemplateIdRaw || null;
+  const quoteTemplateUuid = parseUuid(String(formData.get("quote_template_uuid") ?? ""));
   const languageRaw = String(formData.get("language") ?? "").trim().toLowerCase();
   const language = languageRaw ? languageRaw.slice(0, 8) : null;
   const currencyRaw = String(formData.get("currency") ?? "EUR").trim().toUpperCase();
@@ -8817,9 +8815,6 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     .filter((value) => Number.isFinite(value) && value >= 0 && value <= 6);
   const lines = parseQuoteWizardLines(String(formData.get("lines_json") ?? ""));
 
-  if (cgvVersionIdRaw && !cgvVersionId) {
-    redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
-  }
   let tvaRate: string | null = null;
   if (tvaRateRaw) {
     const parsedTva = Number(tvaRateRaw);
@@ -8890,8 +8885,8 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     client_id: contextType === "active_client" ? clientId : null,
     location_id: locationId,
     payment_plan_id: paymentPlanId,
-    quote_template_id: quoteTemplateId,
-    cgv_version_id: cgvVersionId,
+    quote_template_uuid: quoteTemplateUuid,
+    terms_template_id: termsTemplateId,
     school_year_label: schoolYearLabel,
     currency,
     language,
@@ -9049,10 +9044,8 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
   const pricingCatalogId = parseUuid(String(formData.get("pricing_catalog_id") ?? ""));
   const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
-  const cgvVersionIdRaw = String(formData.get("cgv_version_id") ?? "").trim();
-  const cgvVersionId = cgvVersionIdRaw ? parseUuid(cgvVersionIdRaw) : null;
-  const quoteTemplateIdRaw = String(formData.get("quote_template_id") ?? "").trim();
-  const quoteTemplateId = quoteTemplateIdRaw || null;
+  const quoteTemplateUuid = parseUuid(String(formData.get("quote_template_uuid") ?? ""));
+  const termsTemplateId = parseUuid(String(formData.get("terms_template_id") ?? ""));
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
   const currencyRaw = String(formData.get("currency") ?? "EUR").trim().toUpperCase();
   const currency = currencyRaw.length === 3 ? currencyRaw : "EUR";
@@ -9065,9 +9058,6 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   const hasTvaRate = formData.has("tva_rate");
   const tvaRateRaw = String(formData.get("tva_rate") ?? "").trim();
 
-  if (cgvVersionIdRaw && !cgvVersionId) {
-    redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
-  }
   if (expiryDays !== null && (expiryDays < 1 || expiryDays > 120)) {
     redirect(appendQueryMessage(returnTo, "error", "Delai expiration invalide"));
   }
@@ -9100,8 +9090,8 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     quote_type_id: quoteTypeId,
     pricing_catalog_id: pricingCatalogId,
     payment_plan_id: paymentPlanId,
-    quote_template_id: quoteTemplateId,
-    cgv_version_id: cgvVersionId,
+    quote_template_uuid: quoteTemplateUuid,
+    terms_template_id: termsTemplateId,
     school_year_label: schoolYearLabel || null,
     currency,
     language,
@@ -10518,105 +10508,6 @@ export async function deleteAdminPaymentPlanConfigAction(formData: FormData): Pr
   redirect(appendQueryMessage(returnTo, "ok", "Plan de paiement supprime"));
 }
 
-export async function createAdminCgvVersionConfigAction(formData: FormData): Promise<void> {
-  const token = currentToken();
-  if (!token) {
-    redirect("/login?error=Session%20expiree");
-  }
-  await ensureAdmin(token);
-
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=cgv"));
-  const versionLabel = String(formData.get("version_label") ?? "").trim();
-  const content = String(formData.get("content") ?? "").trim();
-  const isActive = parseCheckboxFlag(formData, "is_active", true);
-  if (!versionLabel || !content) {
-    redirect(appendQueryMessage(returnTo, "error", "Version et contenu CGV obligatoires"));
-  }
-
-  const result = await backendRequest<Record<string, unknown>>(
-    "/api/v1/cgv-versions",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        version_label: versionLabel,
-        content,
-        is_active: isActive,
-      }),
-    },
-    token,
-  );
-  if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
-  }
-
-  revalidatePath("/admin/config/quotes");
-  revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Version CGV creee"));
-}
-
-export async function updateAdminCgvVersionConfigAction(formData: FormData): Promise<void> {
-  const token = currentToken();
-  if (!token) {
-    redirect("/login?error=Session%20expiree");
-  }
-  await ensureAdmin(token);
-
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=cgv"));
-  const cgvId = parseUuid(String(formData.get("cgv_id") ?? ""));
-  const versionLabel = String(formData.get("version_label") ?? "").trim();
-  const content = String(formData.get("content") ?? "").trim();
-  const isActive = parseCheckboxFlag(formData, "is_active", true);
-  if (!cgvId || !versionLabel || !content) {
-    redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
-  }
-
-  const result = await backendRequest<Record<string, unknown>>(
-    `/api/v1/cgv-versions/${encodeURIComponent(cgvId)}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        version_label: versionLabel,
-        content,
-        is_active: isActive,
-      }),
-    },
-    token,
-  );
-  if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
-  }
-
-  revalidatePath("/admin/config/quotes");
-  revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Version CGV mise a jour"));
-}
-
-export async function deleteAdminCgvVersionConfigAction(formData: FormData): Promise<void> {
-  const token = currentToken();
-  if (!token) {
-    redirect("/login?error=Session%20expiree");
-  }
-  await ensureAdmin(token);
-
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=cgv"));
-  const cgvId = parseUuid(String(formData.get("cgv_id") ?? ""));
-  if (!cgvId) {
-    redirect(appendQueryMessage(returnTo, "error", "Version CGV invalide"));
-  }
-
-  const result = await backendRequest<Record<string, unknown>>(
-    `/api/v1/cgv-versions/${encodeURIComponent(cgvId)}`,
-    { method: "DELETE" },
-    token,
-  );
-  if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
-  }
-  revalidatePath("/admin/config/quotes");
-  revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Version CGV supprimee"));
-}
-
 export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -11139,121 +11030,6 @@ export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formDa
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
   redirect(appendQueryMessage(returnTo, "ok", `Creneaux groupes retires (${removedCount} locaux)`));
-}
-
-export async function createAdminQuoteTemplateConfigAction(formData: FormData): Promise<void> {
-  const token = currentToken();
-  if (!token) {
-    redirect("/login?error=Session%20expiree");
-  }
-  await ensureAdmin(token);
-
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=templates"));
-  const code = String(formData.get("code") ?? "").trim();
-  const name = String(formData.get("name") ?? "").trim();
-  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
-  const subjectTemplate = String(formData.get("subject_template") ?? "").trim();
-  const bodyTemplate = String(formData.get("body_template") ?? "").trim();
-  const isActive = parseCheckboxFlag(formData, "is_active", true);
-  const isDefault = parseCheckboxFlag(formData, "is_default", false);
-  if (!code || !name || !subjectTemplate || !bodyTemplate) {
-    redirect(appendQueryMessage(returnTo, "error", "Champs template devis invalides"));
-  }
-
-  const result = await backendRequest<Record<string, unknown>>(
-    "/api/v1/quote-templates",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        code,
-        name,
-        language,
-        subject_template: subjectTemplate,
-        body_template: bodyTemplate,
-        is_active: isActive,
-        is_default: isDefault,
-      }),
-    },
-    token,
-  );
-  if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
-  }
-
-  revalidatePath("/admin/config/quotes");
-  revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template devis cree"));
-}
-
-export async function updateAdminQuoteTemplateConfigAction(formData: FormData): Promise<void> {
-  const token = currentToken();
-  if (!token) {
-    redirect("/login?error=Session%20expiree");
-  }
-  await ensureAdmin(token);
-
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=templates"));
-  const templateId = String(formData.get("template_id") ?? "").trim();
-  const code = String(formData.get("code") ?? "").trim();
-  const name = String(formData.get("name") ?? "").trim();
-  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
-  const subjectTemplate = String(formData.get("subject_template") ?? "").trim();
-  const bodyTemplate = String(formData.get("body_template") ?? "").trim();
-  const isActive = parseCheckboxFlag(formData, "is_active", true);
-  const isDefault = parseCheckboxFlag(formData, "is_default", false);
-  if (!templateId || !code || !name || !subjectTemplate || !bodyTemplate) {
-    redirect(appendQueryMessage(returnTo, "error", "Template devis invalide"));
-  }
-
-  const result = await backendRequest<Record<string, unknown>>(
-    `/api/v1/quote-templates/${encodeURIComponent(templateId)}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({
-        code,
-        name,
-        language,
-        subject_template: subjectTemplate,
-        body_template: bodyTemplate,
-        is_active: isActive,
-        is_default: isDefault,
-      }),
-    },
-    token,
-  );
-  if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
-  }
-
-  revalidatePath("/admin/config/quotes");
-  revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template devis mis a jour"));
-}
-
-export async function deleteAdminQuoteTemplateConfigAction(formData: FormData): Promise<void> {
-  const token = currentToken();
-  if (!token) {
-    redirect("/login?error=Session%20expiree");
-  }
-  await ensureAdmin(token);
-
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=templates"));
-  const templateId = String(formData.get("template_id") ?? "").trim();
-  if (!templateId) {
-    redirect(appendQueryMessage(returnTo, "error", "Template devis invalide"));
-  }
-
-  const result = await backendRequest<Record<string, unknown>>(
-    `/api/v1/quote-templates/${encodeURIComponent(templateId)}`,
-    { method: "DELETE" },
-    token,
-  );
-  if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
-  }
-  revalidatePath("/admin/config/quotes");
-  revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template devis supprime"));
 }
 
 export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {

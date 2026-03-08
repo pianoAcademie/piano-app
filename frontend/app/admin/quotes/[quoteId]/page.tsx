@@ -126,16 +126,17 @@ type PricingCatalogOut = {
   name: string;
 };
 
-type CgvVersionOut = {
+type TermsTemplateOut = {
   id: string;
-  version_label: string;
-};
-
-type QuoteTemplateOut = {
-  id: string;
-  code: string;
   name: string;
   language: string;
+};
+
+type QuoteTemplateV2Out = {
+  id: string;
+  name: string;
+  language: string;
+  is_default: boolean;
 };
 
 type QuoteDocumentPreviewOut = {
@@ -396,14 +397,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, termsTemplatesResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
-    backendRequest<CgvVersionOut[]>("/api/v1/cgv-versions", {}, token),
-    backendRequest<QuoteTemplateOut[]>("/api/v1/quote-templates?active_only=true", {}, token),
+    backendRequest<TermsTemplateOut[]>("/api/v1/terms-templates?active_only=true", {}, token),
+    backendRequest<QuoteTemplateV2Out[]>("/api/v1/quote-templates-v2?active_only=true", {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
     backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
@@ -437,7 +438,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
   const quoteTypes = quoteTypesResult.ok ? quoteTypesResult.data : [];
   const catalogs = catalogsResult.ok ? catalogsResult.data : [];
-  const cgvVersions = cgvVersionsResult.ok ? cgvVersionsResult.data : [];
+  const termsTemplates = termsTemplatesResult.ok ? termsTemplatesResult.data : [];
   const quoteTemplates = quoteTemplatesResult.ok ? quoteTemplatesResult.data : [];
   const activities = activitiesResult.ok ? activitiesResult.data : [];
   const products = productsResult.ok ? productsResult.data : [];
@@ -460,8 +461,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     ? displayName(owner.first_name, owner.last_name, owner.email)
     : "-";
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
-  const quoteTemplateId = readStringMeta(detail.quote.meta || {}, "template_id");
-  const quoteCgvVersionId = readStringMeta(detail.quote.meta || {}, "cgv_version_id") || readStringMeta(detail.quote.cgv_snapshot || {}, "id");
+  const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
+  const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const calendarSessionsForViewer = calendarSessions.map((session) => ({
     date: String(session.date ?? ""),
@@ -485,17 +486,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     }
     return [selectedTemplate, ...languageQuoteTemplates];
   })();
-  const cgvOptions = (() => {
-    if (!quoteCgvVersionId) {
-      return cgvVersions;
+  const languageTermsTemplates = termsTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
+  const selectedTermsTemplate = termsTemplates.find((row) => row.id === quoteTermsTemplateId);
+  const termsOptions = (() => {
+    if (!selectedTermsTemplate) {
+      return languageTermsTemplates;
     }
-    if (cgvVersions.some((row) => row.id === quoteCgvVersionId)) {
-      return cgvVersions;
+    if (languageTermsTemplates.some((row) => row.id === selectedTermsTemplate.id)) {
+      return languageTermsTemplates;
     }
-    return [
-      { id: quoteCgvVersionId, version_label: String(detail.quote.cgv_snapshot?.version_label || "Snapshot actuel") },
-      ...cgvVersions,
-    ];
+    return [selectedTermsTemplate, ...languageTermsTemplates];
   })();
 
   const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
@@ -617,20 +617,20 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             </select>
           </label>
           <label>
-            Template
-            <select name="quote_template_id" defaultValue={quoteTemplateId} disabled={detail.quote.status !== "created"}>
+            Modele de devis
+            <select name="quote_template_uuid" defaultValue={quoteTemplateId} disabled={detail.quote.status !== "created"}>
               <option value="">Aucun</option>
               {templateOptions.map((row) => (
-                <option key={row.id} value={row.id}>{row.name} ({row.code})</option>
+                <option key={row.id} value={row.id}>{row.name}</option>
               ))}
             </select>
           </label>
           <label>
-            CGV
-            <select name="cgv_version_id" defaultValue={quoteCgvVersionId} disabled={detail.quote.status !== "created"}>
+            Modele de CGV
+            <select name="terms_template_id" defaultValue={quoteTermsTemplateId} disabled={detail.quote.status !== "created"}>
               <option value="">Conserver snapshot actuel</option>
-              {cgvOptions.map((row) => (
-                <option key={row.id} value={row.id}>{row.version_label}</option>
+              {termsOptions.map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
               ))}
             </select>
           </label>

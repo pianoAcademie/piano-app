@@ -3,26 +3,20 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
-  createAdminQuoteTemplateConfigAction,
   createAdminQuoteTemplateV2ConfigAction,
-  createAdminCgvVersionConfigAction,
   createAdminTermsTemplateConfigAction,
   createAdminQuoteDocumentBindingConfigAction,
   createAdminPaymentPlanConfigAction,
   createAdminPricingCatalogConfigAction,
   createAdminQuoteTypeConfigAction,
-  deleteAdminQuoteTemplateConfigAction,
   deleteAdminQuoteTemplateV2ConfigAction,
-  deleteAdminCgvVersionConfigAction,
   deleteAdminTermsTemplateConfigAction,
   deleteAdminQuoteDocumentBindingConfigAction,
   deleteAdminPaymentPlanConfigAction,
   deleteAdminPricingCatalogConfigAction,
   deleteAdminQuoteTypeConfigAction,
   deleteAdminSolfegeLevelRuleConfigAction,
-  updateAdminQuoteTemplateConfigAction,
   updateAdminQuoteTemplateV2ConfigAction,
-  updateAdminCgvVersionConfigAction,
   updateAdminTermsTemplateConfigAction,
   updateAdminQuoteDocumentBindingConfigAction,
   updateAdminPaymentPlanConfigAction,
@@ -41,8 +35,6 @@ type QuotesConfigTab =
   | "types"
   | "catalogs"
   | "payment_plans"
-  | "cgv"
-  | "templates"
   | "variables"
   | "solfege"
   | "doc_templates"
@@ -78,26 +70,6 @@ type PaymentPlanOut = {
   schedule_type: string;
   schedule_rules: Record<string, unknown>;
   is_active: boolean;
-  updated_at: string;
-};
-
-type CgvVersionOut = {
-  id: string;
-  version_label: string;
-  content: string;
-  is_active: boolean;
-  updated_at: string;
-};
-
-type QuoteTemplateOut = {
-  id: string;
-  code: string;
-  name: string;
-  language: string;
-  subject_template: string;
-  body_template: string;
-  is_active: boolean;
-  is_default: boolean;
   updated_at: string;
 };
 
@@ -197,8 +169,6 @@ function parseTab(raw: string): QuotesConfigTab {
   if (
     value === "catalogs" ||
     value === "payment_plans" ||
-    value === "cgv" ||
-    value === "templates" ||
     value === "variables" ||
     value === "solfege" ||
     value === "doc_templates" ||
@@ -379,6 +349,10 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
   const params = searchParams ?? {};
   const rawTab = readParam(params, "tab").trim().toLowerCase();
+  if (rawTab === "cgv" || rawTab === "templates") {
+    const mapped = rawTab === "cgv" ? "doc_terms" : "doc_templates";
+    redirect(buildQuotesConfigHref(mapped));
+  }
   if (rawTab === "calendars") {
     const redirectParams = new URLSearchParams();
     const ok = readParam(params, "ok").trim();
@@ -400,8 +374,6 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     quoteTypesResult,
     catalogsResult,
     paymentPlansResult,
-    cgvVersionsResult,
-    quoteTemplatesResult,
     templateVariablesResult,
     solfegeRulesResult,
     locationsResult,
@@ -413,8 +385,6 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
-    backendRequest<CgvVersionOut[]>("/api/v1/cgv-versions", {}, token),
-    backendRequest<QuoteTemplateOut[]>("/api/v1/quote-templates", {}, token),
     backendRequest<QuoteTemplateVariableOut[]>("/api/v1/quote-template-variables", {}, token),
     backendRequest<SolfegeLevelRuleOut[]>("/api/v1/solfege-level-rules", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
@@ -437,23 +407,11 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         loadErrors.push(`Catalogues de prix: ${catalogsResult.message}`);
         return [] as PricingCatalogOut[];
       })();
-  const cgvVersions = cgvVersionsResult.ok
-    ? cgvVersionsResult.data
-    : (() => {
-        loadErrors.push(`CGV: ${cgvVersionsResult.message}`);
-        return [] as CgvVersionOut[];
-      })();
   const paymentPlans = paymentPlansResult.ok
     ? paymentPlansResult.data
     : (() => {
         loadErrors.push(`Plans de paiement: ${paymentPlansResult.message}`);
         return [] as PaymentPlanOut[];
-      })();
-  const quoteTemplates = quoteTemplatesResult.ok
-    ? quoteTemplatesResult.data
-    : (() => {
-        loadErrors.push(`Templates de devis: ${quoteTemplatesResult.message}`);
-        return [] as QuoteTemplateOut[];
       })();
   const templateVariables = templateVariablesResult.ok
     ? templateVariablesResult.data
@@ -585,13 +543,6 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
           <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>Variables documentaires</Link>
           <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>Creneaux de solfege</Link>
           <Link className="config-sub-link" href="/admin/config/calendars">Calendriers scolaires</Link>
-          <details className="config-sub-legacy" open={tab === "cgv" || tab === "templates"}>
-            <summary className="mode-link">Outils techniques legacy (v1)</summary>
-            <div className="row wrap gap-sm top-gap-sm">
-              <Link className={`config-sub-link ${tab === "cgv" ? "active" : ""}`} href={buildQuotesConfigHref("cgv")}>CGV legacy</Link>
-              <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates email legacy</Link>
-            </div>
-          </details>
         </nav>
       </section>
 
@@ -936,193 +887,11 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         </section>
       ) : null}
 
-      {tab === "cgv" ? (
-        <section className="card">
-          <h3>CGV applicables aux devis</h3>
-          <form action={createAdminCgvVersionConfigAction} className="grid cols-2 config-form-grid">
-            <input type="hidden" name="return_to" value={buildQuotesConfigHref("cgv")} />
-            <label>
-              Version
-              <input type="text" name="version_label" required maxLength={80} placeholder="CGV 2026.1" />
-            </label>
-            <label className="checkline">
-              <input type="checkbox" name="is_active" defaultChecked />
-              Active
-            </label>
-            <div className="span-2">
-              <WysiwygField
-                name="content"
-                label="Contenu"
-                defaultValue="<p>Conditions generales de vente...</p>"
-                helpText="Vous pouvez utiliser du HTML dans les CGV."
-              />
-            </div>
-            <div className="row span-2">
-              <button type="submit">Ajouter la version</button>
-            </div>
-          </form>
-
-          <div className="list top-gap-sm">
-            {cgvVersions.length === 0 ? <p className="muted">Aucune version CGV.</p> : null}
-            {cgvVersions.map((row) => (
-              <article key={row.id} className="item">
-                <div className="row spread wrap gap-sm">
-                  <div>
-                    <strong>{row.version_label}</strong>
-                    <p className="muted">Maj: {dateTimeLabel(row.updated_at)}</p>
-                  </div>
-                  <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Active" : "Inactive"}</span>
-                </div>
-                <p className="muted top-gap-sm">{row.content.slice(0, 220)}{row.content.length > 220 ? "..." : ""}</p>
-                <details>
-                  <summary className="mode-link">Modifier</summary>
-                  <form action={updateAdminCgvVersionConfigAction} className="grid config-form-grid top-gap-sm">
-                    <input type="hidden" name="cgv_id" value={row.id} />
-                    <input type="hidden" name="return_to" value={buildQuotesConfigHref("cgv")} />
-                    <label>
-                      Version
-                      <input type="text" name="version_label" defaultValue={row.version_label} required maxLength={80} />
-                    </label>
-                    <label className="checkline">
-                      <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                      Active
-                    </label>
-                    <WysiwygField
-                      name="content"
-                      label="Contenu"
-                      defaultValue={row.content}
-                      helpText="Version CGV editable en mode WYSIWYG ou HTML."
-                    />
-                    <div className="row">
-                      <button type="submit">Enregistrer</button>
-                    </div>
-                  </form>
-                  <form action={deleteAdminCgvVersionConfigAction} className="row top-gap-sm">
-                    <input type="hidden" name="cgv_id" value={row.id} />
-                    <input type="hidden" name="return_to" value={buildQuotesConfigHref("cgv")} />
-                    <button type="submit" className="danger">Supprimer</button>
-                  </form>
-                </details>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {tab === "templates" ? (
-        <section className="card">
-          <h3>Templates email devis (legacy)</h3>
-          <p className="muted">
-            Variables disponibles: {templateVariables.length} · <Link className="mode-link" href={buildQuotesConfigHref("variables")}>Voir les variables</Link>
-          </p>
-          <form action={createAdminQuoteTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
-            <input type="hidden" name="return_to" value={buildQuotesConfigHref("templates")} />
-            <label>
-              Code
-              <input type="text" name="code" required maxLength={80} placeholder="QUOTE_DEFAULT_FR" />
-            </label>
-            <label>
-              Nom
-              <input type="text" name="name" required maxLength={180} placeholder="Template devis FR" />
-            </label>
-            <label>
-              Langue
-              <input type="text" name="language" defaultValue="fr" required maxLength={8} />
-            </label>
-            <label className="checkline">
-              <input type="checkbox" name="is_default" />
-              Template par defaut
-            </label>
-            <label className="checkline">
-              <input type="checkbox" name="is_active" defaultChecked />
-              Actif
-            </label>
-            <div className="span-2">
-              <QuoteTemplateEditor
-                subjectName="subject_template"
-                bodyName="body_template"
-                defaultSubject="Votre devis {quote_number} Piano Academie"
-                defaultBody={
-                  "<h1>Devis {quote_number}</h1><p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p><p><strong>Type:</strong> {prospect_type_label}</p><p><strong>Parent:</strong> {parent_full_name}</p><p><strong>Eleve:</strong> {child_full_name}</p><h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Echeancier de paiement</h2>{payment_schedule_table_html}<h2>Calendrier des cours</h2>{calendar_table_html}<p><strong>Total HT:</strong> {total_ht} {currency}</p><p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p><p><strong>Total TTC:</strong> {total_ttc} {currency}</p><p><strong>Expiration:</strong> {expires_at}</p>"
-                }
-                variables={templateVariables}
-              />
-            </div>
-            <div className="row span-2">
-              <button type="submit">Ajouter le template</button>
-            </div>
-          </form>
-
-          <div className="list top-gap-sm">
-            {quoteTemplates.length === 0 ? <p className="muted">Aucun template de devis.</p> : null}
-            {quoteTemplates.map((row) => (
-              <article key={row.id} className="item">
-                <div className="row spread wrap gap-sm">
-                  <div>
-                    <strong>{row.name}</strong>
-                    <p className="muted">{row.code} · langue {row.language.toUpperCase()} · Maj: {dateTimeLabel(row.updated_at)}</p>
-                  </div>
-                  <div className="row wrap gap-sm">
-                    {row.is_default ? <span className="badge">Defaut</span> : null}
-                    <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span>
-                  </div>
-                </div>
-                <details>
-                  <summary className="mode-link">Modifier</summary>
-                  <form action={updateAdminQuoteTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
-                    <input type="hidden" name="template_id" value={row.id} />
-                    <input type="hidden" name="return_to" value={buildQuotesConfigHref("templates")} />
-                    <label>
-                      Code
-                      <input type="text" name="code" defaultValue={row.code} required maxLength={80} />
-                    </label>
-                    <label>
-                      Nom
-                      <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
-                    </label>
-                    <label>
-                      Langue
-                      <input type="text" name="language" defaultValue={row.language} required maxLength={8} />
-                    </label>
-                    <label className="checkline">
-                      <input type="checkbox" name="is_default" defaultChecked={row.is_default} />
-                      Template par defaut
-                    </label>
-                    <label className="checkline">
-                      <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                      Actif
-                    </label>
-                    <div className="span-2">
-                      <QuoteTemplateEditor
-                        subjectName="subject_template"
-                        bodyName="body_template"
-                        defaultSubject={row.subject_template}
-                        defaultBody={row.body_template}
-                        variables={templateVariables}
-                      />
-                    </div>
-                    <div className="row span-2">
-                      <button type="submit">Enregistrer</button>
-                    </div>
-                  </form>
-                  <form action={deleteAdminQuoteTemplateConfigAction} className="row top-gap-sm">
-                    <input type="hidden" name="template_id" value={row.id} />
-                    <input type="hidden" name="return_to" value={buildQuotesConfigHref("templates")} />
-                    <button type="submit" className="danger">Supprimer</button>
-                  </form>
-                </details>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       {tab === "doc_templates" ? (
         <section className="card">
           <h3>Modeles de devis (document principal)</h3>
           <p className="muted">
             Ce bloc gere le document devis (rendu admin, page publique et PDF). Les codes techniques sont geres automatiquement.
-            Les anciens templates email sont disponibles dans "Outils techniques legacy (v1)".
           </p>
           <form action={createAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />

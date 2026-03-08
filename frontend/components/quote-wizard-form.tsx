@@ -30,15 +30,15 @@ type PaymentPlanOption = {
   payment_method: string;
 };
 
-type CgvOption = {
+type TermsTemplateOption = {
   id: string;
-  version_label: string;
+  name: string;
+  language: string;
 };
 
 type QuoteTemplateOption = {
   id: string;
   name: string;
-  code: string;
   language: string;
   is_default: boolean;
 };
@@ -119,7 +119,7 @@ type QuoteWizardFormProps = {
   quoteTypes: QuoteTypeOption[];
   catalogs: CatalogOption[];
   paymentPlans: PaymentPlanOption[];
-  cgvVersions: CgvOption[];
+  termsTemplates: TermsTemplateOption[];
   quoteTemplates: QuoteTemplateOption[];
   locations: LocationOption[];
   activities: ActivityOption[];
@@ -354,7 +354,7 @@ export default function QuoteWizardForm({
   quoteTypes,
   catalogs,
   paymentPlans,
-  cgvVersions,
+  termsTemplates,
   quoteTemplates,
   locations,
   activities,
@@ -639,8 +639,8 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
-              Template devis
-              <select name="quote_template_id" value={selectedTemplateId} onChange={(event) => {
+              Modele de devis
+              <select name="quote_template_uuid" value={selectedTemplateId} onChange={(event) => {
                 const nextId = event.target.value;
                 setSelectedTemplateId(nextId);
                 const template = quoteTemplates.find((item) => item.id === nextId);
@@ -651,7 +651,7 @@ export default function QuoteWizardForm({
               <option value="">Aucun</option>
                 {languageTemplates.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} ({item.code})
+                    {item.name}
                   </option>
                 ))}
               </select>
@@ -668,12 +668,12 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
-              Version CGV de reference
-              <select name="cgv_version_id" defaultValue={cgvVersions[0]?.id ?? ""}>
+              Modele de CGV
+              <select name="terms_template_id" defaultValue={termsTemplates[0]?.id ?? ""}>
                 <option value="">Aucune</option>
-                {cgvVersions.map((item) => (
+                {termsTemplates.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.version_label}
+                    {item.name} ({normalizeLang(item.language).toUpperCase()})
                   </option>
                 ))}
               </select>
