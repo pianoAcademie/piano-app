@@ -73,6 +73,10 @@ from app.schemas.quote import (
     QuotePaymentSchedulePreviewRequest,
     QuotePublicOut,
     QuoteSchoolCalendarOut,
+    QuoteSchoolCalendarDeploymentActionOut,
+    QuoteSchoolCalendarDeploymentPreviewOut,
+    QuoteSchoolCalendarDeploymentSummaryOut,
+    QuoteSchoolCalendarGeneratedSlotOut,
     QuoteSchoolCalendarPeriod,
     QuoteSchoolCalendarResolveOut,
     QuoteSchoolCalendarUpsertRequest,
@@ -213,6 +217,14 @@ def _next_available_payment_plan_code(db: Session, *, base_code: str, exclude_id
 
 
 QUOTE_SCHOOL_CALENDARS_SETTING_KEY = "quote_school_calendars_v1"
+CALENDAR_DEPLOYMENT_BLOCK_PREFIX = "GEN:QUOTE_CAL_DEPLOY"
+CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED = "not_deployed"
+CALENDAR_DEPLOYMENT_STATUS_DEPLOYED = "deployed"
+CALENDAR_DEPLOYMENT_STATUS_STALE = "stale"
+CALENDAR_DEPLOYMENT_STATUS_REMOVED = "removed"
+CALENDAR_DEPLOYMENT_REASON_HOLIDAY = "holiday"
+CALENDAR_DEPLOYMENT_REASON_VACATION = "vacation"
+CALENDAR_DEPLOYMENT_REASON_CLOSURE = "closure"
 
 
 def _parse_iso_date(raw: str) -> date | None:
@@ -223,6 +235,114 @@ def _parse_iso_date(raw: str) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _deployment_private_description(
+    *,
+    calendar_id: UUID,
+    day: date,
+    reason_types: set[str],
+    source_hash: str,
+) -> str:
+    normalized_types = ",".join(sorted(reason_types))
+    return (
+        f"{CALENDAR_DEPLOYMENT_BLOCK_PREFIX}"
+        f"|calendar={calendar_id}"
+        f"|day={day.isoformat()}"
+        f"|types={normalized_types}"
+        f"|hash={source_hash}"
+    )
+
+
+def _parse_calendar_deployment_private_description(value: str | None) -> tuple[UUID | None, date | None, set[str]]:
+    raw = str(value or "").strip()
+    if not raw.startswith(CALENDAR_DEPLOYMENT_BLOCK_PREFIX):
+        return (None, None, set())
+    segments = raw.split("|")
+    calendar_value = ""
+    day_value = ""
+    type_value = ""
+    for segment in segments[1:]:
+        if "=" not in segment:
+            continue
+        key, val = segment.split("=", 1)
+        key = key.strip().lower()
+        val = val.strip()
+        if key == "calendar":
+            calendar_value = val
+        elif key == "day":
+            day_value = val
+        elif key == "types":
+            type_value = val
+    calendar_id: UUID | None = None
+    day: date | None = None
+    try:
+        calendar_id = UUID(calendar_value) if calendar_value else None
+    except Exception:
+        calendar_id = None
+    try:
+        day = date.fromisoformat(day_value) if day_value else None
+    except Exception:
+        day = None
+    reason_types = {
+        token.strip().lower()
+        for token in type_value.split(",")
+        if token.strip().lower() in {
+            CALENDAR_DEPLOYMENT_REASON_HOLIDAY,
+            CALENDAR_DEPLOYMENT_REASON_VACATION,
+            CALENDAR_DEPLOYMENT_REASON_CLOSURE,
+        }
+    }
+    return (calendar_id, day, reason_types)
+
+
+def _calendar_day_reason_map(
+    *,
+    periods: list[QuoteSchoolCalendarPeriod],
+    holiday_days: list[date],
+    closure_days: list[date],
+) -> dict[date, set[str]]:
+    day_reasons: dict[date, set[str]] = {}
+    for day in holiday_days:
+        day_reasons.setdefault(day, set()).add(CALENDAR_DEPLOYMENT_REASON_HOLIDAY)
+    for day in closure_days:
+        day_reasons.setdefault(day, set()).add(CALENDAR_DEPLOYMENT_REASON_CLOSURE)
+    for day in _expand_vacation_periods(periods):
+        day_reasons.setdefault(day, set()).add(CALENDAR_DEPLOYMENT_REASON_VACATION)
+    return day_reasons
+
+
+def _calendar_source_hash(
+    *,
+    name: str,
+    school_year_label: str,
+    location_id: UUID,
+    periods: list[QuoteSchoolCalendarPeriod],
+    holiday_days: list[date],
+    closure_days: list[date],
+    is_active: bool,
+) -> str:
+    payload = {
+        "name": (name or "").strip(),
+        "school_year_label": (school_year_label or "").strip(),
+        "location_id": str(location_id),
+        "is_active": bool(is_active),
+        "vacation_periods": [
+            {
+                "start_date": period.start_date.isoformat(),
+                "end_date": period.end_date.isoformat(),
+                "label": (period.label or "").strip() or None,
+            }
+            for period in periods
+        ],
+        "holiday_dates": sorted({item.isoformat() for item in holiday_days}),
+        "closure_dates": sorted({item.isoformat() for item in closure_days}),
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _calendar_generated_slot_like_pattern(calendar_id: UUID) -> str:
+    return f"{CALENDAR_DEPLOYMENT_BLOCK_PREFIX}|calendar={calendar_id}|%"
 
 
 def _calendar_periods_out(periods: object) -> list[QuoteSchoolCalendarPeriod]:
@@ -294,15 +414,47 @@ def _save_quote_school_calendars(db: Session, items: list[dict[str, object]]) ->
 
 
 def _calendar_out(row: dict[str, object]) -> QuoteSchoolCalendarOut:
+    location_id = UUID(str(row.get("location_id")))
+    periods = _calendar_periods_out(row.get("vacation_periods"))
+    holiday_dates = _calendar_dates_out(row.get("holiday_dates"))
+    closure_dates = _calendar_dates_out(row.get("closure_dates"))
+    source_hash = _calendar_source_hash(
+        name=str(row.get("name") or ""),
+        school_year_label=str(row.get("school_year_label") or ""),
+        location_id=location_id,
+        periods=periods,
+        holiday_days=holiday_dates,
+        closure_days=closure_dates,
+        is_active=bool(row.get("is_active", True)),
+    )
+    stored_status = str(row.get("deployment_status") or CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED).strip().lower()
+    if stored_status not in {
+        CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED,
+        CALENDAR_DEPLOYMENT_STATUS_DEPLOYED,
+        CALENDAR_DEPLOYMENT_STATUS_STALE,
+        CALENDAR_DEPLOYMENT_STATUS_REMOVED,
+    }:
+        stored_status = CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED
+    deployment_source_hash = str(row.get("deployment_source_hash") or "").strip() or None
+    if stored_status == CALENDAR_DEPLOYMENT_STATUS_DEPLOYED and deployment_source_hash and deployment_source_hash != source_hash:
+        deployment_status = CALENDAR_DEPLOYMENT_STATUS_STALE
+    else:
+        deployment_status = stored_status
     return QuoteSchoolCalendarOut(
         id=UUID(str(row.get("id"))),
         name=str(row.get("name") or "").strip() or "Calendrier",
         school_year_label=str(row.get("school_year_label") or "").strip() or "N/A",
-        location_id=UUID(str(row.get("location_id"))),
-        vacation_periods=_calendar_periods_out(row.get("vacation_periods")),
-        holiday_dates=_calendar_dates_out(row.get("holiday_dates")),
-        closure_dates=_calendar_dates_out(row.get("closure_dates")),
+        location_id=location_id,
+        vacation_periods=periods,
+        holiday_dates=holiday_dates,
+        closure_dates=closure_dates,
         is_active=bool(row.get("is_active", True)),
+        deployment_status=deployment_status,
+        deployment_last_at=_parse_iso_datetime(str(row.get("deployment_last_at") or "").strip()) if row.get("deployment_last_at") else None,
+        deployment_last_sync_at=_parse_iso_datetime(str(row.get("deployment_last_sync_at") or "").strip()) if row.get("deployment_last_sync_at") else None,
+        deployment_source_hash=deployment_source_hash,
+        deployment_generated_count=max(0, int(row.get("deployment_generated_count") or 0)),
+        deployment_generated_active_count=max(0, int(row.get("deployment_generated_active_count") or 0)),
         created_at=_parse_iso_datetime(str(row.get("created_at") or _utcnow().isoformat())),
         updated_at=_parse_iso_datetime(str(row.get("updated_at") or _utcnow().isoformat())),
     )
@@ -316,6 +468,26 @@ def _calendar_record_from_payload(
     location_id: UUID,
 ) -> dict[str, object]:
     now = _utcnow()
+    periods = [
+        QuoteSchoolCalendarPeriod(
+            start_date=period.start_date,
+            end_date=period.end_date,
+            label=period.label or None,
+        )
+        for period in payload.vacation_periods
+        if period.end_date >= period.start_date
+    ]
+    holidays = sorted({item for item in payload.holiday_dates})
+    closures = sorted({item for item in payload.closure_dates})
+    source_hash = _calendar_source_hash(
+        name=payload.name.strip(),
+        school_year_label=payload.school_year_label.strip(),
+        location_id=location_id,
+        periods=periods,
+        holiday_days=holidays,
+        closure_days=closures,
+        is_active=bool(payload.is_active),
+    )
     return {
         "id": str(row_id),
         "name": payload.name.strip(),
@@ -327,12 +499,18 @@ def _calendar_record_from_payload(
                 "end_date": period.end_date.isoformat(),
                 "label": period.label or None,
             }
-            for period in payload.vacation_periods
-            if period.end_date >= period.start_date
+            for period in periods
         ],
-        "holiday_dates": sorted({item.isoformat() for item in payload.holiday_dates}),
-        "closure_dates": sorted({item.isoformat() for item in payload.closure_dates}),
+        "holiday_dates": sorted({item.isoformat() for item in holidays}),
+        "closure_dates": sorted({item.isoformat() for item in closures}),
         "is_active": bool(payload.is_active),
+        "source_hash": source_hash,
+        "deployment_status": CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED,
+        "deployment_last_at": None,
+        "deployment_last_sync_at": None,
+        "deployment_source_hash": None,
+        "deployment_generated_count": 0,
+        "deployment_generated_active_count": 0,
         "created_at": (created_at or now).isoformat(),
         "updated_at": now.isoformat(),
     }
@@ -366,65 +544,210 @@ def _validate_calendar_locations_exist(db: Session, location_ids: list[UUID]) ->
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Location not found")
 
 
-def _apply_school_calendar_to_management_planning(
+def _calendar_source_hash_for_row(row: dict[str, object]) -> str:
+    location_id = UUID(str(row.get("location_id")))
+    periods = _calendar_periods_out(row.get("vacation_periods"))
+    holidays = _calendar_dates_out(row.get("holiday_dates"))
+    closures = _calendar_dates_out(row.get("closure_dates"))
+    return _calendar_source_hash(
+        name=str(row.get("name") or ""),
+        school_year_label=str(row.get("school_year_label") or ""),
+        location_id=location_id,
+        periods=periods,
+        holiday_days=holidays,
+        closure_days=closures,
+        is_active=bool(row.get("is_active", True)),
+    )
+
+
+def _calendar_preview_for_row(db: Session, *, row: dict[str, object]) -> QuoteSchoolCalendarDeploymentPreviewOut:
+    calendar = _calendar_out(row)
+    day_reasons = _calendar_day_reason_map(
+        periods=calendar.vacation_periods,
+        holiday_days=calendar.holiday_dates,
+        closure_days=calendar.closure_dates,
+    )
+    target_days = sorted(day_reasons.keys())
+    source_hash = _calendar_source_hash_for_row(row)
+    existing = db.scalars(
+        select(CourseSession)
+        .where(
+            CourseSession.location_id == calendar.location_id,
+            CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
+        )
+    ).all()
+    existing_by_day: dict[date, list[CourseSession]] = {}
+    active_existing = 0
+    for session in existing:
+        parsed_calendar_id, parsed_day, _ = _parse_calendar_deployment_private_description(session.private_description)
+        if parsed_calendar_id != calendar.id or parsed_day is None:
+            continue
+        existing_by_day.setdefault(parsed_day, []).append(session)
+        if session.status != SessionStatus.CANCELLED:
+            active_existing += 1
+
+    would_create = 0
+    would_keep = 0
+    would_reactivate = 0
+    for day in target_days:
+        day_sessions = existing_by_day.get(day, [])
+        if not day_sessions:
+            would_create += 1
+            continue
+        has_active = any(session.status != SessionStatus.CANCELLED for session in day_sessions)
+        if has_active:
+            would_keep += 1
+        else:
+            would_reactivate += 1
+    would_cancel = sum(
+        1
+        for day, sessions in existing_by_day.items()
+        if day not in day_reasons and any(session.status != SessionStatus.CANCELLED for session in sessions)
+    )
+
+    vacation_days = {
+        day
+        for day, types in day_reasons.items()
+        if CALENDAR_DEPLOYMENT_REASON_VACATION in types
+    }
+    holiday_days = {
+        day
+        for day, types in day_reasons.items()
+        if CALENDAR_DEPLOYMENT_REASON_HOLIDAY in types
+    }
+    closure_days = {
+        day
+        for day, types in day_reasons.items()
+        if CALENDAR_DEPLOYMENT_REASON_CLOSURE in types
+    }
+
+    return QuoteSchoolCalendarDeploymentPreviewOut(
+        calendar_id=calendar.id,
+        location_id=calendar.location_id,
+        deployment_status=calendar.deployment_status,
+        source_hash=source_hash,
+        existing_generated_active_count=active_existing,
+        summary=QuoteSchoolCalendarDeploymentSummaryOut(
+            total_target_days=len(target_days),
+            vacation_days=len(vacation_days),
+            holiday_days=len(holiday_days),
+            closure_days=len(closure_days),
+        ),
+        would_create=would_create,
+        would_keep=would_keep,
+        would_reactivate=would_reactivate,
+        would_cancel=would_cancel,
+        sample_dates=target_days[:12],
+    )
+
+
+def _sync_deployed_status_after_payload_change(
+    *,
+    old_row: dict[str, object],
+    new_row: dict[str, object],
+) -> None:
+    new_source_hash = str(new_row.get("source_hash") or "").strip() or _calendar_source_hash_for_row(new_row)
+    old_deployment_source_hash = str(old_row.get("deployment_source_hash") or "").strip()
+    old_status = str(old_row.get("deployment_status") or CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED).strip().lower()
+    if old_status not in {
+        CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED,
+        CALENDAR_DEPLOYMENT_STATUS_DEPLOYED,
+        CALENDAR_DEPLOYMENT_STATUS_STALE,
+        CALENDAR_DEPLOYMENT_STATUS_REMOVED,
+    }:
+        old_status = CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED
+    if old_status == CALENDAR_DEPLOYMENT_STATUS_DEPLOYED and old_deployment_source_hash and old_deployment_source_hash != new_source_hash:
+        new_status = CALENDAR_DEPLOYMENT_STATUS_STALE
+    else:
+        new_status = old_status
+    new_row["deployment_status"] = new_status
+    new_row["deployment_last_at"] = old_row.get("deployment_last_at")
+    new_row["deployment_last_sync_at"] = old_row.get("deployment_last_sync_at")
+    new_row["deployment_source_hash"] = old_row.get("deployment_source_hash")
+    new_row["deployment_generated_count"] = int(old_row.get("deployment_generated_count") or 0)
+    new_row["deployment_generated_active_count"] = int(old_row.get("deployment_generated_active_count") or 0)
+    new_row["source_hash"] = new_source_hash
+
+
+def _deploy_calendar_row(
     db: Session,
     *,
-    payload: QuoteSchoolCalendarUpsertRequest,
-    location_ids: list[UUID],
-) -> tuple[int, int]:
-    vacation_days = _expand_vacation_periods(payload.vacation_periods)
-    target_days = sorted({*payload.holiday_dates, *payload.closure_dates, *vacation_days})
-    if not location_ids or not target_days:
-        return (0, 0)
+    row: dict[str, object],
+    actor: User | None,
+) -> QuoteSchoolCalendarDeploymentActionOut:
+    calendar = _calendar_out(row)
+    day_reasons = _calendar_day_reason_map(
+        periods=calendar.vacation_periods,
+        holiday_days=calendar.holiday_dates,
+        closure_days=calendar.closure_dates,
+    )
+    source_hash = _calendar_source_hash_for_row(row)
 
     vacation_type = db.scalar(select(CourseType).where(CourseType.code == "VACATION_DAY"))
     if vacation_type is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Activite VACATION_DAY introuvable pour appliquer le calendrier au planning",
+            detail="Activite VACATION_DAY introuvable pour deployer le calendrier",
         )
+    location = db.scalar(select(Location).where(Location.id == calendar.location_id))
+    if location is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Location not found")
 
-    locations = {
-        row.id: row
-        for row in db.scalars(select(Location).where(Location.id.in_(location_ids))).all()
-    }
+    existing_rows = db.scalars(
+        select(CourseSession)
+        .where(
+            CourseSession.location_id == calendar.location_id,
+            CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
+        )
+        .with_for_update()
+    ).all()
+    existing_by_day: dict[date, list[CourseSession]] = {}
+    for session in existing_rows:
+        parsed_calendar_id, parsed_day, _ = _parse_calendar_deployment_private_description(session.private_description)
+        if parsed_calendar_id != calendar.id or parsed_day is None:
+            continue
+        existing_by_day.setdefault(parsed_day, []).append(session)
+
     now = _utcnow()
     created_count = 0
-    skipped_count = 0
+    updated_count = 0
+    reactivated_count = 0
+    cancelled_count = 0
 
-    for location_id in location_ids:
-        location = locations.get(location_id)
-        if location is None:
-            continue
-        for day in target_days:
-            start_at_utc = datetime.combine(day, time.min, tzinfo=timezone.utc)
-            end_at_utc = start_at_utc + timedelta(days=1)
-            exists = db.scalar(
-                select(CourseSession.id)
-                .where(
-                    CourseSession.course_type_id == vacation_type.id,
-                    CourseSession.location_id == location_id,
-                    CourseSession.start_at_utc == start_at_utc,
-                    CourseSession.end_at_utc == end_at_utc,
-                    CourseSession.status != SessionStatus.CANCELLED,
-                )
-                .limit(1)
-            )
-            if exists is not None:
-                skipped_count += 1
-                continue
-
+    for day, reason_types in sorted(day_reasons.items(), key=lambda item: item[0]):
+        start_at_utc = datetime.combine(day, time.min, tzinfo=timezone.utc)
+        end_at_utc = start_at_utc + timedelta(days=1)
+        marker = _deployment_private_description(
+            calendar_id=calendar.id,
+            day=day,
+            reason_types=reason_types,
+            source_hash=source_hash,
+        )
+        display_reasons = ", ".join(
+            {
+                CALENDAR_DEPLOYMENT_REASON_HOLIDAY: "jour ferie",
+                CALENDAR_DEPLOYMENT_REASON_VACATION: "vacances",
+                CALENDAR_DEPLOYMENT_REASON_CLOSURE: "fermeture",
+            }[item]
+            for item in sorted(reason_types)
+        )
+        description = f"Blocage automatique calendrier scolaire ({display_reasons})"
+        day_sessions = existing_by_day.get(day, [])
+        target = next((session for session in day_sessions if session.status != SessionStatus.CANCELLED), None)
+        if target is None and day_sessions:
+            target = day_sessions[0]
+        if target is None:
             db.add(
                 CourseSession(
                     course_type_id=vacation_type.id,
                     billing_entity_snapshot=normalize_billing_entity(vacation_type.billing_entity_code),
                     snapshot_seller_legal_entity_id=vacation_type.seller_legal_entity_id,
                     snapshot_payor_legal_entity_id=vacation_type.payor_legal_entity_id,
-                    location_id=location_id,
+                    location_id=calendar.location_id,
                     professor_id=None,
-                    title=f"Blocage calendrier {payload.school_year_label.strip()}",
-                    description="Blocage automatique calendrier scolaire / jours feries",
-                    private_description="GEN:QUOTE_SCHOOL_CALENDAR_BLOCK",
+                    title=f"Blocage calendrier {calendar.school_year_label}",
+                    description=description,
+                    private_description=marker,
                     start_at_utc=start_at_utc,
                     end_at_utc=end_at_utc,
                     is_all_day=True,
@@ -442,8 +765,172 @@ def _apply_school_calendar_to_management_planning(
                 )
             )
             created_count += 1
+            continue
+        was_cancelled = target.status == SessionStatus.CANCELLED
+        target.start_at_utc = start_at_utc
+        target.end_at_utc = end_at_utc
+        target.title = f"Blocage calendrier {calendar.school_year_label}"
+        target.description = description
+        target.private_description = marker
+        target.is_all_day = True
+        target.capacity_max = 0
+        target.auto_cancel_deadline_utc = start_at_utc
+        target.status = SessionStatus.SCHEDULED
+        target.cancel_reason = None
+        target.is_private = True
+        target.allow_online_booking = False
+        target.timezone = location.timezone
+        target.updated_at = now
+        if was_cancelled:
+            reactivated_count += 1
+        else:
+            updated_count += 1
 
-    return (created_count, skipped_count)
+    for day, sessions in existing_by_day.items():
+        if day in day_reasons:
+            continue
+        for session in sessions:
+            if session.status == SessionStatus.CANCELLED:
+                continue
+            session.status = SessionStatus.CANCELLED
+            session.cancel_reason = "CALENDAR_DEPLOYMENT_SYNC_REMOVED"
+            session.updated_at = now
+            cancelled_count += 1
+
+    active_generated_count = db.scalar(
+        select(func.count(CourseSession.id))
+        .where(
+            CourseSession.location_id == calendar.location_id,
+            CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
+            CourseSession.status != SessionStatus.CANCELLED,
+        )
+    ) or 0
+    row["deployment_status"] = CALENDAR_DEPLOYMENT_STATUS_DEPLOYED
+    row["deployment_last_at"] = now.isoformat()
+    row["deployment_last_sync_at"] = now.isoformat()
+    row["deployment_source_hash"] = source_hash
+    row["deployment_generated_count"] = len(day_reasons)
+    row["deployment_generated_active_count"] = int(active_generated_count)
+    row["source_hash"] = source_hash
+    row["deployment_last_by"] = str(actor.id) if actor is not None else None
+
+    return QuoteSchoolCalendarDeploymentActionOut(
+        calendar_id=calendar.id,
+        deployment_status=CALENDAR_DEPLOYMENT_STATUS_DEPLOYED,
+        source_hash=source_hash,
+        created_count=created_count,
+        updated_count=updated_count,
+        reactivated_count=reactivated_count,
+        cancelled_count=cancelled_count,
+        active_generated_count=int(active_generated_count),
+        message=(
+            f"Deploiement termine ({int(active_generated_count)} creneaux actifs, "
+            f"{created_count} crees, {reactivated_count} reactives, {cancelled_count} retires)"
+        ),
+    )
+
+
+def _remove_calendar_deployment(
+    db: Session,
+    *,
+    row: dict[str, object],
+) -> QuoteSchoolCalendarDeploymentActionOut:
+    calendar = _calendar_out(row)
+    now = _utcnow()
+    to_cancel = db.scalars(
+        select(CourseSession)
+        .where(
+            CourseSession.location_id == calendar.location_id,
+            CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
+            CourseSession.status != SessionStatus.CANCELLED,
+        )
+        .with_for_update()
+    ).all()
+    cancelled_count = 0
+    for session in to_cancel:
+        session.status = SessionStatus.CANCELLED
+        session.cancel_reason = "CALENDAR_DEPLOYMENT_REMOVED"
+        session.updated_at = now
+        cancelled_count += 1
+    row["deployment_status"] = CALENDAR_DEPLOYMENT_STATUS_REMOVED
+    row["deployment_last_sync_at"] = now.isoformat()
+    row["deployment_generated_active_count"] = 0
+    return QuoteSchoolCalendarDeploymentActionOut(
+        calendar_id=calendar.id,
+        deployment_status=CALENDAR_DEPLOYMENT_STATUS_REMOVED,
+        source_hash=str(row.get("deployment_source_hash") or "").strip() or None,
+        cancelled_count=cancelled_count,
+        active_generated_count=0,
+        message=f"Deploiement retire ({cancelled_count} creneaux desactives)",
+    )
+
+
+def _list_calendar_generated_slots(
+    db: Session,
+    *,
+    calendar_id: UUID,
+    location_id: UUID,
+) -> list[QuoteSchoolCalendarGeneratedSlotOut]:
+    rows = db.scalars(
+        select(CourseSession)
+        .where(
+            CourseSession.location_id == location_id,
+            CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar_id)),
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+    ).all()
+    out: list[QuoteSchoolCalendarGeneratedSlotOut] = []
+    for row in rows:
+        parsed_calendar_id, parsed_day, reason_types = _parse_calendar_deployment_private_description(row.private_description)
+        if parsed_calendar_id != calendar_id:
+            continue
+        if parsed_day is None:
+            parsed_day = row.start_at_utc.date()
+        out.append(
+            QuoteSchoolCalendarGeneratedSlotOut(
+                session_id=row.id,
+                location_id=row.location_id,
+                date=parsed_day,
+                reason_types=sorted(reason_types),
+                status=row.status.value if hasattr(row.status, "value") else str(row.status),
+                title=row.title,
+                start_at=row.start_at_utc,
+                end_at=row.end_at_utc,
+            )
+        )
+    return out
+
+
+def _apply_school_calendar_to_management_planning(
+    db: Session,
+    *,
+    payload: QuoteSchoolCalendarUpsertRequest,
+    location_ids: list[UUID],
+) -> tuple[int, int]:
+    rows = _load_quote_school_calendars(db)
+    created = 0
+    touched = 0
+    changed = False
+    for location_id in location_ids:
+        row = next(
+            (
+                item
+                for item in rows
+                if str(item.get("location_id") or "") == str(location_id)
+                and str(item.get("name") or "").strip().lower() == payload.name.strip().lower()
+                and str(item.get("school_year_label") or "").strip().lower() == payload.school_year_label.strip().lower()
+            ),
+            None,
+        )
+        if row is None:
+            continue
+        action = _deploy_calendar_row(db, row=row, actor=None)
+        changed = True
+        created += action.created_count
+        touched += action.created_count + action.updated_count + action.reactivated_count
+    if changed:
+        _save_quote_school_calendars(db, rows)
+    return (created, touched)
 
 
 def _time_from_hhmm(value: str, *, field: str) -> time:
@@ -4058,7 +4545,12 @@ def create_quote_school_calendar(
             location_ids=location_ids,
         )
     db.commit()
-    return _calendar_out(created_records[0])
+    refreshed_rows = _load_quote_school_calendars(db)
+    refreshed = next(
+        (item for item in refreshed_rows if str(item.get("id") or "") == str(created_records[0].get("id"))),
+        created_records[0],
+    )
+    return _calendar_out(refreshed)
 
 
 @router.patch("/quote-school-calendars/{calendar_id}", response_model=QuoteSchoolCalendarOut)
@@ -4080,12 +4572,14 @@ def update_quote_school_calendar(
         if str(raw.get("id") or "") != str(calendar_id):
             continue
         created_at = _parse_iso_datetime(str(raw.get("created_at") or _utcnow().isoformat()))
+        old_row = dict(raw)
         record = _calendar_record_from_payload(
             payload,
             row_id=calendar_id,
             created_at=created_at,
             location_id=primary_location_id,
         )
+        _sync_deployed_status_after_payload_change(old_row=old_row, new_row=record)
         rows[index] = record
         updated = record
         break
@@ -4107,12 +4601,14 @@ def update_quote_school_calendar(
             existing_raw = rows[existing_index]
             existing_id = UUID(str(existing_raw.get("id")))
             existing_created_at = _parse_iso_datetime(str(existing_raw.get("created_at") or _utcnow().isoformat()))
-            rows[existing_index] = _calendar_record_from_payload(
+            replacement = _calendar_record_from_payload(
                 payload,
                 row_id=existing_id,
                 created_at=existing_created_at,
                 location_id=location_id,
             )
+            _sync_deployed_status_after_payload_change(old_row=existing_raw, new_row=replacement)
+            rows[existing_index] = replacement
             continue
         rows.append(
             _calendar_record_from_payload(
@@ -4131,7 +4627,12 @@ def update_quote_school_calendar(
             location_ids=location_ids,
         )
     db.commit()
-    return _calendar_out(updated)
+    refreshed_rows = _load_quote_school_calendars(db)
+    refreshed = next(
+        (item for item in refreshed_rows if str(item.get("id") or "") == str(updated.get("id"))),
+        updated,
+    )
+    return _calendar_out(refreshed)
 
 
 @router.delete("/quote-school-calendars/{calendar_id}", status_code=status.HTTP_200_OK)
@@ -4146,6 +4647,96 @@ def delete_quote_school_calendar(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
     _save_quote_school_calendars(db, filtered)
     db.commit()
+
+
+@router.get(
+    "/quote-school-calendars/{calendar_id}/deployment/preview",
+    response_model=QuoteSchoolCalendarDeploymentPreviewOut,
+)
+def preview_quote_school_calendar_deployment(
+    calendar_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteSchoolCalendarDeploymentPreviewOut:
+    rows = _load_quote_school_calendars(db)
+    row = next((item for item in rows if str(item.get("id") or "") == str(calendar_id)), None)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
+    return _calendar_preview_for_row(db, row=row)
+
+
+@router.post(
+    "/quote-school-calendars/{calendar_id}/deployment",
+    response_model=QuoteSchoolCalendarDeploymentActionOut,
+)
+def deploy_quote_school_calendar(
+    calendar_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteSchoolCalendarDeploymentActionOut:
+    rows = _load_quote_school_calendars(db)
+    row = next((item for item in rows if str(item.get("id") or "") == str(calendar_id)), None)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
+    action = _deploy_calendar_row(db, row=row, actor=user)
+    _save_quote_school_calendars(db, rows)
+    db.commit()
+    return action
+
+
+@router.post(
+    "/quote-school-calendars/{calendar_id}/deployment/sync",
+    response_model=QuoteSchoolCalendarDeploymentActionOut,
+)
+def sync_quote_school_calendar_deployment(
+    calendar_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteSchoolCalendarDeploymentActionOut:
+    rows = _load_quote_school_calendars(db)
+    row = next((item for item in rows if str(item.get("id") or "") == str(calendar_id)), None)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
+    action = _deploy_calendar_row(db, row=row, actor=user)
+    _save_quote_school_calendars(db, rows)
+    db.commit()
+    return action
+
+
+@router.delete(
+    "/quote-school-calendars/{calendar_id}/deployment",
+    response_model=QuoteSchoolCalendarDeploymentActionOut,
+)
+def remove_quote_school_calendar_deployment(
+    calendar_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteSchoolCalendarDeploymentActionOut:
+    rows = _load_quote_school_calendars(db)
+    row = next((item for item in rows if str(item.get("id") or "") == str(calendar_id)), None)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
+    action = _remove_calendar_deployment(db, row=row)
+    _save_quote_school_calendars(db, rows)
+    db.commit()
+    return action
+
+
+@router.get(
+    "/quote-school-calendars/{calendar_id}/generated-blocking-slots",
+    response_model=list[QuoteSchoolCalendarGeneratedSlotOut],
+)
+def list_quote_school_calendar_generated_slots(
+    calendar_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[QuoteSchoolCalendarGeneratedSlotOut]:
+    rows = _load_quote_school_calendars(db)
+    row = next((item for item in rows if str(item.get("id") or "") == str(calendar_id)), None)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
+    location_id = UUID(str(row.get("location_id")))
+    return _list_calendar_generated_slots(db, calendar_id=calendar_id, location_id=location_id)
 
 
 @router.get("/quote-school-calendars/active/by-location/{location_id}", response_model=QuoteSchoolCalendarResolveOut)
@@ -4173,11 +4764,27 @@ def resolve_quote_school_calendar_for_location(
             selected = item
     if selected is None:
         return QuoteSchoolCalendarResolveOut(calendar=None, holiday_dates=[], closure_dates=[])
+    holiday_days = set(selected.holiday_dates)
+    closure_days = set(selected.closure_dates)
+    deployment_slots = _list_calendar_generated_slots(db, calendar_id=selected.id, location_id=selected.location_id)
+    if deployment_slots:
+        generated_holidays: set[date] = set()
+        generated_closures: set[date] = set()
+        for slot in deployment_slots:
+            if slot.status.upper() == "CANCELLED":
+                continue
+            if CALENDAR_DEPLOYMENT_REASON_HOLIDAY in slot.reason_types:
+                generated_holidays.add(slot.date)
+            if CALENDAR_DEPLOYMENT_REASON_VACATION in slot.reason_types or CALENDAR_DEPLOYMENT_REASON_CLOSURE in slot.reason_types:
+                generated_closures.add(slot.date)
+        if generated_holidays or generated_closures:
+            holiday_days = generated_holidays
+            closure_days = generated_closures
     vacation_days = _expand_vacation_periods(selected.vacation_periods)
-    merged_closure_days = sorted({*selected.closure_dates, *vacation_days})
+    merged_closure_days = sorted({*closure_days, *vacation_days})
     return QuoteSchoolCalendarResolveOut(
         calendar=selected,
-        holiday_dates=selected.holiday_dates,
+        holiday_dates=sorted(holiday_days),
         closure_dates=merged_closure_days,
     )
 

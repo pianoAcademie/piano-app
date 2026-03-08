@@ -4,7 +4,11 @@ import { redirect } from "next/navigation";
 
 import {
   createAdminQuoteSchoolCalendarConfigAction,
+  deployAdminQuoteSchoolCalendarAction,
   deleteAdminQuoteSchoolCalendarConfigAction,
+  previewAdminQuoteSchoolCalendarDeploymentAction,
+  removeAdminQuoteSchoolCalendarDeploymentAction,
+  syncAdminQuoteSchoolCalendarDeploymentAction,
   updateAdminQuoteSchoolCalendarConfigAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
@@ -27,7 +31,24 @@ type QuoteSchoolCalendarOut = {
   holiday_dates: string[];
   closure_dates: string[];
   is_active: boolean;
+  deployment_status: string;
+  deployment_last_at: string | null;
+  deployment_last_sync_at: string | null;
+  deployment_source_hash: string | null;
+  deployment_generated_count: number;
+  deployment_generated_active_count: number;
   updated_at: string;
+};
+
+type QuoteSchoolCalendarGeneratedSlotOut = {
+  session_id: string;
+  location_id: string;
+  date: string;
+  reason_types: string[];
+  status: string;
+  title: string;
+  start_at: string;
+  end_at: string;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -59,6 +80,20 @@ function calendarDatesText(dates: string[]): string {
   return dates.join("\n");
 }
 
+function deploymentStatusLabel(value: string): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "deployed") {
+    return "Deploye";
+  }
+  if (normalized === "stale") {
+    return "A resynchroniser";
+  }
+  if (normalized === "removed") {
+    return "Retire";
+  }
+  return "Non deploye";
+}
+
 export default async function AdminSchoolCalendarsPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -68,6 +103,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
   const params = searchParams ?? {};
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
+  const generatedFor = readParam(params, "generated_for");
 
   const [quoteSchoolCalendarsResult, locationsResult] = await Promise.all([
     backendRequest<QuoteSchoolCalendarOut[]>("/api/v1/quote-school-calendars", {}, token),
@@ -89,6 +125,18 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       })();
 
   const locationById = new Map(locations.map((row) => [row.id, row.name]));
+  const selectedCalendar = quoteSchoolCalendars.find((row) => row.id === generatedFor) ?? null;
+  const generatedSlotsResult = selectedCalendar
+    ? await backendRequest<QuoteSchoolCalendarGeneratedSlotOut[]>(
+        `/api/v1/quote-school-calendars/${encodeURIComponent(selectedCalendar.id)}/generated-blocking-slots`,
+        {},
+        token,
+      )
+    : null;
+  const generatedSlots = generatedSlotsResult?.ok ? generatedSlotsResult.data : [];
+  if (generatedSlotsResult && !generatedSlotsResult.ok) {
+    loadErrors.push(`Creneaux generes: ${generatedSlotsResult.message}`);
+  }
   const returnPath = "/admin/config/calendars";
 
   return (
@@ -183,7 +231,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
           </label>
           <label className="checkline span-3">
             <input type="checkbox" name="apply_to_management_planning" />
-            Appliquer au planning de gestion actuel (creation de creneaux bloquants journee entiere)
+            Deployer immediatement en creneaux bloquants (journee entiere)
           </label>
           <div className="row span-4">
             <button type="submit">Ajouter le calendrier</button>
@@ -200,13 +248,15 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                 <th>Vacances</th>
                 <th>Feries</th>
                 <th>Fermetures</th>
+                <th>Deploiement</th>
+                <th>Creneaux actifs</th>
                 <th>Statut</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {quoteSchoolCalendars.length === 0 ? (
-                <tr><td colSpan={8}><p className="muted">Aucun calendrier configure.</p></td></tr>
+                <tr><td colSpan={10}><p className="muted">Aucun calendrier configure.</p></td></tr>
               ) : (
                 quoteSchoolCalendars.map((row) => (
                   <tr key={row.id}>
@@ -216,6 +266,21 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                     <td>{row.vacation_periods.length}</td>
                     <td>{row.holiday_dates.length}</td>
                     <td>{row.closure_dates.length}</td>
+                    <td>
+                      <span className={`status-pill ${
+                        row.deployment_status === "deployed"
+                          ? "status-ok"
+                          : row.deployment_status === "stale"
+                            ? "status-warn"
+                            : row.deployment_status === "removed"
+                              ? "status-off"
+                              : "status-off"
+                      }`}
+                      >
+                        {deploymentStatusLabel(row.deployment_status)}
+                      </span>
+                    </td>
+                    <td>{row.deployment_generated_active_count || 0}</td>
                     <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span></td>
                     <td>
                       <details>
@@ -282,12 +347,37 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                           </label>
                           <label className="checkline span-3">
                             <input type="checkbox" name="apply_to_management_planning" />
-                            Appliquer au planning de gestion actuel (creation de creneaux bloquants journee entiere)
+                            Deployer immediatement en creneaux bloquants (journee entiere)
                           </label>
                           <div className="row">
                             <button type="submit">Enregistrer</button>
                           </div>
                         </form>
+                        <div className="row wrap top-gap-sm gap-sm">
+                          <form action={previewAdminQuoteSchoolCalendarDeploymentAction}>
+                            <input type="hidden" name="calendar_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={returnPath} />
+                            <button type="submit" className="ghost">Previsualiser le deploiement</button>
+                          </form>
+                          <form action={deployAdminQuoteSchoolCalendarAction}>
+                            <input type="hidden" name="calendar_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={returnPath} />
+                            <button type="submit">Deployer</button>
+                          </form>
+                          <form action={syncAdminQuoteSchoolCalendarDeploymentAction}>
+                            <input type="hidden" name="calendar_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={returnPath} />
+                            <button type="submit" className="ghost">Mettre a jour le deploiement</button>
+                          </form>
+                          <form action={removeAdminQuoteSchoolCalendarDeploymentAction}>
+                            <input type="hidden" name="calendar_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={returnPath} />
+                            <button type="submit" className="danger">Retirer les creneaux generes</button>
+                          </form>
+                          <Link className="ghost" href={`/admin/config/calendars?generated_for=${encodeURIComponent(row.id)}`}>
+                            Voir creneaux generes
+                          </Link>
+                        </div>
                         <form action={deleteAdminQuoteSchoolCalendarConfigAction} className="row top-gap-sm">
                           <input type="hidden" name="calendar_id" value={row.id} />
                           <input type="hidden" name="return_to" value={returnPath} />
@@ -302,6 +392,44 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
           </table>
         </div>
       </section>
+
+      {selectedCalendar ? (
+        <section className="card">
+          <div className="row spread wrap gap-sm">
+            <h3>Creneaux bloquants generes</h3>
+            <Link className="ghost" href="/admin/config/calendars">Fermer</Link>
+          </div>
+          <p className="muted">
+            {selectedCalendar.name} · {locationById.get(selectedCalendar.location_id) || selectedCalendar.location_id}
+          </p>
+          {generatedSlots.length === 0 ? (
+            <p className="muted">Aucun creneau genere pour ce calendrier.</p>
+          ) : (
+            <div className="table-wrap top-gap-sm">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Raisons</th>
+                    <th>Statut</th>
+                    <th>Session</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {generatedSlots.map((slot) => (
+                    <tr key={slot.session_id}>
+                      <td>{slot.date}</td>
+                      <td>{slot.reason_types.join(", ") || "-"}</td>
+                      <td>{slot.status}</td>
+                      <td>{slot.title}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
     </section>
   );
 }

@@ -414,6 +414,12 @@ class QuoteSchoolCalendarOut(BaseModel):
     holiday_dates: list[date] = Field(default_factory=list)
     closure_dates: list[date] = Field(default_factory=list)
     is_active: bool
+    deployment_status: str = "not_deployed"
+    deployment_last_at: datetime | None = None
+    deployment_last_sync_at: datetime | None = None
+    deployment_source_hash: str | None = None
+    deployment_generated_count: int = 0
+    deployment_generated_active_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -434,6 +440,50 @@ class QuoteSchoolCalendarResolveOut(BaseModel):
     calendar: QuoteSchoolCalendarOut | None = None
     holiday_dates: list[date] = Field(default_factory=list)
     closure_dates: list[date] = Field(default_factory=list)
+
+
+class QuoteSchoolCalendarDeploymentSummaryOut(BaseModel):
+    total_target_days: int = 0
+    vacation_days: int = 0
+    holiday_days: int = 0
+    closure_days: int = 0
+
+
+class QuoteSchoolCalendarDeploymentPreviewOut(BaseModel):
+    calendar_id: UUID
+    location_id: UUID
+    deployment_status: str
+    source_hash: str
+    existing_generated_active_count: int = 0
+    summary: QuoteSchoolCalendarDeploymentSummaryOut = Field(default_factory=QuoteSchoolCalendarDeploymentSummaryOut)
+    would_create: int = 0
+    would_keep: int = 0
+    would_reactivate: int = 0
+    would_cancel: int = 0
+    sample_dates: list[date] = Field(default_factory=list)
+
+
+class QuoteSchoolCalendarDeploymentActionOut(BaseModel):
+    calendar_id: UUID
+    deployment_status: str
+    source_hash: str | None = None
+    created_count: int = 0
+    updated_count: int = 0
+    reactivated_count: int = 0
+    cancelled_count: int = 0
+    active_generated_count: int = 0
+    message: str
+
+
+class QuoteSchoolCalendarGeneratedSlotOut(BaseModel):
+    session_id: UUID
+    location_id: UUID
+    date: date
+    reason_types: list[str] = Field(default_factory=list)
+    status: str
+    title: str
+    start_at: datetime
+    end_at: datetime
 
 
 class PaymentPlanOut(BaseModel):

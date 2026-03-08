@@ -10867,6 +10867,122 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
   redirect(appendQueryMessage(returnTo, "ok", "Calendrier supprime"));
 }
 
+export async function previewAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
+  if (!calendarId) {
+    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+  }
+
+  const result = await backendRequest<{
+    summary?: { total_target_days?: number };
+    would_create?: number;
+    would_keep?: number;
+    would_reactivate?: number;
+    would_cancel?: number;
+  }>(
+    `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment/preview`,
+    {},
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  const total = Number(result.data.summary?.total_target_days ?? 0);
+  const createCount = Number(result.data.would_create ?? 0);
+  const keepCount = Number(result.data.would_keep ?? 0);
+  const reactivateCount = Number(result.data.would_reactivate ?? 0);
+  const cancelCount = Number(result.data.would_cancel ?? 0);
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      `Preview deploiement: ${total} dates cibles (${createCount} a creer, ${keepCount} deja actives, ${reactivateCount} a reactiver, ${cancelCount} a retirer).`,
+    ),
+  );
+}
+
+export async function deployAdminQuoteSchoolCalendarAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
+  if (!calendarId) {
+    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+  }
+  const result = await backendRequest<{ message?: string }>(
+    `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/calendars");
+  revalidatePath("/admin/config/quotes");
+  redirect(appendQueryMessage(returnTo, "ok", String(result.data.message || "Deploiement effectue")));
+}
+
+export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
+  if (!calendarId) {
+    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+  }
+  const result = await backendRequest<{ message?: string }>(
+    `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment/sync`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/calendars");
+  revalidatePath("/admin/config/quotes");
+  redirect(appendQueryMessage(returnTo, "ok", String(result.data.message || "Deploiement mis a jour")));
+}
+
+export async function removeAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
+  if (!calendarId) {
+    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+  }
+  const result = await backendRequest<{ message?: string }>(
+    `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/config/calendars");
+  revalidatePath("/admin/config/quotes");
+  redirect(appendQueryMessage(returnTo, "ok", String(result.data.message || "Deploiement retire")));
+}
+
 export async function createAdminQuoteTemplateConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
