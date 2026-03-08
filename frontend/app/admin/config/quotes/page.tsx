@@ -1064,16 +1064,8 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
           <form action={createAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
             <label>
-              Code
-              <input type="text" name="code" required maxLength={80} placeholder="CGV_CHILD_COLLECTIVE" />
-            </label>
-            <label>
               Nom
               <input type="text" name="name" required maxLength={180} placeholder="CGV enfants collectifs" />
-            </label>
-            <label>
-              Type
-              <input type="text" name="terms_type" defaultValue="cgv" maxLength={40} />
             </label>
             <label>
               Cible
@@ -1134,7 +1126,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     <div>
                       <strong>{row.name}</strong>
                       <p className="muted">
-                        {row.code} · {row.terms_type} · cible {row.target || "-"} · langue {row.language.toUpperCase()} · v{row.current_version_number ?? "-"} · Maj: {dateTimeLabel(row.updated_at)}
+                        cible {row.target || "-"} · langue {row.language.toUpperCase()} · v{row.current_version_number ?? "-"} · Maj: {dateTimeLabel(row.updated_at)}
                       </p>
                     </div>
                     <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.status}</span>
@@ -1144,17 +1136,10 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     <form action={updateAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
-                      <label>
-                        Code
-                        <input type="text" name="code" defaultValue={row.code} required maxLength={80} />
-                      </label>
+                      <input type="hidden" name="current_code" value={row.code} />
                       <label>
                         Nom
                         <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
-                      </label>
-                      <label>
-                        Type
-                        <input type="text" name="terms_type" defaultValue={row.terms_type} maxLength={40} />
                       </label>
                       <label>
                         Cible

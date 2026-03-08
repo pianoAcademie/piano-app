@@ -9969,6 +9969,17 @@ function quoteTemplateCodeFromName(name: string): string {
   return (normalized || "QUOTE_TEMPLATE").slice(0, 80);
 }
 
+function termsTemplateCodeFromName(name: string): string {
+  const normalized = name
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return (normalized || "TERMS_TEMPLATE").slice(0, 80);
+}
+
 function buildPaymentPlanRules(
   scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly",
   feePercent: number | null,
@@ -11182,9 +11193,9 @@ export async function createAdminTermsTemplateConfigAction(formData: FormData): 
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
-  const code = String(formData.get("code") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
-  const termsType = String(formData.get("terms_type") ?? "cgv").trim();
+  const code = termsTemplateCodeFromName(name);
+  const termsType = "cgv";
   const target = optionalField(formData, "target");
   const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
   const description = optionalField(formData, "description");
@@ -11195,7 +11206,7 @@ export async function createAdminTermsTemplateConfigAction(formData: FormData): 
   const publishNow = parseCheckboxFlag(formData, "publish_now", true);
   const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
   const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
-  if (!code || !name || !versionLabel || !content) {
+  if (!name || !versionLabel || !content) {
     redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
   }
 
@@ -11206,7 +11217,7 @@ export async function createAdminTermsTemplateConfigAction(formData: FormData): 
       body: JSON.stringify({
         code,
         name,
-        terms_type: termsType || "cgv",
+        terms_type: termsType,
         target,
         language,
         description,
@@ -11237,9 +11248,10 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
   const templateId = parseUuid(String(formData.get("template_id") ?? ""));
-  const code = String(formData.get("code") ?? "").trim();
+  const currentCode = String(formData.get("current_code") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
-  const termsType = String(formData.get("terms_type") ?? "cgv").trim();
+  const code = currentCode || termsTemplateCodeFromName(name);
+  const termsType = "cgv";
   const target = optionalField(formData, "target");
   const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
   const description = optionalField(formData, "description");
@@ -11250,7 +11262,7 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
   const publishNow = parseCheckboxFlag(formData, "publish_now", true);
   const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
   const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
-  if (!templateId || !code || !name || !versionLabel || !content) {
+  if (!templateId || !name || !versionLabel || !content) {
     redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
   }
 
@@ -11261,7 +11273,7 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
       body: JSON.stringify({
         code,
         name,
-        terms_type: termsType || "cgv",
+        terms_type: termsType,
         target,
         language,
         description,
