@@ -158,6 +158,19 @@ button.ghost {
 
 button.danger {
   background: var(--danger);
+  color: #fffaf5;
+  border: 1px solid #8f2823;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+}
+
+button.danger:hover {
+  background: #9f2b25;
+}
+
+button.danger:focus-visible {
+  outline: 2px solid #4d90fe;
+  outline-offset: 1px;
 }
 
 .reset-link {
