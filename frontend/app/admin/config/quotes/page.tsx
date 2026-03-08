@@ -908,7 +908,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             </label>
             <label>
               Langue
-              <input type="text" name="language" defaultValue="fr" required maxLength={8} />
+              <select name="language" defaultValue="fr" required>
+                <option value="fr">Français</option>
+              </select>
             </label>
             <label>
               Statut
@@ -953,7 +955,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               />
             </div>
             <div className="row span-2">
-              <button type="submit">Creer le template documentaire</button>
+              <button type="submit">Enregistrer le modele de devis</button>
             </div>
           </form>
 
@@ -995,7 +997,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       </label>
                       <label>
                         Langue
-                        <input type="text" name="language" defaultValue={row.language} required maxLength={8} />
+                        <select name="language" defaultValue={row.language || "fr"} required>
+                          <option value="fr">Français</option>
+                        </select>
                       </label>
                       <label>
                         Statut
@@ -1073,7 +1077,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             </label>
             <label>
               Langue
-              <input type="text" name="language" defaultValue="fr" required maxLength={8} />
+              <select name="language" defaultValue="fr" required>
+                <option value="fr">Français</option>
+              </select>
             </label>
             <label>
               Statut
@@ -1112,7 +1118,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               />
             </div>
             <div className="row span-2">
-              <button type="submit">Creer le template CGV</button>
+              <button type="submit">Enregistrer le modele de CGV</button>
             </div>
           </form>
 
@@ -1147,7 +1153,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       </label>
                       <label>
                         Langue
-                        <input type="text" name="language" defaultValue={row.language} required maxLength={8} />
+                        <select name="language" defaultValue={row.language || "fr"} required>
+                          <option value="fr">Français</option>
+                        </select>
                       </label>
                       <label>
                         Statut
