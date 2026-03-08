@@ -298,6 +298,18 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "description": "Tableau detaille de toutes les seances (date/heure/modalite).",
         "example": "<table>...</table>",
     },
+    {
+        "key": "page_break_html",
+        "label": "Saut de page (HTML)",
+        "description": "Bloc HTML pour forcer un saut de page dans le PDF.",
+        "example": "<div style='page-break-before:always;'></div>",
+    },
+    {
+        "key": "footer_standard_html",
+        "label": "Pied de page standard (HTML)",
+        "description": "Pied de page Piano Academie pret a inserer.",
+        "example": "<table>...</table>",
+    },
 )
 
 

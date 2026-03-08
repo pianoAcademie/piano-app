@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from html import escape
+from html import escape, unescape as html_unescape
 import re
 from typing import Any
 
@@ -522,6 +522,15 @@ def _as_html_fragment(content: str) -> str:
     return "<p>" + "<br/>".join(line for line in normalized.split("\n")) + "</p>"
 
 
+def _normalize_template_source(template: str) -> str:
+    raw = (template or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+        raw = raw[1:-1].strip()
+    if "<" not in raw and "&lt;" in raw and "&gt;" in raw:
+        raw = html_unescape(raw)
+    return raw
+
+
 def _build_template_values(
     *,
     db: Session | None,
@@ -747,6 +756,24 @@ def _build_template_values(
         "payment_method_label": payment_method_label,
         "payment_instruction": payment_instruction,
         "payment_schedule_compact_notice": document_context["payment_schedule_compact_notice"] or "",
+        "page_break_html": "<div style='page-break-before:always;'></div>",
+        "footer_standard_html": (
+            "<hr/>"
+            "<table width='100%' cellspacing='0' cellpadding='0' style='font-size:10px;color:#444;'>"
+            "<tr>"
+            "<td align='left' valign='top'>"
+            "Piano Academie<br/>"
+            "1 rue de Richelieu<br/>"
+            "75001 Paris"
+            "</td>"
+            "<td align='center' valign='top'>"
+            "SIRET 82805141700032<br/>"
+            "FR 74828051417"
+            "</td>"
+            f"<td align='right' valign='top'>{escape(quote.quote_number or '-')}</td>"
+            "</tr>"
+            "</table>"
+        ),
         "cgv_version": cgv_label or "-",
         "services_count": str(len(services)),
         "products_count": str(len(products)),
@@ -789,6 +816,8 @@ def _build_template_values(
         "calendar_table_html",
         "calendar_activity_semesters_html",
         "calendar_sessions_table_html",
+        "page_break_html",
+        "footer_standard_html",
     }
     return values, html_keys, document_context
 
@@ -823,7 +852,7 @@ def _render_quote_body_html(
     audience: str = DEFAULT_AUDIENCE,
 ) -> str:
     _, body_template = _load_quote_template_snapshot(db=db, quote=quote)
-    template = body_template or _default_quote_body_template()
+    template = _normalize_template_source(body_template or _default_quote_body_template())
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered = _apply_template(template, values=values, html_keys=html_keys, html_output=True)
     return _as_html_fragment(rendered)
@@ -838,7 +867,8 @@ def _render_quote_terms_html(
 ) -> str:
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
-    rendered_terms = _apply_template(cgv_content, values=values, html_keys=html_keys, html_output=True)
+    normalized_terms = _normalize_template_source(cgv_content)
+    rendered_terms = _apply_template(normalized_terms, values=values, html_keys=html_keys, html_output=True)
     return (
         "<section>"
         "<h2>Conditions generales</h2>"
