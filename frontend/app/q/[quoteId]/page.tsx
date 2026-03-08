@@ -52,6 +52,17 @@ type QuotePublicOut = {
   payment_schedule: Array<Record<string, unknown>>;
 };
 
+type QuotePublicDocumentOut = {
+  quote_id: string;
+  audience: string;
+  document_hash: string;
+  combined_html: string;
+  display_flags: Record<string, boolean>;
+  visible_blocks: string[];
+  hidden_blocks: string[];
+  payment_schedule_compact_notice: string;
+};
+
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
   if (Array.isArray(value)) {
@@ -164,12 +175,17 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
   const quoteResult = invalidLink
     ? null
     : await backendRequest<QuotePublicOut>(`/api/v1/public/quotes/${encodeURIComponent(quoteId)}?t=${encodeURIComponent(token)}`);
+  const documentResult =
+    invalidLink
+      ? null
+      : await backendRequest<QuotePublicDocumentOut>(
+          `/api/v1/public/quotes/${encodeURIComponent(quoteId)}/document?t=${encodeURIComponent(token)}&audience=public_page`,
+        );
   const payload = quoteResult && quoteResult.ok ? quoteResult.data : null;
+  const documentPayload = documentResult && documentResult.ok ? documentResult.data : null;
 
   const canAct = payload ? ["sent", "change_requested"].includes(payload.quote.status) : false;
   const selfPath = buildSelfPath(quoteId, token);
-  const sessions = payload ? getCalendarSessions(payload.quote.calendar_snapshot) : [];
-  const selectedSolfegeSlot = payload ? getSelectedSolfegeSlot(payload.quote) : null;
 
   return (
     <main className="quote-public-page">
@@ -227,93 +243,12 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
               </article>
 
               <article className="card quote-public-lines-card">
-                <h3>Prestations et elements inclus</h3>
-                <div className="quote-public-lines top-gap-sm">
-                  {payload.lines.length === 0 ? (
-                    <p className="muted">Aucune ligne detaillee.</p>
-                  ) : (
-                    payload.lines.map((line) => (
-                      <article key={line.id} className="quote-public-line-item">
-                        <div className="row spread wrap gap-xs">
-                          <strong>{line.title}</strong>
-                          <span className="status-pill status-off">{line.line_type}</span>
-                        </div>
-                        {line.description ? <p className="muted">{line.description}</p> : null}
-                        <div className="row spread wrap gap-xs top-gap-sm">
-                          <span>Quantite: {line.quantity}</span>
-                          <span>PU: {formatAmount(line.unit_price_ttc, payload.quote.currency)}</span>
-                          <strong>{formatAmount(line.amount_ttc, payload.quote.currency)}</strong>
-                        </div>
-                      </article>
-                    ))
-                  )}
-                </div>
-              </article>
-
-              <article className="card quote-public-calendar-card">
-                <h3>Calendrier des cours proposes</h3>
-                <p className="muted">{sessions.length} seances planifiees (hors jours feries/fermetures selon la configuration).</p>
-                <div className="quote-public-lines top-gap-sm">
-                  {sessions.length === 0 ? (
-                    <p className="muted">Aucune seance calculee pour le moment.</p>
-                  ) : (
-                    sessions.map((session, index) => (
-                      <article key={`session-${index}`} className="quote-public-line-item">
-                        <strong>{String(session.date ?? "-")}</strong>
-                        <span>{String(session.start_time ?? "--:--")} - {String(session.end_time ?? "--:--")}</span>
-                        <small className="muted">
-                          {String(session.activity_label ?? "Activite")}
-                          {" · "}
-                          {String(session.location_label ?? session.location_id ?? "Lieu non defini")}
-                          {" · "}
-                          {modalityLabel(session.modality)}
-                        </small>
-                      </article>
-                    ))
-                  )}
-                </div>
-              </article>
-
-              <article className="card quote-public-calendar-card">
-                <h3>Creneau solfege selectionne</h3>
-                {selectedSolfegeSlot ? (
-                  <div className="quote-public-lines top-gap-sm">
-                    <article className="quote-public-line-item">
-                      <strong>{String(selectedSolfegeSlot.label ?? "Creneau solfege")}</strong>
-                      <span>
-                        {weekdayLabelFromNumber(selectedSolfegeSlot.weekday)}
-                        {" · "}
-                        {String(selectedSolfegeSlot.start_time ?? "--:--")} - {String(selectedSolfegeSlot.end_time ?? "--:--")}
-                      </span>
-                      <small className="muted">
-                        {String(selectedSolfegeSlot.duration_minutes ?? "-")} min
-                        {" · "}
-                        {String(selectedSolfegeSlot.location_label ?? selectedSolfegeSlot.location_id ?? "Lieu non defini")}
-                        {" · "}
-                        {modalityLabel(selectedSolfegeSlot.modality)}
-                      </small>
-                    </article>
-                  </div>
+                <h3>Document du devis</h3>
+                {documentPayload ? (
+                  <div className="top-gap-sm" dangerouslySetInnerHTML={{ __html: documentPayload.combined_html }} />
                 ) : (
-                  <p className="muted top-gap-sm">Aucun creneau solfege selectionne.</p>
+                  <p className="muted top-gap-sm">Le rendu documentaire est indisponible pour le moment.</p>
                 )}
-              </article>
-
-              <article className="card quote-public-schedule-card">
-                <h3>Echeancier de paiement</h3>
-                <div className="quote-public-lines top-gap-sm">
-                  {payload.payment_schedule.length === 0 ? (
-                    <p className="muted">Aucun echeancier detaille disponible.</p>
-                  ) : (
-                    payload.payment_schedule.map((item, index) => (
-                      <article key={`schedule-${index}`} className="quote-public-line-item">
-                        <strong>{String(item.label ?? `Echeance ${index + 1}`)}</strong>
-                        <span>{String(item.due_label ?? item.due_type ?? "-")}</span>
-                        <small>{String(item.amount_ttc ?? "0")} {payload.quote.currency}</small>
-                      </article>
-                    ))
-                  )}
-                </div>
               </article>
             </>
           )}

@@ -101,7 +101,13 @@ from app.services.invoice_documents import normalize_billing_entity
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.quotes.payment_plan_engine import PaymentPlanScheduleInput, build_payment_schedule
-from app.services.quotes.quote_documents import render_quote_parts_html
+from app.services.quotes.quote_documents import (
+    AUDIENCE_ADMIN_PREVIEW,
+    AUDIENCE_CLIENT_PDF,
+    AUDIENCE_PUBLIC_PAGE,
+    render_quote_document_bundle,
+    render_quote_parts_html,
+)
 from app.services.quotes.template_registry import (
     delete_quote_template,
     find_quote_template,
@@ -1121,8 +1127,20 @@ def _extract_vat_rate(meta: dict[str, object] | None) -> Decimal | None:
     return value.quantize(Decimal("0.01"))
 
 
-def _freeze_quote_document_snapshot(db: Session, *, quote: Quote, lines: list[QuoteLine], state: str) -> QuoteDocumentSnapshot:
-    body_html, terms_html, combined_html = render_quote_parts_html(db=db, quote=quote, lines=lines)
+def _freeze_quote_document_snapshot(
+    db: Session,
+    *,
+    quote: Quote,
+    lines: list[QuoteLine],
+    state: str,
+    audience: str = AUDIENCE_CLIENT_PDF,
+) -> QuoteDocumentSnapshot:
+    body_html, terms_html, combined_html = render_quote_parts_html(
+        db=db,
+        quote=quote,
+        lines=lines,
+        audience=audience,
+    )
     document_hash = hashlib.sha256(combined_html.encode("utf-8")).hexdigest()
     existing = db.scalar(
         select(QuoteDocumentSnapshot)
@@ -1164,12 +1182,25 @@ def _freeze_quote_document_snapshot(db: Session, *, quote: Quote, lines: list[Qu
     return existing
 
 
-def _resolve_quote_pdf_bytes(db: Session, *, quote: Quote, lines: list[QuoteLine], freeze_state: str) -> bytes:
+def _resolve_quote_pdf_bytes(
+    db: Session,
+    *,
+    quote: Quote,
+    lines: list[QuoteLine],
+    freeze_state: str,
+    audience: str = AUDIENCE_CLIENT_PDF,
+) -> bytes:
     if quote.document_snapshot_id:
         snapshot = db.scalar(select(QuoteDocumentSnapshot).where(QuoteDocumentSnapshot.id == quote.document_snapshot_id))
         if snapshot is not None and snapshot.combined_html_snapshot:
             return render_teacher_invoice_pdf_from_html(snapshot.combined_html_snapshot)
-    snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state=freeze_state)
+    snapshot = _freeze_quote_document_snapshot(
+        db,
+        quote=quote,
+        lines=lines,
+        state=freeze_state,
+        audience=audience,
+    )
     return render_teacher_invoice_pdf_from_html(snapshot.combined_html_snapshot)
 
 
@@ -2186,21 +2217,31 @@ def generate_quote_pdf(
 @router.get("/quotes/{quote_id}/document-preview")
 def preview_quote_document(
     quote_id: UUID,
+    audience: str = Query(default=AUDIENCE_ADMIN_PREVIEW),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> dict[str, object]:
     quote = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
-    body_html, terms_html, combined_html = render_quote_parts_html(db=db, quote=quote, lines=lines)
+    resolved_audience = audience.strip().lower() if audience else AUDIENCE_ADMIN_PREVIEW
+    if resolved_audience not in {AUDIENCE_ADMIN_PREVIEW, AUDIENCE_PUBLIC_PAGE, AUDIENCE_CLIENT_PDF}:
+        resolved_audience = AUDIENCE_ADMIN_PREVIEW
+    bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=resolved_audience)
+    combined_html = str(bundle["combined_html"])
     document_hash = hashlib.sha256(combined_html.encode("utf-8")).hexdigest()
     return {
         "quote_id": str(quote.id),
+        "audience": resolved_audience,
         "document_hash": document_hash,
         "document_status": quote.document_status,
         "document_snapshot_id": str(quote.document_snapshot_id) if quote.document_snapshot_id else None,
-        "quote_body_html": body_html,
-        "terms_html": terms_html,
+        "quote_body_html": bundle["body_html"],
+        "terms_html": bundle["terms_html"],
         "combined_html": combined_html,
+        "display_flags": bundle["display_flags"],
+        "visible_blocks": bundle["visible_blocks"],
+        "hidden_blocks": bundle["hidden_blocks"],
+        "payment_schedule_compact_notice": bundle["payment_schedule_compact_notice"],
     }
 
 
@@ -2403,12 +2444,45 @@ def public_get_quote(
     if quote.public_token != t:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid quote token")
     lines = _load_quote_lines(db, quote.id)
-    payment_schedule = list((quote.payment_terms_snapshot or {}).get("schedule", []))
+    preview_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
+    schedule_flag = bool((preview_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
+    payment_schedule = list((quote.payment_terms_snapshot or {}).get("schedule", [])) if schedule_flag else []
     return QuotePublicOut(
         quote=_quote_out(quote),
         lines=[_line_out(row) for row in lines],
         payment_schedule=payment_schedule,
     )
+
+
+@router.get("/public/quotes/{quote_id}/document")
+def public_get_quote_document(
+    quote_id: UUID,
+    t: str = Query(..., min_length=10),
+    audience: str = Query(default=AUDIENCE_PUBLIC_PAGE),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    quote = _load_quote(db, quote_id)
+    if quote.public_token != t:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid quote token")
+    lines = _load_quote_lines(db, quote.id)
+    resolved_audience = audience.strip().lower() if audience else AUDIENCE_PUBLIC_PAGE
+    if resolved_audience not in {AUDIENCE_ADMIN_PREVIEW, AUDIENCE_PUBLIC_PAGE, AUDIENCE_CLIENT_PDF}:
+        resolved_audience = AUDIENCE_PUBLIC_PAGE
+    bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=resolved_audience)
+    combined_html = str(bundle["combined_html"])
+    return {
+        "quote_id": str(quote.id),
+        "quote_status": quote.status,
+        "audience": resolved_audience,
+        "document_hash": hashlib.sha256(combined_html.encode("utf-8")).hexdigest(),
+        "combined_html": combined_html,
+        "quote_body_html": bundle["body_html"],
+        "terms_html": bundle["terms_html"],
+        "display_flags": bundle["display_flags"],
+        "visible_blocks": bundle["visible_blocks"],
+        "hidden_blocks": bundle["hidden_blocks"],
+        "payment_schedule_compact_notice": bundle["payment_schedule_compact_notice"],
+    }
 
 
 def _ensure_followup(db: Session, quote: Quote) -> QuoteAcceptanceFollowup:
@@ -2527,10 +2601,16 @@ def public_approve_quote(
     db.add(quote)
     db.commit()
     db.refresh(quote)
+    public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
+    public_schedule = (
+        list((quote.payment_terms_snapshot or {}).get("schedule", []))
+        if bool((public_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
+        else []
+    )
     return QuotePublicOut(
         quote=_quote_out(quote),
         lines=[_line_out(row) for row in lines],
-        payment_schedule=list((quote.payment_terms_snapshot or {}).get("schedule", [])),
+        payment_schedule=public_schedule,
     )
 
 
@@ -2563,10 +2643,16 @@ def public_reject_quote(
     db.commit()
     db.refresh(quote)
     lines = _load_quote_lines(db, quote.id)
+    public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
+    public_schedule = (
+        list((quote.payment_terms_snapshot or {}).get("schedule", []))
+        if bool((public_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
+        else []
+    )
     return QuotePublicOut(
         quote=_quote_out(quote),
         lines=[_line_out(row) for row in lines],
-        payment_schedule=list((quote.payment_terms_snapshot or {}).get("schedule", [])),
+        payment_schedule=public_schedule,
     )
 
 
@@ -2599,10 +2685,16 @@ def public_change_request_quote(
     db.commit()
     db.refresh(quote)
     lines = _load_quote_lines(db, quote.id)
+    public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
+    public_schedule = (
+        list((quote.payment_terms_snapshot or {}).get("schedule", []))
+        if bool((public_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
+        else []
+    )
     return QuotePublicOut(
         quote=_quote_out(quote),
         lines=[_line_out(row) for row in lines],
-        payment_schedule=list((quote.payment_terms_snapshot or {}).get("schedule", [])),
+        payment_schedule=public_schedule,
     )
 
 

@@ -138,6 +138,20 @@ type QuoteTemplateOut = {
   language: string;
 };
 
+type QuoteDocumentPreviewOut = {
+  quote_id: string;
+  audience: string;
+  document_hash: string;
+  document_status: string;
+  quote_body_html: string;
+  terms_html: string;
+  combined_html: string;
+  display_flags: Record<string, boolean>;
+  visible_blocks: string[];
+  hidden_blocks: string[];
+  payment_schedule_compact_notice: string;
+};
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -382,7 +396,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
@@ -396,6 +410,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
+    backendRequest<QuoteDocumentPreviewOut>(
+      `/api/v1/quotes/${encodeURIComponent(quoteId)}/document-preview?audience=admin_preview`,
+      {},
+      token,
+    ),
   ]);
 
   if (!detailResult.ok) {
@@ -426,6 +445,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const locations = locationsResult.ok ? locationsResult.data : [];
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
+  const documentPreview = documentPreviewResult.ok ? documentPreviewResult.data : null;
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
@@ -656,6 +676,51 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         <p className="muted">
           Hash document: <strong>{detail.quote.document_hash || "-"}</strong>
         </p>
+      </section>
+
+      <section className="card">
+        <div className="row spread wrap gap-sm">
+          <h3>Apercu documentaire (admin)</h3>
+          <small className="muted">Audience: admin_preview</small>
+        </div>
+        {documentPreview ? (
+          <>
+            <p className="muted top-gap-sm">
+              Hash rendu: <strong>{documentPreview.document_hash}</strong>
+            </p>
+            <div className="grid cols-2 top-gap-sm">
+              <article className="item">
+                <strong>Blocs visibles</strong>
+                {documentPreview.visible_blocks.length === 0 ? (
+                  <p className="muted top-gap-sm">Aucun bloc visible.</p>
+                ) : (
+                  <ul className="top-gap-sm">
+                    {documentPreview.visible_blocks.map((name) => (
+                      <li key={`visible-${name}`}>{name}</li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+              <article className="item">
+                <strong>Blocs masques</strong>
+                {documentPreview.hidden_blocks.length === 0 ? (
+                  <p className="muted top-gap-sm">Aucun bloc masque.</p>
+                ) : (
+                  <ul className="top-gap-sm">
+                    {documentPreview.hidden_blocks.map((name) => (
+                      <li key={`hidden-${name}`}>{name}</li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+            </div>
+            <article className="item top-gap-sm">
+              <div dangerouslySetInnerHTML={{ __html: documentPreview.combined_html }} />
+            </article>
+          </>
+        ) : (
+          <p className="muted top-gap-sm">Apercu documentaire indisponible.</p>
+        )}
       </section>
 
       <section className="card">

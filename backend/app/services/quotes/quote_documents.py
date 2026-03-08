@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from html import escape
 import re
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +12,32 @@ from sqlalchemy.orm import Session
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplateVersion, TermsTemplateVersion
 from app.models.user import User
 from app.services.teacher_invoice_documents import render_teacher_invoice_pdf_from_html
+
+
+AUDIENCE_ADMIN_PREVIEW = "admin_preview"
+AUDIENCE_PUBLIC_PAGE = "public_page"
+AUDIENCE_CLIENT_PDF = "client_pdf"
+DEFAULT_AUDIENCE = AUDIENCE_CLIENT_PDF
+
+
+def _is_true(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "oui"}
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _json_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    return []
 
 
 def _utcnow() -> datetime:
@@ -203,6 +230,151 @@ def _resolve_client_data(*, db: Session | None, quote: Quote) -> dict[str, str]:
     return values
 
 
+def _resolve_schedule_visibility_by_audience(*, quote: Quote) -> dict[str, bool]:
+    default_visibility = {
+        AUDIENCE_ADMIN_PREVIEW: True,
+        AUDIENCE_PUBLIC_PAGE: False,
+        AUDIENCE_CLIENT_PDF: False,
+    }
+    meta = _json_object(quote.meta)
+    visibility_root = _json_object(meta.get("document_visibility"))
+    raw = _json_object(visibility_root.get("payment_schedule_detailed"))
+    if not raw:
+        raw = _json_object(meta.get("payment_schedule_visibility"))
+    if not raw:
+        return default_visibility
+    return {
+        AUDIENCE_ADMIN_PREVIEW: _is_true(raw.get(AUDIENCE_ADMIN_PREVIEW, default_visibility[AUDIENCE_ADMIN_PREVIEW])),
+        AUDIENCE_PUBLIC_PAGE: _is_true(raw.get(AUDIENCE_PUBLIC_PAGE, default_visibility[AUDIENCE_PUBLIC_PAGE])),
+        AUDIENCE_CLIENT_PDF: _is_true(raw.get(AUDIENCE_CLIENT_PDF, default_visibility[AUDIENCE_CLIENT_PDF])),
+    }
+
+
+def _resolve_payment_method_label(*, quote: Quote) -> str:
+    snapshot = _json_object(quote.payment_terms_snapshot)
+    for key in ("payment_method_label", "plan_name", "payment_plan_name"):
+        value = str(snapshot.get(key) or "").strip()
+        if value:
+            return value
+    meta = _json_object(quote.meta)
+    for key in ("payment_plan_label", "payment_method_label", "payment_method", "payment_plan_name"):
+        value = str(meta.get(key) or "").strip()
+        if value:
+            return value
+    return "Paiement non precise"
+
+
+def _extract_document_context(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str,
+) -> dict[str, Any]:
+    prospect_data = _resolve_prospect_data(db=db, quote=quote)
+    client_data = _resolve_client_data(db=db, quote=quote)
+
+    schedule = [item for item in _json_list(_json_object(quote.payment_terms_snapshot).get("schedule")) if isinstance(item, dict)]
+    has_installment_schedule = len(schedule) > 1
+    schedule_visibility = _resolve_schedule_visibility_by_audience(quote=quote)
+
+    calendar_snapshot = _json_object(quote.calendar_snapshot)
+    calendar_solfege = _json_object(calendar_snapshot.get("solfege"))
+    solfege_selected_slot = _json_object(calendar_solfege.get("selected_slot"))
+    selected_solfege_slot = _json_object(quote.selected_solfege_slot)
+    if not selected_solfege_slot:
+        selected_solfege_slot = solfege_selected_slot
+
+    meta = _json_object(quote.meta)
+    activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
+    masterclass_blocks = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
+    pass_recup_enabled = _is_true(meta.get("pass_recup_enabled"))
+
+    solfege_enabled = bool(
+        quote.estimated_solfege_level
+        or quote.solfege_duration_minutes
+        or selected_solfege_slot
+        or activity_solfege
+    )
+    masterclass_enabled = bool(masterclass_blocks) or _is_true(meta.get("masterclass_enabled"))
+
+    schedule_allowed_for_audience = bool(schedule_visibility.get(audience, False))
+    show_schedule_detailed = has_installment_schedule and schedule_allowed_for_audience
+    payment_schedule_compact_notice = ""
+    if has_installment_schedule and not show_schedule_detailed:
+        payment_schedule_compact_notice = (
+            f"Paiement en {len(schedule)} echeances. Le detail des echeances est communique separement."
+        )
+
+    prospect_type = str(prospect_data.get("prospect_type") or "adult").strip().lower()
+    show_child_block = prospect_type == "child"
+    show_adult_block = not show_child_block
+
+    display_flags: dict[str, bool] = {
+        "showAdultBlock": show_adult_block,
+        "showChildBlock": show_child_block,
+        "showPaymentMethodBlock": True,
+        "showPaymentScheduleDetailed": show_schedule_detailed,
+        "showPaymentScheduleCompactNotice": bool(payment_schedule_compact_notice),
+        "showSolfegeSection": solfege_enabled,
+        "showSolfegeCompactNotice": not solfege_enabled,
+        "showMasterclassSection": masterclass_enabled,
+        "showMasterclassCompactNotice": not masterclass_enabled,
+        "showPassRecupSection": pass_recup_enabled,
+        "showPassRecupCompactNotice": not pass_recup_enabled,
+    }
+    return {
+        "audience": audience,
+        "prospect_type": prospect_type,
+        "schedule": schedule,
+        "schedule_visibility": schedule_visibility,
+        "payment_method_label": _resolve_payment_method_label(quote=quote),
+        "payment_schedule_compact_notice": payment_schedule_compact_notice,
+        "solfege_enabled": solfege_enabled,
+        "solfege_level": str(quote.estimated_solfege_level or "").strip(),
+        "solfege_duration_minutes": quote.solfege_duration_minutes,
+        "solfege_selected_slot": selected_solfege_slot,
+        "masterclass_enabled": masterclass_enabled,
+        "masterclass_blocks": masterclass_blocks,
+        "pass_recup_enabled": pass_recup_enabled,
+        "display_flags": display_flags,
+        "prospect_data": prospect_data,
+        "client_data": client_data,
+    }
+
+
+def build_quote_document_context(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> dict[str, Any]:
+    context = _extract_document_context(db=db, quote=quote, lines=lines, audience=audience)
+    visible_blocks: list[str] = []
+    hidden_blocks: list[str] = []
+    for block_name, flag_key in (
+        ("adult_identity", "showAdultBlock"),
+        ("child_parent_identity", "showChildBlock"),
+        ("payment_method", "showPaymentMethodBlock"),
+        ("payment_schedule_detailed", "showPaymentScheduleDetailed"),
+        ("payment_schedule_compact_notice", "showPaymentScheduleCompactNotice"),
+        ("solfege", "showSolfegeSection"),
+        ("solfege_compact_notice", "showSolfegeCompactNotice"),
+        ("masterclass", "showMasterclassSection"),
+        ("masterclass_compact_notice", "showMasterclassCompactNotice"),
+        ("pass_recup", "showPassRecupSection"),
+        ("pass_recup_compact_notice", "showPassRecupCompactNotice"),
+    ):
+        if bool(context["display_flags"].get(flag_key)):
+            visible_blocks.append(block_name)
+        else:
+            hidden_blocks.append(block_name)
+    context["visible_blocks"] = visible_blocks
+    context["hidden_blocks"] = hidden_blocks
+    return context
+
+
 TOKEN_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
 
 
@@ -234,9 +406,17 @@ def _as_html_fragment(content: str) -> str:
     return "<p>" + "<br/>".join(line for line in normalized.split("\n")) + "</p>"
 
 
-def _build_template_values(*, db: Session | None, quote: Quote, lines: list[QuoteLine]) -> tuple[dict[str, str], set[str]]:
+def _build_template_values(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> tuple[dict[str, str], set[str], dict[str, Any]]:
     currency = (quote.currency or "EUR").upper()
     services, products, kits = _line_groups(lines)
+    document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
+    display_flags = document_context["display_flags"]
     total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
     total_ht = sum((Decimal(getattr(line, "amount_ht", Decimal("0")) or Decimal("0")) for line in lines), Decimal("0.00")).quantize(Decimal("0.01"))
     vat_amount = sum((Decimal(getattr(line, "amount_vat", Decimal("0")) or Decimal("0")) for line in lines), Decimal("0.00")).quantize(Decimal("0.01"))
@@ -304,23 +484,26 @@ def _build_template_values(*, db: Session | None, quote: Quote, lines: list[Quot
         empty_label="Aucune ligne.",
     )
 
-    schedule = (quote.payment_terms_snapshot or {}).get("schedule", [])
+    schedule = document_context["schedule"]
+    payment_schedule_rows = [
+        [
+            str(item.get("label") or "-"),
+            f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
+            str(item.get("due_label") or item.get("due_type") or "-"),
+            str(item.get("payment_method") or "-"),
+        ]
+        for item in schedule
+    ]
     payment_schedule_table_html = _table_html(
         ["Echeance", "Montant", "Quand", "Type"],
-        [
-            [
-                str(item.get("label") or "-"),
-                f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
-                str(item.get("due_label") or item.get("due_type") or "-"),
-                str(item.get("payment_method") or "-"),
-            ]
-            for item in schedule
-            if isinstance(item, dict)
-        ],
+        payment_schedule_rows,
         empty_label="Aucun echeancier.",
     )
+    if not display_flags["showPaymentScheduleDetailed"]:
+        compact_notice = document_context["payment_schedule_compact_notice"] or "Aucun echeancier detaille."
+        payment_schedule_table_html = f"<p>{escape(compact_notice)}</p>"
 
-    sessions = (quote.calendar_snapshot or {}).get("sessions", [])
+    sessions = _json_list(_json_object(quote.calendar_snapshot).get("sessions"))
     calendar_table_html = _table_html(
         ["Date", "Debut", "Fin", "Duree", "Modalite"],
         [
@@ -337,15 +520,15 @@ def _build_template_values(*, db: Session | None, quote: Quote, lines: list[Quot
         empty_label="Aucun cours planifie.",
     )
     calendar_summary = (
-        f"{len(sessions)} seances planifiees" if isinstance(sessions, list) and sessions else "Aucune seance planifiee"
+        f"{len(sessions)} seances planifiees" if sessions else "Aucune seance planifiee"
     )
     payment_schedule_summary = (
-        f"{len(schedule)} echeances" if isinstance(schedule, list) and schedule else "Paiement non planifie"
+        f"{len(schedule)} echeances" if schedule else "Paiement non planifie"
     )
 
     cgv_label, _ = _load_terms_template_content(db=db, quote=quote)
-    prospect_data = _resolve_prospect_data(db=db, quote=quote)
-    client_data = _resolve_client_data(db=db, quote=quote)
+    prospect_data = document_context["prospect_data"]
+    client_data = document_context["client_data"]
     recipient_name = (
         prospect_data.get("parent_full_name")
         or prospect_data.get("adult_full_name")
@@ -358,6 +541,65 @@ def _build_template_values(*, db: Session | None, quote: Quote, lines: list[Quot
         or client_data.get("client_email")
         or "-"
     )
+    payment_method_label = str(document_context["payment_method_label"] or "Paiement non precise")
+    solfege_slot = _json_object(document_context.get("solfege_selected_slot"))
+    solfege_slot_label = str(solfege_slot.get("label") or "").strip()
+    if not solfege_slot_label and solfege_slot:
+        day = str(solfege_slot.get("weekday_label") or solfege_slot.get("weekday") or "").strip()
+        start = str(solfege_slot.get("start_time") or "--:--").strip()
+        end = str(solfege_slot.get("end_time") or "--:--").strip()
+        solfege_slot_label = f"{day} {start}-{end}".strip()
+    solfege_duration = document_context.get("solfege_duration_minutes")
+    solfege_duration_label = f" ({solfege_duration} min)" if solfege_duration else ""
+    solfege_slot_suffix = f" · {solfege_slot_label}" if solfege_slot_label else ""
+    solfege_full = (
+        f"Solfege souscrit - Niveau {document_context.get('solfege_level') or '-'}"
+        f"{solfege_duration_label}"
+        f"{solfege_slot_suffix}"
+    )
+    masterclass_blocks = _json_list(document_context.get("masterclass_blocks"))
+    masterclass_full = "Masterclass du samedi souscrite."
+    if masterclass_blocks:
+        labels: list[str] = []
+        for block in masterclass_blocks[:3]:
+            if not isinstance(block, dict):
+                continue
+            session = str(block.get("session") or "").strip()
+            location = str(block.get("location_label") or "").strip()
+            label = " · ".join(part for part in (session, location) if part)
+            if label:
+                labels.append(label)
+        if labels:
+            masterclass_full = f"Masterclass du samedi souscrite - {'; '.join(labels)}"
+
+    adult_email_value = prospect_data.get("adult_email") or recipient_email
+    adult_identity_block_html = (
+        f"<p><strong>Adulte:</strong> {escape(prospect_data.get('adult_full_name') or recipient_name)}"
+        f"{f' · {escape(adult_email_value)}' if adult_email_value else ''}</p>"
+    )
+    parent_email_value = prospect_data.get("parent_email") or recipient_email
+    child_identity_block_html = (
+        f"<p><strong>Eleve:</strong> {escape(prospect_data.get('child_full_name') or '-')}</p>"
+        f"<p><strong>Parent referent:</strong> {escape(prospect_data.get('parent_full_name') or recipient_name)}"
+        f"{f' · {escape(parent_email_value)}' if parent_email_value else ''}</p>"
+    )
+    prospect_identity_block_html = child_identity_block_html if display_flags["showChildBlock"] else adult_identity_block_html
+    solfege_block_html = (
+        f"<p>{escape(solfege_full)}</p>"
+        if display_flags["showSolfegeSection"]
+        else "<p>Solfege non souscrit. Aucun cours de solfege n est inclus dans cette formule.</p>"
+    )
+    masterclass_block_html = (
+        f"<p>{escape(masterclass_full)}</p>"
+        if display_flags["showMasterclassSection"]
+        else "<p>Masterclass du samedi : non souscrite.</p>"
+    )
+    pass_recup_block_html = (
+        "<p>Option Pass Recup souscrite. Les regles d usage sont appliquees selon la formule.</p>"
+        if display_flags["showPassRecupSection"]
+        else "<p>Option Pass Recup : non souscrite. Aucun rattrapage de cours n est inclus dans cette formule.</p>"
+    )
+    payment_method_block_html = f"<p><strong>Mode de paiement :</strong> {escape(payment_method_label)}</p>"
 
     values: dict[str, str] = {
         "quote_number": quote.quote_number or "-",
@@ -374,22 +616,40 @@ def _build_template_values(*, db: Session | None, quote: Quote, lines: list[Quot
         "school_year_label": (quote.school_year_label or "-"),
         "calendar_summary": calendar_summary,
         "payment_schedule_summary": payment_schedule_summary,
+        "payment_method_label": payment_method_label,
+        "payment_schedule_compact_notice": document_context["payment_schedule_compact_notice"] or "",
         "cgv_version": cgv_label or "-",
         "services_count": str(len(services)),
         "products_count": str(len(products)),
         "kits_count": str(len(kits)),
         "lines_count": str(len(lines)),
+        "prospect_identity_block_html": prospect_identity_block_html,
+        "solfege_block_html": solfege_block_html,
+        "masterclass_block_html": masterclass_block_html,
+        "pass_recup_block_html": pass_recup_block_html,
+        "payment_method_block_html": payment_method_block_html,
         "services_table_html": services_table_html,
         "products_table_html": products_table_html,
         "kits_table_html": kits_table_html,
         "lines_table_html": lines_table_html,
         "payment_schedule_table_html": payment_schedule_table_html,
         "calendar_table_html": calendar_table_html,
+        "show_adult_block": "true" if display_flags["showAdultBlock"] else "false",
+        "show_child_block": "true" if display_flags["showChildBlock"] else "false",
+        "show_solfege_section": "true" if display_flags["showSolfegeSection"] else "false",
+        "show_masterclass_section": "true" if display_flags["showMasterclassSection"] else "false",
+        "show_pass_recup_section": "true" if display_flags["showPassRecupSection"] else "false",
+        "show_payment_schedule_detailed": "true" if display_flags["showPaymentScheduleDetailed"] else "false",
     }
     values.update(prospect_data)
     values.update(client_data)
 
     html_keys = {
+        "prospect_identity_block_html",
+        "solfege_block_html",
+        "masterclass_block_html",
+        "pass_recup_block_html",
+        "payment_method_block_html",
         "services_table_html",
         "products_table_html",
         "kits_table_html",
@@ -397,7 +657,7 @@ def _build_template_values(*, db: Session | None, quote: Quote, lines: list[Quot
         "payment_schedule_table_html",
         "calendar_table_html",
     }
-    return values, html_keys
+    return values, html_keys, document_context
 
 
 def _default_quote_body_template() -> str:
@@ -406,10 +666,15 @@ def _default_quote_body_template() -> str:
         "<p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p>"
         "<p><strong>Annee scolaire:</strong> {school_year_label}</p>"
         "<p><strong>Expiration:</strong> {expires_at}</p>"
+        "{prospect_identity_block_html}"
         "<h2>Activites</h2>{services_table_html}"
         "<h2>Produits</h2>{products_table_html}"
         "<h2>Kits</h2>{kits_table_html}"
+        "{payment_method_block_html}"
         "<h2>Echeancier de paiement</h2>{payment_schedule_table_html}"
+        "{solfege_block_html}"
+        "{masterclass_block_html}"
+        "{pass_recup_block_html}"
         "<h2>Calendrier des cours</h2>{calendar_table_html}"
         "<p><strong>Total HT:</strong> {total_ht} {currency}</p>"
         "<p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p>"
@@ -417,17 +682,29 @@ def _default_quote_body_template() -> str:
     )
 
 
-def _render_quote_body_html(*, db: Session | None, quote: Quote, lines: list[QuoteLine]) -> str:
+def _render_quote_body_html(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> str:
     _, body_template = _load_quote_template_snapshot(db=db, quote=quote)
     template = body_template or _default_quote_body_template()
-    values, html_keys = _build_template_values(db=db, quote=quote, lines=lines)
+    values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered = _apply_template(template, values=values, html_keys=html_keys, html_output=True)
     return _as_html_fragment(rendered)
 
 
-def _render_quote_terms_html(*, db: Session | None, quote: Quote, lines: list[QuoteLine]) -> str:
+def _render_quote_terms_html(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> str:
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
-    values, html_keys = _build_template_values(db=db, quote=quote, lines=lines)
+    values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered_terms = _apply_template(cgv_content, values=values, html_keys=html_keys, html_output=True)
     return (
         "<section>"
@@ -438,9 +715,15 @@ def _render_quote_terms_html(*, db: Session | None, quote: Quote, lines: list[Qu
     )
 
 
-def render_quote_combined_html(*, db: Session | None = None, quote: Quote, lines: list[QuoteLine]) -> str:
-    body_html = _render_quote_body_html(db=db, quote=quote, lines=lines)
-    terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines)
+def render_quote_combined_html(
+    *,
+    db: Session | None = None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> str:
+    body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
+    terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
     return (
         "<html><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
         f"<section>{body_html}</section>"
@@ -450,13 +733,25 @@ def render_quote_combined_html(*, db: Session | None = None, quote: Quote, lines
     )
 
 
-def render_quote_html(*, db: Session | None = None, quote: Quote, lines: list[QuoteLine]) -> str:
-    return render_quote_combined_html(db=db, quote=quote, lines=lines)
+def render_quote_html(
+    *,
+    db: Session | None = None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> str:
+    return render_quote_combined_html(db=db, quote=quote, lines=lines, audience=audience)
 
 
-def render_quote_parts_html(*, db: Session | None = None, quote: Quote, lines: list[QuoteLine]) -> tuple[str, str, str]:
-    body_html = _render_quote_body_html(db=db, quote=quote, lines=lines)
-    terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines)
+def render_quote_parts_html(
+    *,
+    db: Session | None = None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> tuple[str, str, str]:
+    body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
+    terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
     combined_html = (
         "<html><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
         f"<section>{body_html}</section>"
@@ -467,6 +762,36 @@ def render_quote_parts_html(*, db: Session | None = None, quote: Quote, lines: l
     return body_html, terms_html, combined_html
 
 
-def render_quote_pdf(*, db: Session | None = None, quote: Quote, lines: list[QuoteLine]) -> bytes:
-    html = render_quote_combined_html(db=db, quote=quote, lines=lines)
+def render_quote_document_bundle(
+    *,
+    db: Session | None = None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> dict[str, Any]:
+    values, _, context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
+    body_html, terms_html, combined_html = render_quote_parts_html(db=db, quote=quote, lines=lines, audience=audience)
+    return {
+        "audience": audience,
+        "quote_id": str(quote.id),
+        "quote_number": quote.quote_number,
+        "body_html": body_html,
+        "terms_html": terms_html,
+        "combined_html": combined_html,
+        "display_flags": context.get("display_flags", {}),
+        "visible_blocks": context.get("visible_blocks", []),
+        "hidden_blocks": context.get("hidden_blocks", []),
+        "payment_method_label": values.get("payment_method_label", ""),
+        "payment_schedule_compact_notice": values.get("payment_schedule_compact_notice", ""),
+    }
+
+
+def render_quote_pdf(
+    *,
+    db: Session | None = None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> bytes:
+    html = render_quote_combined_html(db=db, quote=quote, lines=lines, audience=audience)
     return render_teacher_invoice_pdf_from_html(html)
