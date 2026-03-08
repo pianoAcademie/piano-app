@@ -300,6 +300,8 @@ def _serialize_activity(
         cancellation_deadline_hours_override=activity.cancellation_deadline_hours_override,
         auto_cancel_if_booked_less_than_override=activity.auto_cancel_if_booked_less_than_override,
         auto_cancel_hours_before_start_override=activity.auto_cancel_hours_before_start_override,
+        exclude_holidays_in_recurrence=bool(activity.exclude_holidays_in_recurrence),
+        exclude_school_vacations_in_recurrence=bool(activity.exclude_school_vacations_in_recurrence),
         active=activity.active,
     )
 
@@ -1574,6 +1576,8 @@ def create_admin_activity(
         cancellation_deadline_hours_override=payload.cancellation_deadline_hours_override,
         auto_cancel_if_booked_less_than_override=payload.auto_cancel_if_booked_less_than_override,
         auto_cancel_hours_before_start_override=payload.auto_cancel_hours_before_start_override,
+        exclude_holidays_in_recurrence=bool(payload.exclude_holidays_in_recurrence),
+        exclude_school_vacations_in_recurrence=bool(payload.exclude_school_vacations_in_recurrence),
         active=bool(payload.active),
     )
     db.add(activity)
@@ -1697,6 +1701,12 @@ def update_admin_activity(
 
     if "auto_cancel_hours_before_start_override" in changes:
         activity.auto_cancel_hours_before_start_override = changes["auto_cancel_hours_before_start_override"]
+
+    if "exclude_holidays_in_recurrence" in changes:
+        activity.exclude_holidays_in_recurrence = bool(changes["exclude_holidays_in_recurrence"])
+
+    if "exclude_school_vacations_in_recurrence" in changes:
+        activity.exclude_school_vacations_in_recurrence = bool(changes["exclude_school_vacations_in_recurrence"])
 
     if "active" in changes:
         activity.active = bool(changes["active"])

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
+import json
 import re
 from typing import Literal
 from uuid import UUID, uuid4
@@ -124,6 +125,7 @@ BOOKING_STATUSES_ACTIVE = (
     BookingStatus.EXCUSED_ABSENCE,
 )
 VACATION_COURSE_TYPE_CODE = "VACATION_DAY"
+QUOTE_SCHOOL_CALENDARS_SETTING_KEY = "quote_school_calendars_v1"
 
 ApplyScope = Literal["ONE", "SERIES_FUTURE", "SERIES_ALL"]
 BookingScope = Literal["OCCURRENCE", "SERIES_FUTURE"]
@@ -615,6 +617,173 @@ def _has_vacation_on_day(
         .limit(1)
     )
     return exists is not None
+
+
+def _parse_school_calendar_rows(db: Session) -> list[dict[str, object]]:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == QUOTE_SCHOOL_CALENDARS_SETTING_KEY))
+    if setting is None:
+        return []
+    try:
+        parsed = json.loads(setting.value or "[]")
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def _safe_parse_iso_date(value: object | None) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def _parse_school_year_bounds(label: str) -> tuple[date, date] | None:
+    normalized = (label or "").strip()
+    match = re.fullmatch(r"(\\d{4})\\s*[-/]\\s*(\\d{4})", normalized)
+    if match is None:
+        return None
+    start_year = int(match.group(1))
+    end_year = int(match.group(2))
+    if end_year < start_year:
+        return None
+    # School year in France: Sep 1 -> Aug 31.
+    return (date(start_year, 9, 1), date(end_year, 8, 31))
+
+
+def _school_calendar_updated_at(raw: dict[str, object]) -> datetime:
+    value = str(raw.get("updated_at") or "").strip()
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _calendar_location_matches(raw: dict[str, object], *, location_id: UUID) -> bool:
+    return str(raw.get("location_id") or "").strip() == str(location_id)
+
+
+def _select_school_calendar_for_day(
+    rows: list[dict[str, object]],
+    *,
+    location_id: UUID,
+    day: date,
+) -> dict[str, object] | None:
+    location_rows = [
+        item for item in rows if bool(item.get("is_active", True)) and _calendar_location_matches(item, location_id=location_id)
+    ]
+    if not location_rows:
+        return None
+
+    scoped: list[dict[str, object]] = []
+    for item in location_rows:
+        bounds = _parse_school_year_bounds(str(item.get("school_year_label") or ""))
+        if bounds is None:
+            continue
+        start_day, end_day = bounds
+        if start_day <= day <= end_day:
+            scoped.append(item)
+    if scoped:
+        scoped.sort(key=_school_calendar_updated_at, reverse=True)
+        return scoped[0]
+
+    location_rows.sort(key=_school_calendar_updated_at, reverse=True)
+    return location_rows[0]
+
+
+def _calendar_holiday_dates(raw: dict[str, object]) -> set[date]:
+    values = raw.get("holiday_dates")
+    if not isinstance(values, list):
+        return set()
+    out: set[date] = set()
+    for entry in values:
+        parsed = _safe_parse_iso_date(entry)
+        if parsed is not None:
+            out.add(parsed)
+    return out
+
+
+def _calendar_closure_dates(raw: dict[str, object]) -> set[date]:
+    values = raw.get("closure_dates")
+    if not isinstance(values, list):
+        return set()
+    out: set[date] = set()
+    for entry in values:
+        parsed = _safe_parse_iso_date(entry)
+        if parsed is not None:
+            out.add(parsed)
+    return out
+
+
+def _calendar_vacation_dates(raw: dict[str, object]) -> set[date]:
+    values = raw.get("vacation_periods")
+    if not isinstance(values, list):
+        return set()
+    out: set[date] = set()
+    for entry in values:
+        if not isinstance(entry, dict):
+            continue
+        start = _safe_parse_iso_date(entry.get("start_date"))
+        end = _safe_parse_iso_date(entry.get("end_date"))
+        if start is None or end is None or end < start:
+            continue
+        current = start
+        while current <= end:
+            out.add(current)
+            current += timedelta(days=1)
+    return out
+
+
+def _is_blocked_by_school_calendar(
+    db: Session,
+    *,
+    location_id: UUID,
+    location_timezone: str,
+    starts_at_utc: datetime,
+    include_holidays: bool,
+    include_school_vacations: bool,
+    cache: dict[str, object],
+) -> bool:
+    if not include_holidays and not include_school_vacations:
+        return False
+
+    rows = cache.get("rows")
+    if not isinstance(rows, list):
+        rows = _parse_school_calendar_rows(db)
+        cache["rows"] = rows
+
+    try:
+        local_day = starts_at_utc.astimezone(ZoneInfo(location_timezone)).date()
+    except Exception:
+        local_day = starts_at_utc.date()
+
+    calendar_row = _select_school_calendar_for_day(rows, location_id=location_id, day=local_day)
+    if calendar_row is None:
+        return False
+
+    day_cache = cache.setdefault("day_cache", {})
+    day_key = f"{calendar_row.get('id')}::{local_day.isoformat()}"
+    cached = day_cache.get(day_key)
+    if isinstance(cached, tuple) and len(cached) == 2:
+        is_holiday, is_vacation = bool(cached[0]), bool(cached[1])
+    else:
+        holiday_dates = _calendar_holiday_dates(calendar_row)
+        vacation_dates = _calendar_vacation_dates(calendar_row)
+        closure_dates = _calendar_closure_dates(calendar_row)
+        is_holiday = local_day in holiday_dates
+        is_vacation = local_day in vacation_dates or local_day in closure_dates
+        day_cache[day_key] = (is_holiday, is_vacation)
+
+    return (include_holidays and is_holiday) or (include_school_vacations and is_vacation)
 
 
 def _cancel_recurring_occurrences_for_vacation(
@@ -1428,6 +1597,7 @@ def create_session(
     duration = end_at_utc - start_at_utc
     deadline_delta = start_at_utc - auto_cancel_deadline_utc
     now = _utcnow()
+    calendar_skip_cache: dict[str, object] = {}
 
     sessions_to_create: list[CourseSession] = []
     for index in range(recurrence_occurrences):
@@ -1458,6 +1628,16 @@ def create_session(
 
         if recurrence_occurrences > 1 and not is_vacation:
             if _has_vacation_on_day(db, location_id=payload.location_id, day_start_utc=_start_of_utc_day(starts_at)):
+                continue
+            if _is_blocked_by_school_calendar(
+                db,
+                location_id=payload.location_id,
+                location_timezone=location.timezone,
+                starts_at_utc=starts_at,
+                include_holidays=bool(course_type.exclude_holidays_in_recurrence),
+                include_school_vacations=bool(course_type.exclude_school_vacations_in_recurrence),
+                cache=calendar_skip_cache,
+            ):
                 continue
 
         sessions_to_create.append(
@@ -1497,7 +1677,7 @@ def create_session(
     if not sessions_to_create:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="All recurring occurrences were blocked by vacation day sessions",
+            detail="All recurring occurrences were blocked by configured holidays, vacations or closure slots",
         )
 
     db.add_all(sessions_to_create)
@@ -2587,6 +2767,7 @@ def update_session(
         anchor_duration = session_obj.end_at_utc - session_obj.start_at_utc
         anchor_deadline_delta = session_obj.start_at_utc - session_obj.auto_cancel_deadline_utc
         created_future_count = 0
+        calendar_skip_cache: dict[str, object] = {}
 
         for index in range(1, recurrence_occurrences):
             starts_at = _advance_recurrence_datetime(session_obj.start_at_utc, frequency=recurrence_rule, offset=index)
@@ -2613,6 +2794,16 @@ def update_session(
                 db,
                 location_id=session_obj.location_id,
                 day_start_utc=_start_of_utc_day(starts_at),
+            ):
+                continue
+            if not is_vacation and _is_blocked_by_school_calendar(
+                db,
+                location_id=session_obj.location_id,
+                location_timezone=location.timezone,
+                starts_at_utc=starts_at,
+                include_holidays=bool(course_type.exclude_holidays_in_recurrence),
+                include_school_vacations=bool(course_type.exclude_school_vacations_in_recurrence),
+                cache=calendar_skip_cache,
             ):
                 continue
 
@@ -2650,7 +2841,7 @@ def update_session(
         if created_future_count <= 0:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="All recurring future occurrences were blocked by vacation day sessions",
+                detail="All recurring future occurrences were blocked by configured holidays, vacations or closure slots",
             )
 
     db.commit()

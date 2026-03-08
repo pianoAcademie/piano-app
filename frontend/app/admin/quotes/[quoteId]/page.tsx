@@ -137,6 +137,16 @@ type QuoteTemplateOut = {
   language: string;
 };
 
+type SolfegeRuleOut = {
+  id: string;
+  level_code: string;
+  duration_minutes: number;
+  allowed_weekdays: number[];
+  allowed_time_slots: Array<Record<string, unknown>>;
+  location_id: string | null;
+  modality: string | null;
+};
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -393,7 +403,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult, solfegeRulesResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
@@ -407,6 +417,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
+    backendRequest<SolfegeRuleOut[]>("/api/v1/solfege-level-rules?active_only=true", {}, token),
   ]);
 
   if (!detailResult.ok) {
@@ -437,6 +448,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const locations = locationsResult.ok ? locationsResult.data : [];
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
+  const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
@@ -685,7 +697,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       </section>
 
       <section className="card">
-        <h3>Selection solfege</h3>
+        <div className="row spread wrap gap-sm">
+          <h3>Selection solfege</h3>
+          {detail.quote.status === "created" ? <a className="mode-link" href="#planning-editor">Modifier dans planning</a> : null}
+        </div>
         {selectedSolfegeSlot ? (
           <div className="grid cols-3 top-gap-sm">
             <p><strong>Jour:</strong> {weekdayLabelFromNumber(selectedSolfegeSlot.weekday)}</p>
@@ -701,7 +716,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       </section>
 
       <section className="card">
-        <h3>Solfege et masterclass par activite</h3>
+        <div className="row spread wrap gap-sm">
+          <h3>Solfege et masterclass par activite</h3>
+          {detail.quote.status === "created" ? <a className="mode-link" href="#planning-editor">Modifier par activite</a> : null}
+        </div>
         <div className="list top-gap-sm">
           {activitySolfegeRows.length === 0 ? (
             <p className="muted">Aucune activite avec solfege configuree.</p>
@@ -740,7 +758,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         </div>
       </section>
 
-      <section className="card">
+      <section className="card" id="planning-editor">
         <h3>Calendrier previsionnel</h3>
         <p className="muted">{calendarSessions.length} seances calculees.</p>
         {planningSummary.length > 0 ? (
@@ -786,7 +804,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               id: row.id,
               name: row.name,
             }))}
+            solfegeRules={solfegeRules.map((row) => ({
+              id: row.id,
+              level_code: row.level_code,
+              duration_minutes: row.duration_minutes,
+              allowed_weekdays: row.allowed_weekdays,
+              allowed_time_slots: row.allowed_time_slots,
+              location_id: row.location_id,
+              modality: row.modality,
+            }))}
             initialSnapshot={detail.quote.calendar_snapshot}
+            initialMeta={detail.quote.meta || {}}
             saveAction={updateQuotePlanningAction}
           />
         </div>

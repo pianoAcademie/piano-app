@@ -1725,6 +1725,10 @@ button.danger {
     grid-column: auto;
   }
 
+  .calendar-textarea-field textarea {
+    min-height: 140px;
+  }
+
   .client-balance-main {
     font-size: 40px;
   }
@@ -4202,6 +4206,50 @@ button.danger {
 .config-form-grid label {
   display: grid;
   gap: 6px;
+}
+
+.calendar-inline-help {
+  border: 1px dashed #d7ba8f;
+  border-radius: 10px;
+  background: #fff8ec;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.calendar-inline-help.compact {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.calendar-inline-help strong {
+  color: #4a3922;
+}
+
+.calendar-textarea-field textarea {
+  min-height: 180px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.4;
+}
+
+.calendar-locations-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.calendar-locations-fieldset legend {
+  font-weight: 700;
+  padding: 0 6px;
+}
+
+.calendar-location-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 12px;
 }
 
 .wysiwyg-editor {

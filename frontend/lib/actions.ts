@@ -5875,6 +5875,8 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const autoCancelHoursBeforeStartOverride = parseOptionalPlanningRuleOverride(
     String(formData.get("auto_cancel_hours_before_start_override") ?? ""),
   );
+  const excludeHolidaysInRecurrence = checkboxField(formData, "exclude_holidays_in_recurrence");
+  const excludeSchoolVacationsInRecurrence = checkboxField(formData, "exclude_school_vacations_in_recurrence");
 
   if (!name) {
     redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
@@ -5936,6 +5938,8 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     cancellation_deadline_hours_override: cancellationDeadlineHoursOverride,
     auto_cancel_if_booked_less_than_override: autoCancelIfBookedLessThanOverride,
     auto_cancel_hours_before_start_override: autoCancelHoursBeforeStartOverride,
+    exclude_holidays_in_recurrence: excludeHolidaysInRecurrence,
+    exclude_school_vacations_in_recurrence: excludeSchoolVacationsInRecurrence,
     active: checkboxField(formData, "active"),
   };
   if (code) {
@@ -6002,6 +6006,8 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const autoCancelHoursBeforeStartOverride = parseOptionalPlanningRuleOverride(
     String(formData.get("auto_cancel_hours_before_start_override") ?? ""),
   );
+  const excludeHolidaysInRecurrence = checkboxField(formData, "exclude_holidays_in_recurrence");
+  const excludeSchoolVacationsInRecurrence = checkboxField(formData, "exclude_school_vacations_in_recurrence");
 
   if (!name) {
     redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
@@ -6064,6 +6070,8 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     cancellation_deadline_hours_override: cancellationDeadlineHoursOverride,
     auto_cancel_if_booked_less_than_override: autoCancelIfBookedLessThanOverride,
     auto_cancel_hours_before_start_override: autoCancelHoursBeforeStartOverride,
+    exclude_holidays_in_recurrence: excludeHolidaysInRecurrence,
+    exclude_school_vacations_in_recurrence: excludeSchoolVacationsInRecurrence,
     active: checkboxField(formData, "active"),
   };
 
@@ -9457,8 +9465,91 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
   if (blocks === null) {
     redirect(appendQueryMessage(returnTo, "error", "Planning invalide"));
   }
+
+  let currentMeta: Record<string, unknown> = {};
+  const currentMetaRaw = String(formData.get("current_meta_json") ?? "").trim();
+  if (currentMetaRaw) {
+    try {
+      const parsed = JSON.parse(currentMetaRaw) as unknown;
+      if (parsed && typeof parsed === "object") {
+        currentMeta = parsed as Record<string, unknown>;
+      }
+    } catch {
+      currentMeta = {};
+    }
+  }
+
+  const firstActivitySolfege = blocks.find((block) => block.solfege_enabled && block.solfege_level);
+  const fallbackSolfegeSlot = firstActivitySolfege?.solfege_slot
+    ? parseSolfegeSlotJson(JSON.stringify(firstActivitySolfege.solfege_slot))
+    : null;
+  if (fallbackSolfegeSlot === undefined) {
+    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege activite invalide"));
+  }
+  const resolvedEstimatedSolfegeLevel = firstActivitySolfege?.solfege_level || null;
+  const resolvedSelectedSolfegeSlot = fallbackSolfegeSlot || null;
+
+  const activitySolfege = blocks
+    .filter((block) => block.solfege_enabled)
+    .map((block) => ({
+      activity_id: block.activity_id,
+      activity_label: block.activity_label,
+      level: block.solfege_level || null,
+      start_date: block.solfege_start_date || null,
+      slot: block.solfege_slot || null,
+    }));
+
+  const masterclassBlocks = blocks
+    .filter((block) => block.masterclass_enabled)
+    .map((block) => ({
+      activity_id: block.activity_id,
+      activity_label: block.activity_label,
+      session: block.masterclass_session || null,
+      location_id: block.masterclass_location_id || null,
+      location_label: block.masterclass_location_label || null,
+    }));
+
+  if (activitySolfege.length > 0) {
+    currentMeta.activity_solfege = activitySolfege;
+  } else {
+    delete currentMeta.activity_solfege;
+  }
+  if (masterclassBlocks.length > 0) {
+    currentMeta.masterclass_blocks = masterclassBlocks;
+  } else {
+    delete currentMeta.masterclass_blocks;
+  }
+  if (resolvedSelectedSolfegeSlot) {
+    currentMeta.selected_solfege_slot = resolvedSelectedSolfegeSlot;
+  } else {
+    delete currentMeta.selected_solfege_slot;
+  }
+
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
-  const snapshot = await buildCalendarSnapshotFromBlocks({ blocks, token, returnTo, schoolYearLabel });
+  let snapshot = await buildCalendarSnapshotFromBlocks({ blocks, token, returnTo, schoolYearLabel });
+  if (resolvedEstimatedSolfegeLevel && resolvedSelectedSolfegeSlot) {
+    snapshot = {
+      ...(snapshot || {}),
+      solfege: {
+        estimated_level: resolvedEstimatedSolfegeLevel,
+        selected_slot: resolvedSelectedSolfegeSlot,
+      },
+    };
+  } else if (snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)) {
+    const next = { ...(snapshot as Record<string, unknown>) };
+    delete next.solfege;
+    snapshot = next;
+  }
+  if (masterclassBlocks.length > 0) {
+    snapshot = {
+      ...(snapshot || {}),
+      masterclass_blocks: masterclassBlocks,
+    };
+  } else if (snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)) {
+    const next = { ...(snapshot as Record<string, unknown>) };
+    delete next.masterclass_blocks;
+    snapshot = next;
+  }
 
   const result = await backendRequest<{ quote: { id: string } }>(
     `/api/v1/quotes/${encodeURIComponent(quoteId)}`,
@@ -9466,6 +9557,9 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
       method: "PATCH",
       body: JSON.stringify({
         calendar_snapshot: snapshot,
+        meta: currentMeta,
+        estimated_solfege_level: resolvedEstimatedSolfegeLevel,
+        selected_solfege_slot: resolvedSelectedSolfegeSlot,
       }),
     },
     token,
@@ -9944,22 +10038,79 @@ type QuoteCalendarPeriodPayload = {
   label: string | null;
 };
 
-function parseCalendarDateList(values: FormDataEntryValue[]): string[] | null {
+function parseCalendarDateList(values: FormDataEntryValue[], multilineRaw?: string): string[] | null {
   const out = new Set<string>();
-  for (const value of values) {
-    const raw = String(value).trim();
+  const pushDate = (rawInput: string): boolean => {
+    const raw = rawInput.trim();
     if (!raw) {
-      continue;
+      return true;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-      return null;
+      return false;
     }
     out.add(raw);
+    return true;
+  };
+  for (const value of values) {
+    if (!pushDate(String(value))) {
+      return null;
+    }
+  }
+  if (multilineRaw) {
+    const lines = multilineRaw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      if (!pushDate(line)) {
+        return null;
+      }
+    }
   }
   return Array.from(out).sort();
 }
 
 function parseCalendarVacationPeriods(formData: FormData): QuoteCalendarPeriodPayload[] | null {
+  const rawTextarea = String(formData.get("vacation_periods_text") ?? "").trim();
+  if (rawTextarea) {
+    const out: QuoteCalendarPeriodPayload[] = [];
+    const lines = rawTextarea
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      const parts = line.split("|").map((part) => part.trim());
+      let start = "";
+      let end = "";
+      let label = "";
+      if (parts.length >= 2) {
+        start = parts[0] ?? "";
+        end = parts[1] ?? "";
+        label = parts.slice(2).join(" | ").trim();
+      } else {
+        const arrowMatch = line.match(/^(\d{4}-\d{2}-\d{2})\s*(?:->|→|au)\s*(\d{4}-\d{2}-\d{2})(?:\s*[|;]\s*(.+))?$/i);
+        if (!arrowMatch) {
+          return null;
+        }
+        start = arrowMatch[1];
+        end = arrowMatch[2];
+        label = (arrowMatch[3] || "").trim();
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        return null;
+      }
+      if (end < start) {
+        return null;
+      }
+      out.push({
+        start_date: start,
+        end_date: end,
+        label: label || null,
+      });
+    }
+    return out;
+  }
+
   const starts = formData.getAll("vacation_start").map((entry) => String(entry).trim());
   const ends = formData.getAll("vacation_end").map((entry) => String(entry).trim());
   const labels = formData.getAll("vacation_label").map((entry) => String(entry).trim());
@@ -10556,17 +10707,25 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=calendars"));
   const name = String(formData.get("name") ?? "").trim();
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
-  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const selectedLocationIds = formData
+    .getAll("location_ids")
+    .map((entry) => parseUuid(String(entry)))
+    .filter((value): value is string => Boolean(value));
+  const fallbackLocationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const locationIds = selectedLocationIds.length > 0
+    ? Array.from(new Set(selectedLocationIds))
+    : (fallbackLocationId ? [fallbackLocationId] : []);
   const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const applyToManagementPlanning = parseCheckboxFlag(formData, "apply_to_management_planning", false);
   const vacationPeriods = parseCalendarVacationPeriods(formData);
-  const holidayDates = parseCalendarDateList(formData.getAll("holiday_date"));
-  const closureDates = parseCalendarDateList(formData.getAll("closure_date"));
+  const holidayDates = parseCalendarDateList(formData.getAll("holiday_date"), String(formData.get("holiday_dates_text") ?? ""));
+  const closureDates = parseCalendarDateList(formData.getAll("closure_date"), String(formData.get("closure_dates_text") ?? ""));
 
-  if (!name || !schoolYearLabel || !locationId) {
+  if (!name || !schoolYearLabel || locationIds.length === 0) {
     redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
   }
   if (vacationPeriods === null || holidayDates === null || closureDates === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Dates calendrier invalides"));
+    redirect(appendQueryMessage(returnTo, "error", "Dates invalides. Format attendu: vacances 'YYYY-MM-DD | YYYY-MM-DD | Libelle', jours feries/fermetures une date par ligne."));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -10576,11 +10735,13 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
       body: JSON.stringify({
         name,
         school_year_label: schoolYearLabel,
-        location_id: locationId,
+        location_id: locationIds[0],
+        location_ids: locationIds,
         vacation_periods: vacationPeriods,
         holiday_dates: holidayDates,
         closure_dates: closureDates,
         is_active: isActive,
+        apply_to_management_planning: applyToManagementPlanning,
       }),
     },
     token,
@@ -10592,7 +10753,15 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Calendrier enregistre"));
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      applyToManagementPlanning
+        ? "Calendrier enregistre et applique au planning de gestion"
+        : "Calendrier enregistre",
+    ),
+  );
 }
 
 export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
@@ -10606,17 +10775,25 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   const name = String(formData.get("name") ?? "").trim();
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
-  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const selectedLocationIds = formData
+    .getAll("location_ids")
+    .map((entry) => parseUuid(String(entry)))
+    .filter((value): value is string => Boolean(value));
+  const fallbackLocationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const locationIds = selectedLocationIds.length > 0
+    ? Array.from(new Set(selectedLocationIds))
+    : (fallbackLocationId ? [fallbackLocationId] : []);
   const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const applyToManagementPlanning = parseCheckboxFlag(formData, "apply_to_management_planning", false);
   const vacationPeriods = parseCalendarVacationPeriods(formData);
-  const holidayDates = parseCalendarDateList(formData.getAll("holiday_date"));
-  const closureDates = parseCalendarDateList(formData.getAll("closure_date"));
+  const holidayDates = parseCalendarDateList(formData.getAll("holiday_date"), String(formData.get("holiday_dates_text") ?? ""));
+  const closureDates = parseCalendarDateList(formData.getAll("closure_date"), String(formData.get("closure_dates_text") ?? ""));
 
-  if (!calendarId || !name || !schoolYearLabel || !locationId) {
+  if (!calendarId || !name || !schoolYearLabel || locationIds.length === 0) {
     redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
   }
   if (vacationPeriods === null || holidayDates === null || closureDates === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Dates calendrier invalides"));
+    redirect(appendQueryMessage(returnTo, "error", "Dates invalides. Format attendu: vacances 'YYYY-MM-DD | YYYY-MM-DD | Libelle', jours feries/fermetures une date par ligne."));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -10626,11 +10803,13 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
       body: JSON.stringify({
         name,
         school_year_label: schoolYearLabel,
-        location_id: locationId,
+        location_id: locationIds[0],
+        location_ids: locationIds,
         vacation_periods: vacationPeriods,
         holiday_dates: holidayDates,
         closure_dates: closureDates,
         is_active: isActive,
+        apply_to_management_planning: applyToManagementPlanning,
       }),
     },
     token,
@@ -10642,7 +10821,15 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Calendrier mis a jour"));
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      applyToManagementPlanning
+        ? "Calendrier mis a jour et applique au planning de gestion"
+        : "Calendrier mis a jour",
+    ),
+  );
 }
 
 export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {

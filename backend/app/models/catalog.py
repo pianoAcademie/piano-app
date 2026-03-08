@@ -242,6 +242,16 @@ class CourseType(Base):
     cancellation_deadline_hours_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auto_cancel_if_booked_less_than_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auto_cancel_hours_before_start_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exclude_holidays_in_recurrence: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+    )
+    exclude_school_vacations_in_recurrence: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+    )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

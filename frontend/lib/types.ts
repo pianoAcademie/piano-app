@@ -63,6 +63,8 @@ export type CourseTypeOut = {
   cancellation_deadline_hours_override: number | null;
   auto_cancel_if_booked_less_than_override: number | null;
   auto_cancel_hours_before_start_override: number | null;
+  exclude_holidays_in_recurrence: boolean;
+  exclude_school_vacations_in_recurrence: boolean;
   active: boolean;
 };
 
@@ -1654,6 +1656,8 @@ export type AdminActivityOut = {
   cancellation_deadline_hours_override: number | null;
   auto_cancel_if_booked_less_than_override: number | null;
   auto_cancel_hours_before_start_override: number | null;
+  exclude_holidays_in_recurrence: boolean;
+  exclude_school_vacations_in_recurrence: boolean;
   active: boolean;
 };
 

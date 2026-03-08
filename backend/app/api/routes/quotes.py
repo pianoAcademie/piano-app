@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
-from app.models.catalog import CourseType, Location
+from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
 from app.models.ops import AppSetting
 from app.models.product_catalog import CatalogKit, CatalogProduct
 from app.models.quote import (
@@ -97,6 +97,7 @@ from app.schemas.quote import (
     TermsTemplateVersionPublishRequest,
 )
 from app.services.email_delivery import send_email
+from app.services.invoice_documents import normalize_billing_entity
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.quotes.payment_plan_engine import PaymentPlanScheduleInput, build_payment_schedule
@@ -306,13 +307,14 @@ def _calendar_record_from_payload(
     *,
     row_id: UUID,
     created_at: datetime | None,
+    location_id: UUID,
 ) -> dict[str, object]:
     now = _utcnow()
     return {
         "id": str(row_id),
         "name": payload.name.strip(),
         "school_year_label": payload.school_year_label.strip(),
-        "location_id": str(payload.location_id),
+        "location_id": str(location_id),
         "vacation_periods": [
             {
                 "start_date": period.start_date.isoformat(),
@@ -328,6 +330,114 @@ def _calendar_record_from_payload(
         "created_at": (created_at or now).isoformat(),
         "updated_at": now.isoformat(),
     }
+
+
+def _calendar_location_ids_from_payload(payload: QuoteSchoolCalendarUpsertRequest) -> list[UUID]:
+    out: list[UUID] = []
+    seen: set[UUID] = set()
+    if payload.location_id is not None and payload.location_id not in seen:
+        seen.add(payload.location_id)
+        out.append(payload.location_id)
+    for location_id in payload.location_ids:
+        if location_id in seen:
+            continue
+        seen.add(location_id)
+        out.append(location_id)
+    return out
+
+
+def _validate_calendar_locations_exist(db: Session, location_ids: list[UUID]) -> None:
+    if not location_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Location not found")
+    existing_ids = {
+        row_id
+        for row_id in db.scalars(
+            select(Location.id).where(Location.id.in_(location_ids))
+        ).all()
+    }
+    missing = [location_id for location_id in location_ids if location_id not in existing_ids]
+    if missing:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Location not found")
+
+
+def _apply_school_calendar_to_management_planning(
+    db: Session,
+    *,
+    payload: QuoteSchoolCalendarUpsertRequest,
+    location_ids: list[UUID],
+) -> tuple[int, int]:
+    vacation_days = _expand_vacation_periods(payload.vacation_periods)
+    target_days = sorted({*payload.holiday_dates, *payload.closure_dates, *vacation_days})
+    if not location_ids or not target_days:
+        return (0, 0)
+
+    vacation_type = db.scalar(select(CourseType).where(CourseType.code == "VACATION_DAY"))
+    if vacation_type is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Activite VACATION_DAY introuvable pour appliquer le calendrier au planning",
+        )
+
+    locations = {
+        row.id: row
+        for row in db.scalars(select(Location).where(Location.id.in_(location_ids))).all()
+    }
+    now = _utcnow()
+    created_count = 0
+    skipped_count = 0
+
+    for location_id in location_ids:
+        location = locations.get(location_id)
+        if location is None:
+            continue
+        for day in target_days:
+            start_at_utc = datetime.combine(day, time.min, tzinfo=timezone.utc)
+            end_at_utc = start_at_utc + timedelta(days=1)
+            exists = db.scalar(
+                select(CourseSession.id)
+                .where(
+                    CourseSession.course_type_id == vacation_type.id,
+                    CourseSession.location_id == location_id,
+                    CourseSession.start_at_utc == start_at_utc,
+                    CourseSession.end_at_utc == end_at_utc,
+                    CourseSession.status != SessionStatus.CANCELLED,
+                )
+                .limit(1)
+            )
+            if exists is not None:
+                skipped_count += 1
+                continue
+
+            db.add(
+                CourseSession(
+                    course_type_id=vacation_type.id,
+                    billing_entity_snapshot=normalize_billing_entity(vacation_type.billing_entity_code),
+                    snapshot_seller_legal_entity_id=vacation_type.seller_legal_entity_id,
+                    snapshot_payor_legal_entity_id=vacation_type.payor_legal_entity_id,
+                    location_id=location_id,
+                    professor_id=None,
+                    title=f"Blocage calendrier {payload.school_year_label.strip()}",
+                    description="Blocage automatique calendrier scolaire / jours feries",
+                    private_description="GEN:QUOTE_SCHOOL_CALENDAR_BLOCK",
+                    start_at_utc=start_at_utc,
+                    end_at_utc=end_at_utc,
+                    is_all_day=True,
+                    capacity_max=0,
+                    status=SessionStatus.SCHEDULED,
+                    auto_cancel_deadline_utc=start_at_utc,
+                    cancel_reason=None,
+                    zoom_link=None,
+                    is_private=True,
+                    allow_online_booking=False,
+                    timezone=location.timezone,
+                    recurrence_group_id=None,
+                    recurrence_rule=None,
+                    updated_at=now,
+                )
+            )
+            created_count += 1
+
+    return (created_count, skipped_count)
 
 
 def _time_from_hhmm(value: str, *, field: str) -> time:
@@ -3837,18 +3947,26 @@ def create_quote_school_calendar(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteSchoolCalendarOut:
-    location_exists = db.scalar(select(Location.id).where(Location.id == payload.location_id))
-    if location_exists is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Location not found")
+    location_ids = _calendar_location_ids_from_payload(payload)
+    _validate_calendar_locations_exist(db, location_ids)
     for period in payload.vacation_periods:
         if period.end_date < period.start_date:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Vacation period end date must be after start date")
     rows = _load_quote_school_calendars(db)
-    record = _calendar_record_from_payload(payload, row_id=uuid4(), created_at=None)
-    rows.append(record)
+    created_records: list[dict[str, object]] = []
+    for location_id in location_ids:
+        record = _calendar_record_from_payload(payload, row_id=uuid4(), created_at=None, location_id=location_id)
+        rows.append(record)
+        created_records.append(record)
     _save_quote_school_calendars(db, rows)
+    if payload.apply_to_management_planning:
+        _apply_school_calendar_to_management_planning(
+            db,
+            payload=payload,
+            location_ids=location_ids,
+        )
     db.commit()
-    return _calendar_out(record)
+    return _calendar_out(created_records[0])
 
 
 @router.patch("/quote-school-calendars/{calendar_id}", response_model=QuoteSchoolCalendarOut)
@@ -3858,25 +3976,68 @@ def update_quote_school_calendar(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteSchoolCalendarOut:
-    location_exists = db.scalar(select(Location.id).where(Location.id == payload.location_id))
-    if location_exists is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Location not found")
+    location_ids = _calendar_location_ids_from_payload(payload)
+    _validate_calendar_locations_exist(db, location_ids)
     for period in payload.vacation_periods:
         if period.end_date < period.start_date:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Vacation period end date must be after start date")
     rows = _load_quote_school_calendars(db)
     updated: dict[str, object] | None = None
+    primary_location_id = location_ids[0]
     for index, raw in enumerate(rows):
         if str(raw.get("id") or "") != str(calendar_id):
             continue
         created_at = _parse_iso_datetime(str(raw.get("created_at") or _utcnow().isoformat()))
-        record = _calendar_record_from_payload(payload, row_id=calendar_id, created_at=created_at)
+        record = _calendar_record_from_payload(
+            payload,
+            row_id=calendar_id,
+            created_at=created_at,
+            location_id=primary_location_id,
+        )
         rows[index] = record
         updated = record
         break
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
+
+    for location_id in location_ids[1:]:
+        existing_index = next(
+            (
+                idx
+                for idx, raw in enumerate(rows)
+                if str(raw.get("location_id") or "") == str(location_id)
+                and str(raw.get("school_year_label") or "").strip().lower() == payload.school_year_label.strip().lower()
+                and str(raw.get("name") or "").strip().lower() == payload.name.strip().lower()
+            ),
+            None,
+        )
+        if existing_index is not None:
+            existing_raw = rows[existing_index]
+            existing_id = UUID(str(existing_raw.get("id")))
+            existing_created_at = _parse_iso_datetime(str(existing_raw.get("created_at") or _utcnow().isoformat()))
+            rows[existing_index] = _calendar_record_from_payload(
+                payload,
+                row_id=existing_id,
+                created_at=existing_created_at,
+                location_id=location_id,
+            )
+            continue
+        rows.append(
+            _calendar_record_from_payload(
+                payload,
+                row_id=uuid4(),
+                created_at=None,
+                location_id=location_id,
+            )
+        )
+
     _save_quote_school_calendars(db, rows)
+    if payload.apply_to_management_planning:
+        _apply_school_calendar_to_management_planning(
+            db,
+            payload=payload,
+            location_ids=location_ids,
+        )
     db.commit()
     return _calendar_out(updated)
 

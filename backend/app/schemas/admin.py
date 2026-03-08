@@ -516,6 +516,8 @@ class AdminActivityOut(BaseModel):
     cancellation_deadline_hours_override: int | None
     auto_cancel_if_booked_less_than_override: int | None
     auto_cancel_hours_before_start_override: int | None
+    exclude_holidays_in_recurrence: bool
+    exclude_school_vacations_in_recurrence: bool
     active: bool
 
 
@@ -540,6 +542,8 @@ class AdminActivityUpsertRequest(BaseModel):
     cancellation_deadline_hours_override: int | None = Field(default=None, ge=0)
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=0)
     auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
+    exclude_holidays_in_recurrence: bool = True
+    exclude_school_vacations_in_recurrence: bool = True
     active: bool = True
 
 
@@ -564,6 +568,8 @@ class AdminActivityUpdateRequest(BaseModel):
     cancellation_deadline_hours_override: int | None = Field(default=None, ge=0)
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=0)
     auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
+    exclude_holidays_in_recurrence: bool | None = None
+    exclude_school_vacations_in_recurrence: bool | None = None
     active: bool | None = None
 
 

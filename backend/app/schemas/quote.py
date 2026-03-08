@@ -421,11 +421,13 @@ class QuoteSchoolCalendarOut(BaseModel):
 class QuoteSchoolCalendarUpsertRequest(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     school_year_label: str = Field(min_length=1, max_length=40)
-    location_id: UUID
+    location_id: UUID | None = None
+    location_ids: list[UUID] = Field(default_factory=list)
     vacation_periods: list[QuoteSchoolCalendarPeriod] = Field(default_factory=list)
     holiday_dates: list[date] = Field(default_factory=list)
     closure_dates: list[date] = Field(default_factory=list)
     is_active: bool = True
+    apply_to_management_planning: bool = False
 
 
 class QuoteSchoolCalendarResolveOut(BaseModel):

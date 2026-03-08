@@ -394,6 +394,27 @@ function solfegeSlotRows(
   return out;
 }
 
+function calendarVacationPeriodsText(periods: QuoteSchoolCalendarPeriodOut[]): string {
+  if (!periods.length) {
+    return "";
+  }
+  return periods
+    .map((period) => {
+      const label = (period.label || "").trim();
+      return label
+        ? `${period.start_date} | ${period.end_date} | ${label}`
+        : `${period.start_date} | ${period.end_date}`;
+    })
+    .join("\n");
+}
+
+function calendarDatesText(dates: string[]): string {
+  if (!dates.length) {
+    return "";
+  }
+  return dates.join("\n");
+}
+
 export default async function AdminQuoteConfigurationPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -1886,61 +1907,56 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               Annee scolaire
               <input type="text" name="school_year_label" required maxLength={40} placeholder="2026-2027" />
             </label>
-            <label>
-              Local
-              <select name="location_id" required defaultValue="">
-                <option value="">Selectionner</option>
+            <fieldset className="span-4 calendar-locations-fieldset">
+              <legend>Locaux cibles</legend>
+              <p className="muted">Selection multiple possible: le meme calendrier sera deploie sur tous les locaux coches.</p>
+              <div className="calendar-location-grid">
                 {locations.map((row) => (
-                  <option key={`calendar-create-location-${row.id}`} value={row.id}>{row.name}</option>
+                  <label key={`calendar-create-location-${row.id}`} className="checkline">
+                    <input type="checkbox" name="location_ids" value={row.id} />
+                    {row.name}
+                  </label>
                 ))}
-              </select>
+              </div>
+            </fieldset>
+            <div className="span-4 calendar-inline-help">
+              <strong>Saisie rapide</strong>
+              <p className="muted">Vacances: une ligne = <code>YYYY-MM-DD | YYYY-MM-DD | Libelle</code> (libelle optionnel). Jours feries et fermetures: une date par ligne.</p>
+            </div>
+            <label className="span-2 calendar-textarea-field">
+              Vacances scolaires (periodes)
+              <textarea
+                name="vacation_periods_text"
+                rows={8}
+                placeholder={"2026-10-17 | 2026-11-01 | Vacances Toussaint\n2026-12-19 | 2027-01-03 | Vacances Noel"}
+              />
             </label>
-            <div className="span-4">
-              <p className="muted">Vacances scolaires (periodes)</p>
-              <div className="grid cols-3 top-gap-sm">
-                {Array.from({ length: 4 }).map((_, index) => (
-                  <div key={`calendar-create-vacation-${index}`} className="grid cols-3">
-                    <label>
-                      Debut
-                      <input type="date" name="vacation_start" />
-                    </label>
-                    <label>
-                      Fin
-                      <input type="date" name="vacation_end" />
-                    </label>
-                    <label>
-                      Libelle
-                      <input type="text" name="vacation_label" maxLength={120} placeholder="Vacances hiver" />
-                    </label>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="span-2">
-              <p className="muted">Jours feries</p>
-              <div className="grid cols-2 top-gap-sm">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <label key={`calendar-create-holiday-${index}`}>
-                    Date
-                    <input type="date" name="holiday_date" />
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div className="span-2">
-              <p className="muted">Fermetures exceptionnelles</p>
-              <div className="grid cols-2 top-gap-sm">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <label key={`calendar-create-closure-${index}`}>
-                    Date
-                    <input type="date" name="closure_date" />
-                  </label>
-                ))}
-              </div>
+            <label className="calendar-textarea-field">
+              Jours feries (une date par ligne)
+              <textarea
+                name="holiday_dates_text"
+                rows={8}
+                placeholder={"2026-11-11\n2026-12-25\n2027-01-01"}
+              />
+            </label>
+            <label className="calendar-textarea-field">
+              Fermetures exceptionnelles (une date par ligne)
+              <textarea
+                name="closure_dates_text"
+                rows={8}
+                placeholder={"2026-09-02\n2027-05-19"}
+              />
+            </label>
+            <div className="span-4 calendar-inline-help compact">
+              <p className="muted">Astuce: copiez/collez une liste de dates depuis Excel/Sheets, une ligne par date.</p>
             </div>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
               Actif
+            </label>
+            <label className="checkline span-3">
+              <input type="checkbox" name="apply_to_management_planning" />
+              Appliquer au planning de gestion actuel (creation de creneaux bloquants journee entiere)
             </label>
             <div className="row span-4">
               <button type="submit">Ajouter le calendrier</button>
@@ -1988,64 +2004,58 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                               Annee scolaire
                               <input type="text" name="school_year_label" defaultValue={row.school_year_label} required maxLength={40} />
                             </label>
-                            <label>
-                              Local
-                              <select name="location_id" required defaultValue={row.location_id}>
-                                <option value="">Selectionner</option>
+                            <fieldset className="span-4 calendar-locations-fieldset">
+                              <legend>Locaux cibles</legend>
+                              <p className="muted">Selection multiple possible: le calendrier mis a jour sera duplique vers les locaux coches.</p>
+                              <div className="calendar-location-grid">
                                 {locations.map((location) => (
-                                  <option key={`${row.id}-location-${location.id}`} value={location.id}>{location.name}</option>
+                                  <label key={`${row.id}-location-${location.id}`} className="checkline">
+                                    <input
+                                      type="checkbox"
+                                      name="location_ids"
+                                      value={location.id}
+                                      defaultChecked={location.id === row.location_id}
+                                    />
+                                    {location.name}
+                                  </label>
                                 ))}
-                              </select>
+                              </div>
+                            </fieldset>
+                            <div className="span-4 calendar-inline-help">
+                              <strong>Saisie rapide</strong>
+                              <p className="muted">Vacances: une ligne = <code>YYYY-MM-DD | YYYY-MM-DD | Libelle</code>. Jours feries et fermetures: une date par ligne.</p>
+                            </div>
+                            <label className="span-2 calendar-textarea-field">
+                              Vacances scolaires (periodes)
+                              <textarea
+                                name="vacation_periods_text"
+                                rows={8}
+                                defaultValue={calendarVacationPeriodsText(row.vacation_periods)}
+                              />
                             </label>
-                            <div className="span-4">
-                              <p className="muted">Vacances scolaires (periodes)</p>
-                              <div className="grid cols-3 top-gap-sm">
-                                {Array.from({ length: Math.max(4, row.vacation_periods.length) }).map((_, index) => {
-                                  const period = row.vacation_periods[index];
-                                  return (
-                                    <div key={`${row.id}-vacation-${index}`} className="grid cols-3">
-                                      <label>
-                                        Debut
-                                        <input type="date" name="vacation_start" defaultValue={period?.start_date || ""} />
-                                      </label>
-                                      <label>
-                                        Fin
-                                        <input type="date" name="vacation_end" defaultValue={period?.end_date || ""} />
-                                      </label>
-                                      <label>
-                                        Libelle
-                                        <input type="text" name="vacation_label" maxLength={120} defaultValue={period?.label || ""} />
-                                      </label>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                            <div className="span-2">
-                              <p className="muted">Jours feries</p>
-                              <div className="grid cols-2 top-gap-sm">
-                                {Array.from({ length: Math.max(6, row.holiday_dates.length) }).map((_, index) => (
-                                  <label key={`${row.id}-holiday-${index}`}>
-                                    Date
-                                    <input type="date" name="holiday_date" defaultValue={row.holiday_dates[index] || ""} />
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="span-2">
-                              <p className="muted">Fermetures exceptionnelles</p>
-                              <div className="grid cols-2 top-gap-sm">
-                                {Array.from({ length: Math.max(6, row.closure_dates.length) }).map((_, index) => (
-                                  <label key={`${row.id}-closure-${index}`}>
-                                    Date
-                                    <input type="date" name="closure_date" defaultValue={row.closure_dates[index] || ""} />
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
+                            <label className="calendar-textarea-field">
+                              Jours feries (une date par ligne)
+                              <textarea
+                                name="holiday_dates_text"
+                                rows={8}
+                                defaultValue={calendarDatesText(row.holiday_dates)}
+                              />
+                            </label>
+                            <label className="calendar-textarea-field">
+                              Fermetures exceptionnelles (une date par ligne)
+                              <textarea
+                                name="closure_dates_text"
+                                rows={8}
+                                defaultValue={calendarDatesText(row.closure_dates)}
+                              />
+                            </label>
                             <label className="checkline">
                               <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
                               Actif
+                            </label>
+                            <label className="checkline span-3">
+                              <input type="checkbox" name="apply_to_management_planning" />
+                              Appliquer au planning de gestion actuel (creation de creneaux bloquants journee entiere)
                             </label>
                             <div className="row">
                               <button type="submit">Enregistrer</button>

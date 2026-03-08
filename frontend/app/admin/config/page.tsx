@@ -2263,6 +2263,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             Professeur: {activity.requires_professor ? "Requis" : "Optionnel"}
                           </small>
                           <small className="muted">
+                            Recurrence: feries {activity.exclude_holidays_in_recurrence ? "exclus" : "inclus"} · vacances{" "}
+                            {activity.exclude_school_vacations_in_recurrence ? "exclues" : "incluses"}
+                          </small>
+                          <small className="muted">
                             Entite: {activity.seller_legal_entity_name ?? "Non definie"}
                           </small>
                           <small className="muted">{activity.description || "Sans description"}</small>
@@ -2356,6 +2360,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label className="checkline">
                           <input type="checkbox" name="requires_professor" defaultChecked />
                           Professeur requis
+                        </label>
+                        <label className="checkline">
+                          <input type="checkbox" name="exclude_holidays_in_recurrence" defaultChecked />
+                          Exclure les jours feries en creation recurrente
+                        </label>
+                        <label className="checkline">
+                          <input type="checkbox" name="exclude_school_vacations_in_recurrence" defaultChecked />
+                          Exclure les vacances scolaires en creation recurrente
                         </label>
                         <label>
                           Type de credit
@@ -2569,6 +2581,22 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             defaultChecked={selectedActivity.requires_professor}
                           />
                           Professeur requis
+                        </label>
+                        <label className="checkline">
+                          <input
+                            type="checkbox"
+                            name="exclude_holidays_in_recurrence"
+                            defaultChecked={selectedActivity.exclude_holidays_in_recurrence}
+                          />
+                          Exclure les jours feries en creation recurrente
+                        </label>
+                        <label className="checkline">
+                          <input
+                            type="checkbox"
+                            name="exclude_school_vacations_in_recurrence"
+                            defaultChecked={selectedActivity.exclude_school_vacations_in_recurrence}
+                          />
+                          Exclure les vacances scolaires en creation recurrente
                         </label>
 
                         <label>
