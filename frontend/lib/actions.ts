@@ -9090,13 +9090,17 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     quote_type_id: quoteTypeId,
     pricing_catalog_id: pricingCatalogId,
     payment_plan_id: paymentPlanId,
-    quote_template_uuid: quoteTemplateUuid,
-    terms_template_id: termsTemplateId,
     school_year_label: schoolYearLabel || null,
     currency,
     language,
     meta,
   };
+  if (quoteTemplateUuid) {
+    payload.quote_template_uuid = quoteTemplateUuid;
+  }
+  if (termsTemplateId) {
+    payload.terms_template_id = termsTemplateId;
+  }
   if (hasTvaRate) {
     payload.vat_rate = tvaRateRaw ? Number(tvaRateRaw).toFixed(2) : null;
   }

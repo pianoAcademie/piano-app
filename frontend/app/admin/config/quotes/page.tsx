@@ -519,8 +519,21 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         </div>
       </section>
 
-      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
-      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
+      {okMessage || errorMessage ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel modal-compact">
+            <a className="modal-close-x" href={returnPath} aria-label="Fermer">
+              ×
+            </a>
+            <h3 className="modal-title">{errorMessage ? "Erreur" : "Confirmation"}</h3>
+            {okMessage ? <section className="flash-ok top-gap-sm">{okMessage}</section> : null}
+            {errorMessage ? <section className="flash-err top-gap-sm">{errorMessage}</section> : null}
+            <div className="row modal-actions-end top-gap-sm">
+              <a className="ghost" href={returnPath}>Fermer</a>
+            </div>
+          </article>
+        </section>
+      ) : null}
       {loadErrors.length > 0 ? (
         <section className="card">
           <h3>Erreurs de chargement</h3>

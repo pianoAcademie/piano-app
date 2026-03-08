@@ -2402,7 +2402,16 @@ def update_quote(
         if selected_quote_template is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template UUID not found")
         row.quote_template_id = selected_quote_template.id
-        row.quote_template_version_id = None
+        selected_quote_template_version_id = selected_quote_template.current_version_id
+        if selected_quote_template_version_id is None:
+            fallback_quote_version = db.scalar(
+                select(QuoteTemplateVersion)
+                .where(QuoteTemplateVersion.quote_template_id == selected_quote_template.id)
+                .order_by(QuoteTemplateVersion.version_number.desc())
+                .limit(1)
+            )
+            selected_quote_template_version_id = fallback_quote_version.id if fallback_quote_version is not None else None
+        row.quote_template_version_id = selected_quote_template_version_id
         document_dirty = True
     if payload.quote_template_version_id is not None:
         selected_quote_template_version = db.scalar(
@@ -2420,7 +2429,21 @@ def update_quote(
         if selected_terms_template is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Terms template not found")
         row.terms_template_id = selected_terms_template.id
-        row.terms_template_version_id = None
+        selected_terms_template_version = None
+        if selected_terms_template.current_version_id is not None:
+            selected_terms_template_version = db.scalar(
+                select(TermsTemplateVersion).where(TermsTemplateVersion.id == selected_terms_template.current_version_id)
+            )
+        if selected_terms_template_version is None:
+            selected_terms_template_version = db.scalar(
+                select(TermsTemplateVersion)
+                .where(TermsTemplateVersion.terms_template_id == selected_terms_template.id)
+                .order_by(TermsTemplateVersion.version_number.desc())
+                .limit(1)
+            )
+        row.terms_template_version_id = selected_terms_template_version.id if selected_terms_template_version is not None else None
+        if selected_terms_template_version is not None:
+            row.cgv_snapshot = _cgv_snapshot_from_terms_version(selected_terms_template_version)
         document_dirty = True
     if payload.terms_template_version_id is not None:
         selected_terms_template_version = db.scalar(
@@ -2688,7 +2711,12 @@ def generate_quote_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
@@ -2731,6 +2759,19 @@ def regenerate_quote_document(
 ) -> dict[str, object]:
     quote = _load_quote(db, quote_id, lock=True)
     _ensure_quote_editable(quote)
+    if quote.quote_template_id is not None:
+        template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == quote.quote_template_id))
+        if template is not None and template.current_version_id is not None:
+            quote.quote_template_version_id = template.current_version_id
+    if quote.terms_template_id is not None:
+        terms_template = db.scalar(select(TermsTemplate).where(TermsTemplate.id == quote.terms_template_id))
+        if terms_template is not None and terms_template.current_version_id is not None:
+            quote.terms_template_version_id = terms_template.current_version_id
+            terms_version = db.scalar(
+                select(TermsTemplateVersion).where(TermsTemplateVersion.id == terms_template.current_version_id)
+            )
+            if terms_version is not None:
+                quote.cgv_snapshot = _cgv_snapshot_from_terms_version(terms_version)
     lines = _load_quote_lines(db, quote.id)
     snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="generated")
     db.add(
@@ -2766,7 +2807,12 @@ def download_quote_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
@@ -3192,7 +3238,12 @@ def public_quote_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 

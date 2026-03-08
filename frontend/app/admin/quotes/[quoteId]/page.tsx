@@ -497,6 +497,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     }
     return [selectedTermsTemplate, ...languageTermsTemplates];
   })();
+  const pdfVersionTag = String(detail.quote.document_hash || detail.quote.document_generated_at || "").trim();
+  const adminPdfHref = `/admin/quotes/${detail.quote.id}/pdf${pdfVersionTag ? `?v=${encodeURIComponent(pdfVersionTag)}` : ""}`;
+  const publicPdfHref = detail.quote.pdf_token
+    ? `/q/${detail.quote.id}/pdf?t=${encodeURIComponent(detail.quote.pdf_token)}${pdfVersionTag ? `&v=${encodeURIComponent(pdfVersionTag)}` : ""}`
+    : null;
 
   const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
 
@@ -560,13 +565,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           {detail.quote.pdf_token ? (
             <Link
               className="ghost"
-              href={`/q/${detail.quote.id}/pdf?t=${encodeURIComponent(detail.quote.pdf_token)}`}
+              href={publicPdfHref || "#"}
               target="_blank"
             >
               PDF public
             </Link>
           ) : null}
-          <Link className="ghost" href={`/admin/quotes/${detail.quote.id}/pdf`} target="_blank">
+          <Link className="ghost" href={adminPdfHref} target="_blank">
             PDF admin
           </Link>
           <form action={regenerateQuoteDocumentAction}>
