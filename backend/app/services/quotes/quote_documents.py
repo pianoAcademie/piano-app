@@ -70,6 +70,106 @@ def _datetime_label(value: datetime | None) -> str:
     return value.astimezone(timezone.utc).strftime("%d/%m/%Y %H:%M")
 
 
+MONTH_LABELS_FR = (
+    "Janvier",
+    "Fevrier",
+    "Mars",
+    "Avril",
+    "Mai",
+    "Juin",
+    "Juillet",
+    "Aout",
+    "Septembre",
+    "Octobre",
+    "Novembre",
+    "Decembre",
+)
+
+
+def _session_month_day(value: object) -> tuple[int, int] | None:
+    raw = str(value or "").strip()
+    parsed = re.match(r"^\d{4}-(\d{2})-(\d{2})$", raw)
+    if parsed is None:
+        return None
+    month = int(parsed.group(1))
+    day = int(parsed.group(2))
+    if month < 1 or month > 12 or day < 1 or day > 31:
+        return None
+    return month, day
+
+
+def _calendar_semester_rows(month_map: dict[int, set[int]], *, semester: int) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for month in sorted(month_map.keys()):
+        if semester == 1 and not (month >= 9 or month <= 1):
+            continue
+        if semester == 2 and not (2 <= month <= 8):
+            continue
+        days = sorted(month_map.get(month) or set())
+        if not days:
+            continue
+        rows.append((MONTH_LABELS_FR[month - 1], ", ".join(str(day) for day in days)))
+    return rows
+
+
+def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
+    grouped: dict[str, dict[int, set[int]]] = {}
+    for session in sessions:
+        parsed = _session_month_day(session.get("date"))
+        if parsed is None:
+            continue
+        month, day = parsed
+        activity_label = str(session.get("activity_label") or "").strip() or "Activite"
+        location_label = str(session.get("location_label") or "").strip()
+        title = f"{activity_label} · {location_label}" if location_label else activity_label
+        if title not in grouped:
+            grouped[title] = {}
+        if month not in grouped[title]:
+            grouped[title][month] = set()
+        grouped[title][month].add(day)
+
+    if not grouped:
+        return "<p>Aucune seance planifiee.</p>", 0
+
+    blocks: list[str] = []
+    for title in sorted(grouped.keys()):
+        month_map = grouped[title]
+        count = sum(len(values) for values in month_map.values())
+        sem1 = _calendar_semester_rows(month_map, semester=1)
+        sem2 = _calendar_semester_rows(month_map, semester=2)
+
+        sem1_html = "".join(
+            f"<p style='margin:0 0 4px 0;'><strong>{escape(month_label)}:</strong> {escape(days)}</p>"
+            for month_label, days in sem1
+        ) or "<p style='margin:0;'>Aucune seance</p>"
+        sem2_html = "".join(
+            f"<p style='margin:0 0 4px 0;'><strong>{escape(month_label)}:</strong> {escape(days)}</p>"
+            for month_label, days in sem2
+        ) or "<p style='margin:0;'>Aucune seance</p>"
+
+        blocks.append(
+            "<div style='border:1px solid #d6d9de;padding:8px;margin:0 0 10px 0;'>"
+            "<table width='100%' cellspacing='0' cellpadding='0' style='border-collapse:collapse;margin-bottom:6px;'>"
+            f"<tr><td><strong>{escape(title)}</strong></td><td align='right'><strong>{count} cours</strong></td></tr>"
+            "</table>"
+            "<table width='100%' cellspacing='0' cellpadding='0' style='border-collapse:collapse;'>"
+            "<tr>"
+            "<td width='50%' valign='top' style='padding-right:8px;'>"
+            "<p style='margin:0 0 6px 0;'><strong>1er semestre</strong></p>"
+            f"{sem1_html}"
+            "</td>"
+            "<td width='50%' valign='top' style='padding-left:8px;'>"
+            "<p style='margin:0 0 6px 0;'><strong>2e semestre</strong></p>"
+            f"{sem2_html}"
+            "</td>"
+            "</tr>"
+            "</table>"
+            "</div>"
+        )
+
+    return "".join(blocks), len(grouped)
+
+
 def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) -> str:
     if not rows:
         return f"<p>{escape(empty_label)}</p>"
@@ -503,8 +603,8 @@ def _build_template_values(
         compact_notice = document_context["payment_schedule_compact_notice"] or "Aucun echeancier detaille."
         payment_schedule_table_html = f"<p>{escape(compact_notice)}</p>"
 
-    sessions = _json_list(_json_object(quote.calendar_snapshot).get("sessions"))
-    calendar_table_html = _table_html(
+    sessions = [item for item in _json_list(_json_object(quote.calendar_snapshot).get("sessions")) if isinstance(item, dict)]
+    calendar_sessions_table_html = _table_html(
         ["Date", "Debut", "Fin", "Duree", "Modalite"],
         [
             [
@@ -515,12 +615,14 @@ def _build_template_values(
                 str(item.get("modality") or "-"),
             ]
             for item in sessions
-            if isinstance(item, dict)
         ],
         empty_label="Aucun cours planifie.",
     )
+    calendar_table_html, calendar_activities_count = _calendar_visual_summary(sessions)
     calendar_summary = (
-        f"{len(sessions)} seances planifiees" if sessions else "Aucune seance planifiee"
+        f"{len(sessions)} seances planifiees sur {calendar_activities_count} activites"
+        if sessions
+        else "Aucune seance planifiee"
     )
     payment_schedule_summary = (
         f"{len(schedule)} echeances" if schedule else "Paiement non planifie"
@@ -634,6 +736,8 @@ def _build_template_values(
         "lines_table_html": lines_table_html,
         "payment_schedule_table_html": payment_schedule_table_html,
         "calendar_table_html": calendar_table_html,
+        "calendar_activity_semesters_html": calendar_table_html,
+        "calendar_sessions_table_html": calendar_sessions_table_html,
         "show_adult_block": "true" if display_flags["showAdultBlock"] else "false",
         "show_child_block": "true" if display_flags["showChildBlock"] else "false",
         "show_solfege_section": "true" if display_flags["showSolfegeSection"] else "false",
@@ -656,6 +760,8 @@ def _build_template_values(
         "lines_table_html",
         "payment_schedule_table_html",
         "calendar_table_html",
+        "calendar_activity_semesters_html",
+        "calendar_sessions_table_html",
     }
     return values, html_keys, document_context
 

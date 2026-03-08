@@ -215,6 +215,36 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "4",
     },
     {
+        "key": "prospect_identity_block_html",
+        "label": "Bloc identite prospect (HTML)",
+        "description": "Bloc deja structure (adulte ou enfant/parent selon le type de prospect).",
+        "example": "<p><strong>Eleve:</strong> Emma Dupont</p>",
+    },
+    {
+        "key": "payment_method_block_html",
+        "label": "Bloc mode de paiement (HTML)",
+        "description": "Bloc compact avec le mode de paiement choisi.",
+        "example": "<p><strong>Mode de paiement:</strong> Cheque en 4 fois</p>",
+    },
+    {
+        "key": "solfege_block_html",
+        "label": "Bloc solfege (HTML)",
+        "description": "Bloc conditionnel: details solfege ou mention non souscrit.",
+        "example": "<p>Solfege souscrit - Niveau 1</p>",
+    },
+    {
+        "key": "masterclass_block_html",
+        "label": "Bloc masterclass (HTML)",
+        "description": "Bloc conditionnel: details masterclass ou mention non souscrite.",
+        "example": "<p>Masterclass du samedi : non souscrite.</p>",
+    },
+    {
+        "key": "pass_recup_block_html",
+        "label": "Bloc Pass Recup (HTML)",
+        "description": "Bloc conditionnel: details Pass Recup ou mention non souscrit.",
+        "example": "<p>Option Pass Recup : non souscrite.</p>",
+    },
+    {
         "key": "services_table_html",
         "label": "Tableau activites (HTML)",
         "description": "Tableau HTML des activites du devis.",
@@ -246,8 +276,20 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     },
     {
         "key": "calendar_table_html",
-        "label": "Tableau calendrier (HTML)",
-        "description": "Tableau HTML du calendrier des cours.",
+        "label": "Calendrier visuel (HTML)",
+        "description": "Calendrier visuel par activite, semestres, mois et nombre de cours.",
+        "example": "<div>1er semestre ...</div>",
+    },
+    {
+        "key": "calendar_activity_semesters_html",
+        "label": "Calendrier visuel par activite (HTML)",
+        "description": "Alias du calendrier visuel par activite (1er/2e semestre).",
+        "example": "<div>1er semestre ...</div>",
+    },
+    {
+        "key": "calendar_sessions_table_html",
+        "label": "Tableau seances detaillees (HTML)",
+        "description": "Tableau detaille de toutes les seances (date/heure/modalite).",
         "example": "<table>...</table>",
     },
 )

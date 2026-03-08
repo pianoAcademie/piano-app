@@ -962,7 +962,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 bodyName="body_template"
                 defaultSubject="Votre devis {quote_number} Piano Academie"
                 defaultBody={
-                  "<h1>Devis {quote_number}</h1><p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p><p><strong>Type:</strong> {prospect_type_label}</p><p><strong>Parent:</strong> {parent_full_name}</p><p><strong>Eleve:</strong> {child_full_name}</p><h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Echeancier de paiement</h2>{payment_schedule_table_html}<h2>Calendrier des cours</h2>{calendar_table_html}<p><strong>Total HT:</strong> {total_ht} {currency}</p><p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p><p><strong>Total TTC:</strong> {total_ttc} {currency}</p><p><strong>Expiration:</strong> {expires_at}</p>"
+                  "<h1>Devis {quote_number}</h1><p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p><p><strong>Annee scolaire:</strong> {school_year_label}</p>{prospect_identity_block_html}<h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Paiement</h2>{payment_method_block_html}{payment_schedule_table_html}{solfege_block_html}{masterclass_block_html}{pass_recup_block_html}<h2>Calendrier des cours</h2><p>{calendar_summary}</p>{calendar_activity_semesters_html}<p><strong>Total HT:</strong> {total_ht} {currency}</p><p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p><p><strong>Total TTC:</strong> {total_ttc} {currency}</p><p><strong>Expiration:</strong> {expires_at}</p>"
                 }
                 variables={templateVariables}
               />
@@ -1052,7 +1052,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                           defaultSubject={prefill?.subject || `Devis {quote_number}`}
                           defaultBody={
                             prefill?.body ||
-                            "<h1>Devis {quote_number}</h1><h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Echeancier</h2>{payment_schedule_table_html}<h2>Calendrier</h2>{calendar_table_html}<p>Total TTC: {total_ttc} {currency}</p>"
+                            "<h1>Devis {quote_number}</h1><p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p>{prospect_identity_block_html}<h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Paiement</h2>{payment_method_block_html}{payment_schedule_table_html}<h2>Calendrier des cours</h2>{calendar_activity_semesters_html}<p>Total TTC: {total_ttc} {currency}</p>"
                           }
                           variables={templateVariables}
                         />
