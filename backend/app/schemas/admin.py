@@ -528,8 +528,8 @@ class AdminActivityUpsertRequest(BaseModel):
     service_code: str = Field(default="ACTIVITY", min_length=1, max_length=80)
     seller_legal_entity_id: UUID
     payor_legal_entity_id: UUID | None = None
-    credit_type_id: UUID
-    duration_minutes: int = Field(default=60, ge=5, le=600)
+    credit_type_id: UUID | None = None
+    duration_minutes: int = Field(default=60, ge=5, le=1440)
     color_hex: str = Field(default="#94C973", min_length=7, max_length=7)
     mode: DeliveryMode = DeliveryMode.ANY
     requires_professor: bool = True
@@ -555,7 +555,7 @@ class AdminActivityUpdateRequest(BaseModel):
     seller_legal_entity_id: UUID | None = None
     payor_legal_entity_id: UUID | None = None
     credit_type_id: UUID | None = None
-    duration_minutes: int | None = Field(default=None, ge=5, le=600)
+    duration_minutes: int | None = Field(default=None, ge=5, le=1440)
     color_hex: str | None = Field(default=None, min_length=7, max_length=7)
     mode: DeliveryMode | None = None
     requires_professor: bool | None = None

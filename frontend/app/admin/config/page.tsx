@@ -162,6 +162,10 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
+function isVacationServiceCode(serviceCode: string | null | undefined): boolean {
+  return (serviceCode ?? "").trim().toUpperCase().startsWith("VACATION");
+}
+
 function parseSection(raw: string): ConfigSection {
   const value = raw.trim();
   if (value === "params-client-password-email") {
@@ -554,6 +558,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const createActivityModalOpen = readParam(params, "new_activity") === "1";
   const selectedActivityId = readParam(params, "activity_id");
   const selectedActivity = activities.find((activity) => activity.id === selectedActivityId) ?? null;
+  const selectedActivityIsVacation = isVacationServiceCode(selectedActivity?.service_code);
   const createLegalEntityModalOpen = readParam(params, "new_legal_entity") === "1";
   const selectedLegalEntityId = readParam(params, "legal_entity_id");
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === selectedLegalEntityId) ?? null;
@@ -2328,9 +2333,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </header>
 
                     <section className="card modal-card">
-                      {activeCreditTypes.length === 0 || activeLegalEntities.length === 0 ? (
+                      {activeLegalEntities.length === 0 ? (
                         <p className="flash-err">
-                          Impossible de creer une activite sans type de credit actif et sans entite legale active.
+                          Impossible de creer une activite sans entite legale active.
                         </p>
                       ) : (
                       <form action={createAdminActivityAction} className="grid cols-4 config-form-grid activity-modal-grid">
@@ -2395,10 +2400,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </label>
                         <label>
                           Type de credit
-                          <select name="credit_type_id" defaultValue={activeCreditTypes[0]?.id ?? ""} required>
-                            <option value="" disabled>
-                              Selectionner
-                            </option>
+                          <select name="credit_type_id" defaultValue="">
+                            <option value="">Aucun type de credit</option>
                             {activeCreditTypes.map((creditType) => (
                               <option key={creditType.id} value={creditType.id}>
                                 {creditType.name}
@@ -2408,7 +2411,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </label>
                         <label>
                           Duree (minutes)
-                          <input type="number" name="duration_minutes" min={5} max={600} defaultValue={60} required />
+                          <input type="number" name="duration_minutes" min={5} max={1440} defaultValue={60} required />
                         </label>
                         <label>
                           Capacite maximum
@@ -2531,9 +2534,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </header>
 
                     <section className="card modal-card">
-                      {activeCreditTypes.length === 0 || activeLegalEntities.length === 0 ? (
+                      {activeLegalEntities.length === 0 ? (
                         <p className="flash-err">
-                          Impossible de modifier cette activite sans type de credit actif et sans entite legale active.
+                          Impossible de modifier cette activite sans entite legale active.
                         </p>
                       ) : (
                       <form action={updateAdminActivityAction} className="grid cols-4 config-form-grid activity-modal-grid">
@@ -2625,10 +2628,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
                         <label>
                           Type de credit
-                          <select name="credit_type_id" defaultValue={selectedActivity.credit_type_id ?? ""} required>
-                            <option value="" disabled>
-                              Selectionner
-                            </option>
+                          <select name="credit_type_id" defaultValue={selectedActivity.credit_type_id ?? ""}>
+                            <option value="">Aucun type de credit</option>
                             {activeCreditTypes.map((creditType) => (
                               <option key={creditType.id} value={creditType.id}>
                                 {creditType.name}
@@ -2641,23 +2642,31 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <input
                             type="number"
                             name="duration_minutes"
-                            min={5}
-                            max={600}
+                            min={selectedActivityIsVacation ? 600 : 5}
+                            max={1440}
                             defaultValue={selectedActivity.duration_minutes}
                             required
                           />
                         </label>
-                        <label>
-                          Capacite maximum
-                          <input
-                            type="number"
-                            name="default_capacity"
-                            min={1}
-                            max={500}
-                            defaultValue={selectedActivity.default_capacity}
-                            required
-                          />
-                        </label>
+                        {selectedActivityIsVacation ? (
+                          <label>
+                            Capacite maximum
+                            <input type="number" value={1} disabled readOnly />
+                            <small className="muted">Capacite fixee a 1 pour les activites VACATION.</small>
+                          </label>
+                        ) : (
+                          <label>
+                            Capacite maximum
+                            <input
+                              type="number"
+                              name="default_capacity"
+                              min={1}
+                              max={500}
+                              defaultValue={selectedActivity.default_capacity}
+                              required
+                            />
+                          </label>
+                        )}
                         <label>
                           Rappels par courriel
                           <select

@@ -397,6 +397,10 @@ function parsePositiveInt(raw: string): number | null {
   return parsed;
 }
 
+function isVacationServiceCode(serviceCode: string): boolean {
+  return serviceCode.trim().toUpperCase().startsWith("VACATION");
+}
+
 function parseNonNegativeInt(raw: string): number | null {
   const value = raw.trim();
   if (!value) {
@@ -5855,6 +5859,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? ""));
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
+  const isVacationActivity = isVacationServiceCode(serviceCode);
   const defaultHourlyRateRaw = String(formData.get("default_hourly_rate") ?? "").trim();
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
   const defaultCourseRateRaw = String(formData.get("default_course_rate_ttc") ?? "").trim();
@@ -5884,11 +5889,11 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (!durationMinutes || durationMinutes < 5) {
     redirect("/admin/config?section=activities&error=Duree%20activite%20invalide");
   }
-  if (!defaultCapacity || defaultCapacity < 1) {
-    redirect("/admin/config?section=activities&error=Capacite%20par%20defaut%20invalide");
+  if (isVacationActivity && (durationMinutes < 600 || durationMinutes > 1440)) {
+    redirect("/admin/config?section=activities&error=Duree%20VACATION%20invalide%20(600-1440)");
   }
-  if (!creditTypeId) {
-    redirect("/admin/config?section=activities&error=Type%20de%20credit%20obligatoire");
+  if (!isVacationActivity && (!defaultCapacity || defaultCapacity < 1)) {
+    redirect("/admin/config?section=activities&error=Capacite%20par%20defaut%20invalide");
   }
   if (!sellerLegalEntityId) {
     redirect("/admin/config?section=activities&error=Entite%20legale%20obligatoire");
@@ -5924,12 +5929,12 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     service_code: serviceCode || "ACTIVITY",
     seller_legal_entity_id: sellerLegalEntityId,
     payor_legal_entity_id: payorLegalEntityId || sellerLegalEntityId,
-    credit_type_id: creditTypeId,
+    credit_type_id: creditTypeId || null,
     duration_minutes: durationMinutes,
     color_hex: colorHex,
     mode,
     requires_professor: requiresProfessor,
-    default_capacity: defaultCapacity,
+    default_capacity: isVacationActivity ? 1 : defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     email_reminder_hours_before_start: emailReminderHours,
@@ -5986,6 +5991,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? ""));
   const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
+  const isVacationActivity = isVacationServiceCode(serviceCode);
   const defaultHourlyRateRaw = String(formData.get("default_hourly_rate") ?? "").trim();
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
   const defaultCourseRateRaw = String(formData.get("default_course_rate_ttc") ?? "").trim();
@@ -6015,11 +6021,11 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (!durationMinutes || durationMinutes < 5) {
     redirect("/admin/config?section=activities&error=Duree%20activite%20invalide");
   }
-  if (!defaultCapacity || defaultCapacity < 1) {
-    redirect("/admin/config?section=activities&error=Capacite%20par%20defaut%20invalide");
+  if (isVacationActivity && (durationMinutes < 600 || durationMinutes > 1440)) {
+    redirect("/admin/config?section=activities&error=Duree%20VACATION%20invalide%20(600-1440)");
   }
-  if (!creditTypeId) {
-    redirect("/admin/config?section=activities&error=Type%20de%20credit%20obligatoire");
+  if (!isVacationActivity && (!defaultCapacity || defaultCapacity < 1)) {
+    redirect("/admin/config?section=activities&error=Capacite%20par%20defaut%20invalide");
   }
   if (!sellerLegalEntityId) {
     redirect("/admin/config?section=activities&error=Entite%20legale%20obligatoire");
@@ -6056,12 +6062,12 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     service_code: serviceCode || "ACTIVITY",
     seller_legal_entity_id: sellerLegalEntityId,
     payor_legal_entity_id: payorLegalEntityId || sellerLegalEntityId,
-    credit_type_id: creditTypeId,
+    credit_type_id: creditTypeId || null,
     duration_minutes: durationMinutes,
     color_hex: colorHex,
     mode,
     requires_professor: requiresProfessor,
-    default_capacity: defaultCapacity,
+    default_capacity: isVacationActivity ? 1 : defaultCapacity,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     email_reminder_hours_before_start: emailReminderHours,

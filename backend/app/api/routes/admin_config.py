@@ -261,6 +261,26 @@ def _normalize_color_hex(raw_color: str | None) -> str:
     return normalized
 
 
+def _is_vacation_service_code(service_code: str | None) -> bool:
+    normalized = (service_code or "").strip().upper()
+    return normalized.startswith("VACATION")
+
+
+def _validate_activity_duration(*, service_code: str | None, duration_minutes: int) -> None:
+    if _is_vacation_service_code(service_code):
+        if duration_minutes < 600 or duration_minutes > 1440:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="For VACATION activities, duration_minutes must be between 600 and 1440",
+            )
+
+
+def _normalize_activity_capacity(*, service_code: str | None, capacity: int) -> int:
+    if _is_vacation_service_code(service_code):
+        return 1
+    return capacity
+
+
 def _serialize_activity(
     activity: CourseType,
     *,
@@ -1536,8 +1556,13 @@ def create_admin_activity(
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="name is required")
+    _validate_activity_duration(service_code=payload.service_code, duration_minutes=int(payload.duration_minutes))
 
-    credit_type = _resolve_credit_type(db, credit_type_id=payload.credit_type_id)
+    credit_type = (
+        _resolve_credit_type(db, credit_type_id=payload.credit_type_id)
+        if payload.credit_type_id is not None
+        else None
+    )
     seller_legal_entity = _resolve_legal_entity(db, legal_entity_id=payload.seller_legal_entity_id)
     payor_legal_entity = (
         _resolve_legal_entity(db, legal_entity_id=payload.payor_legal_entity_id)
@@ -1562,12 +1587,15 @@ def create_admin_activity(
         billing_entity_code=_legacy_billing_entity_code_from_legal_entity(seller_legal_entity),
         seller_legal_entity_id=seller_legal_entity.id,
         payor_legal_entity_id=payor_legal_entity.id,
-        credit_type_id=credit_type.id,
+        credit_type_id=credit_type.id if credit_type is not None else None,
         duration_minutes=int(payload.duration_minutes),
         color_hex=_normalize_color_hex(payload.color_hex),
         mode=DeliveryMode(payload.mode),
         requires_professor=bool(payload.requires_professor),
-        default_capacity=int(payload.default_capacity),
+        default_capacity=_normalize_activity_capacity(
+            service_code=payload.service_code,
+            capacity=int(payload.default_capacity),
+        ),
         default_hourly_rate=payload.default_hourly_rate,
         default_course_rate_ttc=payload.default_course_rate_ttc,
         email_reminder_hours_before_start=payload.email_reminder_hours_before_start,
@@ -1660,11 +1688,14 @@ def update_admin_activity(
     if "credit_type_id" in changes:
         credit_type_id = changes["credit_type_id"]
         if credit_type_id is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="credit_type_id is required")
-        activity.credit_type_id = _resolve_credit_type(db, credit_type_id=credit_type_id).id
+            activity.credit_type_id = None
+        else:
+            activity.credit_type_id = _resolve_credit_type(db, credit_type_id=credit_type_id).id
 
     if "duration_minutes" in changes:
-        activity.duration_minutes = int(changes["duration_minutes"])
+        next_duration = int(changes["duration_minutes"])
+        _validate_activity_duration(service_code=activity.service_code, duration_minutes=next_duration)
+        activity.duration_minutes = next_duration
 
     if "color_hex" in changes:
         activity.color_hex = _normalize_color_hex(changes["color_hex"])
@@ -1676,7 +1707,18 @@ def update_admin_activity(
         activity.requires_professor = bool(changes["requires_professor"])
 
     if "default_capacity" in changes:
-        activity.default_capacity = int(changes["default_capacity"])
+        activity.default_capacity = _normalize_activity_capacity(
+            service_code=activity.service_code,
+            capacity=int(changes["default_capacity"]),
+        )
+
+    if "service_code" in changes and _is_vacation_service_code(activity.service_code):
+        activity.default_capacity = 1
+
+    _validate_activity_duration(
+        service_code=activity.service_code,
+        duration_minutes=int(activity.duration_minutes),
+    )
 
     if "default_hourly_rate" in changes:
         activity.default_hourly_rate = changes["default_hourly_rate"]
