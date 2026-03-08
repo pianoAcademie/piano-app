@@ -19,6 +19,7 @@ import {
   deleteAdminPaymentPlanConfigAction,
   deleteAdminPricingCatalogConfigAction,
   deleteAdminQuoteTypeConfigAction,
+  deleteAdminQuoteSchoolCalendarConfigAction,
   deleteAdminSolfegeLevelRuleConfigAction,
   updateAdminQuoteTemplateConfigAction,
   updateAdminQuoteTemplateV2ConfigAction,
@@ -28,12 +29,14 @@ import {
   updateAdminPaymentPlanConfigAction,
   updateAdminPricingCatalogConfigAction,
   updateAdminQuoteTypeConfigAction,
+  updateAdminQuoteSchoolCalendarConfigAction,
   upsertAdminSolfegeLevelRuleConfigAction,
+  createAdminQuoteSchoolCalendarConfigAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import QuoteTemplateEditor from "../../../../components/quote-template-editor";
 import WysiwygField from "../../../../components/wysiwyg-field";
-import type { LocationOut } from "../../../../lib/types";
+import type { AdminActivityOut, LocationOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -45,6 +48,7 @@ type QuotesConfigTab =
   | "templates"
   | "variables"
   | "solfege"
+  | "calendars"
   | "doc_templates"
   | "doc_terms"
   | "doc_bindings";
@@ -184,6 +188,24 @@ type SolfegeLevelRuleOut = {
   updated_at: string;
 };
 
+type QuoteSchoolCalendarPeriodOut = {
+  start_date: string;
+  end_date: string;
+  label: string | null;
+};
+
+type QuoteSchoolCalendarOut = {
+  id: string;
+  name: string;
+  school_year_label: string;
+  location_id: string;
+  vacation_periods: QuoteSchoolCalendarPeriodOut[];
+  holiday_dates: string[];
+  closure_dates: string[];
+  is_active: boolean;
+  updated_at: string;
+};
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -201,6 +223,7 @@ function parseTab(raw: string): QuotesConfigTab {
     value === "templates" ||
     value === "variables" ||
     value === "solfege" ||
+    value === "calendars" ||
     value === "doc_templates" ||
     value === "doc_terms" ||
     value === "doc_bindings"
@@ -250,6 +273,25 @@ const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 6, label: "Dimanche" },
 ];
 
+const PAYMENT_PLAN_PRESET_OPTIONS: Array<{ value: string; label: string; payment_method: string; schedule_type: string }> = [
+  { value: "Carte bancaire", label: "Carte bancaire", payment_method: "CARD", schedule_type: "single" },
+  { value: "Carte bancaire mensuelle", label: "Carte bancaire mensuelle", payment_method: "CARD_MONTHLY", schedule_type: "monthly" },
+  { value: "Cheque en 1 fois", label: "Cheque en 1 fois", payment_method: "CHECK", schedule_type: "single" },
+  { value: "Cheque en 2 fois", label: "Cheque en 2 fois", payment_method: "CHECK", schedule_type: "split_2" },
+  { value: "Cheque en 4 fois", label: "Cheque en 4 fois", payment_method: "CHECK", schedule_type: "split_4" },
+  { value: "Virement bancaire", label: "Virement bancaire", payment_method: "BANK_TRANSFER", schedule_type: "single" },
+  { value: "Especes", label: "Especes", payment_method: "CASH", schedule_type: "single" },
+  { value: "4 fois avec frais", label: "4 fois avec frais", payment_method: "CARD_4X_FEES", schedule_type: "split_4" },
+];
+
+const PAYMENT_SCHEDULE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "single", label: "Paiement unitaire" },
+  { value: "split_2", label: "Paiement en 2 fois" },
+  { value: "split_3", label: "Paiement en 3 fois" },
+  { value: "split_4", label: "Paiement en 4 fois" },
+  { value: "monthly", label: "Paiement mensuel" },
+];
+
 function weekdaysLabel(days: number[]): string {
   if (!days.length) {
     return "Tous";
@@ -257,6 +299,40 @@ function weekdaysLabel(days: number[]): string {
   return days
     .map((day) => WEEKDAY_OPTIONS.find((option) => option.value === day)?.label ?? String(day))
     .join(", ");
+}
+
+function paymentScheduleTypeLabel(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  const fromCatalog = PAYMENT_SCHEDULE_TYPE_OPTIONS.find((item) => item.value === normalized)?.label;
+  return (fromCatalog ?? value) || "-";
+}
+
+function paymentMethodLabel(value: string): string {
+  const normalized = value.trim().toUpperCase();
+  if (!normalized) return "-";
+  if (normalized === "CARD") return "Carte bancaire";
+  if (normalized === "CARD_MONTHLY") return "Carte bancaire mensuelle";
+  if (normalized === "CHECK") return "Cheque";
+  if (normalized === "BANK_TRANSFER") return "Virement bancaire";
+  if (normalized === "CASH") return "Especes";
+  if (normalized === "CARD_4X_FEES") return "4 fois avec frais";
+  return value;
+}
+
+function paymentInstallmentCount(rules: Record<string, unknown>): string {
+  const raw = Number.parseInt(String(rules.installment_count ?? ""), 10);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return "-";
+  }
+  return String(raw);
+}
+
+function paymentFeePercent(rules: Record<string, unknown>): string {
+  const raw = Number.parseFloat(String(rules.fee_percent ?? ""));
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return "0 %";
+  }
+  return `${raw.toFixed(2).replace(".", ",")} %`;
 }
 
 function modalityLabel(value: string | null): string {
@@ -279,15 +355,43 @@ function solfegeSlotsCsv(slots: Array<Record<string, unknown>>): string {
   }
   return slots
     .map((slot) => {
+      const weekdayRaw = Number.parseInt(String(slot.weekday ?? ""), 10);
+      const weekdayText = Number.isFinite(weekdayRaw) && weekdayRaw >= 0 && weekdayRaw <= 6
+        ? `${WEEKDAY_OPTIONS.find((item) => item.value === weekdayRaw)?.label ?? weekdayRaw}`
+        : "";
       const start = typeof slot.start_time === "string" ? slot.start_time : typeof slot.start === "string" ? slot.start : "";
       const end = typeof slot.end_time === "string" ? slot.end_time : typeof slot.end === "string" ? slot.end : "";
       if (!start || !end) {
         return "";
       }
-      return `${start}-${end}`;
+      return `${weekdayText ? `${weekdayText} ` : ""}${start}-${end}`;
     })
     .filter(Boolean)
     .join(", ");
+}
+
+function solfegeSlotRows(
+  slots: Array<Record<string, unknown>>,
+  weekdays: number[],
+): Array<{ weekday: number; start: string; end: string }> {
+  const out: Array<{ weekday: number; start: string; end: string }> = [];
+  for (const slot of slots) {
+    const start = typeof slot.start_time === "string" ? slot.start_time : typeof slot.start === "string" ? slot.start : "";
+    const end = typeof slot.end_time === "string" ? slot.end_time : typeof slot.end === "string" ? slot.end : "";
+    if (!start || !end) {
+      continue;
+    }
+    const weekdayRaw = Number.parseInt(String(slot.weekday ?? ""), 10);
+    if (Number.isFinite(weekdayRaw) && weekdayRaw >= 0 && weekdayRaw <= 6) {
+      out.push({ weekday: weekdayRaw, start, end });
+      continue;
+    }
+    const fallbackWeekday = weekdays.find((day) => Number.isFinite(day) && day >= 0 && day <= 6);
+    if (fallbackWeekday !== undefined) {
+      out.push({ weekday: fallbackWeekday, start, end });
+    }
+  }
+  return out;
 }
 
 export default async function AdminQuoteConfigurationPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
@@ -309,7 +413,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     quoteTemplatesResult,
     templateVariablesResult,
     solfegeRulesResult,
+    quoteSchoolCalendarsResult,
     locationsResult,
+    activitiesResult,
     quoteTemplatesV2Result,
     termsTemplatesResult,
     quoteDocumentBindingsResult,
@@ -321,7 +427,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     backendRequest<QuoteTemplateOut[]>("/api/v1/quote-templates", {}, token),
     backendRequest<QuoteTemplateVariableOut[]>("/api/v1/quote-template-variables", {}, token),
     backendRequest<SolfegeLevelRuleOut[]>("/api/v1/solfege-level-rules", {}, token),
+    backendRequest<QuoteSchoolCalendarOut[]>("/api/v1/quote-school-calendars", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
+    backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<QuoteTemplateV2Out[]>("/api/v1/quote-templates-v2", {}, token),
     backendRequest<TermsTemplateOut[]>("/api/v1/terms-templates", {}, token),
     backendRequest<QuoteDocumentBindingOut[]>("/api/v1/quote-document-bindings", {}, token),
@@ -370,11 +478,23 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         loadErrors.push(`Regles solfege: ${solfegeRulesResult.message}`);
         return [] as SolfegeLevelRuleOut[];
       })();
+  const quoteSchoolCalendars = quoteSchoolCalendarsResult.ok
+    ? quoteSchoolCalendarsResult.data
+    : (() => {
+        loadErrors.push(`Calendriers scolaires: ${quoteSchoolCalendarsResult.message}`);
+        return [] as QuoteSchoolCalendarOut[];
+      })();
   const locations = locationsResult.ok
     ? locationsResult.data
     : (() => {
         loadErrors.push(`Lieux: ${locationsResult.message}`);
         return [] as LocationOut[];
+      })();
+  const activities = activitiesResult.ok
+    ? activitiesResult.data
+    : (() => {
+        loadErrors.push(`Activites: ${activitiesResult.message}`);
+        return [] as AdminActivityOut[];
       })();
   const quoteTemplatesV2 = quoteTemplatesV2Result.ok
     ? quoteTemplatesV2Result.data
@@ -391,11 +511,18 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   const quoteDocumentBindings = quoteDocumentBindingsResult.ok
     ? quoteDocumentBindingsResult.data
     : (() => {
-        loadErrors.push(`Regles de selection documentaire: ${quoteDocumentBindingsResult.message}`);
+        loadErrors.push(`Regles d association documentaire: ${quoteDocumentBindingsResult.message}`);
         return [] as QuoteDocumentBindingOut[];
       })();
 
   const locationById = new Map(locations.map((row) => [row.id, row.name]));
+  const activityFamilies = Array.from(
+    new Set(
+      activities
+        .map((row) => String(row.service_code || "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  ).sort((a, b) => a.localeCompare(b, "fr-FR"));
   const quoteTemplateVersionPrefill = new Map<string, { subject: string; body: string; versionNumber: number | null }>();
   const termsTemplateVersionPrefill = new Map<string, { versionLabel: string; content: string; versionNumber: number | null }>();
   await Promise.all(
@@ -469,13 +596,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
           <Link className={`config-sub-link ${tab === "types" ? "active" : ""}`} href={buildQuotesConfigHref("types")}>Types de devis</Link>
           <Link className={`config-sub-link ${tab === "catalogs" ? "active" : ""}`} href={buildQuotesConfigHref("catalogs")}>Catalogues de prix</Link>
           <Link className={`config-sub-link ${tab === "payment_plans" ? "active" : ""}`} href={buildQuotesConfigHref("payment_plans")}>Plans de paiement</Link>
-          <Link className={`config-sub-link ${tab === "cgv" ? "active" : ""}`} href={buildQuotesConfigHref("cgv")}>CGV</Link>
-          <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates email (legacy)</Link>
           <Link className={`config-sub-link ${tab === "doc_templates" ? "active" : ""}`} href={buildQuotesConfigHref("doc_templates")}>Modeles de devis</Link>
           <Link className={`config-sub-link ${tab === "doc_terms" ? "active" : ""}`} href={buildQuotesConfigHref("doc_terms")}>Modeles de CGV</Link>
           <Link className={`config-sub-link ${tab === "doc_bindings" ? "active" : ""}`} href={buildQuotesConfigHref("doc_bindings")}>Regles d association documentaire</Link>
           <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>Variables documentaires</Link>
           <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>Creneaux de solfege</Link>
+          <Link className={`config-sub-link ${tab === "calendars" ? "active" : ""}`} href={buildQuotesConfigHref("calendars")}>Calendriers scolaires</Link>
+          <Link className={`config-sub-link ${tab === "cgv" ? "active" : ""}`} href={buildQuotesConfigHref("cgv")}>CGV legacy (v1)</Link>
+          <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates email legacy (v1)</Link>
         </nav>
       </section>
 
@@ -668,28 +796,40 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       {tab === "payment_plans" ? (
         <section className="card">
           <h3>Plans de paiement</h3>
-          <p className="muted">Ce referentiel alimente le champ Plan de paiement dans la creation et l edition des devis.</p>
+          <p className="muted">Configuration metier guidee: libelle commercial, methode, type d echeancier et frais. Le code et les regles techniques sont generes automatiquement.</p>
           <form action={createAdminPaymentPlanConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("payment_plans")} />
-            <label>
-              Code
-              <input type="text" name="code" required maxLength={60} placeholder="CHEQUE_2" />
-            </label>
-            <label>
-              Nom
-              <input type="text" name="name" required maxLength={180} placeholder="Cheque en 2 fois" />
+            <label className="span-2">
+              Plan de paiement / libelle commercial
+              <select name="plan_label_preset" defaultValue="Carte bancaire" required>
+                <option value="">Selectionner</option>
+                {PAYMENT_PLAN_PRESET_OPTIONS.map((option) => (
+                  <option key={`preset-create-${option.value}`} value={option.value}>{option.label}</option>
+                ))}
+              </select>
             </label>
             <label>
               Methode de paiement
-              <input type="text" name="payment_method" required maxLength={40} placeholder="CHEQUE_2" />
+              <select name="payment_method" defaultValue="CARD" required>
+                <option value="CARD">Carte bancaire</option>
+                <option value="CARD_MONTHLY">Carte bancaire mensuelle</option>
+                <option value="CHECK">Cheque</option>
+                <option value="BANK_TRANSFER">Virement bancaire</option>
+                <option value="CASH">Especes</option>
+                <option value="CARD_4X_FEES">4 fois avec frais</option>
+              </select>
             </label>
             <label>
               Type d echeancier
-              <input type="text" name="schedule_type" required maxLength={40} placeholder="fixed_months" />
+              <select name="schedule_type" defaultValue="single" required>
+                {PAYMENT_SCHEDULE_TYPE_OPTIONS.map((option) => (
+                  <option key={`schedule-create-${option.value}`} value={option.value}>{option.label}</option>
+                ))}
+              </select>
             </label>
-            <label className="span-4">
-              Regles JSON
-              <textarea name="schedule_rules_json" rows={4} defaultValue={"{}"} />
+            <label>
+              Frais (%)
+              <input type="number" name="fee_percent" min={0} max={100} step="0.01" defaultValue="0" />
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
@@ -704,11 +844,11 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Code</th>
-                  <th>Nom</th>
+                  <th>Libelle</th>
                   <th>Methode</th>
-                  <th>Type</th>
-                  <th>Regles</th>
+                  <th>Echeancier</th>
+                  <th>Echeances</th>
+                  <th>Frais</th>
                   <th>Statut</th>
                   <th>Actions</th>
                 </tr>
@@ -719,11 +859,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 ) : (
                   paymentPlans.map((row) => (
                     <tr key={row.id}>
-                      <td><strong>{row.code}</strong></td>
-                      <td>{row.name}</td>
-                      <td>{row.payment_method}</td>
-                      <td>{row.schedule_type}</td>
-                      <td><code>{JSON.stringify(row.schedule_rules || {})}</code></td>
+                      <td>
+                        <strong>{row.name}</strong>
+                        <div className="muted"><code>{row.code}</code></div>
+                      </td>
+                      <td>{paymentMethodLabel(row.payment_method)}</td>
+                      <td>{paymentScheduleTypeLabel(row.schedule_type)}</td>
+                      <td>{paymentInstallmentCount(row.schedule_rules || {})}</td>
+                      <td>{paymentFeePercent(row.schedule_rules || {})}</td>
                       <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span></td>
                       <td>
                         <details>
@@ -731,25 +874,55 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                           <form action={updateAdminPaymentPlanConfigAction} className="grid config-form-grid top-gap-sm">
                             <input type="hidden" name="plan_id" value={row.id} />
                             <input type="hidden" name="return_to" value={buildQuotesConfigHref("payment_plans")} />
-                            <label>
-                              Code
-                              <input type="text" name="code" defaultValue={row.code} required maxLength={60} />
+                            <input type="hidden" name="name_current" value={row.name} />
+                            <label className="span-2">
+                              Plan de paiement / libelle commercial
+                              <select name="plan_label_preset" defaultValue={PAYMENT_PLAN_PRESET_OPTIONS.some((item) => item.value === row.name) ? row.name : ""}>
+                                <option value="">Conserver actuel</option>
+                                {PAYMENT_PLAN_PRESET_OPTIONS.map((option) => (
+                                  <option key={`preset-edit-${row.id}-${option.value}`} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
                             </label>
-                            <label>
-                              Nom
-                              <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
+                            <label className="span-2">
+                              Libelle personnalise (optionnel)
+                              <input type="text" name="name_custom" maxLength={180} placeholder={row.name} />
                             </label>
                             <label>
                               Methode de paiement
-                              <input type="text" name="payment_method" defaultValue={row.payment_method} required maxLength={40} />
+                              <select name="payment_method" defaultValue={row.payment_method} required>
+                                {!["CARD", "CARD_MONTHLY", "CHECK", "BANK_TRANSFER", "CASH", "CARD_4X_FEES"].includes(row.payment_method) ? (
+                                  <option value={row.payment_method}>{row.payment_method}</option>
+                                ) : null}
+                                <option value="CARD">Carte bancaire</option>
+                                <option value="CARD_MONTHLY">Carte bancaire mensuelle</option>
+                                <option value="CHECK">Cheque</option>
+                                <option value="BANK_TRANSFER">Virement bancaire</option>
+                                <option value="CASH">Especes</option>
+                                <option value="CARD_4X_FEES">4 fois avec frais</option>
+                              </select>
                             </label>
                             <label>
                               Type d echeancier
-                              <input type="text" name="schedule_type" defaultValue={row.schedule_type} required maxLength={40} />
+                              <select name="schedule_type" defaultValue={row.schedule_type} required>
+                                {!PAYMENT_SCHEDULE_TYPE_OPTIONS.some((option) => option.value === row.schedule_type) ? (
+                                  <option value={row.schedule_type}>{row.schedule_type}</option>
+                                ) : null}
+                                {PAYMENT_SCHEDULE_TYPE_OPTIONS.map((option) => (
+                                  <option key={`schedule-edit-${row.id}-${option.value}`} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
                             </label>
-                            <label className="span-4">
-                              Regles JSON
-                              <textarea name="schedule_rules_json" rows={4} defaultValue={JSON.stringify(row.schedule_rules || {}, null, 2)} />
+                            <label>
+                              Frais (%)
+                              <input
+                                type="number"
+                                name="fee_percent"
+                                min={0}
+                                max={100}
+                                step="0.01"
+                                defaultValue={String(row.schedule_rules?.fee_percent ?? 0)}
+                              />
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
@@ -1310,7 +1483,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             </label>
             <label>
               Famille activite
-              <input type="text" name="activity_family" maxLength={80} placeholder="piano_collectif" />
+              <select name="activity_family" defaultValue="">
+                <option value="">Toutes</option>
+                {activityFamilies.map((family) => (
+                  <option key={`binding-family-create-${family}`} value={family}>{family}</option>
+                ))}
+              </select>
             </label>
             <label>
               Langue
@@ -1419,7 +1597,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                             </label>
                             <label>
                               Famille activite
-                              <input type="text" name="activity_family" defaultValue={row.activity_family || ""} maxLength={80} />
+                              <select name="activity_family" defaultValue={row.activity_family || ""}>
+                                <option value="">Toutes</option>
+                                {activityFamilies.map((family) => (
+                                  <option key={`binding-family-edit-${row.id}-${family}`} value={family}>{family}</option>
+                                ))}
+                              </select>
                             </label>
                             <label>
                               Langue
@@ -1536,10 +1719,28 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 ))}
               </div>
             </fieldset>
-            <label className="span-2">
-              Creneaux autorises (HH:MM-HH:MM)
-              <input type="text" name="allowed_time_slots_csv" placeholder="17:05-17:35, 18:05-18:35" />
-            </label>
+            <div className="span-4">
+              <p className="muted">Lignes de creneaux (jour + heure de debut). L heure de fin est calculee automatiquement avec la duree.</p>
+              <div className="grid cols-4 top-gap-sm">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <div key={`create-solfege-slot-${index}`} className="grid cols-2">
+                    <label>
+                      Jour
+                      <select name="slot_weekday" defaultValue="">
+                        <option value="">-</option>
+                        {WEEKDAY_OPTIONS.map((day) => (
+                          <option key={`create-solfege-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Heure debut
+                      <input type="time" name="slot_start_time" defaultValue="" />
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
               Active
@@ -1622,10 +1823,31 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 ))}
                               </div>
                             </fieldset>
-                            <label>
-                              Creneaux autorises
-                              <input type="text" name="allowed_time_slots_csv" defaultValue={solfegeSlotsCsv(row.allowed_time_slots)} />
-                            </label>
+                            <div className="span-4">
+                              <p className="muted">Lignes de creneaux (jour + heure de debut). Duree heritee du niveau.</p>
+                              <div className="grid cols-4 top-gap-sm">
+                                {Array.from({ length: Math.max(5, solfegeSlotRows(row.allowed_time_slots, row.allowed_weekdays).length) }).map((_, index) => {
+                                  const slot = solfegeSlotRows(row.allowed_time_slots, row.allowed_weekdays)[index];
+                                  return (
+                                    <div key={`${row.id}-slot-edit-${index}`} className="grid cols-2">
+                                      <label>
+                                        Jour
+                                        <select name="slot_weekday" defaultValue={slot ? String(slot.weekday) : ""}>
+                                          <option value="">-</option>
+                                          {WEEKDAY_OPTIONS.map((day) => (
+                                            <option key={`${row.id}-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                      <label>
+                                        Heure debut
+                                        <input type="time" name="slot_start_time" defaultValue={slot?.start || ""} />
+                                      </label>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
                             <label className="checkline">
                               <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
                               Active
@@ -1637,6 +1859,201 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                           <form action={deleteAdminSolfegeLevelRuleConfigAction} className="row top-gap-sm">
                             <input type="hidden" name="rule_id" value={row.id} />
                             <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
+                            <button type="submit" className="danger">Supprimer</button>
+                          </form>
+                        </details>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {tab === "calendars" ? (
+        <section className="card">
+          <h3>Calendriers scolaires par local</h3>
+          <p className="muted">Definissez les vacances, jours feries et fermetures exceptionnelles par annee scolaire et par local.</p>
+          <form action={createAdminQuoteSchoolCalendarConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
+            <input type="hidden" name="return_to" value={buildQuotesConfigHref("calendars")} />
+            <label className="span-2">
+              Nom du calendrier
+              <input type="text" name="name" required maxLength={180} placeholder="Calendrier Paris 2026-2027" />
+            </label>
+            <label>
+              Annee scolaire
+              <input type="text" name="school_year_label" required maxLength={40} placeholder="2026-2027" />
+            </label>
+            <label>
+              Local
+              <select name="location_id" required defaultValue="">
+                <option value="">Selectionner</option>
+                {locations.map((row) => (
+                  <option key={`calendar-create-location-${row.id}`} value={row.id}>{row.name}</option>
+                ))}
+              </select>
+            </label>
+            <div className="span-4">
+              <p className="muted">Vacances scolaires (periodes)</p>
+              <div className="grid cols-3 top-gap-sm">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={`calendar-create-vacation-${index}`} className="grid cols-3">
+                    <label>
+                      Debut
+                      <input type="date" name="vacation_start" />
+                    </label>
+                    <label>
+                      Fin
+                      <input type="date" name="vacation_end" />
+                    </label>
+                    <label>
+                      Libelle
+                      <input type="text" name="vacation_label" maxLength={120} placeholder="Vacances hiver" />
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="span-2">
+              <p className="muted">Jours feries</p>
+              <div className="grid cols-2 top-gap-sm">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <label key={`calendar-create-holiday-${index}`}>
+                    Date
+                    <input type="date" name="holiday_date" />
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="span-2">
+              <p className="muted">Fermetures exceptionnelles</p>
+              <div className="grid cols-2 top-gap-sm">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <label key={`calendar-create-closure-${index}`}>
+                    Date
+                    <input type="date" name="closure_date" />
+                  </label>
+                ))}
+              </div>
+            </div>
+            <label className="checkline">
+              <input type="checkbox" name="is_active" defaultChecked />
+              Actif
+            </label>
+            <div className="row span-4">
+              <button type="submit">Ajouter le calendrier</button>
+            </div>
+          </form>
+
+          <div className="table-wrap top-gap-sm">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Nom</th>
+                  <th>Annee</th>
+                  <th>Local</th>
+                  <th>Vacances</th>
+                  <th>Feries</th>
+                  <th>Fermetures</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quoteSchoolCalendars.length === 0 ? (
+                  <tr><td colSpan={8}><p className="muted">Aucun calendrier configure.</p></td></tr>
+                ) : (
+                  quoteSchoolCalendars.map((row) => (
+                    <tr key={row.id}>
+                      <td><strong>{row.name}</strong></td>
+                      <td>{row.school_year_label}</td>
+                      <td>{locationById.get(row.location_id) || row.location_id}</td>
+                      <td>{row.vacation_periods.length}</td>
+                      <td>{row.holiday_dates.length}</td>
+                      <td>{row.closure_dates.length}</td>
+                      <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span></td>
+                      <td>
+                        <details>
+                          <summary className="mode-link">Modifier</summary>
+                          <form action={updateAdminQuoteSchoolCalendarConfigAction} className="grid config-form-grid top-gap-sm">
+                            <input type="hidden" name="calendar_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("calendars")} />
+                            <label className="span-2">
+                              Nom
+                              <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
+                            </label>
+                            <label>
+                              Annee scolaire
+                              <input type="text" name="school_year_label" defaultValue={row.school_year_label} required maxLength={40} />
+                            </label>
+                            <label>
+                              Local
+                              <select name="location_id" required defaultValue={row.location_id}>
+                                <option value="">Selectionner</option>
+                                {locations.map((location) => (
+                                  <option key={`${row.id}-location-${location.id}`} value={location.id}>{location.name}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <div className="span-4">
+                              <p className="muted">Vacances scolaires (periodes)</p>
+                              <div className="grid cols-3 top-gap-sm">
+                                {Array.from({ length: Math.max(4, row.vacation_periods.length) }).map((_, index) => {
+                                  const period = row.vacation_periods[index];
+                                  return (
+                                    <div key={`${row.id}-vacation-${index}`} className="grid cols-3">
+                                      <label>
+                                        Debut
+                                        <input type="date" name="vacation_start" defaultValue={period?.start_date || ""} />
+                                      </label>
+                                      <label>
+                                        Fin
+                                        <input type="date" name="vacation_end" defaultValue={period?.end_date || ""} />
+                                      </label>
+                                      <label>
+                                        Libelle
+                                        <input type="text" name="vacation_label" maxLength={120} defaultValue={period?.label || ""} />
+                                      </label>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <div className="span-2">
+                              <p className="muted">Jours feries</p>
+                              <div className="grid cols-2 top-gap-sm">
+                                {Array.from({ length: Math.max(6, row.holiday_dates.length) }).map((_, index) => (
+                                  <label key={`${row.id}-holiday-${index}`}>
+                                    Date
+                                    <input type="date" name="holiday_date" defaultValue={row.holiday_dates[index] || ""} />
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="span-2">
+                              <p className="muted">Fermetures exceptionnelles</p>
+                              <div className="grid cols-2 top-gap-sm">
+                                {Array.from({ length: Math.max(6, row.closure_dates.length) }).map((_, index) => (
+                                  <label key={`${row.id}-closure-${index}`}>
+                                    Date
+                                    <input type="date" name="closure_date" defaultValue={row.closure_dates[index] || ""} />
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                            <label className="checkline">
+                              <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
+                              Actif
+                            </label>
+                            <div className="row">
+                              <button type="submit">Enregistrer</button>
+                            </div>
+                          </form>
+                          <form action={deleteAdminQuoteSchoolCalendarConfigAction} className="row top-gap-sm">
+                            <input type="hidden" name="calendar_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("calendars")} />
                             <button type="submit" className="danger">Supprimer</button>
                           </form>
                         </details>

@@ -87,6 +87,13 @@ type PlanningBlock = {
   start_time: string;
   end_time: string;
   modality: string;
+  solfege_enabled: boolean;
+  solfege_level: string;
+  solfege_start_date: string;
+  solfege_slot_key: string;
+  masterclass_enabled: boolean;
+  masterclass_session: string;
+  masterclass_location_id: string;
 };
 
 type SolfegeSlotOption = {
@@ -277,6 +284,65 @@ function timeSlotParts(slot: Record<string, unknown>): { start: string; end: str
   return { start, end };
 }
 
+function slotOptionsFromRule(rule: SolfegeRule | null | undefined): SolfegeSlotOption[] {
+  if (!rule) {
+    return [];
+  }
+  const options: SolfegeSlotOption[] = [];
+  const hasStructuredWeekdays = rule.allowed_time_slots.some((slot) => {
+    const weekday = Number.parseInt(String(slot.weekday ?? ""), 10);
+    return Number.isFinite(weekday) && weekday >= 0 && weekday <= 6;
+  });
+
+  if (hasStructuredWeekdays) {
+    for (const slot of rule.allowed_time_slots) {
+      const parts = timeSlotParts(slot);
+      if (!parts) {
+        continue;
+      }
+      const weekday = Number.parseInt(String(slot.weekday ?? ""), 10);
+      if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
+        continue;
+      }
+      options.push({
+        key: `${weekday}|${parts.start}|${parts.end}`,
+        weekday,
+        start_time: parts.start,
+        end_time: parts.end,
+        duration_minutes: rule.duration_minutes,
+        location_id: rule.location_id,
+        modality: rule.modality,
+        label: `${weekdayLabel(weekday)} ${parts.start}-${parts.end}`,
+      });
+    }
+    return options;
+  }
+
+  const weekdays = rule.allowed_weekdays.length > 0
+    ? rule.allowed_weekdays.filter((day) => Number.isFinite(day) && day >= 0 && day <= 6)
+    : [0, 1, 2, 3, 4, 5, 6];
+
+  for (const weekday of weekdays) {
+    for (const slot of rule.allowed_time_slots) {
+      const parts = timeSlotParts(slot);
+      if (!parts) {
+        continue;
+      }
+      options.push({
+        key: `${weekday}|${parts.start}|${parts.end}`,
+        weekday,
+        start_time: parts.start,
+        end_time: parts.end,
+        duration_minutes: rule.duration_minutes,
+        location_id: rule.location_id,
+        modality: rule.modality,
+        label: `${weekdayLabel(weekday)} ${parts.start}-${parts.end}`,
+      });
+    }
+  }
+  return options;
+}
+
 function isCatalogKind(kind: LineKind): boolean {
   return kind === "activity" || kind === "product" || kind === "kit";
 }
@@ -305,7 +371,6 @@ export default function QuoteWizardForm({
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultTemplate?.id ?? "");
   const [language, setLanguage] = useState<string>(normalizeLang(defaultTemplate?.language));
   const [currency, setCurrency] = useState<string>("EUR");
-  const [tvaRate, setTvaRate] = useState<string>("20");
   const [estimatedLevel, setEstimatedLevel] = useState<string>("");
   const [selectedSolfegeSlotKey, setSelectedSolfegeSlotKey] = useState<string>("");
   const [lines, setLines] = useState<WizardLine[]>([]);
@@ -326,36 +391,7 @@ export default function QuoteWizardForm({
     [solfegeRules, estimatedLevel],
   );
 
-  const solfegeSlotOptions = useMemo<SolfegeSlotOption[]>(() => {
-    if (!selectedSolfegeRule) {
-      return [];
-    }
-    const weekdays = selectedSolfegeRule.allowed_weekdays.length > 0
-      ? selectedSolfegeRule.allowed_weekdays.filter((day) => Number.isFinite(day) && day >= 0 && day <= 6)
-      : [0, 1, 2, 3, 4, 5, 6];
-
-    const options: SolfegeSlotOption[] = [];
-    for (const weekday of weekdays) {
-      for (const slot of selectedSolfegeRule.allowed_time_slots) {
-        const parts = timeSlotParts(slot);
-        if (!parts) {
-          continue;
-        }
-        const key = `${weekday}|${parts.start}|${parts.end}`;
-        options.push({
-          key,
-          weekday,
-          start_time: parts.start,
-          end_time: parts.end,
-          duration_minutes: selectedSolfegeRule.duration_minutes,
-          location_id: selectedSolfegeRule.location_id,
-          modality: selectedSolfegeRule.modality,
-          label: `${weekdayLabel(weekday)} ${parts.start}-${parts.end}`,
-        });
-      }
-    }
-    return options;
-  }, [selectedSolfegeRule]);
+  const solfegeSlotOptions = useMemo<SolfegeSlotOption[]>(() => slotOptionsFromRule(selectedSolfegeRule), [selectedSolfegeRule]);
 
   const selectedSolfegeSlot = useMemo(
     () => solfegeSlotOptions.find((item) => item.key === selectedSolfegeSlotKey) ?? null,
@@ -381,9 +417,19 @@ export default function QuoteWizardForm({
           start_time: row.start_time,
           end_time: row.end_time,
           modality: row.modality || null,
+          solfege_enabled: row.solfege_enabled,
+          solfege_level: row.solfege_level || null,
+          solfege_start_date: row.solfege_start_date || null,
+          solfege_slot: row.solfege_slot_key
+            ? slotOptionsFromRule(solfegeRules.find((rule) => String(rule.level_code) === String(row.solfege_level))).find((item) => item.key === row.solfege_slot_key) || null
+            : null,
+          masterclass_enabled: row.masterclass_enabled,
+          masterclass_session: row.masterclass_session || null,
+          masterclass_location_id: row.masterclass_location_id || null,
+          masterclass_location_label: locations.find((item) => item.id === row.masterclass_location_id)?.name || null,
         })),
       ),
-    [planningBlocks],
+    [planningBlocks, activities, locations, solfegeRules],
   );
 
   const selectedSolfegeSlotJson = useMemo(
@@ -412,6 +458,13 @@ export default function QuoteWizardForm({
         start_time: startTime,
         end_time: addMinutesToTime(startTime, defaultDuration),
         modality: "",
+        solfege_enabled: false,
+        solfege_level: "",
+        solfege_start_date: "",
+        solfege_slot_key: "",
+        masterclass_enabled: false,
+        masterclass_session: "",
+        masterclass_location_id: "",
       },
     ]);
   }
@@ -661,18 +714,6 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
-              TVA (%)
-              <input
-                type="number"
-                name="tva_rate"
-                min={0}
-                max={100}
-                step="0.01"
-                value={tvaRate}
-                onChange={(event) => setTvaRate(event.target.value)}
-              />
-            </label>
-            <label>
               Delai expiration (jours)
               <input type="number" name="expiry_days" min={1} max={120} defaultValue={10} required />
             </label>
@@ -692,7 +733,8 @@ export default function QuoteWizardForm({
             {planningBlocks.map((block, index) => (
               <article key={block.uid} className="item">
                 <div className="row spread wrap gap-sm">
-                  <strong>Activite #{index + 1}</strong>
+                  <strong>{activities.find((item) => item.id === block.activity_id)?.name || `Activite #${index + 1}`}</strong>
+                  <span className="badge">{countEstimatedSessions(block.start_date, block.end_date, [block.weekday])} cours</span>
                   <button type="button" className="ghost small-btn" onClick={() => removePlanningBlock(block.uid)}>
                     Supprimer
                   </button>
@@ -778,6 +820,100 @@ export default function QuoteWizardForm({
                     Heure fin (auto)
                     <input type="time" value={block.end_time} readOnly />
                   </label>
+                  <label className="checkline cols-span-4">
+                    <input
+                      type="checkbox"
+                      checked={block.solfege_enabled}
+                      onChange={(event) => updatePlanningBlock(block.uid, {
+                        solfege_enabled: event.target.checked,
+                        solfege_level: event.target.checked ? block.solfege_level : "",
+                        solfege_start_date: event.target.checked ? block.solfege_start_date : "",
+                        solfege_slot_key: event.target.checked ? block.solfege_slot_key : "",
+                      })}
+                    />
+                    Cette activite inclut le solfege
+                  </label>
+                  {block.solfege_enabled ? (
+                    <>
+                      <label>
+                        Niveau solfege
+                        <select
+                          value={block.solfege_level}
+                          onChange={(event) => updatePlanningBlock(block.uid, {
+                            solfege_level: event.target.value,
+                            solfege_slot_key: "",
+                          })}
+                        >
+                          <option value="">Selectionner</option>
+                          {["1", "2", "3", "4", "5"].map((level) => (
+                            <option key={`${block.uid}-solfege-level-${level}`} value={level}>Niveau {level}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Date demarrage solfege
+                        <input
+                          type="date"
+                          value={block.solfege_start_date}
+                          onChange={(event) => updatePlanningBlock(block.uid, { solfege_start_date: event.target.value })}
+                        />
+                      </label>
+                      <label className="cols-span-2">
+                        Creneau solfege
+                        <select
+                          value={block.solfege_slot_key}
+                          onChange={(event) => updatePlanningBlock(block.uid, { solfege_slot_key: event.target.value })}
+                        >
+                          <option value="">Selectionner</option>
+                          {slotOptionsFromRule(solfegeRules.find((rule) => String(rule.level_code) === String(block.solfege_level))).map((slot) => (
+                            <option key={`${block.uid}-solfege-slot-${slot.key}`} value={slot.key}>{slot.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  ) : (
+                    <p className="muted cols-span-4">Sans solfege pour cette activite.</p>
+                  )}
+                  <label className="checkline cols-span-4">
+                    <input
+                      type="checkbox"
+                      checked={block.masterclass_enabled}
+                      onChange={(event) => updatePlanningBlock(block.uid, {
+                        masterclass_enabled: event.target.checked,
+                        masterclass_session: event.target.checked ? block.masterclass_session : "",
+                        masterclass_location_id: event.target.checked ? block.masterclass_location_id : "",
+                      })}
+                    />
+                    Participation Masterclass du samedi
+                  </label>
+                  {block.masterclass_enabled ? (
+                    <>
+                      <label>
+                        Session masterclass
+                        <select
+                          value={block.masterclass_session}
+                          onChange={(event) => updatePlanningBlock(block.uid, { masterclass_session: event.target.value })}
+                        >
+                          <option value="">Selectionner</option>
+                          <option value="morning">Matin 09:00-12:00</option>
+                          <option value="afternoon_1330">Apres-midi 13:30-16:30</option>
+                          <option value="afternoon_1400">Apres-midi 14:00-17:00</option>
+                        </select>
+                      </label>
+                      <label>
+                        Local masterclass
+                        <select
+                          value={block.masterclass_location_id}
+                          onChange={(event) => updatePlanningBlock(block.uid, { masterclass_location_id: event.target.value })}
+                        >
+                          <option value="">Selectionner</option>
+                          {locations.map((item) => (
+                            <option key={`${block.uid}-masterclass-location-${item.id}`} value={item.id}>{item.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  ) : null}
                 </div>
               </article>
             ))}
@@ -803,7 +939,9 @@ export default function QuoteWizardForm({
               <p>
                 Duree suggeree: <strong>{selectedSolfegeRule.duration_minutes} min</strong>
               </p>
-              <p className="muted">Jours autorises: {selectedSolfegeRule.allowed_weekdays.length > 0 ? selectedSolfegeRule.allowed_weekdays.join(", ") : "Tous"}</p>
+              <p className="muted">
+                Jours autorises: {selectedSolfegeRule.allowed_weekdays.length > 0 ? selectedSolfegeRule.allowed_weekdays.map((day) => weekdayLabel(day)).join(", ") : "Tous"}
+              </p>
               <p className="muted">Creneaux configures: {solfegeSlotOptions.length}</p>
               <label className="top-gap-sm">
                 Creneau propose
@@ -913,7 +1051,6 @@ export default function QuoteWizardForm({
           <h3>Resume sticky</h3>
           <p className="muted">Contexte: <strong>{contextType === "acquisition" ? "Acquisition" : "Client actif"}</strong></p>
           <p className="muted">Devise: <strong>{currency}</strong> · Langue: <strong>{language.toUpperCase()}</strong></p>
-          <p className="muted">TVA: <strong>{tvaRate || "0"} %</strong></p>
           <p className="muted">Lignes: <strong>{lines.length}</strong></p>
           <p className="muted">Activites planning: <strong>{planningBlocks.length}</strong></p>
           <p className="muted">Seances estimees: <strong>{sessionsCount}</strong></p>

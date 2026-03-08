@@ -29,6 +29,7 @@ type QuotePlanningEditorProps = {
   quoteId: string;
   returnTo: string;
   editable: boolean;
+  schoolYearLabel?: string | null;
   activities: ActivityOption[];
   locations: LocationOption[];
   initialSnapshot: Record<string, unknown>;
@@ -45,6 +46,21 @@ const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 6, label: "Dimanche" },
 ];
 
+const MONTH_LABELS = [
+  "Janvier",
+  "Fevrier",
+  "Mars",
+  "Avril",
+  "Mai",
+  "Juin",
+  "Juillet",
+  "Aout",
+  "Septembre",
+  "Octobre",
+  "Novembre",
+  "Decembre",
+];
+
 function addMinutesToTime(startTime: string, deltaMinutes: number): string {
   const match = startTime.trim().match(/^(\d{2}):(\d{2})$/);
   if (!match) {
@@ -59,6 +75,64 @@ function addMinutesToTime(startTime: string, deltaMinutes: number): string {
   const outHours = Math.floor(total / 60).toString().padStart(2, "0");
   const outMinutes = (total % 60).toString().padStart(2, "0");
   return `${outHours}:${outMinutes}`;
+}
+
+function parseDateOnly(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed || !/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = new Date(`${trimmed}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function estimateSessionDates(block: PlanningBlock): string[] {
+  const start = parseDateOnly(block.start_date);
+  const end = parseDateOnly(block.end_date);
+  if (!start || !end || end < start) {
+    return [];
+  }
+  const out: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const normalizedWeekday = (cursor.getUTCDay() + 6) % 7;
+    if (normalizedWeekday === block.weekday) {
+      out.push(cursor.toISOString().slice(0, 10));
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
+
+function summarizeBySemester(dates: string[], semester: 1 | 2): Array<{ monthLabel: string; days: string }> {
+  const grouped = new Map<number, number[]>();
+  for (const raw of dates) {
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+      continue;
+    }
+    const month = Number.parseInt(match[2], 10);
+    const day = Number.parseInt(match[3], 10);
+    if (!Number.isFinite(month) || !Number.isFinite(day)) {
+      continue;
+    }
+    if (semester === 1 && !(month >= 9 || month <= 1)) {
+      continue;
+    }
+    if (semester === 2 && !(month >= 2 && month <= 8)) {
+      continue;
+    }
+    if (!grouped.has(month)) {
+      grouped.set(month, []);
+    }
+    grouped.get(month)?.push(day);
+  }
+  return Array.from(grouped.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([month, days]) => ({
+      monthLabel: MONTH_LABELS[month - 1] || String(month),
+      days: Array.from(new Set(days)).sort((a, b) => a - b).join(", "),
+    }));
 }
 
 function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] {
@@ -128,6 +202,7 @@ export default function QuotePlanningEditor({
   quoteId,
   returnTo,
   editable,
+  schoolYearLabel,
   activities,
   locations,
   initialSnapshot,
@@ -198,6 +273,7 @@ export default function QuotePlanningEditor({
     <form action={saveAction}>
       <input type="hidden" name="quote_id" value={quoteId} />
       <input type="hidden" name="return_to" value={returnTo} />
+      <input type="hidden" name="school_year_label" value={schoolYearLabel || ""} />
       <input type="hidden" name="planning_blocks_json" value={blocksJson} />
 
       <div className="row wrap gap-sm">
@@ -210,8 +286,41 @@ export default function QuotePlanningEditor({
       <div className="list top-gap-sm">
         {blocks.map((block, index) => (
           <article key={block.uid} className="item">
+            {(() => {
+              const activity = activities.find((item) => item.id === block.activity_id);
+              const estimatedDates = estimateSessionDates(block);
+              const semester1 = summarizeBySemester(estimatedDates, 1);
+              const semester2 = summarizeBySemester(estimatedDates, 2);
+              return (
+                <>
+                  <div className="row spread wrap gap-sm">
+                    <strong>{activity?.name || `Activite #${index + 1}`}</strong>
+                    <span className="badge">{estimatedDates.length} cours</span>
+                  </div>
+                  {estimatedDates.length > 0 ? (
+                    <div className="grid cols-2 top-gap-sm">
+                      <div>
+                        <p><strong>1er semestre</strong></p>
+                        {semester1.length === 0 ? <p className="muted">Aucune seance</p> : null}
+                        {semester1.map((item) => (
+                          <p key={`${block.uid}-s1-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
+                        ))}
+                      </div>
+                      <div>
+                        <p><strong>2e semestre</strong></p>
+                        {semester2.length === 0 ? <p className="muted">Aucune seance</p> : null}
+                        {semester2.map((item) => (
+                          <p key={`${block.uid}-s2-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="muted top-gap-sm">Dates manquantes pour calculer la synthese.</p>
+                  )}
+                </>
+              );
+            })()}
             <div className="row spread wrap gap-sm">
-              <strong>Activite #{index + 1}</strong>
               <button type="button" className="ghost small-btn" onClick={() => removeBlock(block.uid)} disabled={!editable}>
                 Supprimer
               </button>

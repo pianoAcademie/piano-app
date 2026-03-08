@@ -4,9 +4,10 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import io
+import json
 import re
 import secrets
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -16,7 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
-from app.models.catalog import CourseType
+from app.models.catalog import CourseType, Location
+from app.models.ops import AppSetting
 from app.models.product_catalog import CatalogKit, CatalogProduct
 from app.models.quote import (
     CgvVersion,
@@ -70,6 +72,10 @@ from app.schemas.quote import (
     QuoteOut,
     QuotePaymentSchedulePreviewRequest,
     QuotePublicOut,
+    QuoteSchoolCalendarOut,
+    QuoteSchoolCalendarPeriod,
+    QuoteSchoolCalendarResolveOut,
+    QuoteSchoolCalendarUpsertRequest,
     QuoteSendRequest,
     QuoteTypeOut,
     QuoteTypeUpsertRequest,
@@ -173,6 +179,155 @@ def _next_available_quote_type_code(db: Session, *, base_code: str, exclude_id: 
         suffix = f"_{index}"
         candidate = f"{root[: max(1, 60 - len(suffix))]}{suffix}"
         index += 1
+
+
+def _payment_plan_code_from_name(name: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", (name or "").strip().upper()).strip("_")
+    if not normalized:
+        normalized = "PAYMENT_PLAN"
+    return normalized[:60]
+
+
+def _next_available_payment_plan_code(db: Session, *, base_code: str, exclude_id: UUID | None = None) -> str:
+    root = (base_code or "PAYMENT_PLAN").strip().upper() or "PAYMENT_PLAN"
+    root = root[:60]
+    candidate = root
+    index = 2
+    while True:
+        stmt = select(PaymentPlan.id).where(func.upper(PaymentPlan.code) == candidate.upper())
+        if exclude_id is not None:
+            stmt = stmt.where(PaymentPlan.id != exclude_id)
+        existing = db.scalar(stmt.limit(1))
+        if existing is None:
+            return candidate
+        suffix = f"_{index}"
+        candidate = f"{root[: max(1, 60 - len(suffix))]}{suffix}"
+        index += 1
+
+
+QUOTE_SCHOOL_CALENDARS_SETTING_KEY = "quote_school_calendars_v1"
+
+
+def _parse_iso_date(raw: str) -> date | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _calendar_periods_out(periods: object) -> list[QuoteSchoolCalendarPeriod]:
+    if not isinstance(periods, list):
+        return []
+    out: list[QuoteSchoolCalendarPeriod] = []
+    for item in periods:
+        if not isinstance(item, dict):
+            continue
+        start = _parse_iso_date(str(item.get("start_date") or ""))
+        end = _parse_iso_date(str(item.get("end_date") or ""))
+        if start is None or end is None or end < start:
+            continue
+        label_raw = str(item.get("label") or "").strip()
+        out.append(
+            QuoteSchoolCalendarPeriod(
+                start_date=start,
+                end_date=end,
+                label=label_raw[:120] if label_raw else None,
+            )
+        )
+    return out
+
+
+def _calendar_dates_out(raw: object) -> list[date]:
+    if not isinstance(raw, list):
+        return []
+    out: set[date] = set()
+    for entry in raw:
+        parsed = _parse_iso_date(str(entry or ""))
+        if parsed is not None:
+            out.add(parsed)
+    return sorted(out)
+
+
+def _expand_vacation_periods(periods: list[QuoteSchoolCalendarPeriod]) -> list[date]:
+    out: set[date] = set()
+    for period in periods:
+        current = period.start_date
+        while current <= period.end_date:
+            out.add(current)
+            current += timedelta(days=1)
+    return sorted(out)
+
+
+def _load_quote_school_calendars(db: Session) -> list[dict[str, object]]:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == QUOTE_SCHOOL_CALENDARS_SETTING_KEY))
+    if setting is None:
+        return []
+    try:
+        parsed = json.loads(setting.value or "[]")
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def _save_quote_school_calendars(db: Session, items: list[dict[str, object]]) -> None:
+    now = _utcnow()
+    serialized = json.dumps(items, ensure_ascii=False)
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == QUOTE_SCHOOL_CALENDARS_SETTING_KEY).with_for_update())
+    if setting is None:
+        setting = AppSetting(key=QUOTE_SCHOOL_CALENDARS_SETTING_KEY, value=serialized, updated_at=now)
+    else:
+        setting.value = serialized
+        setting.updated_at = now
+    db.add(setting)
+
+
+def _calendar_out(row: dict[str, object]) -> QuoteSchoolCalendarOut:
+    return QuoteSchoolCalendarOut(
+        id=UUID(str(row.get("id"))),
+        name=str(row.get("name") or "").strip() or "Calendrier",
+        school_year_label=str(row.get("school_year_label") or "").strip() or "N/A",
+        location_id=UUID(str(row.get("location_id"))),
+        vacation_periods=_calendar_periods_out(row.get("vacation_periods")),
+        holiday_dates=_calendar_dates_out(row.get("holiday_dates")),
+        closure_dates=_calendar_dates_out(row.get("closure_dates")),
+        is_active=bool(row.get("is_active", True)),
+        created_at=_parse_iso_datetime(str(row.get("created_at") or _utcnow().isoformat())),
+        updated_at=_parse_iso_datetime(str(row.get("updated_at") or _utcnow().isoformat())),
+    )
+
+
+def _calendar_record_from_payload(
+    payload: QuoteSchoolCalendarUpsertRequest,
+    *,
+    row_id: UUID,
+    created_at: datetime | None,
+) -> dict[str, object]:
+    now = _utcnow()
+    return {
+        "id": str(row_id),
+        "name": payload.name.strip(),
+        "school_year_label": payload.school_year_label.strip(),
+        "location_id": str(payload.location_id),
+        "vacation_periods": [
+            {
+                "start_date": period.start_date.isoformat(),
+                "end_date": period.end_date.isoformat(),
+                "label": period.label or None,
+            }
+            for period in payload.vacation_periods
+            if period.end_date >= period.start_date
+        ],
+        "holiday_dates": sorted({item.isoformat() for item in payload.holiday_dates}),
+        "closure_dates": sorted({item.isoformat() for item in payload.closure_dates}),
+        "is_active": bool(payload.is_active),
+        "created_at": (created_at or now).isoformat(),
+        "updated_at": now.isoformat(),
+    }
 
 
 def _time_from_hhmm(value: str, *, field: str) -> time:
@@ -3649,6 +3804,131 @@ def delete_solfege_level_rule(
     db.commit()
 
 
+@router.get("/quote-school-calendars", response_model=list[QuoteSchoolCalendarOut])
+def list_quote_school_calendars(
+    active_only: bool = Query(default=False),
+    location_id: UUID | None = None,
+    school_year_label: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[QuoteSchoolCalendarOut]:
+    rows = _load_quote_school_calendars(db)
+    out: list[QuoteSchoolCalendarOut] = []
+    normalized_year = (school_year_label or "").strip().lower()
+    for raw in rows:
+        try:
+            item = _calendar_out(raw)
+        except Exception:
+            continue
+        if active_only and not item.is_active:
+            continue
+        if location_id is not None and item.location_id != location_id:
+            continue
+        if normalized_year and item.school_year_label.strip().lower() != normalized_year:
+            continue
+        out.append(item)
+    out.sort(key=lambda item: item.updated_at, reverse=True)
+    return out
+
+
+@router.post("/quote-school-calendars", response_model=QuoteSchoolCalendarOut, status_code=status.HTTP_201_CREATED)
+def create_quote_school_calendar(
+    payload: QuoteSchoolCalendarUpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteSchoolCalendarOut:
+    location_exists = db.scalar(select(Location.id).where(Location.id == payload.location_id))
+    if location_exists is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Location not found")
+    for period in payload.vacation_periods:
+        if period.end_date < period.start_date:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Vacation period end date must be after start date")
+    rows = _load_quote_school_calendars(db)
+    record = _calendar_record_from_payload(payload, row_id=uuid4(), created_at=None)
+    rows.append(record)
+    _save_quote_school_calendars(db, rows)
+    db.commit()
+    return _calendar_out(record)
+
+
+@router.patch("/quote-school-calendars/{calendar_id}", response_model=QuoteSchoolCalendarOut)
+def update_quote_school_calendar(
+    calendar_id: UUID,
+    payload: QuoteSchoolCalendarUpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteSchoolCalendarOut:
+    location_exists = db.scalar(select(Location.id).where(Location.id == payload.location_id))
+    if location_exists is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Location not found")
+    for period in payload.vacation_periods:
+        if period.end_date < period.start_date:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Vacation period end date must be after start date")
+    rows = _load_quote_school_calendars(db)
+    updated: dict[str, object] | None = None
+    for index, raw in enumerate(rows):
+        if str(raw.get("id") or "") != str(calendar_id):
+            continue
+        created_at = _parse_iso_datetime(str(raw.get("created_at") or _utcnow().isoformat()))
+        record = _calendar_record_from_payload(payload, row_id=calendar_id, created_at=created_at)
+        rows[index] = record
+        updated = record
+        break
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
+    _save_quote_school_calendars(db, rows)
+    db.commit()
+    return _calendar_out(updated)
+
+
+@router.delete("/quote-school-calendars/{calendar_id}", status_code=status.HTTP_200_OK)
+def delete_quote_school_calendar(
+    calendar_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> None:
+    rows = _load_quote_school_calendars(db)
+    filtered = [raw for raw in rows if str(raw.get("id") or "") != str(calendar_id)]
+    if len(filtered) == len(rows):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Calendar not found")
+    _save_quote_school_calendars(db, filtered)
+    db.commit()
+
+
+@router.get("/quote-school-calendars/active/by-location/{location_id}", response_model=QuoteSchoolCalendarResolveOut)
+def resolve_quote_school_calendar_for_location(
+    location_id: UUID,
+    school_year_label: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteSchoolCalendarResolveOut:
+    rows = _load_quote_school_calendars(db)
+    normalized_year = (school_year_label or "").strip().lower()
+    selected: QuoteSchoolCalendarOut | None = None
+    for raw in rows:
+        try:
+            item = _calendar_out(raw)
+        except Exception:
+            continue
+        if not item.is_active:
+            continue
+        if item.location_id != location_id:
+            continue
+        if normalized_year and item.school_year_label.strip().lower() != normalized_year:
+            continue
+        if selected is None or item.updated_at > selected.updated_at:
+            selected = item
+    if selected is None:
+        return QuoteSchoolCalendarResolveOut(calendar=None, holiday_dates=[], closure_dates=[])
+    vacation_days = _expand_vacation_periods(selected.vacation_periods)
+    merged_closure_days = sorted({*selected.closure_dates, *vacation_days})
+    return QuoteSchoolCalendarResolveOut(
+        calendar=selected,
+        holiday_dates=selected.holiday_dates,
+        closure_dates=merged_closure_days,
+    )
+
+
 @router.get("/payment-plans", response_model=list[PaymentPlanOut])
 def list_payment_plans(
     active_only: bool = Query(default=False),
@@ -3669,8 +3949,11 @@ def create_payment_plan(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> PaymentPlanOut:
     now = _utcnow()
+    requested_code = (payload.code or "").strip()
+    base_code = requested_code or _payment_plan_code_from_name(payload.name)
+    generated_code = _next_available_payment_plan_code(db, base_code=base_code)
     row = PaymentPlan(
-        code=payload.code.strip(),
+        code=generated_code,
         name=payload.name.strip(),
         payment_method=payload.payment_method.strip(),
         schedule_type=payload.schedule_type.strip(),
@@ -3699,7 +3982,9 @@ def update_payment_plan(
     row = db.scalar(select(PaymentPlan).where(PaymentPlan.id == plan_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment plan not found")
-    row.code = payload.code.strip()
+    requested_code = (payload.code or "").strip()
+    base_code = requested_code or _payment_plan_code_from_name(payload.name)
+    row.code = _next_available_payment_plan_code(db, base_code=base_code, exclude_id=row.id)
     row.name = payload.name.strip()
     row.payment_method = payload.payment_method.strip()
     row.schedule_type = payload.schedule_type.strip()

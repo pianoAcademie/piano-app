@@ -193,6 +193,81 @@ function getCalendarSessions(snapshot: Record<string, unknown>): Array<Record<st
   return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
 }
 
+const MONTH_LABELS_FR = [
+  "Janvier",
+  "Fevrier",
+  "Mars",
+  "Avril",
+  "Mai",
+  "Juin",
+  "Juillet",
+  "Aout",
+  "Septembre",
+  "Octobre",
+  "Novembre",
+  "Decembre",
+];
+
+type PlanningSummaryBlock = {
+  key: string;
+  title: string;
+  count: number;
+  semester1: Array<{ monthLabel: string; days: string }>;
+  semester2: Array<{ monthLabel: string; days: string }>;
+};
+
+function planningVisualSummary(sessions: Array<Record<string, unknown>>): PlanningSummaryBlock[] {
+  const grouped = new Map<string, Map<number, number[]>>();
+  for (const session of sessions) {
+    const dateRaw = String(session.date ?? "").trim();
+    const parsed = dateRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!parsed) {
+      continue;
+    }
+    const month = Number.parseInt(parsed[2], 10);
+    const day = Number.parseInt(parsed[3], 10);
+    if (!Number.isFinite(month) || !Number.isFinite(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+      continue;
+    }
+    const activityLabel = String(session.activity_label ?? "").trim() || "Activite";
+    const locationLabel = String(session.location_label ?? "").trim();
+    const title = locationLabel ? `${activityLabel} · ${locationLabel}` : activityLabel;
+    const key = title;
+    if (!grouped.has(key)) {
+      grouped.set(key, new Map<number, number[]>());
+    }
+    const monthMap = grouped.get(key)!;
+    if (!monthMap.has(month)) {
+      monthMap.set(month, []);
+    }
+    monthMap.get(month)!.push(day);
+  }
+
+  const toEntries = (monthMap: Map<number, number[]>, semester: 1 | 2): Array<{ monthLabel: string; days: string }> => {
+    const months = Array.from(monthMap.keys()).sort((a, b) => a - b);
+    return months
+      .filter((month) => (semester === 1 ? month >= 9 || month <= 1 : month >= 2 && month <= 8))
+      .map((month) => {
+        const days = Array.from(new Set(monthMap.get(month) || [])).sort((a, b) => a - b);
+        return {
+          monthLabel: MONTH_LABELS_FR[month - 1] || String(month),
+          days: days.join(", "),
+        };
+      });
+  };
+
+  return Array.from(grouped.entries()).map(([key, monthMap]) => {
+    const count = Array.from(monthMap.values()).reduce((sum, days) => sum + days.length, 0);
+    return {
+      key,
+      title: key,
+      count,
+      semester1: toEntries(monthMap, 1),
+      semester2: toEntries(monthMap, 2),
+    };
+  });
+}
+
 function safeBackPath(raw: string): string {
   const value = raw.trim();
   if (value.startsWith("/admin/quotes")) {
@@ -380,8 +455,19 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteCgvVersionId = readStringMeta(detail.quote.meta || {}, "cgv_version_id") || readStringMeta(detail.quote.cgv_snapshot || {}, "id");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
+  const planningSummary = planningVisualSummary(calendarSessions);
   const selectedSolfegeSlot = getSelectedSolfegeSlot(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
   const proposedSolfegeSlots = getProposedSolfegeSlots(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
+  const activitySolfegeRows = Array.isArray((detail.quote.meta || {}).activity_solfege)
+    ? ((detail.quote.meta || {}).activity_solfege as Array<Record<string, unknown>>)
+    : [];
+  const masterclassRowsMeta = Array.isArray((detail.quote.meta || {}).masterclass_blocks)
+    ? ((detail.quote.meta || {}).masterclass_blocks as Array<Record<string, unknown>>)
+    : [];
+  const masterclassRowsSnapshot = Array.isArray((detail.quote.calendar_snapshot || {}).masterclass_blocks)
+    ? ((detail.quote.calendar_snapshot || {}).masterclass_blocks as Array<Record<string, unknown>>)
+    : [];
+  const masterclassRows = masterclassRowsMeta.length > 0 ? masterclassRowsMeta : masterclassRowsSnapshot;
   const languageQuoteTemplates = quoteTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
   const selectedTemplate = quoteTemplates.find((row) => row.id === quoteTemplateId);
   const templateOptions = (() => {
@@ -615,13 +701,82 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       </section>
 
       <section className="card">
+        <h3>Solfege et masterclass par activite</h3>
+        <div className="list top-gap-sm">
+          {activitySolfegeRows.length === 0 ? (
+            <p className="muted">Aucune activite avec solfege configuree.</p>
+          ) : (
+            activitySolfegeRows.map((row, index) => (
+              <article key={`activity-solfege-${index}`} className="item">
+                <div className="row spread wrap gap-sm">
+                  <strong>{String(row.activity_label || activityById.get(String(row.activity_id || "")) || "Activite")}</strong>
+                  <span className="badge">Niveau {String(row.level || "-")}</span>
+                </div>
+                <p className="muted">
+                  Demarrage: {String(row.start_date || "-")}
+                  {" · "}
+                  Creneau: {String(readObject(row.slot)?.label || "-")}
+                </p>
+              </article>
+            ))
+          )}
+          {masterclassRows.length === 0 ? (
+            <p className="muted">Aucune masterclass configuree.</p>
+          ) : (
+            masterclassRows.map((row, index) => (
+              <article key={`masterclass-${index}`} className="item">
+                <div className="row spread wrap gap-sm">
+                  <strong>{String(row.activity_label || activityById.get(String(row.activity_id || "")) || "Masterclass samedi")}</strong>
+                  <span className="badge">Masterclass</span>
+                </div>
+                <p className="muted">
+                  Session: {String(row.session || "-")}
+                  {" · "}
+                  Local: {String(row.location_label || locationById.get(String(row.location_id || "")) || "-")}
+                </p>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="card">
         <h3>Calendrier previsionnel</h3>
         <p className="muted">{calendarSessions.length} seances calculees.</p>
+        {planningSummary.length > 0 ? (
+          <div className="list top-gap-sm">
+            {planningSummary.map((block) => (
+              <article key={block.key} className="item">
+                <div className="row spread wrap gap-sm">
+                  <strong>{block.title}</strong>
+                  <span className="badge">{block.count} cours</span>
+                </div>
+                <div className="grid cols-2 top-gap-sm">
+                  <div>
+                    <p><strong>1er semestre</strong></p>
+                    {block.semester1.length === 0 ? <p className="muted">Aucune seance</p> : null}
+                    {block.semester1.map((item) => (
+                      <p key={`${block.key}-s1-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
+                    ))}
+                  </div>
+                  <div>
+                    <p><strong>2e semestre</strong></p>
+                    {block.semester2.length === 0 ? <p className="muted">Aucune seance</p> : null}
+                    {block.semester2.map((item) => (
+                      <p key={`${block.key}-s2-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
+                    ))}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
         <div className="top-gap-sm">
           <QuotePlanningEditor
             quoteId={detail.quote.id}
             returnTo={selfPath}
             editable={detail.quote.status === "created"}
+            schoolYearLabel={detail.quote.school_year_label}
             activities={activities.map((row) => ({
               id: row.id,
               name: row.name,
@@ -647,6 +802,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   {String(block.start_date ?? "-")} → {String(block.end_date ?? "-")}
                   {" · "}
                   {String(block.location_label ?? locationById.get(String(block.location_id ?? "")) ?? "Lieu non defini")}
+                  {" · "}
+                  Calendrier: {String(block.calendar_name ?? "Par defaut")}
                 </small>
               </article>
             ))}

@@ -8774,6 +8774,24 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   if (planningBlocks === null) {
     redirect(appendQueryMessage(returnTo, "error", "Planning devis invalide"));
   }
+  const firstActivitySolfege = planningBlocks.find((block) => block.solfege_enabled && block.solfege_level);
+  const fallbackSolfegeSlot = firstActivitySolfege?.solfege_slot
+    ? parseSolfegeSlotJson(JSON.stringify(firstActivitySolfege.solfege_slot))
+    : null;
+  if (fallbackSolfegeSlot === undefined) {
+    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege activite invalide"));
+  }
+  const resolvedEstimatedSolfegeLevel = estimatedSolfegeLevel || firstActivitySolfege?.solfege_level || null;
+  const resolvedSolfegeSlot = parsedSolfegeSlot || fallbackSolfegeSlot || null;
+  const masterclassBlocks = planningBlocks
+    .filter((block) => block.masterclass_enabled)
+    .map((block) => ({
+      activity_id: block.activity_id,
+      activity_label: block.activity_label,
+      session: block.masterclass_session || null,
+      location_id: block.masterclass_location_id || null,
+      location_label: block.masterclass_location_label || null,
+    }));
   const calendarActivityId = parseUuid(String(formData.get("calendar_activity_id") ?? ""));
   const startDate = parseDateOnly(String(formData.get("calendar_start_date") ?? ""));
   const endDate = parseDateOnly(String(formData.get("calendar_end_date") ?? ""));
@@ -8806,7 +8824,12 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
 
   let calendarSnapshot: Record<string, unknown> = {};
   if (planningBlocks.length > 0) {
-    calendarSnapshot = await buildCalendarSnapshotFromBlocks({ blocks: planningBlocks, token, returnTo });
+    calendarSnapshot = await buildCalendarSnapshotFromBlocks({
+      blocks: planningBlocks,
+      token,
+      returnTo,
+      schoolYearLabel,
+    });
   } else if (startDate && endDate && startTime && endTime && weekdays.length > 0) {
     const preview = await backendRequest<Record<string, unknown>>(
       "/api/v1/quotes/calendar/preview",
@@ -8828,13 +8851,19 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
       calendarSnapshot = preview.data;
     }
   }
-  if (estimatedSolfegeLevel && parsedSolfegeSlot) {
+  if (resolvedEstimatedSolfegeLevel && resolvedSolfegeSlot) {
     calendarSnapshot = {
       ...(calendarSnapshot || {}),
       solfege: {
-        estimated_level: estimatedSolfegeLevel,
-        selected_slot: parsedSolfegeSlot,
+        estimated_level: resolvedEstimatedSolfegeLevel,
+        selected_slot: resolvedSolfegeSlot,
       },
+    };
+  }
+  if (masterclassBlocks.length > 0) {
+    calendarSnapshot = {
+      ...(calendarSnapshot || {}),
+      masterclass_blocks: masterclassBlocks,
     };
   }
 
@@ -8855,10 +8884,22 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     vat_rate: tvaRate,
     meta: {
       ...(tvaRate ? { tva_rate: tvaRate } : {}),
-      ...(parsedSolfegeSlot ? { selected_solfege_slot: parsedSolfegeSlot } : {}),
+      ...(resolvedSolfegeSlot ? { selected_solfege_slot: resolvedSolfegeSlot } : {}),
+      ...(firstActivitySolfege ? {
+        activity_solfege: planningBlocks
+          .filter((block) => block.solfege_enabled)
+          .map((block) => ({
+            activity_id: block.activity_id,
+            activity_label: block.activity_label,
+            level: block.solfege_level || null,
+            start_date: block.solfege_start_date || null,
+            slot: block.solfege_slot || null,
+          })),
+      } : {}),
+      ...(masterclassBlocks.length > 0 ? { masterclass_blocks: masterclassBlocks } : {}),
     },
     expiry_days: expiryDays,
-    estimated_solfege_level: estimatedSolfegeLevel,
+    estimated_solfege_level: resolvedEstimatedSolfegeLevel,
     calendar_snapshot: calendarSnapshot,
     lines: lines.map((line) => ({
       line_category: line.line_category,
@@ -9139,6 +9180,14 @@ type QuotePlanningBlockInput = {
   start_time: string;
   end_time: string;
   modality: string | null;
+  solfege_enabled?: boolean;
+  solfege_level?: string | null;
+  solfege_start_date?: string | null;
+  solfege_slot?: Record<string, unknown> | null;
+  masterclass_enabled?: boolean;
+  masterclass_session?: string | null;
+  masterclass_location_id?: string | null;
+  masterclass_location_label?: string | null;
 };
 
 type QuoteSolfegeSlotInput = {
@@ -9180,6 +9229,15 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const locationIdRaw = String(item.location_id ?? "").trim();
       const locationLabel = String(item.location_label ?? "").trim();
       const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
+      const solfegeEnabled = Boolean(item.solfege_enabled);
+      const solfegeLevel = String(item.solfege_level ?? "").trim();
+      const solfegeStartDate = String(item.solfege_start_date ?? "").trim();
+      const solfegeSlotRaw = item.solfege_slot;
+      const solfegeSlot = solfegeSlotRaw && typeof solfegeSlotRaw === "object" ? (solfegeSlotRaw as Record<string, unknown>) : null;
+      const masterclassEnabled = Boolean(item.masterclass_enabled);
+      const masterclassSession = String(item.masterclass_session ?? "").trim();
+      const masterclassLocationId = parseUuid(String(item.masterclass_location_id ?? "").trim());
+      const masterclassLocationLabel = String(item.masterclass_location_label ?? "").trim();
       if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
         return null;
       }
@@ -9202,6 +9260,14 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         start_time: startTime,
         end_time: endTime,
         modality: modalityRaw === "ONLINE" || modalityRaw === "ONSITE" ? modalityRaw : null,
+        solfege_enabled: solfegeEnabled,
+        solfege_level: solfegeEnabled && solfegeLevel ? solfegeLevel : null,
+        solfege_start_date: solfegeEnabled && /^\d{4}-\d{2}-\d{2}$/.test(solfegeStartDate) ? solfegeStartDate : null,
+        solfege_slot: solfegeEnabled ? solfegeSlot : null,
+        masterclass_enabled: masterclassEnabled,
+        masterclass_session: masterclassEnabled && masterclassSession ? masterclassSession : null,
+        masterclass_location_id: masterclassEnabled ? masterclassLocationId : null,
+        masterclass_location_label: masterclassEnabled ? (masterclassLocationLabel || null) : null,
       });
     }
     return out;
@@ -9254,13 +9320,62 @@ async function buildCalendarSnapshotFromBlocks({
   blocks,
   token,
   returnTo,
+  schoolYearLabel,
 }: {
   blocks: QuotePlanningBlockInput[];
   token: string;
   returnTo: string;
+  schoolYearLabel: string | null;
 }): Promise<Record<string, unknown>> {
   const sessions: Array<Record<string, unknown>> = [];
-  for (const block of blocks) {
+  const calendarByLocation = new Map<string, {
+    calendar: Record<string, unknown> | null;
+    holiday_dates: string[];
+    closure_dates: string[];
+  }>();
+
+  async function resolveLocationCalendar(locationId: string | null): Promise<{
+    calendar: Record<string, unknown> | null;
+    holiday_dates: string[];
+    closure_dates: string[];
+  }> {
+    if (!locationId) {
+      return { calendar: null, holiday_dates: [], closure_dates: [] };
+    }
+    const cached = calendarByLocation.get(locationId);
+    if (cached) {
+      return cached;
+    }
+    const query = schoolYearLabel ? `?school_year_label=${encodeURIComponent(schoolYearLabel)}` : "";
+    const result = await backendRequest<{
+      calendar: Record<string, unknown> | null;
+      holiday_dates: string[];
+      closure_dates: string[];
+    }>(
+      `/api/v1/quote-school-calendars/active/by-location/${encodeURIComponent(locationId)}${query}`,
+      {},
+      token,
+    );
+    if (!result.ok) {
+      redirect(appendQueryMessage(returnTo, "error", result.message));
+    }
+    const value = {
+      calendar: result.data.calendar || null,
+      holiday_dates: Array.isArray(result.data.holiday_dates) ? result.data.holiday_dates.map((item) => String(item)) : [],
+      closure_dates: Array.isArray(result.data.closure_dates) ? result.data.closure_dates.map((item) => String(item)) : [],
+    };
+    calendarByLocation.set(locationId, value);
+    return value;
+  }
+
+  const normalizedBlocks = blocks.map((block) => ({
+    ...block,
+    location_id: block.location_id || null,
+    location_label: block.location_label || null,
+  }));
+
+  for (const block of normalizedBlocks) {
+    const resolvedCalendar = await resolveLocationCalendar(block.location_id);
     const preview = await backendRequest<Record<string, unknown>>(
       "/api/v1/quotes/calendar/preview",
       {
@@ -9274,6 +9389,8 @@ async function buildCalendarSnapshotFromBlocks({
           activity_id: block.activity_id,
           location_id: block.location_id,
           modality: block.modality,
+          holiday_dates: resolvedCalendar.holiday_dates,
+          closure_dates: resolvedCalendar.closure_dates,
         }),
       },
       token,
@@ -9289,8 +9406,17 @@ async function buildCalendarSnapshotFromBlocks({
         location_label: block.location_label,
         weekday: block.weekday,
         weekday_label: block.weekday_label,
+        calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
+        calendar_name: String(resolvedCalendar.calendar?.name ?? ""),
       });
     }
+    Object.assign(block, {
+      calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
+      calendar_name: String(resolvedCalendar.calendar?.name ?? ""),
+      calendar_school_year: String(resolvedCalendar.calendar?.school_year_label ?? ""),
+      holiday_dates: resolvedCalendar.holiday_dates,
+      closure_dates: resolvedCalendar.closure_dates,
+    });
   }
 
   sessions.sort((a, b) => {
@@ -9306,9 +9432,10 @@ async function buildCalendarSnapshotFromBlocks({
   });
 
   return {
-    blocks,
+    blocks: normalizedBlocks,
     sessions,
     sessions_count: sessions.length,
+    school_year_label: schoolYearLabel,
     generated_at: new Date().toISOString(),
   };
 }
@@ -9330,7 +9457,8 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
   if (blocks === null) {
     redirect(appendQueryMessage(returnTo, "error", "Planning invalide"));
   }
-  const snapshot = await buildCalendarSnapshotFromBlocks({ blocks, token, returnTo });
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
+  const snapshot = await buildCalendarSnapshotFromBlocks({ blocks, token, returnTo, schoolYearLabel });
 
   const result = await backendRequest<{ quote: { id: string } }>(
     `/api/v1/quotes/${encodeURIComponent(quoteId)}`,
@@ -9693,6 +9821,175 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   }
 }
 
+function normalizePaymentPlanScheduleType(raw: string): "single" | "split_2" | "split_3" | "split_4" | "monthly" | null {
+  const value = raw.trim().toLowerCase();
+  if (value === "single" || value === "split_2" || value === "split_3" || value === "split_4" || value === "monthly") {
+    return value;
+  }
+  return null;
+}
+
+function defaultInstallmentsForScheduleType(scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly"): number {
+  if (scheduleType === "split_2") return 2;
+  if (scheduleType === "split_3") return 3;
+  if (scheduleType === "split_4") return 4;
+  if (scheduleType === "monthly") return 10;
+  return 1;
+}
+
+function normalizePaymentPlanPresetLabel(raw: string): string {
+  const value = raw.trim();
+  if (!value) {
+    return "";
+  }
+  const allowed = new Set([
+    "Carte bancaire",
+    "Carte bancaire mensuelle",
+    "Cheque en 1 fois",
+    "Cheque en 2 fois",
+    "Cheque en 4 fois",
+    "Virement bancaire",
+    "Especes",
+    "4 fois avec frais",
+  ]);
+  if (allowed.has(value)) {
+    return value;
+  }
+  return "";
+}
+
+function paymentPlanCodeFromName(name: string): string {
+  const normalized = name
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return (normalized || "PAYMENT_PLAN").slice(0, 60);
+}
+
+function buildPaymentPlanRules(
+  scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly",
+  feePercent: number | null,
+): Record<string, unknown> {
+  const installments = defaultInstallmentsForScheduleType(scheduleType);
+  return {
+    installment_count: installments,
+    cadence:
+      scheduleType === "monthly"
+        ? "monthly"
+        : scheduleType === "single"
+          ? "single"
+          : "manual_split",
+    has_fees: feePercent !== null && feePercent > 0,
+    fee_percent: feePercent !== null && feePercent > 0 ? Number(feePercent.toFixed(2)) : 0,
+  };
+}
+
+function addMinutesToTimeLabel(start: string, durationMinutes: number): string | null {
+  const match = start.trim().match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  const totalMinutes = (hours * 60 + minutes + Math.max(0, durationMinutes)) % (24 * 60);
+  const outHours = Math.floor(totalMinutes / 60).toString().padStart(2, "0");
+  const outMinutes = (totalMinutes % 60).toString().padStart(2, "0");
+  return `${outHours}:${outMinutes}`;
+}
+
+function parseStructuredSolfegeSlots(
+  formData: FormData,
+  durationMinutes: number,
+): Array<{ weekday: number; start_time: string; end_time: string }> | null {
+  const weekdays = formData.getAll("slot_weekday").map((entry) => String(entry).trim());
+  const starts = formData.getAll("slot_start_time").map((entry) => String(entry).trim());
+  const out: Array<{ weekday: number; start_time: string; end_time: string }> = [];
+  const rows = Math.max(weekdays.length, starts.length);
+  for (let index = 0; index < rows; index += 1) {
+    const weekdayRaw = weekdays[index] ?? "";
+    const startRaw = starts[index] ?? "";
+    if (!weekdayRaw && !startRaw) {
+      continue;
+    }
+    const parsedWeekdays = parseWeekdayValues([weekdayRaw]);
+    if (!parsedWeekdays || parsedWeekdays.length !== 1) {
+      return null;
+    }
+    const start = startRaw.match(/^([01]\d|2[0-3]):([0-5]\d)$/) ? startRaw : "";
+    if (!start) {
+      return null;
+    }
+    const end = addMinutesToTimeLabel(start, durationMinutes);
+    if (!end) {
+      return null;
+    }
+    out.push({
+      weekday: parsedWeekdays[0],
+      start_time: start,
+      end_time: end,
+    });
+  }
+  return out;
+}
+
+type QuoteCalendarPeriodPayload = {
+  start_date: string;
+  end_date: string;
+  label: string | null;
+};
+
+function parseCalendarDateList(values: FormDataEntryValue[]): string[] | null {
+  const out = new Set<string>();
+  for (const value of values) {
+    const raw = String(value).trim();
+    if (!raw) {
+      continue;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return null;
+    }
+    out.add(raw);
+  }
+  return Array.from(out).sort();
+}
+
+function parseCalendarVacationPeriods(formData: FormData): QuoteCalendarPeriodPayload[] | null {
+  const starts = formData.getAll("vacation_start").map((entry) => String(entry).trim());
+  const ends = formData.getAll("vacation_end").map((entry) => String(entry).trim());
+  const labels = formData.getAll("vacation_label").map((entry) => String(entry).trim());
+  const size = Math.max(starts.length, ends.length, labels.length);
+  const out: QuoteCalendarPeriodPayload[] = [];
+  for (let index = 0; index < size; index += 1) {
+    const start = starts[index] ?? "";
+    const end = ends[index] ?? "";
+    const label = labels[index] ?? "";
+    if (!start && !end && !label) {
+      continue;
+    }
+    if (!start || !end) {
+      return null;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      return null;
+    }
+    if (end < start) {
+      return null;
+    }
+    out.push({
+      start_date: start,
+      end_date: end,
+      label: label || null,
+    });
+  }
+  return out;
+}
+
 export async function createAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -9932,15 +10229,23 @@ export async function createAdminPaymentPlanConfigAction(formData: FormData): Pr
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=payment_plans"));
-  const code = String(formData.get("code") ?? "").trim();
-  const name = String(formData.get("name") ?? "").trim();
-  const paymentMethod = String(formData.get("payment_method") ?? "").trim();
-  const scheduleType = String(formData.get("schedule_type") ?? "").trim();
-  const scheduleRules = parseJsonObject(String(formData.get("schedule_rules_json") ?? ""));
+  const presetLabel = normalizePaymentPlanPresetLabel(String(formData.get("plan_label_preset") ?? ""));
+  const customLabel = String(formData.get("name_custom") ?? "").trim();
+  const name = customLabel || presetLabel;
+  const paymentMethod = String(formData.get("payment_method") ?? "").trim().toUpperCase();
+  const scheduleType = normalizePaymentPlanScheduleType(String(formData.get("schedule_type") ?? ""));
+  const feePercentRaw = String(formData.get("fee_percent") ?? "").trim().replace(",", ".");
+  const feePercent = feePercentRaw ? Number(feePercentRaw) : null;
+  const normalizedFeePercent = Number.isFinite(feePercent ?? NaN) ? Number(feePercent) : null;
   const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const code = paymentPlanCodeFromName(name);
+  const scheduleRules = scheduleType ? buildPaymentPlanRules(scheduleType, normalizedFeePercent) : null;
 
-  if (!code || !name || !paymentMethod || !scheduleType || scheduleRules === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide (verifier le JSON)"));
+  if (!name || !paymentMethod || !scheduleType || scheduleRules === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide"));
+  }
+  if (feePercentRaw && (normalizedFeePercent === null || normalizedFeePercent < 0 || normalizedFeePercent > 100)) {
+    redirect(appendQueryMessage(returnTo, "error", "Frais invalides"));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -9976,15 +10281,24 @@ export async function updateAdminPaymentPlanConfigAction(formData: FormData): Pr
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=payment_plans"));
   const planId = parseUuid(String(formData.get("plan_id") ?? ""));
-  const code = String(formData.get("code") ?? "").trim();
-  const name = String(formData.get("name") ?? "").trim();
-  const paymentMethod = String(formData.get("payment_method") ?? "").trim();
-  const scheduleType = String(formData.get("schedule_type") ?? "").trim();
-  const scheduleRules = parseJsonObject(String(formData.get("schedule_rules_json") ?? ""));
+  const presetLabel = normalizePaymentPlanPresetLabel(String(formData.get("plan_label_preset") ?? ""));
+  const customLabel = String(formData.get("name_custom") ?? "").trim();
+  const currentLabel = String(formData.get("name_current") ?? "").trim();
+  const name = customLabel || presetLabel || currentLabel;
+  const paymentMethod = String(formData.get("payment_method") ?? "").trim().toUpperCase();
+  const scheduleType = normalizePaymentPlanScheduleType(String(formData.get("schedule_type") ?? ""));
+  const feePercentRaw = String(formData.get("fee_percent") ?? "").trim().replace(",", ".");
+  const feePercent = feePercentRaw ? Number(feePercentRaw) : null;
+  const normalizedFeePercent = Number.isFinite(feePercent ?? NaN) ? Number(feePercent) : null;
   const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const code = paymentPlanCodeFromName(name);
+  const scheduleRules = scheduleType ? buildPaymentPlanRules(scheduleType, normalizedFeePercent) : null;
 
-  if (!planId || !code || !name || !paymentMethod || !scheduleType || scheduleRules === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide (verifier le JSON)"));
+  if (!planId || !name || !paymentMethod || !scheduleType || scheduleRules === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide"));
+  }
+  if (feePercentRaw && (normalizedFeePercent === null || normalizedFeePercent < 0 || normalizedFeePercent > 100)) {
+    redirect(appendQueryMessage(returnTo, "error", "Frais invalides"));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -10149,18 +10463,29 @@ export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
   const modalityRaw = String(formData.get("modality") ?? "").trim().toUpperCase();
   const isActive = parseCheckboxFlag(formData, "is_active", true);
+  if (!levelCode || durationMinutes === null || durationMinutes < 10 || durationMinutes > 180) {
+    redirect(appendQueryMessage(returnTo, "error", "Niveau ou duree solfege invalide"));
+  }
+
+  const structuredSlots = parseStructuredSolfegeSlots(formData, durationMinutes);
+  if (structuredSlots === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Creneaux invalides (jour + heure de debut)"));
+  }
+
   const weekdayTokens = formData
     .getAll("allowed_weekday")
     .map((entry) => String(entry).trim())
     .filter((entry) => entry.length > 0);
-  const weekdays = weekdayTokens.length > 0
+  const fallbackWeekdays = weekdayTokens.length > 0
     ? parseWeekdayValues(weekdayTokens)
     : parseWeekdaysCsv(String(formData.get("allowed_weekdays_csv") ?? ""));
-  const timeSlots = parseTimeSlotsCsv(String(formData.get("allowed_time_slots_csv") ?? ""));
+  const fallbackSlots = parseTimeSlotsCsv(String(formData.get("allowed_time_slots_csv") ?? ""));
 
-  if (!levelCode || durationMinutes === null || durationMinutes < 10 || durationMinutes > 180) {
-    redirect(appendQueryMessage(returnTo, "error", "Niveau ou duree solfege invalide"));
-  }
+  const weekdays = structuredSlots.length > 0
+    ? Array.from(new Set(structuredSlots.map((slot) => slot.weekday))).sort((a, b) => a - b)
+    : fallbackWeekdays;
+  const timeSlots = structuredSlots.length > 0 ? structuredSlots : fallbackSlots;
+
   if (weekdays === null) {
     redirect(appendQueryMessage(returnTo, "error", "Jours autorises invalides"));
   }
@@ -10219,6 +10544,132 @@ export async function deleteAdminSolfegeLevelRuleConfigAction(formData: FormData
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
   redirect(appendQueryMessage(returnTo, "ok", "Regle solfege supprimee"));
+}
+
+export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=calendars"));
+  const name = String(formData.get("name") ?? "").trim();
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
+  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const vacationPeriods = parseCalendarVacationPeriods(formData);
+  const holidayDates = parseCalendarDateList(formData.getAll("holiday_date"));
+  const closureDates = parseCalendarDateList(formData.getAll("closure_date"));
+
+  if (!name || !schoolYearLabel || !locationId) {
+    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+  }
+  if (vacationPeriods === null || holidayDates === null || closureDates === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Dates calendrier invalides"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/quote-school-calendars",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        school_year_label: schoolYearLabel,
+        location_id: locationId,
+        vacation_periods: vacationPeriods,
+        holiday_dates: holidayDates,
+        closure_dates: closureDates,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Calendrier enregistre"));
+}
+
+export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=calendars"));
+  const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
+  const name = String(formData.get("name") ?? "").trim();
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
+  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const vacationPeriods = parseCalendarVacationPeriods(formData);
+  const holidayDates = parseCalendarDateList(formData.getAll("holiday_date"));
+  const closureDates = parseCalendarDateList(formData.getAll("closure_date"));
+
+  if (!calendarId || !name || !schoolYearLabel || !locationId) {
+    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+  }
+  if (vacationPeriods === null || holidayDates === null || closureDates === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Dates calendrier invalides"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        name,
+        school_year_label: schoolYearLabel,
+        location_id: locationId,
+        vacation_periods: vacationPeriods,
+        holiday_dates: holidayDates,
+        closure_dates: closureDates,
+        is_active: isActive,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Calendrier mis a jour"));
+}
+
+export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=calendars"));
+  const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
+  if (!calendarId) {
+    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(returnTo, "ok", "Calendrier supprime"));
 }
 
 export async function createAdminQuoteTemplateConfigAction(formData: FormData): Promise<void> {

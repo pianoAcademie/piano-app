@@ -399,6 +399,41 @@ class SolfegeLevelRuleUpsertRequest(BaseModel):
     is_active: bool = True
 
 
+class QuoteSchoolCalendarPeriod(BaseModel):
+    start_date: date
+    end_date: date
+    label: str | None = Field(default=None, max_length=120)
+
+
+class QuoteSchoolCalendarOut(BaseModel):
+    id: UUID
+    name: str
+    school_year_label: str
+    location_id: UUID
+    vacation_periods: list[QuoteSchoolCalendarPeriod] = Field(default_factory=list)
+    holiday_dates: list[date] = Field(default_factory=list)
+    closure_dates: list[date] = Field(default_factory=list)
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuoteSchoolCalendarUpsertRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    school_year_label: str = Field(min_length=1, max_length=40)
+    location_id: UUID
+    vacation_periods: list[QuoteSchoolCalendarPeriod] = Field(default_factory=list)
+    holiday_dates: list[date] = Field(default_factory=list)
+    closure_dates: list[date] = Field(default_factory=list)
+    is_active: bool = True
+
+
+class QuoteSchoolCalendarResolveOut(BaseModel):
+    calendar: QuoteSchoolCalendarOut | None = None
+    holiday_dates: list[date] = Field(default_factory=list)
+    closure_dates: list[date] = Field(default_factory=list)
+
+
 class PaymentPlanOut(BaseModel):
     id: UUID
     code: str
@@ -412,7 +447,7 @@ class PaymentPlanOut(BaseModel):
 
 
 class PaymentPlanUpsertRequest(BaseModel):
-    code: str = Field(min_length=1, max_length=60)
+    code: str | None = Field(default=None, min_length=1, max_length=60)
     name: str = Field(min_length=1, max_length=180)
     payment_method: str = Field(min_length=2, max_length=40)
     schedule_type: str = Field(min_length=2, max_length=40)
