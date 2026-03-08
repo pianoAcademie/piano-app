@@ -258,8 +258,8 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     },
     {
         "key": "products_table_html",
-        "label": "Tableau produits (HTML)",
-        "description": "Tableau HTML des produits du devis.",
+        "label": "Tableau materiel (HTML)",
+        "description": "Tableau HTML du materiel du devis.",
         "example": "<table>...</table>",
     },
     {
@@ -297,6 +297,30 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "label": "Tableau seances detaillees (HTML)",
         "description": "Tableau detaille de toutes les seances (date/heure/modalite).",
         "example": "<table>...</table>",
+    },
+    {
+        "key": "document_style_html",
+        "label": "Style documentaire (HTML)",
+        "description": "Feuille de style print-safe (tables lisibles, sauts de page, blocs).",
+        "example": "<style>...</style>",
+    },
+    {
+        "key": "brand_logo_html",
+        "label": "Logo Piano Academie (HTML)",
+        "description": "Bloc logo/wordmark a inserer sur la couverture ou dans les en-tetes.",
+        "example": "<div class='quote-brand-logo'>PIANO<br/>ACADEMIE</div>",
+    },
+    {
+        "key": "header_standard_html",
+        "label": "Entete standard (HTML)",
+        "description": "Entete avec logo et numero de devis, reutilisable en haut de page.",
+        "example": "<table class='quote-header'>...</table>",
+    },
+    {
+        "key": "cover_page_standard_html",
+        "label": "Couverture standard (HTML)",
+        "description": "Page de couverture precomposee avec logo et informations dossier.",
+        "example": "<section class='quote-cover'>...</section>",
     },
     {
         "key": "page_break_html",

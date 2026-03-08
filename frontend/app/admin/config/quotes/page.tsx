@@ -1118,7 +1118,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 bodyName="body_template"
                 defaultSubject="Votre devis {quote_number} Piano Academie"
                 defaultBody={
-                  "<h1>Devis {quote_number}</h1><p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p><p><strong>Annee scolaire:</strong> {school_year_label}</p>{prospect_identity_block_html}<h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Paiement</h2>{payment_method_block_html}{payment_schedule_table_html}{solfege_block_html}{masterclass_block_html}{pass_recup_block_html}<h2>Calendrier des cours</h2><p>{calendar_summary}</p>{calendar_activity_semesters_html}<p><strong>Total HT:</strong> {total_ht} {currency}</p><p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p><p><strong>Total TTC:</strong> {total_ttc} {currency}</p><p><strong>Expiration:</strong> {expires_at}</p>"
+                  "{document_style_html}{cover_page_standard_html}{header_standard_html}<h1>Devis {quote_number}</h1><div class='quote-block'>{prospect_identity_block_html}</div><h2>Activites</h2>{services_table_html}<h2>Materiel</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Paiement</h2>{payment_method_block_html}{payment_schedule_table_html}{solfege_block_html}{masterclass_block_html}{pass_recup_block_html}<h2>Calendrier des cours</h2><p>{calendar_summary}</p>{calendar_activity_semesters_html}<p><strong>Total HT:</strong> {total_ht} {currency}</p><p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p><p><strong>Total TTC:</strong> {total_ttc} {currency}</p><p><strong>Expiration:</strong> {expires_at}</p>{footer_standard_html}"
                 }
                 variables={templateVariables}
               />
@@ -1208,7 +1208,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                           defaultSubject={prefill?.subject || `Devis {quote_number}`}
                           defaultBody={
                             prefill?.body ||
-                            "<h1>Devis {quote_number}</h1><p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p>{prospect_identity_block_html}<h2>Activites</h2>{services_table_html}<h2>Produits</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Paiement</h2>{payment_method_block_html}{payment_schedule_table_html}<h2>Calendrier des cours</h2>{calendar_activity_semesters_html}<p>Total TTC: {total_ttc} {currency}</p>"
+                            "{document_style_html}{header_standard_html}<h1>Devis {quote_number}</h1><div class='quote-block'>{prospect_identity_block_html}</div><h2>Activites</h2>{services_table_html}<h2>Materiel</h2>{products_table_html}<h2>Kits</h2>{kits_table_html}<h2>Paiement</h2>{payment_method_block_html}{payment_schedule_table_html}<h2>Calendrier des cours</h2>{calendar_activity_semesters_html}<p>Total TTC: {total_ttc} {currency}</p>{footer_standard_html}"
                           }
                           variables={templateVariables}
                         />

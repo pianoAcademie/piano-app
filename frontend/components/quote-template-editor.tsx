@@ -67,6 +67,21 @@ export default function QuoteTemplateEditor({
         value: "{footer_standard_html}",
       },
       {
+        key: "document_style",
+        label: "Style documentaire",
+        value: "{document_style_html}",
+      },
+      {
+        key: "cover_page",
+        label: "Page de couverture standard",
+        value: "{cover_page_standard_html}",
+      },
+      {
+        key: "header_page",
+        label: "Entete standard",
+        value: "{header_standard_html}",
+      },
+      {
         key: "section",
         label: "Bloc section simple",
         value: "<h2>Titre section</h2><p>Contenu...</p>",
@@ -87,6 +102,11 @@ export default function QuoteTemplateEditor({
         value: "<h2>Activites</h2>{services_table_html}",
       },
       {
+        key: "block_material",
+        label: "Bloc materiel",
+        value: "<h2>Materiel</h2>{products_table_html}",
+      },
+      {
         key: "block_payment",
         label: "Bloc paiement",
         value:
@@ -102,6 +122,15 @@ export default function QuoteTemplateEditor({
           "<h2>Calendrier des cours</h2>"
           + "<p>{calendar_summary}</p>"
           + "{calendar_activity_semesters_html}",
+      },
+      {
+        key: "page_full",
+        label: "Page complete (entete + bloc + footer)",
+        value:
+          "{header_standard_html}"
+          + "<div class='quote-block'><h2>Titre page</h2><p>Contenu...</p></div>"
+          + "{footer_standard_html}"
+          + "{page_break_html}",
       },
       {
         key: "totals_table",
@@ -248,6 +277,9 @@ export default function QuoteTemplateEditor({
             HTML
           </button>
         </div>
+        <p className="muted top-gap-sm">
+          Pour une pagination PDF propre (couverture, entete, pied de page, sauts), utilisez les blocs predefinis, idealement en mode HTML.
+        </p>
         {editorMode === "wysiwyg" ? (
           <div className="quote-template-editor-shell top-gap-sm">
             <div className="quote-template-toolbar" aria-label="Outils de mise en forme">

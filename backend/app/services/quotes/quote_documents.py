@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.ops import AppSetting
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplateVersion, TermsTemplateVersion
 from app.models.user import User
 from app.services.teacher_invoice_documents import render_teacher_invoice_pdf_from_html
@@ -18,6 +19,7 @@ AUDIENCE_ADMIN_PREVIEW = "admin_preview"
 AUDIENCE_PUBLIC_PAGE = "public_page"
 AUDIENCE_CLIENT_PDF = "client_pdf"
 DEFAULT_AUDIENCE = AUDIENCE_CLIENT_PDF
+ACCOUNT_LOGO_SETTING_KEY = "config_account_logo_data_url"
 
 
 def _is_true(value: Any) -> bool:
@@ -68,6 +70,73 @@ def _datetime_label(value: datetime | None) -> str:
     if value is None:
         return "-"
     return value.astimezone(timezone.utc).strftime("%d/%m/%Y %H:%M")
+
+
+def _birth_date_label(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "-"
+    for date_format in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw, date_format).strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+    return raw
+
+
+def _document_style_html() -> str:
+    return (
+        "<style>"
+        "body{font-family:Arial,Helvetica,sans-serif;color:#1f1f1f;font-size:11px;line-height:1.4;}"
+        "h1,h2,h3{color:#111827;margin:0 0 8px 0;page-break-after:avoid;}"
+        "p{margin:0 0 8px 0;}"
+        ".quote-muted{color:#5b6470;}"
+        ".quote-page-break{page-break-before:always;}"
+        ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:avoid;}"
+        ".quote-header{width:100%;border-collapse:collapse;margin:0 0 10px 0;}"
+        ".quote-header td{vertical-align:top;}"
+        ".quote-brand-logo{display:inline-block;min-width:84px;padding:7px 9px;background:#111111;color:#d2b04c;font-size:10px;line-height:1.2;font-weight:700;letter-spacing:0.5px;text-align:center;}"
+        ".quote-brand-logo-img{display:inline-block;max-width:140px;max-height:70px;object-fit:contain;}"
+        ".quote-cover{text-align:center;min-height:220mm;padding-top:30mm;}"
+        ".quote-cover-title{font-size:28px;letter-spacing:0.3px;text-transform:uppercase;margin-bottom:6mm;}"
+        ".quote-cover-subtitle{font-size:14px;color:#4b5563;margin-bottom:9mm;}"
+        ".quote-cover-name{font-size:22px;margin-bottom:4mm;}"
+        ".quote-cover-meta{font-size:12px;color:#4b5563;line-height:1.6;}"
+        ".quote-table{width:100%;border-collapse:collapse;margin:6px 0 10px 0;font-size:11px;}"
+        ".quote-table thead{display:table-header-group;}"
+        ".quote-table tfoot{display:table-footer-group;}"
+        ".quote-table tr{page-break-inside:avoid;}"
+        ".quote-table th{background:#edf1f6;color:#111827;border:1px solid #c9d2dd;padding:6px 7px;text-align:left;font-weight:700;}"
+        ".quote-table td{border:1px solid #d8dee7;padding:6px 7px;vertical-align:top;color:#111827;}"
+        ".quote-footer{width:100%;border-collapse:collapse;margin-top:12px;padding-top:8px;border-top:1px solid #cdd4de;font-size:10px;color:#475467;}"
+        ".quote-footer td{vertical-align:top;}"
+        ".quote-terms-title{margin-top:0;}"
+        "</style>"
+    )
+
+
+def _account_logo_data_url(*, db: Session | None) -> str:
+    if db is None:
+        return ""
+    row = db.scalar(select(AppSetting).where(AppSetting.key == ACCOUNT_LOGO_SETTING_KEY))
+    if row is None:
+        return ""
+    value = str(row.value or "").strip()
+    if not value.lower().startswith("data:image/"):
+        return ""
+    return value
+
+
+def _brand_logo_html(*, db: Session | None) -> str:
+    logo_data_url = _account_logo_data_url(db=db)
+    if logo_data_url:
+        return (
+            "<img "
+            "class='quote-brand-logo-img' "
+            f"src='{escape(logo_data_url)}' "
+            "alt='Piano Academie'/>"
+        )
+    return "<div class='quote-brand-logo'>PIANO<br/>ACADEMIE</div>"
 
 
 MONTH_LABELS_FR = (
@@ -172,14 +241,29 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
 
 def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) -> str:
     if not rows:
-        return f"<p>{escape(empty_label)}</p>"
-    head = "".join(f"<th>{escape(cell)}</th>" for cell in headers)
+        return f"<p class='quote-muted'>{escape(empty_label)}</p>"
+    head = "".join(
+        "<th style='background:#edf1f6;color:#111827;border:1px solid #c9d2dd;padding:6px 7px;text-align:left;font-weight:700;'>"
+        f"{escape(cell)}"
+        "</th>"
+        for cell in headers
+    )
     body_rows = []
     for row in rows:
-        body_rows.append("<tr>" + "".join(f"<td>{escape(cell)}</td>" for cell in row) + "</tr>")
+        body_rows.append(
+            "<tr>"
+            + "".join(
+                "<td style='border:1px solid #d8dee7;padding:6px 7px;vertical-align:top;color:#111827;'>"
+                f"{escape(cell)}"
+                "</td>"
+                for cell in row
+            )
+            + "</tr>"
+        )
     body = "".join(body_rows)
     return (
-        "<table border='1' cellspacing='0' cellpadding='6' width='100%'>"
+        "<table class='quote-table' border='1' cellspacing='0' cellpadding='0' width='100%' "
+        "style='width:100%;border-collapse:collapse;margin:6px 0 10px 0;font-size:11px;'>"
         f"<thead><tr>{head}</tr></thead>"
         f"<tbody>{body}</tbody>"
         "</table>"
@@ -566,7 +650,7 @@ def _build_template_values(
         empty_label="Aucune activite.",
     )
     products_table_html = _table_html(
-        ["Produit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+        ["Materiel", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
             [
                 line.title or "-",
@@ -577,7 +661,7 @@ def _build_template_values(
             ]
             for line in products
         ],
-        empty_label="Aucun produit.",
+        empty_label="Aucun materiel.",
     )
     kits_table_html = _table_html(
         ["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
@@ -597,7 +681,7 @@ def _build_template_values(
         ["Categorie", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
             [
-                "Service" if (line.line_category or "").lower() == "service" else ("Kit" if line.kit_id else "Produit"),
+                "Service" if (line.line_category or "").lower() == "service" else ("Kit" if line.kit_id else "Materiel"),
                 line.title or "-",
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
@@ -704,17 +788,34 @@ def _build_template_values(
         if labels:
             masterclass_full = f"Masterclass du samedi souscrite - {'; '.join(labels)}"
 
+    def _identity_row(label: str, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized or normalized == "-":
+            return ""
+        return f"<p><strong>{escape(label)}:</strong> {escape(normalized)}</p>"
+
     adult_email_value = prospect_data.get("adult_email") or recipient_email
+    adult_phone_value = str(prospect_data.get("adult_phone") or client_data.get("client_phone") or "").strip()
+    adult_address_value = str(prospect_data.get("adult_address") or client_data.get("client_address") or "").strip()
     adult_identity_block_html = (
-        f"<p><strong>Adulte:</strong> {escape(prospect_data.get('adult_full_name') or recipient_name)}"
-        f"{f' · {escape(adult_email_value)}' if adult_email_value else ''}</p>"
-    )
+        _identity_row("Adulte", str(prospect_data.get("adult_full_name") or recipient_name))
+        + _identity_row("Email", str(adult_email_value or ""))
+        + _identity_row("Telephone", adult_phone_value)
+        + _identity_row("Adresse", adult_address_value)
+    ) or "<p><strong>Adulte:</strong> -</p>"
+
+    child_birth_date_value = _birth_date_label(str(prospect_data.get("child_birth_date") or ""))
     parent_email_value = prospect_data.get("parent_email") or recipient_email
+    parent_phone_value = str(prospect_data.get("parent_phone") or "").strip()
+    parent_address_value = str(prospect_data.get("parent_address") or "").strip()
     child_identity_block_html = (
-        f"<p><strong>Eleve:</strong> {escape(prospect_data.get('child_full_name') or '-')}</p>"
-        f"<p><strong>Parent referent:</strong> {escape(prospect_data.get('parent_full_name') or recipient_name)}"
-        f"{f' · {escape(parent_email_value)}' if parent_email_value else ''}</p>"
-    )
+        _identity_row("Eleve", str(prospect_data.get("child_full_name") or "-"))
+        + _identity_row("Date de naissance", child_birth_date_value)
+        + _identity_row("Parent referent", str(prospect_data.get("parent_full_name") or recipient_name))
+        + _identity_row("Email parent", str(parent_email_value or ""))
+        + _identity_row("Telephone parent", parent_phone_value)
+        + _identity_row("Adresse parent", parent_address_value)
+    ) or "<p><strong>Eleve:</strong> -</p>"
     prospect_identity_block_html = child_identity_block_html if display_flags["showChildBlock"] else adult_identity_block_html
     solfege_block_html = (
         f"<p>{escape(solfege_full)}</p>"
@@ -738,6 +839,30 @@ def _build_template_values(
             f"{payment_method_block_html}<p><strong>Consignes :</strong> {escape(payment_instruction)}</p>"
         )
 
+    brand_logo_html = _brand_logo_html(db=db)
+    header_standard_html = (
+        "<table class='quote-header' width='100%' cellspacing='0' cellpadding='0'>"
+        "<tr>"
+        f"<td>{brand_logo_html}</td>"
+        f"<td align='right' style='font-size:11px;color:#475467;'><strong>Devis {escape(quote.quote_number or '-')}</strong></td>"
+        "</tr>"
+        "</table>"
+    )
+    cover_page_standard_html = (
+        "<section class='quote-cover'>"
+        f"{brand_logo_html}"
+        "<h1 class='quote-cover-title'>Dossier d inscription</h1>"
+        f"<p class='quote-cover-subtitle'>Annee scolaire {escape(quote.school_year_label or '-')}</p>"
+        f"<p class='quote-cover-name'>{escape(prospect_data.get('child_full_name') or recipient_name)}</p>"
+        "<div class='quote-cover-meta'>"
+        f"<p>Type de prospect: {escape(str(prospect_data.get('prospect_type_label') or '-'))}</p>"
+        f"<p>Document genere le {escape(_datetime_label(_utcnow()))}</p>"
+        f"<p>Valable jusqu au {escape(_date_label(quote.expires_at))}</p>"
+        "</div>"
+        "</section>"
+        "<div class='quote-page-break'></div>"
+    )
+
     values: dict[str, str] = {
         "quote_number": quote.quote_number or "-",
         "recipient_name": recipient_name,
@@ -756,10 +881,13 @@ def _build_template_values(
         "payment_method_label": payment_method_label,
         "payment_instruction": payment_instruction,
         "payment_schedule_compact_notice": document_context["payment_schedule_compact_notice"] or "",
-        "page_break_html": "<div style='page-break-before:always;'></div>",
+        "document_style_html": _document_style_html(),
+        "brand_logo_html": brand_logo_html,
+        "header_standard_html": header_standard_html,
+        "cover_page_standard_html": cover_page_standard_html,
+        "page_break_html": "<div class='quote-page-break'></div>",
         "footer_standard_html": (
-            "<hr/>"
-            "<table width='100%' cellspacing='0' cellpadding='0' style='font-size:10px;color:#444;'>"
+            "<table class='quote-footer' width='100%' cellspacing='0' cellpadding='0'>"
             "<tr>"
             "<td align='left' valign='top'>"
             "Piano Academie<br/>"
@@ -816,6 +944,10 @@ def _build_template_values(
         "calendar_table_html",
         "calendar_activity_semesters_html",
         "calendar_sessions_table_html",
+        "document_style_html",
+        "brand_logo_html",
+        "header_standard_html",
+        "cover_page_standard_html",
         "page_break_html",
         "footer_standard_html",
     }
@@ -824,13 +956,18 @@ def _build_template_values(
 
 def _default_quote_body_template() -> str:
     return (
+        "{document_style_html}"
+        "{cover_page_standard_html}"
+        "{header_standard_html}"
         "<h1>Devis {quote_number}</h1>"
         "<p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p>"
         "<p><strong>Annee scolaire:</strong> {school_year_label}</p>"
         "<p><strong>Expiration:</strong> {expires_at}</p>"
+        "<div class='quote-block'>"
         "{prospect_identity_block_html}"
+        "</div>"
         "<h2>Activites</h2>{services_table_html}"
-        "<h2>Produits</h2>{products_table_html}"
+        "<h2>Materiel</h2>{products_table_html}"
         "<h2>Kits</h2>{kits_table_html}"
         "{payment_method_block_html}"
         "<h2>Echeancier de paiement</h2>{payment_schedule_table_html}"
@@ -841,6 +978,7 @@ def _default_quote_body_template() -> str:
         "<p><strong>Total HT:</strong> {total_ht} {currency}</p>"
         "<p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p>"
         "<p><strong>Total TTC:</strong> {total_ttc} {currency}</p>"
+        "{footer_standard_html}"
     )
 
 
@@ -869,11 +1007,17 @@ def _render_quote_terms_html(
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     normalized_terms = _normalize_template_source(cgv_content)
     rendered_terms = _apply_template(normalized_terms, values=values, html_keys=html_keys, html_output=True)
+    header_html = values.get("header_standard_html", "")
+    footer_html = values.get("footer_standard_html", "")
     return (
         "<section>"
-        "<h2>Conditions generales</h2>"
+        f"{header_html}"
+        "<h2 class='quote-terms-title'>Conditions generales</h2>"
+        "<div class='quote-block'>"
         f"<p><strong>{escape(cgv_label or 'Version non precisee')}</strong></p>"
         f"{_as_html_fragment(rendered_terms or 'Aucune CGV snapshottee.')}"
+        "</div>"
+        f"{footer_html}"
         "</section>"
     )
 
@@ -887,10 +1031,14 @@ def render_quote_combined_html(
 ) -> str:
     body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
     terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
+    base_css = _document_style_html()
     return (
-        "<html><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
+        "<html><head><meta charset='utf-8'/>"
+        f"{base_css}"
+        "</head><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
+        f"{base_css}"
         f"<section>{body_html}</section>"
-        "<div style='page-break-before:always;'></div>"
+        "<div class='quote-page-break'></div>"
         f"{terms_html}"
         "</body></html>"
     )
@@ -915,10 +1063,14 @@ def render_quote_parts_html(
 ) -> tuple[str, str, str]:
     body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
     terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
+    base_css = _document_style_html()
     combined_html = (
-        "<html><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
+        "<html><head><meta charset='utf-8'/>"
+        f"{base_css}"
+        "</head><body style='font-family:Arial,sans-serif;color:#1a1a1a;'>"
+        f"{base_css}"
         f"<section>{body_html}</section>"
-        "<div style='page-break-before:always;'></div>"
+        "<div class='quote-page-break'></div>"
         f"{terms_html}"
         "</body></html>"
     )
