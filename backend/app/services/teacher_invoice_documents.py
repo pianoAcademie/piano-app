@@ -72,6 +72,20 @@ LIQUID_FOR_BLOCK_RE = re.compile(
     r"\{%\s*for\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*%\}(.*?)\{%\s*endfor\s*%\}",
     flags=re.IGNORECASE | re.DOTALL,
 )
+CSS_VAR_RE = re.compile(r"var\(\s*(--[a-zA-Z0-9_-]+)\s*(?:,\s*([^)]+?)\s*)?\)")
+CSS_VAR_DEFAULTS: dict[str, str] = {
+    "--line-soft": "#d6d9de",
+    "--line": "#cfd3da",
+    "--ink": "#1f2937",
+    "--text": "#1f2937",
+    "--text-muted": "#6b7280",
+    "--muted": "#6b7280",
+    "--bg": "#ffffff",
+    "--panel": "#ffffff",
+    "--panel-2": "#f9fafb",
+    "--accent": "#c9872a",
+    "--accent-ink": "#ffffff",
+}
 
 
 def _format_decimal_like(value: Any) -> str:
@@ -255,10 +269,25 @@ def _ensure_full_html_document(rendered_html: str) -> str:
     return f"<html><body>{candidate}</body></html>"
 
 
+def _normalize_css_vars_for_pdf(html_document: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        variable_name = (match.group(1) or "").strip().lower()
+        explicit_fallback = (match.group(2) or "").strip()
+        if explicit_fallback:
+            return explicit_fallback
+        return CSS_VAR_DEFAULTS.get(variable_name, "inherit")
+
+    return CSS_VAR_RE.sub(replace, html_document)
+
+
 def _render_html_pdf_with_xhtml2pdf(rendered_html: str) -> bytes | None:
-    html_document = _ensure_full_html_document(rendered_html)
+    html_document = _normalize_css_vars_for_pdf(_ensure_full_html_document(rendered_html))
     output = io.BytesIO()
-    status = pisa.CreatePDF(src=html_document, dest=output, encoding="utf-8")
+    try:
+        status = pisa.CreatePDF(src=html_document, dest=output, encoding="utf-8")
+    except Exception:  # pragma: no cover - defensive fallback to plain-text PDF
+        logger.exception("Teacher invoice HTML PDF rendering crashed; using fallback renderer")
+        return None
     if status.err:
         logger.warning("Teacher invoice HTML PDF rendering failed with xhtml2pdf; using fallback renderer")
         return None
