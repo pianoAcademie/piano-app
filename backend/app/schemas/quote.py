@@ -471,6 +471,7 @@ class QuoteSchoolCalendarDeploymentActionOut(BaseModel):
     updated_count: int = 0
     reactivated_count: int = 0
     cancelled_count: int = 0
+    deleted_count: int = 0
     active_generated_count: int = 0
     message: str
 

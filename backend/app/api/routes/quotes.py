@@ -712,7 +712,7 @@ def _deploy_calendar_row(
     created_count = 0
     updated_count = 0
     reactivated_count = 0
-    cancelled_count = 0
+    removed_count = 0
 
     for day, reason_types in sorted(day_reasons.items(), key=lambda item: item[0]):
         start_at_utc = datetime.combine(day, time.min, tzinfo=timezone.utc)
@@ -785,17 +785,18 @@ def _deploy_calendar_row(
             reactivated_count += 1
         else:
             updated_count += 1
+        for extra in day_sessions:
+            if extra.id == target.id:
+                continue
+            db.delete(extra)
+            removed_count += 1
 
     for day, sessions in existing_by_day.items():
         if day in day_reasons:
             continue
         for session in sessions:
-            if session.status == SessionStatus.CANCELLED:
-                continue
-            session.status = SessionStatus.CANCELLED
-            session.cancel_reason = "CALENDAR_DEPLOYMENT_SYNC_REMOVED"
-            session.updated_at = now
-            cancelled_count += 1
+            db.delete(session)
+            removed_count += 1
 
     active_generated_count = db.scalar(
         select(func.count(CourseSession.id))
@@ -821,11 +822,12 @@ def _deploy_calendar_row(
         created_count=created_count,
         updated_count=updated_count,
         reactivated_count=reactivated_count,
-        cancelled_count=cancelled_count,
+        cancelled_count=removed_count,
+        deleted_count=removed_count,
         active_generated_count=int(active_generated_count),
         message=(
             f"Deploiement termine ({int(active_generated_count)} creneaux actifs, "
-            f"{created_count} crees, {reactivated_count} reactives, {cancelled_count} retires)"
+            f"{created_count} crees, {reactivated_count} reactives, {removed_count} supprimes)"
         ),
     )
 
@@ -837,31 +839,30 @@ def _remove_calendar_deployment(
 ) -> QuoteSchoolCalendarDeploymentActionOut:
     calendar = _calendar_out(row)
     now = _utcnow()
-    to_cancel = db.scalars(
+    to_delete = db.scalars(
         select(CourseSession)
         .where(
             CourseSession.location_id == calendar.location_id,
             CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
-            CourseSession.status != SessionStatus.CANCELLED,
         )
         .with_for_update()
     ).all()
-    cancelled_count = 0
-    for session in to_cancel:
-        session.status = SessionStatus.CANCELLED
-        session.cancel_reason = "CALENDAR_DEPLOYMENT_REMOVED"
-        session.updated_at = now
-        cancelled_count += 1
+    removed_count = 0
+    for session in to_delete:
+        db.delete(session)
+        removed_count += 1
     row["deployment_status"] = CALENDAR_DEPLOYMENT_STATUS_REMOVED
     row["deployment_last_sync_at"] = now.isoformat()
+    row["deployment_generated_count"] = 0
     row["deployment_generated_active_count"] = 0
     return QuoteSchoolCalendarDeploymentActionOut(
         calendar_id=calendar.id,
         deployment_status=CALENDAR_DEPLOYMENT_STATUS_REMOVED,
         source_hash=str(row.get("deployment_source_hash") or "").strip() or None,
-        cancelled_count=cancelled_count,
+        cancelled_count=removed_count,
+        deleted_count=removed_count,
         active_generated_count=0,
-        message=f"Deploiement retire ({cancelled_count} creneaux desactives)",
+        message=f"Deploiement retire ({removed_count} creneaux supprimes)",
     )
 
 
