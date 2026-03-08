@@ -5,10 +5,14 @@ import { redirect } from "next/navigation";
 import {
   createAdminQuoteSchoolCalendarConfigAction,
   deployAdminQuoteSchoolCalendarAction,
+  deployAdminQuoteSchoolCalendarGroupAction,
   deleteAdminQuoteSchoolCalendarConfigAction,
   previewAdminQuoteSchoolCalendarDeploymentAction,
+  previewAdminQuoteSchoolCalendarGroupDeploymentAction,
   removeAdminQuoteSchoolCalendarDeploymentAction,
+  removeAdminQuoteSchoolCalendarGroupDeploymentAction,
   syncAdminQuoteSchoolCalendarDeploymentAction,
+  syncAdminQuoteSchoolCalendarGroupAction,
   updateAdminQuoteSchoolCalendarConfigAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
@@ -125,6 +129,26 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       })();
 
   const locationById = new Map(locations.map((row) => [row.id, row.name]));
+  const groupedCalendars = Array.from(
+    quoteSchoolCalendars.reduce<Map<string, { key: string; name: string; school_year_label: string; items: QuoteSchoolCalendarOut[] }>>(
+      (acc, row) => {
+        const key = `${row.name.trim().toLowerCase()}::${row.school_year_label.trim().toLowerCase()}`;
+        const existing = acc.get(key);
+        if (existing) {
+          existing.items.push(row);
+        } else {
+          acc.set(key, {
+            key,
+            name: row.name,
+            school_year_label: row.school_year_label,
+            items: [row],
+          });
+        }
+        return acc;
+      },
+      new Map(),
+    ).values(),
+  ).sort((a, b) => a.name.localeCompare(b.name, "fr"));
   const selectedCalendar = quoteSchoolCalendars.find((row) => row.id === generatedFor) ?? null;
   const generatedSlotsResult = selectedCalendar
     ? await backendRequest<QuoteSchoolCalendarGeneratedSlotOut[]>(
@@ -237,6 +261,81 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
             <button type="submit">Ajouter le calendrier</button>
           </div>
         </form>
+
+        <section className="top-gap-sm">
+          <h4>Vue groupee multi-locaux</h4>
+          {groupedCalendars.length === 0 ? (
+            <p className="muted">Aucun groupe de calendrier.</p>
+          ) : (
+            <div className="grid cols-2 top-gap-sm">
+              {groupedCalendars.map((group) => {
+                const activeSlots = group.items.reduce((sum, item) => sum + Number(item.deployment_generated_active_count || 0), 0);
+                const hasStale = group.items.some((item) => item.deployment_status === "stale");
+                const allDeployed = group.items.every((item) => item.deployment_status === "deployed");
+                const allRemoved = group.items.every((item) => item.deployment_status === "removed");
+                const badgeClass = hasStale
+                  ? "status-warn"
+                  : allDeployed
+                    ? "status-ok"
+                    : allRemoved
+                      ? "status-off"
+                      : "status-warn";
+                const badgeLabel = hasStale
+                  ? "A resynchroniser"
+                  : allDeployed
+                    ? "Deploye"
+                    : allRemoved
+                      ? "Retire"
+                      : "Partiel";
+                return (
+                  <article key={group.key} className="card">
+                    <div className="row spread wrap gap-sm">
+                      <div>
+                        <strong>{group.name}</strong>
+                        <p className="muted">{group.school_year_label} · {group.items.length} locaux</p>
+                      </div>
+                      <span className={`status-pill ${badgeClass}`}>{badgeLabel}</span>
+                    </div>
+                    <p className="muted">Creneaux actifs generes: {activeSlots}</p>
+                    <p className="muted">
+                      {group.items.map((item) => locationById.get(item.location_id) || item.location_id).join(", ")}
+                    </p>
+                    <div className="row wrap gap-sm top-gap-sm">
+                      <form action={previewAdminQuoteSchoolCalendarGroupDeploymentAction}>
+                        {group.items.map((item) => (
+                          <input key={`${group.key}-preview-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+                        ))}
+                        <input type="hidden" name="return_to" value={returnPath} />
+                        <button type="submit" className="ghost">Previsualiser</button>
+                      </form>
+                      <form action={deployAdminQuoteSchoolCalendarGroupAction}>
+                        {group.items.map((item) => (
+                          <input key={`${group.key}-deploy-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+                        ))}
+                        <input type="hidden" name="return_to" value={returnPath} />
+                        <button type="submit">Deployer groupe</button>
+                      </form>
+                      <form action={syncAdminQuoteSchoolCalendarGroupAction}>
+                        {group.items.map((item) => (
+                          <input key={`${group.key}-sync-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+                        ))}
+                        <input type="hidden" name="return_to" value={returnPath} />
+                        <button type="submit" className="ghost">Resynchroniser groupe</button>
+                      </form>
+                      <form action={removeAdminQuoteSchoolCalendarGroupDeploymentAction}>
+                        {group.items.map((item) => (
+                          <input key={`${group.key}-remove-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+                        ))}
+                        <input type="hidden" name="return_to" value={returnPath} />
+                        <button type="submit" className="danger">Retirer groupe</button>
+                      </form>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
         <div className="table-wrap top-gap-sm">
           <table className="data-table">
