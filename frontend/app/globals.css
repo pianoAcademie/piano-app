@@ -9809,6 +9809,21 @@ button.danger {
   gap: 0.3rem;
 }
 
+.quote-sessions-modal {
+  width: min(980px, 95vw);
+  max-height: min(90vh, 900px);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+}
+
+.quote-sessions-modal-list {
+  overflow-y: auto;
+  max-height: min(70vh, 640px);
+  padding-right: 0.2rem;
+}
+
 .quote-public-sticky {
   position: static;
 }

@@ -6,6 +6,7 @@ import CopyLinkButton from "../../../../components/copy-link-button";
 import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
+import QuoteSessionsViewer from "../../../../components/quote-sessions-viewer";
 import {
   changeQuoteFollowupPaymentMethodAction,
   duplicateQuoteAction,
@@ -135,16 +136,6 @@ type QuoteTemplateOut = {
   code: string;
   name: string;
   language: string;
-};
-
-type SolfegeRuleOut = {
-  id: string;
-  level_code: string;
-  duration_minutes: number;
-  allowed_weekdays: number[];
-  allowed_time_slots: Array<Record<string, unknown>>;
-  location_id: string | null;
-  modality: string | null;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -337,18 +328,6 @@ function getPlanningBlocks(snapshot: Record<string, unknown>): Array<Record<stri
   return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
 }
 
-function getSelectedSolfegeSlot(meta: Record<string, unknown>, snapshot: Record<string, unknown>): Record<string, unknown> | null {
-  const fromMeta = readObject(meta.selected_solfege_slot);
-  if (fromMeta) {
-    return fromMeta;
-  }
-  const solfege = readObject(snapshot.solfege);
-  if (!solfege) {
-    return null;
-  }
-  return readObject(solfege.selected_slot);
-}
-
 function getProposedSolfegeSlots(meta: Record<string, unknown>, snapshot: Record<string, unknown>): Array<{
   key: string;
   label: string;
@@ -403,7 +382,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult, solfegeRulesResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, cgvVersionsResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
@@ -417,7 +396,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
-    backendRequest<SolfegeRuleOut[]>("/api/v1/solfege-level-rules?active_only=true", {}, token),
   ]);
 
   if (!detailResult.ok) {
@@ -448,7 +426,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const locations = locationsResult.ok ? locationsResult.data : [];
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
-  const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
@@ -466,20 +443,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteTemplateId = readStringMeta(detail.quote.meta || {}, "template_id");
   const quoteCgvVersionId = readStringMeta(detail.quote.meta || {}, "cgv_version_id") || readStringMeta(detail.quote.cgv_snapshot || {}, "id");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
+  const calendarSessionsForViewer = calendarSessions.map((session) => ({
+    date: String(session.date ?? ""),
+    start_time: String(session.start_time ?? ""),
+    end_time: String(session.end_time ?? ""),
+    activity_label: String(session.activity_label ?? activityById.get(String(session.activity_id ?? "")) ?? "Activite"),
+    location_label: String(session.location_label ?? locationById.get(String(session.location_id ?? "")) ?? "Lieu non defini"),
+    modality: String(session.modality ?? ""),
+  }));
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
   const planningSummary = planningVisualSummary(calendarSessions);
-  const selectedSolfegeSlot = getSelectedSolfegeSlot(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
   const proposedSolfegeSlots = getProposedSolfegeSlots(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
-  const activitySolfegeRows = Array.isArray((detail.quote.meta || {}).activity_solfege)
-    ? ((detail.quote.meta || {}).activity_solfege as Array<Record<string, unknown>>)
-    : [];
-  const masterclassRowsMeta = Array.isArray((detail.quote.meta || {}).masterclass_blocks)
-    ? ((detail.quote.meta || {}).masterclass_blocks as Array<Record<string, unknown>>)
-    : [];
-  const masterclassRowsSnapshot = Array.isArray((detail.quote.calendar_snapshot || {}).masterclass_blocks)
-    ? ((detail.quote.calendar_snapshot || {}).masterclass_blocks as Array<Record<string, unknown>>)
-    : [];
-  const masterclassRows = masterclassRowsMeta.length > 0 ? masterclassRowsMeta : masterclassRowsSnapshot;
   const languageQuoteTemplates = quoteTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
   const selectedTemplate = quoteTemplates.find((row) => row.id === quoteTemplateId);
   const templateOptions = (() => {
@@ -692,70 +666,24 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <p><strong>Creation:</strong> {formatDate(detail.quote.created_at)}</p>
           <p><strong>Envoi:</strong> {formatDate(detail.quote.sent_at)}</p>
           <p><strong>Expiration:</strong> {formatDate(detail.quote.expires_at)}</p>
-          <p><strong>Solfege:</strong> {selectedSolfegeSlot ? "Configure (voir section dediee)" : "Non configure"}</p>
+          <p><strong>Solfege / Masterclass:</strong> Geres comme activites separees dans le planning</p>
         </div>
       </section>
 
       <section className="card">
         <div className="row spread wrap gap-sm">
-          <h3>Selection solfege</h3>
+          <h3>Solfege (mode activite separee)</h3>
           {detail.quote.status === "created" ? <a className="mode-link" href="#planning-editor">Modifier dans planning</a> : null}
         </div>
-        {selectedSolfegeSlot ? (
-          <div className="grid cols-3 top-gap-sm">
-            <p><strong>Jour:</strong> {weekdayLabelFromNumber(selectedSolfegeSlot.weekday)}</p>
-            <p><strong>Horaire:</strong> {String(selectedSolfegeSlot.start_time ?? "--:--")} - {String(selectedSolfegeSlot.end_time ?? "--:--")}</p>
-            <p><strong>Duree:</strong> {String(selectedSolfegeSlot.duration_minutes ?? "-")} min</p>
-            <p><strong>Modalite:</strong> {modalityLabel(selectedSolfegeSlot.modality)}</p>
-            <p><strong>Lieu:</strong> {String(selectedSolfegeSlot.location_label ?? locationById.get(String(selectedSolfegeSlot.location_id ?? "")) ?? "-")}</p>
-            <p><strong>Libelle:</strong> {String(selectedSolfegeSlot.label ?? "-")}</p>
-          </div>
-        ) : (
-          <p className="muted">Aucun creneau solfege selectionne sur ce devis.</p>
-        )}
+        <p className="muted">Le solfege est desormais une activite distincte. Ajoutez un bloc activite "Solfege" dans le calendrier previsionnel.</p>
       </section>
 
       <section className="card">
         <div className="row spread wrap gap-sm">
-          <h3>Solfege et masterclass par activite</h3>
+          <h3>Masterclass (mode activite separee)</h3>
           {detail.quote.status === "created" ? <a className="mode-link" href="#planning-editor">Modifier par activite</a> : null}
         </div>
-        <div className="list top-gap-sm">
-          {activitySolfegeRows.length === 0 ? (
-            <p className="muted">Aucune activite avec solfege configuree.</p>
-          ) : (
-            activitySolfegeRows.map((row, index) => (
-              <article key={`activity-solfege-${index}`} className="item">
-                <div className="row spread wrap gap-sm">
-                  <strong>{String(row.activity_label || activityById.get(String(row.activity_id || "")) || "Activite")}</strong>
-                  <span className="badge">Niveau {String(row.level || "-")}</span>
-                </div>
-                <p className="muted">
-                  Demarrage: {String(row.start_date || "-")}
-                  {" · "}
-                  Creneau: {String(readObject(row.slot)?.label || "-")}
-                </p>
-              </article>
-            ))
-          )}
-          {masterclassRows.length === 0 ? (
-            <p className="muted">Aucune masterclass configuree.</p>
-          ) : (
-            masterclassRows.map((row, index) => (
-              <article key={`masterclass-${index}`} className="item">
-                <div className="row spread wrap gap-sm">
-                  <strong>{String(row.activity_label || activityById.get(String(row.activity_id || "")) || "Masterclass samedi")}</strong>
-                  <span className="badge">Masterclass</span>
-                </div>
-                <p className="muted">
-                  Session: {String(row.session || "-")}
-                  {" · "}
-                  Local: {String(row.location_label || locationById.get(String(row.location_id || "")) || "-")}
-                </p>
-              </article>
-            ))
-          )}
-        </div>
+        <p className="muted">La masterclass est desormais une activite distincte. Ajoutez un bloc activite "Masterclass" dans le calendrier previsionnel.</p>
       </section>
 
       <section className="card" id="planning-editor">
@@ -799,19 +727,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               id: row.id,
               name: row.name,
               duration_minutes: row.duration_minutes,
+              exclude_holidays_in_recurrence: row.exclude_holidays_in_recurrence,
+              exclude_school_vacations_in_recurrence: row.exclude_school_vacations_in_recurrence,
             }))}
             locations={locations.map((row) => ({
               id: row.id,
               name: row.name,
-            }))}
-            solfegeRules={solfegeRules.map((row) => ({
-              id: row.id,
-              level_code: row.level_code,
-              duration_minutes: row.duration_minutes,
-              allowed_weekdays: row.allowed_weekdays,
-              allowed_time_slots: row.allowed_time_slots,
-              location_id: row.location_id,
-              modality: row.modality,
             }))}
             initialSnapshot={detail.quote.calendar_snapshot}
             initialMeta={detail.quote.meta || {}}
@@ -837,21 +758,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             ))}
           </div>
         ) : null}
-        <div className="quote-public-lines top-gap-sm">
-          {calendarSessions.slice(0, 20).map((session, index) => (
-            <article key={`session-${index}`} className="quote-public-line-item">
-              <strong>{String(session.date ?? "-")}</strong>
-              <span>{String(session.start_time ?? "--:--")} - {String(session.end_time ?? "--:--")}</span>
-              <small className="muted">
-                {String(session.activity_label ?? activityById.get(String(session.activity_id ?? "")) ?? "Activite")}
-                {" · "}
-                {String(session.location_label ?? locationById.get(String(session.location_id ?? "")) ?? "Lieu non defini")}
-                {" · "}
-                {modalityLabel(session.modality)}
-              </small>
-            </article>
-          ))}
-        </div>
+        <QuoteSessionsViewer quoteNumber={detail.quote.quote_number} sessions={calendarSessionsForViewer} />
       </section>
 
       <section className="card">

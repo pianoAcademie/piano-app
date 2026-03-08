@@ -9188,6 +9188,8 @@ type QuotePlanningBlockInput = {
   start_time: string;
   end_time: string;
   modality: string | null;
+  exclude_holidays_in_recurrence?: boolean;
+  exclude_school_vacations_in_recurrence?: boolean;
   solfege_enabled?: boolean;
   solfege_level?: string | null;
   solfege_start_date?: string | null;
@@ -9237,6 +9239,14 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const locationIdRaw = String(item.location_id ?? "").trim();
       const locationLabel = String(item.location_label ?? "").trim();
       const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
+      const excludeHolidaysInRecurrence =
+        typeof item.exclude_holidays_in_recurrence === "boolean"
+          ? item.exclude_holidays_in_recurrence
+          : true;
+      const excludeSchoolVacationsInRecurrence =
+        typeof item.exclude_school_vacations_in_recurrence === "boolean"
+          ? item.exclude_school_vacations_in_recurrence
+          : true;
       const solfegeEnabled = Boolean(item.solfege_enabled);
       const solfegeLevel = String(item.solfege_level ?? "").trim();
       const solfegeStartDate = String(item.solfege_start_date ?? "").trim();
@@ -9268,6 +9278,8 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         start_time: startTime,
         end_time: endTime,
         modality: modalityRaw === "ONLINE" || modalityRaw === "ONSITE" ? modalityRaw : null,
+        exclude_holidays_in_recurrence: excludeHolidaysInRecurrence,
+        exclude_school_vacations_in_recurrence: excludeSchoolVacationsInRecurrence,
         solfege_enabled: solfegeEnabled,
         solfege_level: solfegeEnabled && solfegeLevel ? solfegeLevel : null,
         solfege_start_date: solfegeEnabled && /^\d{4}-\d{2}-\d{2}$/.test(solfegeStartDate) ? solfegeStartDate : null,
@@ -9324,6 +9336,21 @@ function parseSolfegeSlotJson(raw: string): QuoteSolfegeSlotInput | null | undef
   }
 }
 
+function deriveSchoolYearLabelFromDate(dateRaw: string): string | null {
+  const trimmed = dateRaw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return null;
+  }
+  const year = Number.parseInt(trimmed.slice(0, 4), 10);
+  const month = Number.parseInt(trimmed.slice(5, 7), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null;
+  }
+  const startYear = month >= 9 ? year : year - 1;
+  const endYear = startYear + 1;
+  return `${startYear}-${endYear}`;
+}
+
 async function buildCalendarSnapshotFromBlocks({
   blocks,
   token,
@@ -9342,7 +9369,10 @@ async function buildCalendarSnapshotFromBlocks({
     closure_dates: string[];
   }>();
 
-  async function resolveLocationCalendar(locationId: string | null): Promise<{
+  async function resolveLocationCalendar(
+    locationId: string | null,
+    requestedSchoolYearLabel: string | null,
+  ): Promise<{
     calendar: Record<string, unknown> | null;
     holiday_dates: string[];
     closure_dates: string[];
@@ -9350,11 +9380,12 @@ async function buildCalendarSnapshotFromBlocks({
     if (!locationId) {
       return { calendar: null, holiday_dates: [], closure_dates: [] };
     }
-    const cached = calendarByLocation.get(locationId);
+    const cacheKey = `${locationId}|${requestedSchoolYearLabel || "*"}`;
+    const cached = calendarByLocation.get(cacheKey);
     if (cached) {
       return cached;
     }
-    const query = schoolYearLabel ? `?school_year_label=${encodeURIComponent(schoolYearLabel)}` : "";
+    const query = requestedSchoolYearLabel ? `?school_year_label=${encodeURIComponent(requestedSchoolYearLabel)}` : "";
     const result = await backendRequest<{
       calendar: Record<string, unknown> | null;
       holiday_dates: string[];
@@ -9367,12 +9398,35 @@ async function buildCalendarSnapshotFromBlocks({
     if (!result.ok) {
       redirect(appendQueryMessage(returnTo, "error", result.message));
     }
-    const value = {
+    let value = {
       calendar: result.data.calendar || null,
       holiday_dates: Array.isArray(result.data.holiday_dates) ? result.data.holiday_dates.map((item) => String(item)) : [],
       closure_dates: Array.isArray(result.data.closure_dates) ? result.data.closure_dates.map((item) => String(item)) : [],
     };
-    calendarByLocation.set(locationId, value);
+    if (!value.calendar && requestedSchoolYearLabel) {
+      const fallbackResult = await backendRequest<{
+        calendar: Record<string, unknown> | null;
+        holiday_dates: string[];
+        closure_dates: string[];
+      }>(
+        `/api/v1/quote-school-calendars/active/by-location/${encodeURIComponent(locationId)}`,
+        {},
+        token,
+      );
+      if (!fallbackResult.ok) {
+        redirect(appendQueryMessage(returnTo, "error", fallbackResult.message));
+      }
+      value = {
+        calendar: fallbackResult.data.calendar || null,
+        holiday_dates: Array.isArray(fallbackResult.data.holiday_dates)
+          ? fallbackResult.data.holiday_dates.map((item) => String(item))
+          : [],
+        closure_dates: Array.isArray(fallbackResult.data.closure_dates)
+          ? fallbackResult.data.closure_dates.map((item) => String(item))
+          : [],
+      };
+    }
+    calendarByLocation.set(cacheKey, value);
     return value;
   }
 
@@ -9383,7 +9437,10 @@ async function buildCalendarSnapshotFromBlocks({
   }));
 
   for (const block of normalizedBlocks) {
-    const resolvedCalendar = await resolveLocationCalendar(block.location_id);
+    const inferredSchoolYearLabel = schoolYearLabel || deriveSchoolYearLabelFromDate(block.start_date) || null;
+    const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel);
+    const holidayDates = block.exclude_holidays_in_recurrence === false ? [] : resolvedCalendar.holiday_dates;
+    const closureDates = block.exclude_school_vacations_in_recurrence === false ? [] : resolvedCalendar.closure_dates;
     const preview = await backendRequest<Record<string, unknown>>(
       "/api/v1/quotes/calendar/preview",
       {
@@ -9397,8 +9454,8 @@ async function buildCalendarSnapshotFromBlocks({
           activity_id: block.activity_id,
           location_id: block.location_id,
           modality: block.modality,
-          holiday_dates: resolvedCalendar.holiday_dates,
-          closure_dates: resolvedCalendar.closure_dates,
+          holiday_dates: holidayDates,
+          closure_dates: closureDates,
         }),
       },
       token,
@@ -9422,8 +9479,8 @@ async function buildCalendarSnapshotFromBlocks({
       calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
       calendar_name: String(resolvedCalendar.calendar?.name ?? ""),
       calendar_school_year: String(resolvedCalendar.calendar?.school_year_label ?? ""),
-      holiday_dates: resolvedCalendar.holiday_dates,
-      closure_dates: resolvedCalendar.closure_dates,
+      holiday_dates: holidayDates,
+      closure_dates: closureDates,
     });
   }
 
@@ -9479,74 +9536,16 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
     }
   }
 
-  const firstActivitySolfege = blocks.find((block) => block.solfege_enabled && block.solfege_level);
-  const fallbackSolfegeSlot = firstActivitySolfege?.solfege_slot
-    ? parseSolfegeSlotJson(JSON.stringify(firstActivitySolfege.solfege_slot))
-    : null;
-  if (fallbackSolfegeSlot === undefined) {
-    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege activite invalide"));
-  }
-  const resolvedEstimatedSolfegeLevel = firstActivitySolfege?.solfege_level || null;
-  const resolvedSelectedSolfegeSlot = fallbackSolfegeSlot || null;
-
-  const activitySolfege = blocks
-    .filter((block) => block.solfege_enabled)
-    .map((block) => ({
-      activity_id: block.activity_id,
-      activity_label: block.activity_label,
-      level: block.solfege_level || null,
-      start_date: block.solfege_start_date || null,
-      slot: block.solfege_slot || null,
-    }));
-
-  const masterclassBlocks = blocks
-    .filter((block) => block.masterclass_enabled)
-    .map((block) => ({
-      activity_id: block.activity_id,
-      activity_label: block.activity_label,
-      session: block.masterclass_session || null,
-      location_id: block.masterclass_location_id || null,
-      location_label: block.masterclass_location_label || null,
-    }));
-
-  if (activitySolfege.length > 0) {
-    currentMeta.activity_solfege = activitySolfege;
-  } else {
-    delete currentMeta.activity_solfege;
-  }
-  if (masterclassBlocks.length > 0) {
-    currentMeta.masterclass_blocks = masterclassBlocks;
-  } else {
-    delete currentMeta.masterclass_blocks;
-  }
-  if (resolvedSelectedSolfegeSlot) {
-    currentMeta.selected_solfege_slot = resolvedSelectedSolfegeSlot;
-  } else {
-    delete currentMeta.selected_solfege_slot;
-  }
+  // Solfege and masterclass are now configured as standalone activities.
+  delete currentMeta.activity_solfege;
+  delete currentMeta.masterclass_blocks;
+  delete currentMeta.selected_solfege_slot;
 
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
   let snapshot = await buildCalendarSnapshotFromBlocks({ blocks, token, returnTo, schoolYearLabel });
-  if (resolvedEstimatedSolfegeLevel && resolvedSelectedSolfegeSlot) {
-    snapshot = {
-      ...(snapshot || {}),
-      solfege: {
-        estimated_level: resolvedEstimatedSolfegeLevel,
-        selected_slot: resolvedSelectedSolfegeSlot,
-      },
-    };
-  } else if (snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)) {
+  if (snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)) {
     const next = { ...(snapshot as Record<string, unknown>) };
     delete next.solfege;
-    snapshot = next;
-  }
-  if (masterclassBlocks.length > 0) {
-    snapshot = {
-      ...(snapshot || {}),
-      masterclass_blocks: masterclassBlocks,
-    };
-  } else if (snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)) {
-    const next = { ...(snapshot as Record<string, unknown>) };
     delete next.masterclass_blocks;
     snapshot = next;
   }
@@ -9558,8 +9557,8 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
       body: JSON.stringify({
         calendar_snapshot: snapshot,
         meta: currentMeta,
-        estimated_solfege_level: resolvedEstimatedSolfegeLevel,
-        selected_solfege_slot: resolvedSelectedSolfegeSlot,
+        estimated_solfege_level: null,
+        selected_solfege_slot: null,
       }),
     },
     token,
