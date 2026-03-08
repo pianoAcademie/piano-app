@@ -9968,6 +9968,17 @@ function paymentPlanCodeFromName(name: string): string {
   return (normalized || "PAYMENT_PLAN").slice(0, 60);
 }
 
+function quoteTemplateCodeFromName(name: string): string {
+  const normalized = name
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return (normalized || "QUOTE_TEMPLATE").slice(0, 80);
+}
+
 function buildPaymentPlanRules(
   scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly",
   feePercent: number | null,
@@ -11253,9 +11264,9 @@ export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData)
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
-  const code = String(formData.get("code") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
-  const templateType = String(formData.get("template_type") ?? "quote_body").trim();
+  const code = quoteTemplateCodeFromName(name);
+  const templateType = "quote_body";
   const target = optionalField(formData, "target");
   const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
   const description = optionalField(formData, "description");
@@ -11268,7 +11279,7 @@ export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData)
   const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
   const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
 
-  if (!code || !name || !subjectTemplate || !bodyTemplate) {
+  if (!name || !subjectTemplate || !bodyTemplate) {
     redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
   }
 
@@ -11311,9 +11322,10 @@ export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData)
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
   const templateId = parseUuid(String(formData.get("template_id") ?? ""));
-  const code = String(formData.get("code") ?? "").trim();
+  const currentCode = String(formData.get("code") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
-  const templateType = String(formData.get("template_type") ?? "quote_body").trim();
+  const code = currentCode || quoteTemplateCodeFromName(name);
+  const templateType = "quote_body";
   const target = optionalField(formData, "target");
   const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
   const description = optionalField(formData, "description");
@@ -11326,7 +11338,7 @@ export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData)
   const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
   const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
 
-  if (!templateId || !code || !name || !subjectTemplate || !bodyTemplate) {
+  if (!templateId || !name || !subjectTemplate || !bodyTemplate) {
     redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
   }
 

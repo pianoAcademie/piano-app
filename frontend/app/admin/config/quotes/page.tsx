@@ -585,8 +585,13 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
           <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>Variables documentaires</Link>
           <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>Creneaux de solfege</Link>
           <Link className="config-sub-link" href="/admin/config/calendars">Calendriers scolaires</Link>
-          <Link className={`config-sub-link ${tab === "cgv" ? "active" : ""}`} href={buildQuotesConfigHref("cgv")}>CGV legacy (v1)</Link>
-          <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates email legacy (v1)</Link>
+          <details className="config-sub-legacy" open={tab === "cgv" || tab === "templates"}>
+            <summary className="mode-link">Outils techniques legacy (v1)</summary>
+            <div className="row wrap gap-sm top-gap-sm">
+              <Link className={`config-sub-link ${tab === "cgv" ? "active" : ""}`} href={buildQuotesConfigHref("cgv")}>CGV legacy</Link>
+              <Link className={`config-sub-link ${tab === "templates" ? "active" : ""}`} href={buildQuotesConfigHref("templates")}>Templates email legacy</Link>
+            </div>
+          </details>
         </nav>
       </section>
 
@@ -1115,20 +1120,18 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       {tab === "doc_templates" ? (
         <section className="card">
           <h3>Modeles de devis (document principal)</h3>
-          <p className="muted">Chaque mise a jour publie une nouvelle version figee du template de devis.</p>
+          <p className="muted">
+            Ce bloc gere le document devis (rendu admin, page publique et PDF). Les codes techniques sont geres automatiquement.
+            Les anciens templates email sont disponibles dans "Outils techniques legacy (v1)".
+          </p>
           <form action={createAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
-            <label>
-              Code
-              <input type="text" name="code" required maxLength={80} placeholder="QUOTE_CHILD_COLLECTIVE" />
-            </label>
+            <div className="span-2">
+              <h4>Etape 1 · Fiche du modele</h4>
+            </div>
             <label>
               Nom
               <input type="text" name="name" required maxLength={180} placeholder="Template enfant collectif" />
-            </label>
-            <label>
-              Type
-              <input type="text" name="template_type" defaultValue="quote_body" maxLength={40} />
             </label>
             <label>
               Cible
@@ -1167,6 +1170,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               <input type="text" name="changelog" maxLength={2000} placeholder="v1 initiale" />
             </label>
             <div className="span-2">
+              <h4>Etape 2 · Contenu documentaire</h4>
+            </div>
+            <div className="span-2">
               <QuoteTemplateEditor
                 subjectName="subject_template"
                 bodyName="body_template"
@@ -1192,7 +1198,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     <div>
                       <strong>{row.name}</strong>
                       <p className="muted">
-                        {row.code} · cible {row.target || "-"} · langue {row.language.toUpperCase()} · v{row.current_version_number ?? "-"} · Maj: {dateTimeLabel(row.updated_at)}
+                        cible {row.target || "-"} · langue {row.language.toUpperCase()} · v{row.current_version_number ?? "-"} · Maj: {dateTimeLabel(row.updated_at)}
                       </p>
                     </div>
                     <div className="row wrap gap-sm">
@@ -1205,17 +1211,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     <form action={updateAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
-                      <label>
-                        Code
-                        <input type="text" name="code" defaultValue={row.code} required maxLength={80} />
-                      </label>
+                      <input type="hidden" name="code" value={row.code} />
+                      <input type="hidden" name="template_type" value={row.template_type || "quote_body"} />
+                      <div className="span-2">
+                        <h4>Etape 1 · Fiche du modele</h4>
+                      </div>
                       <label>
                         Nom
                         <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
-                      </label>
-                      <label>
-                        Type
-                        <input type="text" name="template_type" defaultValue={row.template_type} maxLength={40} />
                       </label>
                       <label>
                         Cible
@@ -1253,6 +1256,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         Changelog
                         <input type="text" name="changelog" maxLength={2000} placeholder="Nouvelle version" />
                       </label>
+                      <div className="span-2">
+                        <h4>Etape 2 · Contenu documentaire</h4>
+                      </div>
                       <div className="span-2">
                         <QuoteTemplateEditor
                           subjectName="subject_template"
