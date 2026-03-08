@@ -345,6 +345,26 @@ def _calendar_generated_slot_like_pattern(calendar_id: UUID) -> str:
     return f"{CALENDAR_DEPLOYMENT_BLOCK_PREFIX}|calendar={calendar_id}|%"
 
 
+def _calendar_block_title_from_reason_types(reason_types: set[str]) -> str:
+    normalized = {item.strip().lower() for item in reason_types}
+    if normalized == {CALENDAR_DEPLOYMENT_REASON_HOLIDAY}:
+        return "Jour férié"
+    if normalized == {CALENDAR_DEPLOYMENT_REASON_VACATION}:
+        return "Vacances scolaires"
+    if normalized == {CALENDAR_DEPLOYMENT_REASON_CLOSURE}:
+        return "Fermeture exceptionnelle"
+    labels: list[str] = []
+    if CALENDAR_DEPLOYMENT_REASON_VACATION in normalized:
+        labels.append("Vacances scolaires")
+    if CALENDAR_DEPLOYMENT_REASON_HOLIDAY in normalized:
+        labels.append("Jour férié")
+    if CALENDAR_DEPLOYMENT_REASON_CLOSURE in normalized:
+        labels.append("Fermeture exceptionnelle")
+    if not labels:
+        return "Fermeture calendrier"
+    return " / ".join(labels)
+
+
 def _calendar_periods_out(periods: object) -> list[QuoteSchoolCalendarPeriod]:
     if not isinstance(periods, list):
         return []
@@ -717,6 +737,7 @@ def _deploy_calendar_row(
     for day, reason_types in sorted(day_reasons.items(), key=lambda item: item[0]):
         start_at_utc = datetime.combine(day, time.min, tzinfo=timezone.utc)
         end_at_utc = start_at_utc + timedelta(days=1)
+        block_title = _calendar_block_title_from_reason_types(reason_types)
         marker = _deployment_private_description(
             calendar_id=calendar.id,
             day=day,
@@ -745,7 +766,7 @@ def _deploy_calendar_row(
                     snapshot_payor_legal_entity_id=vacation_type.payor_legal_entity_id,
                     location_id=calendar.location_id,
                     professor_id=None,
-                    title=f"Blocage calendrier {calendar.school_year_label}",
+                    title=block_title,
                     description=description,
                     private_description=marker,
                     start_at_utc=start_at_utc,
@@ -769,7 +790,7 @@ def _deploy_calendar_row(
         was_cancelled = target.status == SessionStatus.CANCELLED
         target.start_at_utc = start_at_utc
         target.end_at_utc = end_at_utc
-        target.title = f"Blocage calendrier {calendar.school_year_label}"
+        target.title = block_title
         target.description = description
         target.private_description = marker
         target.is_all_day = True
