@@ -4221,6 +4221,46 @@ button.danger:focus-visible {
   gap: 6px;
 }
 
+.quote-template-editor-shell {
+  border: 1px solid #d7c6a8;
+  border-radius: 10px;
+  background: #fffdf9;
+  overflow: hidden;
+}
+
+.quote-template-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid #e6d9c4;
+  background: #fff7ea;
+}
+
+.quote-template-toolbar .toolbar-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.quote-template-editor-surface {
+  min-height: 340px;
+  padding: 12px;
+  background: #ffffff;
+  color: #1f2937;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+.quote-template-editor-surface:focus {
+  outline: none;
+}
+
+.quote-template-editor-surface:focus-visible {
+  box-shadow: inset 0 0 0 2px #4d90fe;
+}
+
 .calendar-inline-help {
   border: 1px dashed #d7ba8f;
   border-radius: 10px;
