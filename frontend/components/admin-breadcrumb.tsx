@@ -14,6 +14,7 @@ const CONFIG_SECTION_LABELS: Record<string, string> = {
   "params-payments": "Moyens de paiement",
   formulas: "Formules",
   quotes: "Devis",
+  calendars: "Calendriers scolaires",
   activities: "Activites",
   promo: "Code promo",
   products: "Produits",
@@ -93,6 +94,9 @@ function labelForSegment(segment: string, previous: string): string | null {
   }
   if (segment === "formulas") {
     return "Formules";
+  }
+  if (segment === "calendars" && previous === "config") {
+    return "Calendriers scolaires";
   }
   if (segment === "new" && previous === "formulas") {
     return "Nouvelle formule";

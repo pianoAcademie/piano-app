@@ -59,6 +59,7 @@ type ConfigMainSection =
   | "params"
   | "formulas"
   | "quotes"
+  | "calendars"
   | "activities"
   | "legal-entities"
   | "promo"
@@ -75,6 +76,7 @@ type ConfigSection =
   | "params-messaging"
   | "formulas"
   | "quotes"
+  | "calendars"
   | "activities"
   | "legal-entities"
   | "promo"
@@ -116,6 +118,7 @@ const MAIN_NAV_ITEMS: MainNavItem[] = [
   { key: "params", label: "Parametres", section: "params-account" },
   { key: "formulas", label: "Les formules", section: "formulas" },
   { key: "quotes", label: "Devis", section: "quotes" },
+  { key: "calendars", label: "Calendriers scolaires", section: "calendars" },
   { key: "activities", label: "Activites", section: "activities" },
   { key: "legal-entities", label: "Entites legales", section: "legal-entities" },
   { key: "promo", label: "Code promo", section: "promo" },
@@ -171,6 +174,7 @@ function parseSection(raw: string): ConfigSection {
     value === "params-messaging" ||
     value === "formulas" ||
     value === "quotes" ||
+    value === "calendars" ||
     value === "activities" ||
     value === "legal-entities" ||
     value === "promo" ||
@@ -194,6 +198,7 @@ function toMainSection(section: ConfigSection): ConfigMainSection {
       return "params";
     case "formulas":
     case "quotes":
+    case "calendars":
     case "activities":
     case "legal-entities":
     case "promo":
@@ -365,7 +370,23 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       redirectParams.set("error", error);
     }
     const suffix = redirectParams.toString();
+    if (tab.toLowerCase() === "calendars") {
+      redirect(suffix ? `/admin/config/calendars?${suffix}` : "/admin/config/calendars");
+    }
     redirect(suffix ? `/admin/config/quotes?${suffix}` : "/admin/config/quotes");
+  }
+  if (section === "calendars") {
+    const redirectParams = new URLSearchParams();
+    const ok = readParam(params, "ok").trim();
+    const error = readParam(params, "error").trim();
+    if (ok) {
+      redirectParams.set("ok", ok);
+    }
+    if (error) {
+      redirectParams.set("error", error);
+    }
+    const suffix = redirectParams.toString();
+    redirect(suffix ? `/admin/config/calendars?${suffix}` : "/admin/config/calendars");
   }
   const mainSection = toMainSection(section);
 
@@ -580,6 +601,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       | "params-messaging"
       | "formulas"
       | "quotes"
+      | "calendars"
       | "activities"
       | "legal-entities"
       | "credit-types"
@@ -625,6 +647,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   ? "/admin/config/formulas"
                   : item.key === "quotes"
                   ? "/admin/config/quotes"
+                  : item.key === "calendars"
+                  ? "/admin/config/calendars"
                   : buildConfigHref(item.section);
 
               return (

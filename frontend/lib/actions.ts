@@ -9785,7 +9785,7 @@ export async function updateAdminProspectAction(formData: FormData): Promise<voi
 
 function safeAdminConfigQuotesPath(path: string, fallback = "/admin/config/quotes"): string {
   const value = path.trim();
-  if (value.startsWith("/admin/config/quotes")) {
+  if (value.startsWith("/admin/config/quotes") || value.startsWith("/admin/config/calendars")) {
     return value;
   }
   return fallback;
@@ -10703,7 +10703,7 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
   }
   await ensureAdmin(token);
 
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=calendars"));
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const name = String(formData.get("name") ?? "").trim();
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
   const selectedLocationIds = formData
@@ -10750,6 +10750,7 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
+  revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
   redirect(
@@ -10770,7 +10771,7 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
   }
   await ensureAdmin(token);
 
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=calendars"));
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   const name = String(formData.get("name") ?? "").trim();
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
@@ -10818,6 +10819,7 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
+  revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
   redirect(
@@ -10838,7 +10840,7 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
   }
   await ensureAdmin(token);
 
-  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=calendars"));
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
     redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
@@ -10853,6 +10855,7 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
+  revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
   redirect(appendQueryMessage(returnTo, "ok", "Calendrier supprime"));
