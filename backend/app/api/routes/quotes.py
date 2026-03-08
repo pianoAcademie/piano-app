@@ -218,6 +218,7 @@ def _next_available_payment_plan_code(db: Session, *, base_code: str, exclude_id
 
 QUOTE_SCHOOL_CALENDARS_SETTING_KEY = "quote_school_calendars_v1"
 CALENDAR_DEPLOYMENT_BLOCK_PREFIX = "GEN:QUOTE_CAL_DEPLOY"
+CALENDAR_DEPLOYMENT_LEGACY_BLOCK_MARKER = "GEN:QUOTE_SCHOOL_CALENDAR_BLOCK"
 CALENDAR_DEPLOYMENT_STATUS_NOT_DEPLOYED = "not_deployed"
 CALENDAR_DEPLOYMENT_STATUS_DEPLOYED = "deployed"
 CALENDAR_DEPLOYMENT_STATUS_STALE = "stale"
@@ -343,6 +344,18 @@ def _calendar_source_hash(
 
 def _calendar_generated_slot_like_pattern(calendar_id: UUID) -> str:
     return f"{CALENDAR_DEPLOYMENT_BLOCK_PREFIX}|calendar={calendar_id}|%"
+
+
+def _school_year_bounds_from_label(label: str) -> tuple[date, date] | None:
+    normalized = (label or "").strip()
+    match = re.fullmatch(r"(\d{4})\s*[-/]\s*(\d{4})", normalized)
+    if match is None:
+        return None
+    start_year = int(match.group(1))
+    end_year = int(match.group(2))
+    if end_year < start_year:
+        return None
+    return (date(start_year, 9, 1), date(end_year, 8, 31))
 
 
 def _calendar_block_title_from_reason_types(reason_types: set[str]) -> str:
@@ -715,16 +728,26 @@ def _deploy_calendar_row(
 
     existing_rows = db.scalars(
         select(CourseSession)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .where(
             CourseSession.location_id == calendar.location_id,
-            CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
+            CourseType.code == "VACATION_DAY",
+            or_(
+                CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
+                CourseSession.private_description == CALENDAR_DEPLOYMENT_LEGACY_BLOCK_MARKER,
+            ),
         )
         .with_for_update()
     ).all()
     existing_by_day: dict[date, list[CourseSession]] = {}
     for session in existing_rows:
         parsed_calendar_id, parsed_day, _ = _parse_calendar_deployment_private_description(session.private_description)
-        if parsed_calendar_id != calendar.id or parsed_day is None:
+        is_legacy = (session.private_description or "").strip() == CALENDAR_DEPLOYMENT_LEGACY_BLOCK_MARKER
+        if parsed_day is None and is_legacy:
+            parsed_day = session.start_at_utc.date()
+        if parsed_day is None:
+            continue
+        if not is_legacy and parsed_calendar_id != calendar.id:
             continue
         existing_by_day.setdefault(parsed_day, []).append(session)
 
@@ -860,14 +883,31 @@ def _remove_calendar_deployment(
 ) -> QuoteSchoolCalendarDeploymentActionOut:
     calendar = _calendar_out(row)
     now = _utcnow()
-    to_delete = db.scalars(
+    deployment_any_pattern = f"{CALENDAR_DEPLOYMENT_BLOCK_PREFIX}|calendar=%"
+    query = (
         select(CourseSession)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .where(
             CourseSession.location_id == calendar.location_id,
-            CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
+            CourseType.code == "VACATION_DAY",
+            or_(
+                CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar.id)),
+                CourseSession.private_description == CALENDAR_DEPLOYMENT_LEGACY_BLOCK_MARKER,
+                CourseSession.private_description.like(deployment_any_pattern),
+            ),
         )
         .with_for_update()
-    ).all()
+    )
+    bounds = _school_year_bounds_from_label(calendar.school_year_label)
+    if bounds is not None:
+        school_year_start, school_year_end = bounds
+        start_dt = datetime.combine(school_year_start, time.min, tzinfo=timezone.utc)
+        end_dt = datetime.combine(school_year_end + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        query = query.where(
+            CourseSession.start_at_utc >= start_dt,
+            CourseSession.start_at_utc < end_dt,
+        )
+    to_delete = db.scalars(query).all()
     removed_count = 0
     for session in to_delete:
         db.delete(session)
@@ -895,19 +935,27 @@ def _list_calendar_generated_slots(
 ) -> list[QuoteSchoolCalendarGeneratedSlotOut]:
     rows = db.scalars(
         select(CourseSession)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .where(
             CourseSession.location_id == location_id,
-            CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar_id)),
+            CourseType.code == "VACATION_DAY",
+            or_(
+                CourseSession.private_description.like(_calendar_generated_slot_like_pattern(calendar_id)),
+                CourseSession.private_description == CALENDAR_DEPLOYMENT_LEGACY_BLOCK_MARKER,
+            ),
         )
         .order_by(CourseSession.start_at_utc.asc())
     ).all()
     out: list[QuoteSchoolCalendarGeneratedSlotOut] = []
     for row in rows:
         parsed_calendar_id, parsed_day, reason_types = _parse_calendar_deployment_private_description(row.private_description)
-        if parsed_calendar_id != calendar_id:
+        is_legacy = (row.private_description or "").strip() == CALENDAR_DEPLOYMENT_LEGACY_BLOCK_MARKER
+        if not is_legacy and parsed_calendar_id != calendar_id:
             continue
         if parsed_day is None:
             parsed_day = row.start_at_utc.date()
+        if not reason_types and is_legacy:
+            reason_types = {CALENDAR_DEPLOYMENT_REASON_VACATION}
         out.append(
             QuoteSchoolCalendarGeneratedSlotOut(
                 session_id=row.id,
