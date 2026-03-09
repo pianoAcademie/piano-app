@@ -722,6 +722,63 @@ def _normalize_template_source(template: str) -> str:
     return raw
 
 
+def _dedupe_retained_activities_tables(content: str) -> str:
+    raw = str(content or "")
+    if not raw:
+        return raw
+
+    pattern = re.compile(
+        r"(<h[1-3][^>]*>\s*Les\s+Activites?\s+retenues\s*</h[1-3]>\s*)"
+        r"(<table\b.*?</table>\s*)"
+        r"(<table\b.*?</table>)",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        heading = match.group(1)
+        first_table = match.group(2)
+        second_table = match.group(3)
+        first_is_services = bool(
+            re.search(r"<th[^>]*>\s*Activite\s*</th>", first_table, flags=re.IGNORECASE)
+            and not re.search(r"<th[^>]*>\s*Type\s+activite\s*</th>", first_table, flags=re.IGNORECASE)
+        )
+        second_is_planning = bool(
+            re.search(r"<th[^>]*>\s*Type\s+activite\s*</th>", second_table, flags=re.IGNORECASE)
+            and re.search(r"<th[^>]*>\s*Lieu\s*</th>", second_table, flags=re.IGNORECASE)
+        )
+        if first_is_services and second_is_planning:
+            return f"{heading}{second_table}"
+        return match.group(0)
+
+    return pattern.sub(_replace, raw)
+
+
+def _cleanup_legacy_terms_layout(content: str) -> str:
+    raw = str(content or "")
+    if not raw:
+        return raw
+    has_table = "<table" in raw.lower()
+    if not has_table:
+        return raw
+    has_table_headers = "<th" in raw.lower()
+    table_count = len(re.findall(r"<table\b", raw, flags=re.IGNORECASE))
+    if has_table_headers or table_count != 1:
+        return raw
+
+    row_pattern = re.compile(
+        r"<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*</tr>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    rows = row_pattern.findall(raw)
+    if len(rows) < 4:
+        return raw
+
+    flattened = "".join(f"<p>{cell.strip()}</p>" for cell in rows if cell.strip())
+    if not flattened:
+        return raw
+    return flattened
+
+
 def _enforce_family_page_break(content: str) -> str:
     marker = "quote-page-break"
     pattern = re.compile(r"(<h[1-3][^>]*>\s*Informations?\s+(de\s+la\s+)?famille\s*</h[1-3]>)", re.IGNORECASE)
@@ -1401,6 +1458,7 @@ def _render_quote_body_html(
     template = _normalize_template_source(body_template or _default_quote_body_template())
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered = _apply_template(template, values=values, html_keys=html_keys, html_output=True)
+    rendered = _dedupe_retained_activities_tables(rendered)
     if "{activities_planning_table_html}" not in template.lower():
         rendered += (
             "<h3>Planning detaille des activites</h3>"
@@ -1421,6 +1479,8 @@ def _render_quote_terms_html(
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     normalized_terms = _normalize_template_source(cgv_content)
     rendered_terms = _apply_template(normalized_terms, values=values, html_keys=html_keys, html_output=True)
+    rendered_terms = _normalize_template_source(rendered_terms)
+    rendered_terms = _cleanup_legacy_terms_layout(rendered_terms)
     header_html = values.get("header_standard_html", "")
     footer_html = values.get("footer_standard_html", "")
     return (

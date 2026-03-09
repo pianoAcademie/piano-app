@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import FontFamily from "@tiptap/extension-font-family";
 import Link from "@tiptap/extension-link";
+import TextStyle from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -35,6 +37,57 @@ function plainTextToHtml(value: string): string {
   return escapeHtml(value).replace(/\n/g, "<br>");
 }
 
+function decodeHtmlEntities(value: string): string {
+  if (!value || typeof document === "undefined") {
+    return value;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = value;
+  return textarea.value;
+}
+
+function normalizeInitialEditorValue(value: string): string {
+  const raw = String(value || "");
+  if (!raw.trim()) {
+    return "";
+  }
+  let decoded = raw;
+  for (let i = 0; i < 3; i += 1) {
+    const next = decodeHtmlEntities(decoded);
+    if (next === decoded) {
+      break;
+    }
+    decoded = next;
+  }
+  if (looksLikeHtml(decoded)) {
+    return decoded;
+  }
+  if (looksLikeHtml(raw)) {
+    return raw;
+  }
+  return plainTextToHtml(decoded);
+}
+
+const FONT_FAMILY_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Police par defaut" },
+  { value: "Arial", label: "Arial" },
+  { value: "Verdana", label: "Verdana" },
+  { value: "Georgia", label: "Georgia" },
+  { value: "Times New Roman", label: "Times New Roman" },
+  { value: "Trebuchet MS", label: "Trebuchet MS" },
+];
+
+const FONT_SIZE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Taille par defaut" },
+  { value: "11px", label: "11 px" },
+  { value: "12px", label: "12 px" },
+  { value: "13px", label: "13 px" },
+  { value: "14px", label: "14 px" },
+  { value: "16px", label: "16 px" },
+  { value: "18px", label: "18 px" },
+  { value: "20px", label: "20 px" },
+];
+
 export default function WysiwygField({
   name,
   label,
@@ -42,13 +95,19 @@ export default function WysiwygField({
   minHeightPx = 220,
   helpText,
 }: WysiwygFieldProps): JSX.Element {
-  const initialValue = looksLikeHtml(defaultValue) ? defaultValue : plainTextToHtml(defaultValue || "");
+  const initialValue = normalizeInitialEditorValue(defaultValue);
   const [mode, setMode] = useState<"wysiwyg" | "html">("wysiwyg");
   const [value, setValue] = useState<string>(initialValue);
+  const [fontFamily, setFontFamily] = useState<string>("");
+  const [fontSize, setFontSize] = useState<string>("");
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        heading: { levels: [2, 3] },
+        heading: { levels: [1, 2, 3] },
+      }),
+      TextStyle,
+      FontFamily.configure({
+        types: ["textStyle"],
       }),
       Underline,
       Link.configure({ openOnClick: false }),
@@ -71,7 +130,9 @@ export default function WysiwygField({
       { label: "B", action: "bold" },
       { label: "I", action: "italic" },
       { label: "U", action: "underline" },
+      { label: "H1", action: "heading1" },
       { label: "H2", action: "heading2" },
+      { label: "H3", action: "heading3" },
       { label: "P", action: "paragraph" },
       { label: "Liste", action: "bulletList" },
       { label: "1.2.3", action: "orderedList" },
@@ -100,7 +161,9 @@ export default function WysiwygField({
       | "italic"
       | "underline"
       | "paragraph"
+      | "heading1"
       | "heading2"
+      | "heading3"
       | "bulletList"
       | "orderedList"
       | "alignLeft"
@@ -126,8 +189,14 @@ export default function WysiwygField({
       case "paragraph":
         chain.setParagraph().run();
         break;
+      case "heading1":
+        chain.toggleHeading({ level: 1 }).run();
+        break;
       case "heading2":
         chain.toggleHeading({ level: 2 }).run();
+        break;
+      case "heading3":
+        chain.toggleHeading({ level: 3 }).run();
         break;
       case "bulletList":
         chain.toggleBulletList().run();
@@ -161,7 +230,7 @@ export default function WysiwygField({
       return;
     }
     if (editor) {
-      const next = looksLikeHtml(value) ? value : plainTextToHtml(value);
+      const next = normalizeInitialEditorValue(value);
       editor.commands.setContent(next, false);
       setValue(next);
     }
@@ -176,6 +245,46 @@ export default function WysiwygField({
       setValue(editor.getHTML());
     }
     setMode("html");
+  }
+
+  function applyFontFamily(next: string): void {
+    setFontFamily(next);
+    if (!editor || mode !== "wysiwyg") {
+      return;
+    }
+    const chain = editor.chain().focus();
+    if (!next) {
+      chain.unsetFontFamily().run();
+    } else {
+      chain.setFontFamily(next).run();
+    }
+    setValue(editor.getHTML());
+  }
+
+  function applyFontSize(next: string): void {
+    setFontSize(next);
+    if (!editor || mode !== "wysiwyg") {
+      return;
+    }
+    const chain = editor.chain().focus();
+    if (!next) {
+      chain.unsetMark("textStyle").run();
+    } else {
+      chain.setMark("textStyle", { fontSize: next }).run();
+    }
+    setValue(editor.getHTML());
+  }
+
+  function insertLink(): void {
+    if (!editor || mode !== "wysiwyg") {
+      return;
+    }
+    const href = window.prompt("URL du lien (https://...)");
+    if (!href) {
+      return;
+    }
+    editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+    setValue(editor.getHTML());
   }
 
   return (
@@ -213,6 +322,33 @@ export default function WysiwygField({
                 {item.label}
               </button>
             ))}
+            <select
+              className="ghost small-btn"
+              value={fontFamily}
+              onChange={(event) => applyFontFamily(event.target.value)}
+              aria-label="Famille de police"
+            >
+              {FONT_FAMILY_OPTIONS.map((option) => (
+                <option key={option.label} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="ghost small-btn"
+              value={fontSize}
+              onChange={(event) => applyFontSize(event.target.value)}
+              aria-label="Taille de police"
+            >
+              {FONT_SIZE_OPTIONS.map((option) => (
+                <option key={option.label} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="ghost small-btn" onClick={insertLink}>
+              Lien
+            </button>
           </div>
           <EditorContent editor={editor} />
         </div>

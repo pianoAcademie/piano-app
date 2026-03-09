@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import FontFamily from "@tiptap/extension-font-family";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
+import TextStyle from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -52,6 +54,57 @@ function plainTextToHtml(value: string): string {
   }
   return escapeHtml(value).replace(/\n/g, "<br>");
 }
+
+function decodeHtmlEntities(value: string): string {
+  if (!value || typeof document === "undefined") {
+    return value;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = value;
+  return textarea.value;
+}
+
+function normalizeInitialEditorValue(value: string): string {
+  const raw = String(value || "");
+  if (!raw.trim()) {
+    return "";
+  }
+  let decoded = raw;
+  for (let i = 0; i < 3; i += 1) {
+    const next = decodeHtmlEntities(decoded);
+    if (next === decoded) {
+      break;
+    }
+    decoded = next;
+  }
+  if (looksLikeHtml(decoded)) {
+    return decoded;
+  }
+  if (looksLikeHtml(raw)) {
+    return raw;
+  }
+  return plainTextToHtml(decoded);
+}
+
+const FONT_FAMILY_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Police par defaut" },
+  { value: "Arial", label: "Arial" },
+  { value: "Verdana", label: "Verdana" },
+  { value: "Georgia", label: "Georgia" },
+  { value: "Times New Roman", label: "Times New Roman" },
+  { value: "Trebuchet MS", label: "Trebuchet MS" },
+];
+
+const FONT_SIZE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Taille par defaut" },
+  { value: "11px", label: "11 px" },
+  { value: "12px", label: "12 px" },
+  { value: "13px", label: "13 px" },
+  { value: "14px", label: "14 px" },
+  { value: "16px", label: "16 px" },
+  { value: "18px", label: "18 px" },
+  { value: "20px", label: "20 px" },
+];
 
 export default function QuoteTemplateEditor({
   subjectName,
@@ -114,10 +167,14 @@ export default function QuoteTemplateEditor({
       },
       {
         key: "block_services",
-        label: "Bloc activites",
+        label: "Bloc activites retenues",
         value:
-          "<h2>Activites</h2>{services_table_html}"
-          + "<h3>Planning detaille des activites</h3>{activities_planning_table_html}",
+          "<h2>Les Activites retenues</h2>{activities_planning_table_html}",
+      },
+      {
+        key: "block_prestations",
+        label: "Bloc prestations",
+        value: "<h2>Prestations</h2>{services_table_html}",
       },
       {
         key: "block_material",
@@ -173,16 +230,22 @@ export default function QuoteTemplateEditor({
     [],
   );
   const hasVariables = variables.length > 0;
-  const initialBody = looksLikeHtml(defaultBody) ? defaultBody : plainTextToHtml(defaultBody || "");
+  const initialBody = normalizeInitialEditorValue(defaultBody);
   const [subject, setSubject] = useState<string>(defaultSubject);
   const [body, setBody] = useState<string>(initialBody);
   const [editorMode, setEditorMode] = useState<"wysiwyg" | "html">("wysiwyg");
+  const [fontFamily, setFontFamily] = useState<string>("");
+  const [fontSize, setFontSize] = useState<string>("");
   const [selectedVariable, setSelectedVariable] = useState<string>(variables[0]?.key || "quote_number");
   const [selectedSnippet, setSelectedSnippet] = useState<string>(snippets[0]?.key || "page_break");
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
+      }),
+      TextStyle,
+      FontFamily.configure({
+        types: ["textStyle"],
       }),
       Underline,
       Link.configure({
@@ -217,7 +280,7 @@ export default function QuoteTemplateEditor({
     if (!editor || editorMode !== "wysiwyg") {
       return;
     }
-    const next = looksLikeHtml(body) ? body : plainTextToHtml(body);
+    const next = normalizeInitialEditorValue(body);
     if (editor.getHTML() !== next) {
       editor.commands.setContent(next, false);
     }
@@ -297,7 +360,7 @@ export default function QuoteTemplateEditor({
     if (editorMode === "wysiwyg") {
       return;
     }
-    const next = looksLikeHtml(body) ? body : plainTextToHtml(body);
+    const next = normalizeInitialEditorValue(body);
     if (editor) {
       editor.commands.setContent(next, false);
     }
@@ -357,6 +420,34 @@ export default function QuoteTemplateEditor({
       return;
     }
     editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+    setBody(editor.getHTML());
+  }
+
+  function applyFontFamily(next: string): void {
+    setFontFamily(next);
+    if (!editor || editorMode !== "wysiwyg") {
+      return;
+    }
+    const chain = editor.chain().focus();
+    if (!next) {
+      chain.unsetFontFamily().run();
+    } else {
+      chain.setFontFamily(next).run();
+    }
+    setBody(editor.getHTML());
+  }
+
+  function applyFontSize(next: string): void {
+    setFontSize(next);
+    if (!editor || editorMode !== "wysiwyg") {
+      return;
+    }
+    const chain = editor.chain().focus();
+    if (!next) {
+      chain.unsetMark("textStyle").run();
+    } else {
+      chain.setMark("textStyle", { fontSize: next }).run();
+    }
     setBody(editor.getHTML());
   }
 
@@ -425,6 +516,32 @@ export default function QuoteTemplateEditor({
               <div className="toolbar-group">
                 <button type="button" className="ghost small-btn" onClick={insertLink}>Lien</button>
                 <button type="button" className="ghost small-btn" onClick={insertImageUrl}>Image URL</button>
+              </div>
+              <div className="toolbar-group">
+                <select
+                  className="ghost small-btn"
+                  value={fontFamily}
+                  onChange={(event) => applyFontFamily(event.target.value)}
+                  aria-label="Famille de police"
+                >
+                  {FONT_FAMILY_OPTIONS.map((option) => (
+                    <option key={option.label} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="ghost small-btn"
+                  value={fontSize}
+                  onChange={(event) => applyFontSize(event.target.value)}
+                  aria-label="Taille de police"
+                >
+                  {FONT_SIZE_OPTIONS.map((option) => (
+                    <option key={option.label} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="toolbar-group">
                 <button type="button" className="ghost small-btn" onClick={() => applyCommand("undo")}>↶</button>
