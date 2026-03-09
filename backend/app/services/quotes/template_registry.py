@@ -55,7 +55,19 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     {
         "key": "total_ttc",
         "label": "Total TTC",
-        "description": "Montant total TTC du devis.",
+        "description": "Montant total TTC facture (apres avoir/dette).",
+        "example": "1290.00",
+    },
+    {
+        "key": "total_ttc_before_adjustment",
+        "label": "Total TTC avant ajustement",
+        "description": "Total TTC des lignes avant application de l'avoir/dette.",
+        "example": "1320.00",
+    },
+    {
+        "key": "total_ttc_after_adjustment",
+        "label": "Total TTC apres ajustement",
+        "description": "Alias explicite du total TTC facture (apres ajustement).",
         "example": "1290.00",
     },
     {
@@ -314,6 +326,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "key": "kits_table_html",
         "label": "Tableau kits (HTML)",
         "description": "Tableau HTML des kits du devis.",
+        "example": "<table>...</table>",
+    },
+    {
+        "key": "adjustments_table_html",
+        "label": "Tableau remises/supplements (HTML)",
+        "description": "Tableau HTML dedie aux remises et supplements (separe du materiel).",
         "example": "<table>...</table>",
     },
     {

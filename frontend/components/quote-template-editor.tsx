@@ -182,6 +182,11 @@ export default function QuoteTemplateEditor({
         value: "<h2>Materiel</h2>{products_table_html}",
       },
       {
+        key: "block_adjustments_table",
+        label: "Bloc remises/supplements",
+        value: "<h2>Remises et supplements</h2>{adjustments_table_html}",
+      },
+      {
         key: "block_payment",
         label: "Bloc paiement",
         value:
@@ -223,7 +228,8 @@ export default function QuoteTemplateEditor({
           "<table width='100%' cellpadding='6' cellspacing='0' border='1'>"
           + "<tr><td><strong>Total HT</strong></td><td align='right'>{total_ht} {currency}</td></tr>"
           + "<tr><td><strong>TVA ({vat_rate} %)</strong></td><td align='right'>{vat_amount} {currency}</td></tr>"
-          + "<tr><td><strong>Total TTC</strong></td><td align='right'><strong>{total_ttc} {currency}</strong></td></tr>"
+          + "<tr><td><strong>Total TTC avant ajustement</strong></td><td align='right'>{total_ttc_before_adjustment} {currency}</td></tr>"
+          + "<tr><td><strong>Total TTC facture</strong></td><td align='right'><strong>{total_ttc_after_adjustment} {currency}</strong></td></tr>"
           + "</table>",
       },
     ],

@@ -370,11 +370,21 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> str:
     )
 
 
-def _line_groups(lines: list[QuoteLine]) -> tuple[list[QuoteLine], list[QuoteLine], list[QuoteLine]]:
+def _is_adjustment_line(line: QuoteLine) -> bool:
+    line_type = (line.line_type or "").strip().lower()
+    master_item_type = (line.master_item_type or "").strip().lower()
+    return line_type in {"discount", "surcharge"} or master_item_type in {"discount_rule", "surcharge_rule"}
+
+
+def _line_groups(lines: list[QuoteLine]) -> tuple[list[QuoteLine], list[QuoteLine], list[QuoteLine], list[QuoteLine]]:
     services: list[QuoteLine] = []
     products: list[QuoteLine] = []
     kits: list[QuoteLine] = []
+    adjustments: list[QuoteLine] = []
     for line in lines:
+        if _is_adjustment_line(line):
+            adjustments.append(line)
+            continue
         if (line.line_category or "").strip().lower() == "service":
             services.append(line)
             continue
@@ -382,7 +392,7 @@ def _line_groups(lines: list[QuoteLine]) -> tuple[list[QuoteLine], list[QuoteLin
             kits.append(line)
             continue
         products.append(line)
-    return services, products, kits
+    return services, products, kits, adjustments
 
 
 def _load_quote_template_snapshot(*, db: Session | None, quote: Quote) -> tuple[str, str]:
@@ -975,7 +985,7 @@ def _build_template_values(
     audience: str = DEFAULT_AUDIENCE,
 ) -> tuple[dict[str, str], set[str], dict[str, Any]]:
     currency = (quote.currency or "EUR").upper()
-    services, products, kits = _line_groups(lines)
+    services, products, kits, adjustments = _line_groups(lines)
     document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
     display_flags = document_context["display_flags"]
     total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
@@ -1068,11 +1078,38 @@ def _build_template_values(
         ],
         empty_label="Aucun kit.",
     )
+    adjustments_table_html = _table_html(
+        ["Type", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+        [
+            [
+                "Remise"
+                if (line.line_type or "").strip().lower() == "discount"
+                else "Supplement"
+                if (line.line_type or "").strip().lower() == "surcharge"
+                else (
+                    "Remise"
+                    if (line.master_item_type or "").strip().lower() == "discount_rule"
+                    else "Supplement"
+                ),
+                line.title or "-",
+                _decimal_str(Decimal(line.quantity or 0)),
+                f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+                _money(Decimal(line.unit_price_ttc or 0), currency),
+                _money(Decimal(line.amount_ttc or 0), currency),
+            ]
+            for line in adjustments
+        ],
+        empty_label="Aucune remise ni supplement.",
+    )
     lines_table_html = _table_html(
         ["Categorie", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
             [
-                "Service" if (line.line_category or "").lower() == "service" else ("Kit" if line.kit_id else "Materiel"),
+                "Remise"
+                if (line.line_type or "").strip().lower() == "discount"
+                else "Supplement"
+                if (line.line_type or "").strip().lower() == "surcharge"
+                else ("Service" if (line.line_category or "").lower() == "service" else ("Kit" if line.kit_id else "Materiel")),
                 line.title or "-",
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
@@ -1316,6 +1353,8 @@ def _build_template_values(
         "recipient_name": recipient_name,
         "recipient_email": recipient_email,
         "total_ttc": _decimal_str(total_ttc),
+        "total_ttc_before_adjustment": _decimal_str(total_before_adjustment),
+        "total_ttc_after_adjustment": _decimal_str(total_after_adjustment),
         "total_ht": _decimal_str(total_ht),
         "vat_rate": _decimal_str(vat_rate),
         "vat_amount": _decimal_str(vat_amount),
@@ -1363,6 +1402,7 @@ def _build_template_values(
         "services_count": str(len(services)),
         "products_count": str(len(products)),
         "kits_count": str(len(kits)),
+        "adjustments_count": str(len(adjustments)),
         "lines_count": str(len(lines)),
         "prospect_identity_block_html": prospect_identity_block_html,
         "solfege_block_html": solfege_block_html,
@@ -1373,6 +1413,7 @@ def _build_template_values(
         "activities_planning_table_html": planning_blocks_table_html,
         "products_table_html": products_table_html,
         "kits_table_html": kits_table_html,
+        "adjustments_table_html": adjustments_table_html,
         "lines_table_html": lines_table_html,
         "payment_schedule_table_html": payment_schedule_table_html,
         "calendar_table_html": calendar_table_html,
@@ -1399,6 +1440,7 @@ def _build_template_values(
         "activities_planning_table_html",
         "products_table_html",
         "kits_table_html",
+        "adjustments_table_html",
         "lines_table_html",
         "payment_schedule_table_html",
         "calendar_table_html",
@@ -1432,6 +1474,7 @@ def _default_quote_body_template() -> str:
         "<h3>Planning detaille des activites</h3>{activities_planning_table_html}"
         "<h2>Materiel</h2>{products_table_html}"
         "<h2>Kits</h2>{kits_table_html}"
+        "<h2>Remises et supplements</h2>{adjustments_table_html}"
         "{payment_method_block_html}"
         "<h2>Echeancier de paiement</h2>{payment_schedule_table_html}"
         "<h2>Ajustement financier</h2>{financial_adjustment_block_html}"
