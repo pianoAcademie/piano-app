@@ -2,6 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 import CopyLinkButton from "../../../../components/copy-link-button";
 import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
@@ -552,6 +553,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const publicPdfHref = detail.quote.pdf_token
     ? `/q/${detail.quote.id}/pdf?t=${encodeURIComponent(detail.quote.pdf_token)}${pdfVersionTag ? `&v=${encodeURIComponent(pdfVersionTag)}` : ""}`
     : null;
+  const regenerateFormId = `quote-regenerate-form-${detail.quote.id}`;
 
   const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
 
@@ -624,12 +626,18 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <Link className="ghost" href={adminPdfHref} target="_blank">
             PDF admin
           </Link>
-          <form action={regenerateQuoteDocumentAction}>
+          <form id={regenerateFormId} action={regenerateQuoteDocumentAction}>
             <input type="hidden" name="quote_id" value={detail.quote.id} />
             <input type="hidden" name="return_to" value={selfPath} />
-            <button type="submit" className="ghost" disabled={detail.quote.status !== "created"}>
-              Regenerer document
-            </button>
+            <ConfirmSubmitButton
+              formId={regenerateFormId}
+              label="Regenerer document"
+              title="Confirmer la regeneration du devis ?"
+              description="Le document devis sera regenere avec les parametres et templates actuellement selectionnes."
+              confirmLabel="Regenerer"
+              className="ghost"
+              disabled={detail.quote.status !== "created"}
+            />
           </form>
           {detail.quote.status !== "created" ? (
             <small className="muted">Regeneration reservee au brouillon.</small>

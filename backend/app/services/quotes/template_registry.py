@@ -204,26 +204,26 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     },
     {
         "key": "parent_full_name",
-        "label": "Nom parent",
-        "description": "Nom complet du parent referent.",
+        "label": "Nom adulte responsable",
+        "description": "Nom complet de l adulte responsable.",
         "example": "Sophie Dupont",
     },
     {
         "key": "parent_email",
-        "label": "Email parent",
-        "description": "Email du parent referent.",
+        "label": "Email adulte responsable",
+        "description": "Email de l adulte responsable.",
         "example": "sophie@example.com",
     },
     {
         "key": "parent_phone",
-        "label": "Telephone parent",
-        "description": "Telephone du parent referent.",
+        "label": "Telephone adulte responsable",
+        "description": "Telephone de l adulte responsable.",
         "example": "0601020304",
     },
     {
         "key": "parent_address",
-        "label": "Adresse parent",
-        "description": "Adresse du parent referent.",
+        "label": "Adresse adulte responsable",
+        "description": "Adresse de l adulte responsable.",
         "example": "12 rue Victor Hugo, 75015 Paris",
     },
     {
@@ -265,7 +265,7 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     {
         "key": "prospect_identity_block_html",
         "label": "Bloc identite prospect (HTML)",
-        "description": "Bloc deja structure (adulte ou enfant/parent selon le type de prospect).",
+        "description": "Bloc deja structure (enfant + adulte responsable, ou adulte responsable seul).",
         "example": "<p><strong>Eleve:</strong> Emma Dupont</p>",
     },
     {

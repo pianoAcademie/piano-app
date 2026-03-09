@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import ConfirmSubmitButton from "./confirm-submit-button";
 
 type ProspectOption = {
   id: string;
@@ -364,6 +365,7 @@ export default function QuoteWizardForm({
   defaultProspectId,
   createAction,
 }: QuoteWizardFormProps): JSX.Element {
+  const createDraftFormId = "quote-wizard-create-draft-form";
   const defaultTemplate = quoteTemplates.find((item) => item.is_default) ?? quoteTemplates[0] ?? null;
   const [contextType, setContextType] = useState<"acquisition" | "active_client">("acquisition");
   const [selectedProspectId, setSelectedProspectId] = useState<string>(defaultProspectId || "");
@@ -554,7 +556,7 @@ export default function QuoteWizardForm({
   }
 
   return (
-    <form action={createAction} className="quote-wizard-layout">
+    <form id={createDraftFormId} action={createAction} className="quote-wizard-layout">
       <input type="hidden" name="return_to" value={returnTo} />
       <input type="hidden" name="lines_json" value={linesJson} />
       <input type="hidden" name="planning_blocks_json" value={planningBlocksJson} />
@@ -1065,7 +1067,13 @@ export default function QuoteWizardForm({
           <h3>6. Finalisation</h3>
           <p className="muted">Le devis est cree en brouillon. L envoi au prospect se fait ensuite depuis le panneau detail.</p>
           <div className="row wrap gap-sm top-gap-sm">
-            <button type="submit">Creer le devis brouillon</button>
+            <ConfirmSubmitButton
+              formId={createDraftFormId}
+              label="Creer le devis brouillon"
+              title="Confirmer la generation du devis brouillon ?"
+              description="Le devis sera cree en brouillon avec les informations saisies. Vous pourrez ensuite le modifier et regenerer le document."
+              confirmLabel="Creer le brouillon"
+            />
             <a className="ghost" href={returnTo}>Annuler</a>
           </div>
         </article>

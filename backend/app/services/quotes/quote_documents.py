@@ -103,6 +103,13 @@ def _document_style_html() -> str:
         ".quote-muted{color:#5b6470;}"
         ".quote-page-break{page-break-before:always;}"
         ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:avoid;}"
+        ".quote-identity-grid{display:block;width:100%;}"
+        ".quote-identity-card{border:1px solid #d3dbe7;background:#ffffff;padding:10px 12px;margin:0 0 10px 0;page-break-inside:avoid;}"
+        ".quote-identity-card h3{margin:0 0 8px 0;font-size:13px;color:#111827;}"
+        ".quote-identity-meta{width:100%;border-collapse:collapse;font-size:11px;}"
+        ".quote-identity-meta td{padding:6px 8px;border-bottom:1px solid #edf2f7;vertical-align:top;}"
+        ".quote-identity-meta tr:last-child td{border-bottom:none;}"
+        ".quote-identity-meta td:first-child{width:36%;font-weight:700;color:#1f2937;background:#f8fafc;}"
         ".quote-header{width:100%;border-collapse:collapse;margin:0 0 10px 0;}"
         ".quote-header td{vertical-align:top;}"
         ".quote-brand-logo{display:inline-block;min-width:84px;padding:7px 9px;background:#111111;color:#d2b04c;font-size:10px;line-height:1.2;font-weight:700;letter-spacing:0.5px;text-align:center;}"
@@ -1116,35 +1123,86 @@ def _build_template_values(
         if labels:
             masterclass_full = f"Masterclass du samedi souscrite - {'; '.join(labels)}"
 
-    def _identity_row(label: str, value: str) -> str:
+    def _identity_row_cells(label: str, value: str) -> str:
         normalized = str(value or "").strip()
         if not normalized or normalized == "-":
             return ""
-        return f"<p><strong>{escape(label)}:</strong> {escape(normalized)}</p>"
+        return (
+            "<tr>"
+            f"<td>{escape(label)}</td>"
+            f"<td>{escape(normalized)}</td>"
+            "</tr>"
+        )
+
+    def _identity_card(title: str, rows: list[str], empty_label: str) -> str:
+        body = "".join(row for row in rows if row)
+        if not body:
+            body = (
+                "<tr>"
+                f"<td>{escape(empty_label)}</td>"
+                "<td>-</td>"
+                "</tr>"
+            )
+        return (
+            "<section class='quote-identity-card'>"
+            f"<h3>{escape(title)}</h3>"
+            "<table class='quote-identity-meta' cellspacing='0' cellpadding='0'>"
+            f"{body}"
+            "</table>"
+            "</section>"
+        )
 
     adult_email_value = prospect_data.get("adult_email") or recipient_email
     adult_phone_value = str(prospect_data.get("adult_phone") or client_data.get("client_phone") or "").strip()
     adult_address_value = str(prospect_data.get("adult_address") or client_data.get("client_address") or "").strip()
-    adult_identity_block_html = (
-        _identity_row("Adulte", str(prospect_data.get("adult_full_name") or recipient_name))
-        + _identity_row("Email", str(adult_email_value or ""))
-        + _identity_row("Telephone", adult_phone_value)
-        + _identity_row("Adresse", adult_address_value)
-    ) or "<p><strong>Adulte:</strong> -</p>"
 
     child_birth_date_value = _birth_date_label(str(prospect_data.get("child_birth_date") or ""))
     parent_email_value = prospect_data.get("parent_email") or recipient_email
     parent_phone_value = str(prospect_data.get("parent_phone") or "").strip()
     parent_address_value = str(prospect_data.get("parent_address") or "").strip()
-    child_identity_block_html = (
-        _identity_row("Eleve", str(prospect_data.get("child_full_name") or "-"))
-        + _identity_row("Date de naissance", child_birth_date_value)
-        + _identity_row("Parent referent", str(prospect_data.get("parent_full_name") or recipient_name))
-        + _identity_row("Email parent", str(parent_email_value or ""))
-        + _identity_row("Telephone parent", parent_phone_value)
-        + _identity_row("Adresse parent", parent_address_value)
-    ) or "<p><strong>Eleve:</strong> -</p>"
-    prospect_identity_block_html = child_identity_block_html if display_flags["showChildBlock"] else adult_identity_block_html
+    responsible_name_value = str(
+        prospect_data.get("parent_full_name")
+        or prospect_data.get("adult_full_name")
+        or recipient_name
+        or "-"
+    ).strip()
+    responsible_email_value = str(parent_email_value or adult_email_value or "").strip()
+    responsible_phone_value = str(parent_phone_value or adult_phone_value or "").strip()
+    responsible_address_value = str(parent_address_value or adult_address_value or "").strip()
+
+    child_identity_card_html = _identity_card(
+        "Informations de l eleve",
+        [
+            _identity_row_cells("Eleve", str(prospect_data.get("child_full_name") or "-")),
+            _identity_row_cells("Date de naissance", child_birth_date_value),
+        ],
+        "Eleve",
+    )
+    responsible_identity_card_html = _identity_card(
+        "Informations de l adulte responsable",
+        [
+            _identity_row_cells("Adulte responsable", responsible_name_value),
+            _identity_row_cells("Email", responsible_email_value),
+            _identity_row_cells("Telephone", responsible_phone_value),
+            _identity_row_cells("Adresse", responsible_address_value),
+        ],
+        "Adulte responsable",
+    )
+    adult_identity_card_html = _identity_card(
+        "Informations de l adulte responsable",
+        [
+            _identity_row_cells("Adulte responsable", str(prospect_data.get("adult_full_name") or recipient_name or "-")),
+            _identity_row_cells("Email", str(adult_email_value or "")),
+            _identity_row_cells("Telephone", adult_phone_value),
+            _identity_row_cells("Adresse", adult_address_value),
+        ],
+        "Adulte responsable",
+    )
+    prospect_identity_block_html = (
+        "<div class='quote-identity-grid'>"
+        + (child_identity_card_html + responsible_identity_card_html if display_flags["showChildBlock"] else adult_identity_card_html)
+        + "</div>"
+    )
     solfege_block_html = (
         f"<p>{escape(solfege_full)}</p>"
         if display_flags["showSolfegeSection"]
