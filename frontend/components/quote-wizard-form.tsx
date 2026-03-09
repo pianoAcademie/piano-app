@@ -1044,7 +1044,6 @@ export default function QuoteWizardForm({
                       value={line.unitPrice}
                       onChange={(event) => updateLine(line.uid, { unitPrice: event.target.value })}
                       required
-                      readOnly={isCatalogKind(line.kind)}
                     />
                   </label>
                   <div className="quote-line-amount">
@@ -1054,7 +1053,7 @@ export default function QuoteWizardForm({
                 </div>
                 {isCatalogKind(line.kind) ? (
                   <small className="muted">
-                    Prix catalogue applique automatiquement depuis la base. Utilisez une remise ou un supplement pour ajuster.
+                    Prix pre-rempli depuis le catalogue/la base. Vous pouvez l ajuster si necessaire.
                   </small>
                 ) : null}
               </article>

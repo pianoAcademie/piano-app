@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Image from "@tiptap/extension-image";
+import Link from "@tiptap/extension-link";
+import TextAlign from "@tiptap/extension-text-align";
+import Underline from "@tiptap/extension-underline";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
 
 type QuoteTemplateVariable = {
   key: string;
@@ -167,12 +173,36 @@ export default function QuoteTemplateEditor({
     [],
   );
   const hasVariables = variables.length > 0;
+  const initialBody = looksLikeHtml(defaultBody) ? defaultBody : plainTextToHtml(defaultBody || "");
   const [subject, setSubject] = useState<string>(defaultSubject);
-  const [body, setBody] = useState<string>(defaultBody);
+  const [body, setBody] = useState<string>(initialBody);
   const [editorMode, setEditorMode] = useState<"wysiwyg" | "html">("wysiwyg");
   const [selectedVariable, setSelectedVariable] = useState<string>(variables[0]?.key || "quote_number");
   const [selectedSnippet, setSelectedSnippet] = useState<string>(snippets[0]?.key || "page_break");
-  const editorRef = useRef<HTMLDivElement | null>(null);
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+      }),
+      Underline,
+      Link.configure({
+        openOnClick: false,
+      }),
+      TextAlign.configure({
+        types: ["heading", "paragraph"],
+      }),
+      Image,
+    ],
+    content: initialBody,
+    editorProps: {
+      attributes: {
+        class: "quote-template-editor-surface",
+      },
+    },
+    onUpdate: ({ editor: editorInstance }) => {
+      setBody(editorInstance.getHTML());
+    },
+  });
 
   const selected = useMemo(
     () => variables.find((item) => item.key === selectedVariable) ?? variables[0] ?? null,
@@ -183,47 +213,114 @@ export default function QuoteTemplateEditor({
     [selectedSnippet, snippets],
   );
 
-  function syncBodyFromEditor(): void {
-    setBody(editorRef.current?.innerHTML ?? "");
-  }
-
-  function applyCommand(command: string, commandValue?: string): void {
-    if (!editorRef.current || editorMode !== "wysiwyg") {
+  useEffect(() => {
+    if (!editor || editorMode !== "wysiwyg") {
       return;
     }
-    editorRef.current.focus();
-    document.execCommand("styleWithCSS", false);
-    document.execCommand(command, false, commandValue);
-    syncBodyFromEditor();
+    const next = looksLikeHtml(body) ? body : plainTextToHtml(body);
+    if (editor.getHTML() !== next) {
+      editor.commands.setContent(next, false);
+    }
+  }, [editor, editorMode, body]);
+
+  function applyCommand(
+    action:
+      | "bold"
+      | "italic"
+      | "underline"
+      | "paragraph"
+      | "heading1"
+      | "heading2"
+      | "heading3"
+      | "bulletList"
+      | "orderedList"
+      | "alignLeft"
+      | "alignCenter"
+      | "alignRight"
+      | "undo"
+      | "redo",
+  ): void {
+    if (!editor || editorMode !== "wysiwyg") {
+      return;
+    }
+    const chain = editor.chain().focus();
+    switch (action) {
+      case "bold":
+        chain.toggleBold().run();
+        break;
+      case "italic":
+        chain.toggleItalic().run();
+        break;
+      case "underline":
+        chain.toggleUnderline().run();
+        break;
+      case "paragraph":
+        chain.setParagraph().run();
+        break;
+      case "heading1":
+        chain.toggleHeading({ level: 1 }).run();
+        break;
+      case "heading2":
+        chain.toggleHeading({ level: 2 }).run();
+        break;
+      case "heading3":
+        chain.toggleHeading({ level: 3 }).run();
+        break;
+      case "bulletList":
+        chain.toggleBulletList().run();
+        break;
+      case "orderedList":
+        chain.toggleOrderedList().run();
+        break;
+      case "alignLeft":
+        chain.setTextAlign("left").run();
+        break;
+      case "alignCenter":
+        chain.setTextAlign("center").run();
+        break;
+      case "alignRight":
+        chain.setTextAlign("right").run();
+        break;
+      case "undo":
+        chain.undo().run();
+        break;
+      case "redo":
+        chain.redo().run();
+        break;
+      default:
+        break;
+    }
+    setBody(editor.getHTML());
   }
 
   function switchToWysiwyg(): void {
     if (editorMode === "wysiwyg") {
       return;
     }
-    setEditorMode("wysiwyg");
-    if (!looksLikeHtml(body)) {
-      setBody(plainTextToHtml(body));
+    const next = looksLikeHtml(body) ? body : plainTextToHtml(body);
+    if (editor) {
+      editor.commands.setContent(next, false);
     }
+    setBody(next);
+    setEditorMode("wysiwyg");
   }
 
   function switchToHtml(): void {
     if (editorMode === "html") {
       return;
     }
-    if (editorRef.current) {
-      setBody(editorRef.current.innerHTML);
+    if (editor) {
+      setBody(editor.getHTML());
     }
     setEditorMode("html");
   }
 
   function insertHtmlAtCursor(html: string): void {
-    if (!editorRef.current || editorMode !== "wysiwyg") {
+    if (!editor || editorMode !== "wysiwyg") {
       return;
     }
-    editorRef.current.focus();
-    document.execCommand("insertHTML", false, html);
-    syncBodyFromEditor();
+    editor.chain().focus().insertContent(html).run();
+    setBody(editor.getHTML());
   }
 
   function insertToken(): void {
@@ -231,10 +328,9 @@ export default function QuoteTemplateEditor({
       return;
     }
     const token = tokenForVariable(selected.key);
-    if (editorMode === "wysiwyg" && editorRef.current) {
-      editorRef.current.focus();
-      document.execCommand("insertText", false, token);
-      syncBodyFromEditor();
+    if (editorMode === "wysiwyg" && editor) {
+      editor.chain().focus().insertContent(token).run();
+      setBody(editor.getHTML());
       return;
     }
     setBody((prev) => `${prev}${prev.endsWith("\n") || !prev ? "" : "\n"}${token}`);
@@ -245,7 +341,7 @@ export default function QuoteTemplateEditor({
       return;
     }
     const snippet = selectedSnippetDef.value;
-    if (editorMode === "wysiwyg" && editorRef.current) {
+    if (editorMode === "wysiwyg" && editor) {
       insertHtmlAtCursor(snippet);
       return;
     }
@@ -253,25 +349,27 @@ export default function QuoteTemplateEditor({
   }
 
   function insertLink(): void {
-    if (!editorRef.current || editorMode !== "wysiwyg") {
+    if (!editor || editorMode !== "wysiwyg") {
       return;
     }
     const href = window.prompt("URL du lien (https://...)");
     if (!href) {
       return;
     }
-    applyCommand("createLink", href);
+    editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+    setBody(editor.getHTML());
   }
 
   function insertImageUrl(): void {
-    if (!editorRef.current || editorMode !== "wysiwyg") {
+    if (!editor || editorMode !== "wysiwyg") {
       return;
     }
     const src = window.prompt("URL de l image (https://...)");
     if (!src) {
       return;
     }
-    applyCommand("insertImage", src);
+    editor.chain().focus().setImage({ src }).run();
+    setBody(editor.getHTML());
   }
 
   return (
@@ -310,19 +408,19 @@ export default function QuoteTemplateEditor({
                 <button type="button" className="ghost small-btn" onClick={() => applyCommand("underline")}>U</button>
               </div>
               <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("formatBlock", "h1")}>H1</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("formatBlock", "h2")}>H2</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("formatBlock", "h3")}>H3</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("formatBlock", "p")}>P</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading1")}>H1</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading2")}>H2</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading3")}>H3</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("paragraph")}>P</button>
               </div>
               <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("insertUnorderedList")}>• Liste</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("insertOrderedList")}>1. Liste</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("bulletList")}>• Liste</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("orderedList")}>1. Liste</button>
               </div>
               <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("justifyLeft")}>Gauche</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("justifyCenter")}>Centre</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("justifyRight")}>Droite</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignLeft")}>Gauche</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignCenter")}>Centre</button>
+                <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignRight")}>Droite</button>
               </div>
               <div className="toolbar-group">
                 <button type="button" className="ghost small-btn" onClick={insertLink}>Lien</button>
@@ -333,14 +431,7 @@ export default function QuoteTemplateEditor({
                 <button type="button" className="ghost small-btn" onClick={() => applyCommand("redo")}>↷</button>
               </div>
             </div>
-            <div
-              ref={editorRef}
-              className="quote-template-editor-surface"
-              contentEditable
-              suppressContentEditableWarning
-              onInput={(event) => setBody((event.currentTarget as HTMLDivElement).innerHTML)}
-              dangerouslySetInnerHTML={{ __html: body }}
-            />
+            <EditorContent editor={editor} />
           </div>
         ) : (
           <textarea

@@ -116,8 +116,8 @@ def _document_style_html() -> str:
         ".quote-table thead{display:table-header-group;}"
         ".quote-table tfoot{display:table-footer-group;}"
         ".quote-table tr{page-break-inside:avoid;}"
-        ".quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:10px 8px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:top !important;height:auto !important;min-height:26px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
-        ".quote-table td{border:1px solid #d3dbe7 !important;padding:10px 8px !important;vertical-align:top !important;color:#111827 !important;line-height:1.45 !important;height:auto !important;min-height:24px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
+        ".quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:middle !important;height:auto !important;min-height:30px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
+        ".quote-table td{border:1px solid #d3dbe7 !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;vertical-align:middle !important;color:#111827 !important;line-height:1.45 !important;height:auto !important;min-height:30px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
         ".quote-table td>*{margin-top:0;margin-bottom:0;}"
         ".quote-footer{width:100%;border-collapse:collapse;margin-top:12px;padding-top:8px;border-top:1px solid #cdd4de;font-size:10px;color:#475467;}"
         ".quote-footer td{vertical-align:top;}"
@@ -258,7 +258,7 @@ def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) 
         return f"<p class='quote-muted'>{escape(empty_label)}</p>"
     head = "".join(
         "<th bgcolor='#E7EDF7' "
-        "style='background-color:#E7EDF7;color:#111827;border:1px solid #c2ccda;padding:10px 8px;text-align:left;font-weight:700;line-height:1.4;vertical-align:top;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
+        "style='background-color:#E7EDF7;color:#111827;border:1px solid #c2ccda;padding:12px 10px 12px 10px;padding-top:12px;padding-right:10px;padding-bottom:12px;padding-left:10px;text-align:left;font-weight:700;line-height:1.4;vertical-align:middle;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
         f"{escape(cell)}"
         "</th>"
         for cell in headers
@@ -268,7 +268,7 @@ def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) 
         body_rows.append(
             "<tr>"
             + "".join(
-                "<td valign='top' style='border:1px solid #d8dee7;padding:10px 8px;vertical-align:top;color:#111827;line-height:1.45;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
+                "<td valign='middle' style='border:1px solid #d8dee7;padding:12px 10px 12px 10px;padding-top:12px;padding-right:10px;padding-bottom:12px;padding-left:10px;vertical-align:middle;color:#111827;line-height:1.45;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
                 f"{escape(cell)}"
                 "</td>"
                 for cell in row
@@ -277,7 +277,7 @@ def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) 
         )
     body = "".join(body_rows)
     return (
-        "<table class='quote-table' border='1' cellspacing='0' cellpadding='0' width='100%' "
+        "<table class='quote-table' border='1' cellspacing='0' cellpadding='10' width='100%' "
         "style='width:100%;border-collapse:collapse;border-spacing:0;margin:6px 0 10px 0;font-size:11px;table-layout:auto;'>"
         f"<thead><tr>{head}</tr></thead>"
         f"<tbody>{body}</tbody>"
@@ -784,6 +784,82 @@ def _extract_body_inner_html(content: str) -> str:
     return matched.group(1)
 
 
+def _normalize_tables_for_pdf(content: str) -> str:
+    raw = str(content or "")
+    if not raw:
+        return raw
+
+    def _normalize_table_tag(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        lowered = tag.lower()
+        if (
+            "quote-running-header" in lowered
+            or "quote-running-footer" in lowered
+            or "quote-header" in lowered
+            or "quote-footer" in lowered
+        ):
+            return tag
+
+        updated = tag
+        class_match = re.search(r"class\s*=\s*(['\"])(.*?)\1", updated, flags=re.IGNORECASE | re.DOTALL)
+        if class_match:
+            classes = class_match.group(2)
+            if "quote-table" not in classes.split():
+                next_classes = f"{classes} quote-table".strip()
+                updated = (
+                    updated[: class_match.start(2)]
+                    + next_classes
+                    + updated[class_match.end(2) :]
+                )
+        else:
+            updated = updated[:-1] + " class='quote-table'>"
+
+        if not re.search(r"\bcellpadding\s*=", updated, flags=re.IGNORECASE):
+            updated = updated[:-1] + " cellpadding='10'>"
+        if not re.search(r"\bcellspacing\s*=", updated, flags=re.IGNORECASE):
+            updated = updated[:-1] + " cellspacing='0'>"
+        return updated
+
+    def _append_style(existing: str) -> str:
+        base = existing.strip()
+        if base and not base.endswith(";"):
+            base = base + ";"
+        extra = (
+            "padding:12px 10px 12px 10px;"
+            "padding-top:12px;"
+            "padding-right:10px;"
+            "padding-bottom:12px;"
+            "padding-left:10px;"
+            "vertical-align:middle;"
+        )
+        return (base + extra).strip()
+
+    def _normalize_cell_tag(match: re.Match[str]) -> str:
+        tag_name = match.group(1)
+        attrs = match.group(2) or ""
+        updated_attrs = attrs
+
+        style_match = re.search(r"style\s*=\s*(['\"])(.*?)\1", updated_attrs, flags=re.IGNORECASE | re.DOTALL)
+        if style_match:
+            next_style = _append_style(style_match.group(2))
+            updated_attrs = (
+                updated_attrs[: style_match.start(2)]
+                + next_style
+                + updated_attrs[style_match.end(2) :]
+            )
+        else:
+            updated_attrs = f"{updated_attrs} style='{_append_style('')}'"
+
+        if not re.search(r"\bvalign\s*=", updated_attrs, flags=re.IGNORECASE):
+            updated_attrs = f"{updated_attrs} valign='middle'"
+
+        return f"<{tag_name}{updated_attrs}>"
+
+    normalized = re.sub(r"<table\b[^>]*>", _normalize_table_tag, raw, flags=re.IGNORECASE)
+    normalized = re.sub(r"<(th|td)([^>]*)>", _normalize_cell_tag, normalized, flags=re.IGNORECASE)
+    return normalized
+
+
 def _pdf_shell_html(*, content_html: str, header_html: str, footer_html: str) -> str:
     return (
         "<html><head><meta charset='utf-8'/>"
@@ -801,8 +877,8 @@ def _pdf_shell_html(*, content_html: str, header_html: str, footer_html: str) ->
         ".quote-page-break{page-break-before:always;}"
         ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:avoid;}"
         ".quote-content table,.quote-table{width:100%;border-collapse:collapse;border-spacing:0;table-layout:auto;margin:8px 0 12px 0;font-size:10.9px;}"
-        ".quote-content th,.quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:10px 8px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:top !important;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;height:auto !important;min-height:26px;}"
-        ".quote-content td,.quote-table td{border:1px solid #d3dbe7 !important;padding:10px 8px !important;vertical-align:top !important;color:#111827 !important;line-height:1.45 !important;word-break:break-word !important;white-space:normal !important;overflow-wrap:anywhere !important;height:auto !important;min-height:24px;}"
+        ".quote-content th,.quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:middle !important;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;height:auto !important;min-height:30px;}"
+        ".quote-content td,.quote-table td{border:1px solid #d3dbe7 !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;vertical-align:middle !important;color:#111827 !important;line-height:1.45 !important;word-break:break-word !important;white-space:normal !important;overflow-wrap:anywhere !important;height:auto !important;min-height:30px;}"
         ".quote-content td>*{margin-top:0 !important;margin-bottom:0 !important;}"
         ".quote-content thead,thead{display:table-header-group !important;}"
         ".quote-content tfoot,tfoot{display:table-footer-group !important;}"
@@ -1417,5 +1493,6 @@ def render_quote_pdf_from_combined_html(
     footer_html = values.get("footer_standard_html", "")
     content_html = _extract_body_inner_html(combined_html)
     content_html = _strip_inline_style_blocks(_strip_inline_footers(_strip_inline_headers(content_html)))
+    content_html = _normalize_tables_for_pdf(content_html)
     pdf_html = _pdf_shell_html(content_html=content_html, header_html=header_html, footer_html=footer_html)
     return render_teacher_invoice_pdf_from_html(pdf_html)

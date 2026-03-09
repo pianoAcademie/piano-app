@@ -827,8 +827,22 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               </article>
             </div>
             <article className="item top-gap-sm">
-              <div dangerouslySetInnerHTML={{ __html: documentPreview.combined_html }} />
+              <h4>Apercu devis</h4>
+              <div
+                className="top-gap-sm"
+                dangerouslySetInnerHTML={{ __html: documentPreview.quote_body_html || documentPreview.combined_html }}
+              />
             </article>
+            <details className="modal-details top-gap-sm">
+              <summary>Conditions generales (CGV)</summary>
+              <article className="item">
+                {documentPreview.terms_html ? (
+                  <div dangerouslySetInnerHTML={{ __html: documentPreview.terms_html }} />
+                ) : (
+                  <p className="muted">Aucune CGV disponible pour ce devis.</p>
+                )}
+              </article>
+            </details>
           </>
         ) : (
           <p className="muted top-gap-sm">Apercu documentaire indisponible.</p>

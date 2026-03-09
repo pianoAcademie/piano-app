@@ -368,7 +368,6 @@ export default function QuoteLinesEditor({
                   value={line.vatRate}
                   onChange={(event) => updateLine(line.uid, { vatRate: event.target.value })}
                   required
-                  readOnly={isCatalogKind(line.kind)}
                   disabled={!editable}
                 />
               </label>
@@ -380,7 +379,6 @@ export default function QuoteLinesEditor({
                   value={line.unitPrice}
                   onChange={(event) => updateLine(line.uid, { unitPrice: event.target.value })}
                   required
-                  readOnly={isCatalogKind(line.kind)}
                   disabled={!editable}
                 />
               </label>
@@ -399,7 +397,7 @@ export default function QuoteLinesEditor({
             </div>
             {isCatalogKind(line.kind) ? (
               <small className="muted">
-                Prix catalogue et TVA appliquees automatiquement depuis la base. Utilisez une remise ou un supplement pour ajuster.
+                Prix pre-rempli depuis le catalogue/la base. Vous pouvez l ajuster si necessaire.
               </small>
             ) : null}
           </article>
