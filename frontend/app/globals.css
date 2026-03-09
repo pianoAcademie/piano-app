@@ -4227,6 +4227,9 @@ button.danger:focus-visible {
   background: #fffdf9;
   overflow: hidden;
   position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 320px;
 }
 
 .quote-template-toolbar {
@@ -4237,8 +4240,9 @@ button.danger:focus-visible {
   border-bottom: 1px solid #e6d9c4;
   background: #fff7ea;
   position: sticky;
-  top: 8px;
-  z-index: 8;
+  top: 0;
+  z-index: 12;
+  box-shadow: 0 1px 0 #e6d9c4;
 }
 
 .quote-template-toolbar .toolbar-group {
@@ -4272,14 +4276,33 @@ button.danger:focus-visible {
   border-top: 1px solid #e6d9c4;
 }
 
+.quote-template-editor-scroll {
+  overflow: auto;
+  max-height: 62vh;
+  background: #ffffff;
+}
+
 .quote-template-editor-modal {
   width: min(1200px, 96vw);
   max-height: 92vh;
+  overflow: hidden;
 }
 
 .wysiwyg-editor-modal {
   width: min(1100px, 96vw);
   max-height: 92vh;
+  overflow: hidden;
+}
+
+.quote-template-editor-modal .quote-template-editor-shell,
+.wysiwyg-editor-modal .quote-template-editor-shell {
+  min-height: 0;
+  height: calc(92vh - 140px);
+}
+
+.quote-template-editor-modal .quote-template-editor-scroll,
+.wysiwyg-editor-modal .quote-template-editor-scroll {
+  max-height: none;
 }
 
 .calendar-inline-help {

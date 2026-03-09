@@ -289,7 +289,7 @@ export default function WysiwygField({
     setValue(editor.getHTML());
   }
 
-  function renderToolbar(): JSX.Element {
+  function renderToolbar(showPopupButton = true): JSX.Element {
     return (
       <div className="quote-template-toolbar" aria-label="Outils de mise en forme">
         <div className="toolbar-group">
@@ -334,13 +334,15 @@ export default function WysiwygField({
           <button type="button" className="ghost small-btn" onClick={insertLink}>
             Lien
           </button>
-          <button
-            type="button"
-            className="ghost small-btn"
-            onClick={() => setEditorPopupOpen(true)}
-          >
-            Ouvrir en popup
-          </button>
+          {showPopupButton ? (
+            <button
+              type="button"
+              className="ghost small-btn"
+              onClick={() => setEditorPopupOpen(true)}
+            >
+              Ouvrir en popup
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -375,7 +377,9 @@ export default function WysiwygField({
                 Edition en popup ouverte.
               </div>
             ) : (
-              <EditorContent editor={editor} />
+              <div className="quote-template-editor-scroll">
+                <EditorContent editor={editor} />
+              </div>
             )}
           </div>
         </div>
@@ -407,8 +411,10 @@ export default function WysiwygField({
             </button>
             <h3 className="modal-title">Editeur WYSIWYG</h3>
             <div className="quote-template-editor-shell">
-              {renderToolbar()}
-              <EditorContent editor={editor} />
+              {renderToolbar(false)}
+              <div className="quote-template-editor-scroll">
+                <EditorContent editor={editor} />
+              </div>
             </div>
           </article>
         </section>

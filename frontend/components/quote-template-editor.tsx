@@ -465,7 +465,7 @@ export default function QuoteTemplateEditor({
     setBody(editor.getHTML());
   }
 
-  function renderToolbar(): JSX.Element {
+  function renderToolbar(showPopupButton = true): JSX.Element {
     return (
       <div className="quote-template-toolbar" aria-label="Outils de mise en forme">
         <div className="toolbar-group">
@@ -521,13 +521,15 @@ export default function QuoteTemplateEditor({
         <div className="toolbar-group">
           <button type="button" className="ghost small-btn" onClick={() => applyCommand("undo")}>↶</button>
           <button type="button" className="ghost small-btn" onClick={() => applyCommand("redo")}>↷</button>
-          <button
-            type="button"
-            className="ghost small-btn"
-            onClick={() => setEditorPopupOpen(true)}
-          >
-            Ouvrir en popup
-          </button>
+          {showPopupButton ? (
+            <button
+              type="button"
+              className="ghost small-btn"
+              onClick={() => setEditorPopupOpen(true)}
+            >
+              Ouvrir en popup
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -568,7 +570,9 @@ export default function QuoteTemplateEditor({
                 Edition en popup ouverte.
               </div>
             ) : (
-              <EditorContent editor={editor} />
+              <div className="quote-template-editor-scroll">
+                <EditorContent editor={editor} />
+              </div>
             )}
           </div>
         ) : (
@@ -639,8 +643,10 @@ export default function QuoteTemplateEditor({
             </button>
             <h3 className="modal-title">Editeur de modele de devis</h3>
             <div className="quote-template-editor-shell">
-              {renderToolbar()}
-              <EditorContent editor={editor} />
+              {renderToolbar(false)}
+              <div className="quote-template-editor-scroll">
+                <EditorContent editor={editor} />
+              </div>
             </div>
           </article>
         </section>
