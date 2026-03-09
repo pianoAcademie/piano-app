@@ -78,6 +78,29 @@ def _money(value: Decimal, currency: str) -> str:
     return f"{_decimal_str(value)} {currency}"
 
 
+def _schedule_due_label(item: dict[str, Any]) -> str:
+    due_type = str(item.get("due_type") or "").strip().lower()
+    due_label = str(item.get("due_label") or "").strip()
+    normalized = due_label.lower()
+    if due_type == "on_registration":
+        return "à réception de votre facture"
+    if normalized in {
+        "a reception",
+        "a reception du dossier",
+        "a reception de votre facture",
+        "à reception",
+        "à reception du dossier",
+        "à reception de votre facture",
+        "à réception",
+        "à réception du dossier",
+        "à réception de votre facture",
+    }:
+        return "à réception de votre facture"
+    if due_label:
+        return due_label
+    return due_type or "-"
+
+
 def _name(first_name: str | None, last_name: str | None, fallback: str = "-") -> str:
     value = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
     return value or fallback
@@ -235,7 +258,7 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
         return "<p>Aucune seance planifiee.</p>", 0
 
     blocks: list[str] = []
-    for title in sorted(grouped.keys()):
+    for index, title in enumerate(sorted(grouped.keys()), start=1):
         month_map = grouped[title]
         count = sum(len(values) for values in month_map.values())
         sem1 = _calendar_semester_rows(month_map, semester=1)
@@ -250,23 +273,46 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
             for month_label, days in sem2
         ) or "<p style='margin:0;'>Aucune seance</p>"
 
+        separator_html = (
+            "<div style='height:8px;margin:6px 0 10px 0;border-top:2px dashed #d8deea;'></div>"
+            if index > 1
+            else ""
+        )
         blocks.append(
-            "<div style='border:1px solid #d6d9de;padding:8px;margin:0 0 10px 0;'>"
-            "<table width='100%' cellspacing='0' cellpadding='0' style='border-collapse:collapse;margin-bottom:6px;'>"
-            f"<tr><td><strong>{escape(title)}</strong></td><td align='right'><strong>{count} cours</strong></td></tr>"
-            "</table>"
-            "<table width='100%' cellspacing='0' cellpadding='0' style='border-collapse:collapse;'>"
+            separator_html
+            + "<div style='border:2px solid #cfd6e2;padding:0;margin:0 0 22px 0;page-break-inside:avoid;background:#ffffff;'>"
+            "<div style='background:#f8fafc;border-bottom:1px solid #d6d9de;padding:8px 10px;font-weight:700;color:#0f172a;'>"
+            f"Activite {index}"
+            "</div>"
+            "<div style='padding:8px;'>"
+            "<table class='quote-table' border='1' cellspacing='0' cellpadding='10' width='100%' "
+            "style='width:100%;border-collapse:collapse;border-spacing:0;margin:0 0 8px 0;font-size:11px;'>"
+            "<tbody>"
             "<tr>"
-            "<td width='50%' valign='top' style='padding-right:8px;'>"
-            "<p style='margin:0 0 6px 0;'><strong>1er semestre</strong></p>"
-            f"{sem1_html}"
-            "</td>"
-            "<td width='50%' valign='top' style='padding-left:8px;'>"
-            "<p style='margin:0 0 6px 0;'><strong>2e semestre</strong></p>"
-            f"{sem2_html}"
-            "</td>"
+            "<td bgcolor='#DDE8FA' "
+            "style='background-color:#DDE8FA;color:#111827;border:1px solid #c2ccda;padding:12px 10px;text-align:left;font-weight:700;'>Activite / lieu</td>"
+            "<td bgcolor='#DDE8FA' align='right' "
+            "style='background-color:#DDE8FA;color:#111827;border:1px solid #c2ccda;padding:12px 10px;text-align:right;font-weight:700;'>Nombre de cours</td>"
             "</tr>"
+            f"<tr><td valign='middle' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:middle;'><strong>{escape(title)}</strong></td><td align='right' valign='middle' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:middle;'><strong>{count} cours</strong></td></tr>"
+            "</tbody>"
             "</table>"
+            "<table class='quote-table' border='1' cellspacing='0' cellpadding='10' width='100%' "
+            "style='width:100%;border-collapse:collapse;border-spacing:0;margin:0;font-size:11px;'>"
+            "<tbody>"
+            "<tr>"
+            "<td bgcolor='#EEF3FC' "
+            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>1er semestre</td>"
+            "<td bgcolor='#EEF3FC' "
+            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>2e semestre</td>"
+            "</tr>"
+            "<tr>"
+            f"<td width='50%' valign='top' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:top;'>{sem1_html}</td>"
+            f"<td width='50%' valign='top' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:top;'>{sem2_html}</td>"
+            "</tr>"
+            "</tbody>"
+            "</table>"
+            "</div>"
             "</div>"
         )
 
@@ -622,10 +668,13 @@ def _extract_document_context(
     schedule_allowed_for_audience = bool(schedule_visibility.get(audience, False))
     show_schedule_detailed = has_installment_schedule and schedule_allowed_for_audience
     payment_schedule_compact_notice = ""
-    if has_installment_schedule and not show_schedule_detailed:
-        payment_schedule_compact_notice = (
-            f"Paiement en {len(schedule)} echeances. Le detail des echeances est communique separement."
-        )
+    if schedule and not show_schedule_detailed:
+        if len(schedule) == 1:
+            payment_schedule_compact_notice = f"1 échéance : {_schedule_due_label(schedule[0])}"
+        else:
+            payment_schedule_compact_notice = (
+                f"Paiement en {len(schedule)} échéances. Le détail des échéances est communiqué séparément."
+            )
     payment_instruction = str(_json_object(quote.payment_terms_snapshot).get("payment_instruction") or "").strip()
 
     prospect_type = str(prospect_data.get("prospect_type") or "adult").strip().lower()
@@ -718,6 +767,23 @@ def _apply_template(
         return raw_value
 
     return TOKEN_RE.sub(repl, template)
+
+
+def _normalize_block_placeholder_wrappers(template: str, *, keys: set[str]) -> str:
+    raw = str(template or "")
+    if not raw or not keys:
+        return raw
+    normalized = raw
+    for key in keys:
+        key_pattern = r"\{[\s\xa0]*" + re.escape(key) + r"[\s\xa0]*\}"
+        for tag in ("p", "div", "span", "h1", "h2", "h3", "h4", "h5", "h6"):
+            normalized = re.sub(
+                rf"<{tag}\b[^>]*>\s*{key_pattern}\s*</{tag}>",
+                "{" + key + "}",
+                normalized,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+    return normalized
 
 
 def _as_html_fragment(content: str) -> str:
@@ -1081,14 +1147,46 @@ def _build_template_values(
         ):
             adjustment_parts.append(f"<p><strong>Libelle:</strong> {escape(adjustment_label)}</p>")
         financial_adjustment_block_html = "".join(adjustment_parts)
-        financial_adjustment_section_html = (
-            "<h2>Ajustement financier</h2>"
-            + financial_adjustment_block_html
-        )
+        # Keep this block content-only (no heading) so it can be safely inserted in WYSIWYG flows.
+        financial_adjustment_section_html = financial_adjustment_block_html
         financial_adjustment_none_html = ""
         total_ttc_before_adjustment_html = (
             f"<p><strong>Total TTC avant ajustement :</strong> {_decimal_str(total_before_adjustment)} {escape(currency)}</p>"
         )
+    if adjustment_type == "none":
+        financial_recap_rows: list[tuple[str, str]] = [
+            ("Total HT", f"{_decimal_str(total_ht_after_adjustment)} {currency}"),
+            (f"TVA ({_decimal_str(vat_rate)} %)", f"{_decimal_str(vat_amount_after_adjustment)} {currency}"),
+            ("Total TTC facture", f"{_decimal_str(total_after_adjustment)} {currency}"),
+        ]
+    else:
+        financial_recap_rows = [
+            ("Total TTC avant ajustement", f"{_decimal_str(total_before_adjustment)} {currency}"),
+            (adjustment_display_title, f"{_decimal_str(adjustment_amount)} {currency}"),
+            ("Impact", adjustment_impact_label),
+        ]
+        if adjustment_effective_date and adjustment_effective_date != "-":
+            financial_recap_rows.append(("Date ajustement", adjustment_effective_date))
+        financial_recap_rows.extend(
+            [
+                ("Total HT facture", f"{_decimal_str(total_ht_after_adjustment)} {currency}"),
+                (f"TVA facture ({_decimal_str(vat_rate)} %)", f"{_decimal_str(vat_amount_after_adjustment)} {currency}"),
+                ("Total TTC facture", f"{_decimal_str(total_after_adjustment)} {currency}"),
+            ]
+        )
+
+    financial_recap_lines_html = "".join(
+        "<p>"
+        f"<strong>{escape(label)} :</strong> {escape(value)}"
+        "</p>"
+        for label, value in financial_recap_rows
+    )
+    financial_recap_block_html = (
+        "<div class='quote-block'>"
+        "<h2>Recapitulatif financier</h2>"
+        f"{financial_recap_lines_html}"
+        "</div>"
+    )
 
     services_table_html = _table_html(
         ["Activite", "Quantite", "Duree", "TVA", "PU TTC", "Montant TTC"],
@@ -1181,7 +1279,7 @@ def _build_template_values(
         [
             str(item.get("label") or "-"),
             f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
-            str(item.get("due_label") or item.get("due_type") or "-"),
+            _schedule_due_label(item),
             str(item.get("payment_method") or "-"),
         ]
         for item in schedule
@@ -1192,8 +1290,13 @@ def _build_template_values(
         empty_label="Aucun echeancier.",
     )
     if not display_flags["showPaymentScheduleDetailed"]:
-        compact_notice = document_context["payment_schedule_compact_notice"] or "Aucun echeancier detaille."
-        payment_schedule_table_html = f"<p>{escape(compact_notice)}</p>"
+        compact_notice = str(document_context["payment_schedule_compact_notice"] or "").strip()
+        if compact_notice:
+            payment_schedule_table_html = f"<p>{escape(compact_notice)}</p>"
+        elif not schedule:
+            payment_schedule_table_html = "<p>Aucun échéancier.</p>"
+        else:
+            payment_schedule_table_html = ""
 
     sessions = [item for item in _json_list(_json_object(quote.calendar_snapshot).get("sessions")) if isinstance(item, dict)]
     planning_blocks_table_html = _planning_blocks_table_html(_json_object(quote.calendar_snapshot))
@@ -1218,11 +1321,9 @@ def _build_template_values(
         else "Aucune seance planifiee"
     )
     if schedule:
-        due_labels = ", ".join(
-            str(item.get("due_label") or item.get("due_type") or "-")
-            for item in schedule
-        )
-        payment_schedule_summary = f"{len(schedule)} echeances: {due_labels}"
+        due_labels = ", ".join(_schedule_due_label(item) for item in schedule)
+        unit_label = "échéance" if len(schedule) == 1 else "échéances"
+        payment_schedule_summary = f"{len(schedule)} {unit_label} : {due_labels}"
     else:
         payment_schedule_summary = "Paiement non planifie"
 
@@ -1439,6 +1540,7 @@ def _build_template_values(
         "financial_adjustment_block_html": financial_adjustment_block_html,
         "financial_adjustment_section_html": financial_adjustment_section_html,
         "financial_adjustment_none_html": financial_adjustment_none_html,
+        "financial_recap_block_html": financial_recap_block_html,
         "total_ttc_before_adjustment_html": total_ttc_before_adjustment_html,
         "total_before_adjustment": _decimal_str(total_before_adjustment),
         "total_after_adjustment": _decimal_str(total_after_adjustment),
@@ -1506,6 +1608,7 @@ def _build_template_values(
         "financial_adjustment_block_html",
         "financial_adjustment_section_html",
         "financial_adjustment_none_html",
+        "financial_recap_block_html",
         "total_ttc_before_adjustment_html",
         "services_table_html",
         "activities_planning_table_html",
@@ -1553,12 +1656,7 @@ def _default_quote_body_template() -> str:
         "{masterclass_block_html}"
         "{pass_recup_block_html}"
         "<h2>Calendrier des cours</h2>{calendar_table_html}"
-        "<p><strong>Total avant ajustement:</strong> {total_before_adjustment} {currency}</p>"
-        "<p><strong>Total HT avant ajustement:</strong> {total_ht_before_adjustment} {currency}</p>"
-        "<p><strong>TVA avant ajustement ({vat_rate}%):</strong> {vat_amount_before_adjustment} {currency}</p>"
-        "<p><strong>Total HT:</strong> {total_ht_after_adjustment} {currency}</p>"
-        "<p><strong>TVA ({vat_rate}%):</strong> {vat_amount_after_adjustment} {currency}</p>"
-        "<p><strong>Total TTC facture:</strong> {total_after_adjustment} {currency}</p>"
+        "{financial_recap_block_html}"
         "{footer_standard_html}"
     )
 
@@ -1572,6 +1670,60 @@ def _render_quote_body_html(
 ) -> str:
     _, body_template = _load_quote_template_snapshot(db=db, quote=quote)
     template = _normalize_template_source(body_template or _default_quote_body_template())
+    if "{financial_recap_block_html}" not in template:
+        legacy_financial_tokens = (
+            "{total_ttc_before_adjustment_html}",
+            "{total_ht_before_adjustment}",
+            "{vat_amount_before_adjustment}",
+            "{total_ht_after_adjustment}",
+            "{vat_amount_after_adjustment}",
+            "{total_ttc_after_adjustment}",
+            "{total_ht}",
+            "{vat_amount}",
+            "{total_after_adjustment}",
+            "{total_ttc}",
+        )
+        if any(token in template for token in legacy_financial_tokens):
+            template = re.sub(
+                r"<p[^>]*>\s*<strong>\s*"
+                r"(?:Total(?:\s+TTC(?:\s+avant\s+ajustement|\s+facture)?|\s+HT(?:\s+avant\s+ajustement)?|"
+                r"\s+avant\s+ajustement)|TVA(?:\s*\([^)]+\))?(?:\s+avant\s+ajustement|\s+facture)?)"
+                r"\s*:?\s*</strong>.*?</p>",
+                "",
+                template,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            template += "{financial_recap_block_html}"
+    template = _normalize_block_placeholder_wrappers(
+        template,
+        keys={
+            "document_style_html",
+            "brand_logo_html",
+            "header_standard_html",
+            "cover_page_standard_html",
+            "page_break_html",
+            "footer_standard_html",
+            "prospect_identity_block_html",
+            "solfege_block_html",
+            "masterclass_block_html",
+            "pass_recup_block_html",
+            "payment_method_block_html",
+            "services_table_html",
+            "activities_planning_table_html",
+            "products_table_html",
+            "kits_table_html",
+            "adjustments_table_html",
+            "lines_table_html",
+            "payment_schedule_table_html",
+            "calendar_table_html",
+            "calendar_activity_semesters_html",
+            "calendar_sessions_table_html",
+            "financial_adjustment_block_html",
+            "financial_adjustment_section_html",
+            "financial_adjustment_none_html",
+            "financial_recap_block_html",
+        },
+    )
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered = _apply_template(template, values=values, html_keys=html_keys, html_output=True)
     rendered = _dedupe_retained_activities_tables(rendered)
@@ -1594,6 +1746,23 @@ def _render_quote_terms_html(
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     normalized_terms = _normalize_template_source(cgv_content)
+    normalized_terms = _normalize_block_placeholder_wrappers(
+        normalized_terms,
+        keys={
+            "document_style_html",
+            "brand_logo_html",
+            "header_standard_html",
+            "cover_page_standard_html",
+            "page_break_html",
+            "footer_standard_html",
+            "prospect_identity_block_html",
+            "payment_method_block_html",
+            "payment_schedule_table_html",
+            "calendar_table_html",
+            "calendar_activity_semesters_html",
+            "financial_recap_block_html",
+        },
+    )
     rendered_terms = _apply_template(normalized_terms, values=values, html_keys=html_keys, html_output=True)
     rendered_terms = _normalize_template_source(rendered_terms)
     rendered_terms = _cleanup_legacy_terms_layout(rendered_terms)

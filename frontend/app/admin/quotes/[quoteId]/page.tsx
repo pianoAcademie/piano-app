@@ -202,6 +202,32 @@ function getScheduleItems(snapshot: Record<string, unknown>): Array<Record<strin
   return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
 }
 
+function formatScheduleDueLabel(item: Record<string, unknown>): string {
+  const dueType = String(item.due_type ?? "").trim().toLowerCase();
+  const dueLabel = String(item.due_label ?? "").trim();
+  const normalized = dueLabel.toLowerCase();
+  if (dueType === "on_registration") {
+    return "à réception de votre facture";
+  }
+  if (
+    normalized === "a reception"
+    || normalized === "a reception du dossier"
+    || normalized === "a reception de votre facture"
+    || normalized === "à reception"
+    || normalized === "à reception du dossier"
+    || normalized === "à reception de votre facture"
+    || normalized === "à réception"
+    || normalized === "à réception du dossier"
+    || normalized === "à réception de votre facture"
+  ) {
+    return "à réception de votre facture";
+  }
+  if (dueLabel) {
+    return dueLabel;
+  }
+  return dueType || "-";
+}
+
 function getCalendarSessions(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
   const raw = snapshot.sessions;
   if (!Array.isArray(raw)) {
@@ -1052,7 +1078,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             getScheduleItems(detail.quote.payment_terms_snapshot).map((item, index) => (
               <article key={`schedule-${index}`} className="quote-public-line-item">
                 <strong>{String(item.label ?? `Echeance ${index + 1}`)}</strong>
-                <span>{String(item.due_label ?? item.due_type ?? "-")}</span>
+                <span>{formatScheduleDueLabel(item)}</span>
                 <small>{String(item.amount_ttc ?? "0")} {detail.quote.currency}</small>
               </article>
             ))

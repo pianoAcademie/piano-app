@@ -125,7 +125,7 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
             {
                 "label": "Paiement unique",
                 "due_type": "on_registration",
-                "due_label": "a reception",
+                "due_label": "à réception de votre facture",
                 "amount_ttc": str(total),
                 "currency": payload.currency,
                 "payment_method": method_label,
@@ -162,7 +162,7 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
         if index == 0:
             item["label"] = "1er cheque" if is_check else "1ere echeance"
             item["due_type"] = "on_registration"
-            item["due_label"] = "a reception du dossier"
+            item["due_label"] = "à réception de votre facture"
         else:
             month = deferred_months[index - 1] if (index - 1) < len(deferred_months) else None
             if month is not None:

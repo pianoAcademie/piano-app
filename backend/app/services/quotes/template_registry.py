@@ -221,6 +221,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "<p>Aucun avoir ou dette applique.</p>",
     },
     {
+        "key": "financial_recap_block_html",
+        "label": "Bloc recapitulatif financier (HTML)",
+        "description": "Bloc complet pret a l affichage (totaux et ajustement), stable pour PDF/apercu.",
+        "example": "<div class='quote-block'><h2>Recapitulatif financier</h2>...</div>",
+    },
+    {
         "key": "has_financial_adjustment",
         "label": "Ajustement present",
         "description": "Flag true/false si un avoir ou une dette est applique.",
