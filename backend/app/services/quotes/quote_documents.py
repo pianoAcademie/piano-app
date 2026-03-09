@@ -61,6 +61,19 @@ def _decimal_from_any(value: Any, default: Decimal = Decimal("0")) -> Decimal:
     return parsed
 
 
+def _split_ttc_with_rate(total_ttc: Decimal, vat_rate: Decimal) -> tuple[Decimal, Decimal]:
+    ttc_amount = Decimal(total_ttc or Decimal("0")).quantize(Decimal("0.01"))
+    rate = Decimal(vat_rate or Decimal("0")).quantize(Decimal("0.01"))
+    if rate <= Decimal("0.00"):
+        return ttc_amount, Decimal("0.00")
+    divisor = Decimal("1.00") + (rate / Decimal("100"))
+    if divisor <= Decimal("0.00"):
+        return ttc_amount, Decimal("0.00")
+    ht_amount = (ttc_amount / divisor).quantize(Decimal("0.01"))
+    vat_amount = (ttc_amount - ht_amount).quantize(Decimal("0.01"))
+    return ht_amount, vat_amount
+
+
 def _money(value: Decimal, currency: str) -> str:
     return f"{_decimal_str(value)} {currency}"
 
@@ -989,12 +1002,18 @@ def _build_template_values(
     document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
     display_flags = document_context["display_flags"]
     total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
-    total_ht = sum((Decimal(getattr(line, "amount_ht", Decimal("0")) or Decimal("0")) for line in lines), Decimal("0.00")).quantize(Decimal("0.01"))
-    vat_amount = sum((Decimal(getattr(line, "amount_vat", Decimal("0")) or Decimal("0")) for line in lines), Decimal("0.00")).quantize(Decimal("0.01"))
-    if total_ht <= Decimal("0.00"):
+    total_ht_before_from_lines = sum(
+        (Decimal(getattr(line, "amount_ht", Decimal("0")) or Decimal("0")) for line in lines),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+    vat_amount_before_from_lines = sum(
+        (Decimal(getattr(line, "amount_vat", Decimal("0")) or Decimal("0")) for line in lines),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+    if total_ht_before_from_lines <= Decimal("0.00"):
         vat_rate = Decimal("0.00")
     else:
-        vat_rate = ((vat_amount / total_ht) * Decimal("100")).quantize(Decimal("0.01"))
+        vat_rate = ((vat_amount_before_from_lines / total_ht_before_from_lines) * Decimal("100")).quantize(Decimal("0.01"))
 
     payment_terms_snapshot = _json_object(quote.payment_terms_snapshot)
     adjustment_data = _json_object(payment_terms_snapshot.get("adjustment"))
@@ -1021,19 +1040,55 @@ def _build_template_values(
     adjustment_type_label = (
         "Avoir" if adjustment_type == "credit" else "Dette" if adjustment_type == "debt" else "Aucun"
     )
+    adjustment_impact_label = (
+        "Deduit du total facture"
+        if adjustment_type == "credit"
+        else "Ajoute au total facture"
+        if adjustment_type == "debt"
+        else ""
+    )
+    adjustment_display_title = adjustment_label or adjustment_type_label
+    adjustment_display_line = (
+        f"{adjustment_display_title} : {_money(adjustment_amount, currency)}"
+        if adjustment_type != "none"
+        else ""
+    )
+    has_financial_adjustment = adjustment_type in {"credit", "debt"}
+    has_credit_adjustment = adjustment_type == "credit"
+    has_debt_adjustment = adjustment_type == "debt"
+
+    total_ht_before_adjustment, vat_amount_before_adjustment = _split_ttc_with_rate(total_before_adjustment, vat_rate)
+    total_ht_after_adjustment, vat_amount_after_adjustment = _split_ttc_with_rate(total_after_adjustment, vat_rate)
+
     if adjustment_type == "none":
-        financial_adjustment_block_html = "<p>Aucun avoir ou dette applique.</p>"
+        financial_adjustment_block_html = ""
+        financial_adjustment_section_html = ""
+        financial_adjustment_none_html = "<p>Aucun avoir ou dette applique.</p>"
+        total_ttc_before_adjustment_html = ""
     else:
-        impact_label = "Deduit du total facture" if adjustment_type == "credit" else "Ajoute au total facture"
         adjustment_parts = [
-            f"<p><strong>{escape(adjustment_type_label)}</strong> : {escape(_money(adjustment_amount, currency))}</p>",
-            f"<p><strong>Impact:</strong> {escape(impact_label)}</p>",
+            f"<p><strong>{escape(adjustment_display_title)}</strong> : {escape(_money(adjustment_amount, currency))}</p>",
+            f"<p><strong>Impact:</strong> {escape(adjustment_impact_label)}</p>",
         ]
         if adjustment_effective_date and adjustment_effective_date != "-":
             adjustment_parts.append(f"<p><strong>Date:</strong> {escape(adjustment_effective_date)}</p>")
-        if adjustment_label:
+        normalized_adjustment_label = adjustment_label.strip().lower()
+        normalized_type_label = adjustment_type_label.strip().lower()
+        if (
+            adjustment_label
+            and normalized_adjustment_label not in {"avoir", "dette"}
+            and normalized_adjustment_label != normalized_type_label
+        ):
             adjustment_parts.append(f"<p><strong>Libelle:</strong> {escape(adjustment_label)}</p>")
         financial_adjustment_block_html = "".join(adjustment_parts)
+        financial_adjustment_section_html = (
+            "<h2>Ajustement financier</h2>"
+            + financial_adjustment_block_html
+        )
+        financial_adjustment_none_html = ""
+        total_ttc_before_adjustment_html = (
+            f"<p><strong>Total TTC avant ajustement :</strong> {_decimal_str(total_before_adjustment)} {escape(currency)}</p>"
+        )
 
     services_table_html = _table_html(
         ["Activite", "Quantite", "Duree", "TVA", "PU TTC", "Montant TTC"],
@@ -1355,9 +1410,13 @@ def _build_template_values(
         "total_ttc": _decimal_str(total_ttc),
         "total_ttc_before_adjustment": _decimal_str(total_before_adjustment),
         "total_ttc_after_adjustment": _decimal_str(total_after_adjustment),
-        "total_ht": _decimal_str(total_ht),
+        "total_ht": _decimal_str(total_ht_after_adjustment),
+        "total_ht_before_adjustment": _decimal_str(total_ht_before_adjustment),
+        "total_ht_after_adjustment": _decimal_str(total_ht_after_adjustment),
         "vat_rate": _decimal_str(vat_rate),
-        "vat_amount": _decimal_str(vat_amount),
+        "vat_amount": _decimal_str(vat_amount_after_adjustment),
+        "vat_amount_before_adjustment": _decimal_str(vat_amount_before_adjustment),
+        "vat_amount_after_adjustment": _decimal_str(vat_amount_after_adjustment),
         "currency": currency,
         "expires_at": _date_label(quote.expires_at),
         "sent_at": _datetime_label(quote.sent_at),
@@ -1371,7 +1430,16 @@ def _build_template_values(
         "financial_adjustment_signed_amount_ttc": _decimal_str(adjustment_signed_amount),
         "financial_adjustment_effective_date": adjustment_effective_date,
         "financial_adjustment_label": adjustment_label,
+        "financial_adjustment_display_title": adjustment_display_title if has_financial_adjustment else "",
+        "financial_adjustment_display_line": adjustment_display_line,
+        "financial_adjustment_impact_label": adjustment_impact_label,
+        "has_financial_adjustment": "true" if has_financial_adjustment else "false",
+        "has_credit_adjustment": "true" if has_credit_adjustment else "false",
+        "has_debt_adjustment": "true" if has_debt_adjustment else "false",
         "financial_adjustment_block_html": financial_adjustment_block_html,
+        "financial_adjustment_section_html": financial_adjustment_section_html,
+        "financial_adjustment_none_html": financial_adjustment_none_html,
+        "total_ttc_before_adjustment_html": total_ttc_before_adjustment_html,
         "total_before_adjustment": _decimal_str(total_before_adjustment),
         "total_after_adjustment": _decimal_str(total_after_adjustment),
         "payment_method_label": payment_method_label,
@@ -1436,6 +1504,9 @@ def _build_template_values(
         "pass_recup_block_html",
         "payment_method_block_html",
         "financial_adjustment_block_html",
+        "financial_adjustment_section_html",
+        "financial_adjustment_none_html",
+        "total_ttc_before_adjustment_html",
         "services_table_html",
         "activities_planning_table_html",
         "products_table_html",
@@ -1477,14 +1548,16 @@ def _default_quote_body_template() -> str:
         "<h2>Remises et supplements</h2>{adjustments_table_html}"
         "{payment_method_block_html}"
         "<h2>Echeancier de paiement</h2>{payment_schedule_table_html}"
-        "<h2>Ajustement financier</h2>{financial_adjustment_block_html}"
+        "{financial_adjustment_section_html}"
         "{solfege_block_html}"
         "{masterclass_block_html}"
         "{pass_recup_block_html}"
         "<h2>Calendrier des cours</h2>{calendar_table_html}"
         "<p><strong>Total avant ajustement:</strong> {total_before_adjustment} {currency}</p>"
-        "<p><strong>Total HT:</strong> {total_ht} {currency}</p>"
-        "<p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p>"
+        "<p><strong>Total HT avant ajustement:</strong> {total_ht_before_adjustment} {currency}</p>"
+        "<p><strong>TVA avant ajustement ({vat_rate}%):</strong> {vat_amount_before_adjustment} {currency}</p>"
+        "<p><strong>Total HT:</strong> {total_ht_after_adjustment} {currency}</p>"
+        "<p><strong>TVA ({vat_rate}%):</strong> {vat_amount_after_adjustment} {currency}</p>"
         "<p><strong>Total TTC facture:</strong> {total_after_adjustment} {currency}</p>"
         "{footer_standard_html}"
     )

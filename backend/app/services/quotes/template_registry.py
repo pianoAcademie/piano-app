@@ -65,6 +65,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "1320.00",
     },
     {
+        "key": "total_ttc_before_adjustment_html",
+        "label": "Ligne Total TTC avant ajustement (conditionnelle HTML)",
+        "description": "Ligne HTML affichee uniquement si un avoir/dette est applique.",
+        "example": "<p><strong>Total TTC avant ajustement :</strong> 1320,00 EUR</p>",
+    },
+    {
         "key": "total_ttc_after_adjustment",
         "label": "Total TTC apres ajustement",
         "description": "Alias explicite du total TTC facture (apres ajustement).",
@@ -73,8 +79,20 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     {
         "key": "total_ht",
         "label": "Total HT",
-        "description": "Montant total HT calcule selon la TVA.",
+        "description": "Montant total HT facture (apres ajustement).",
+        "example": "1050.00",
+    },
+    {
+        "key": "total_ht_before_adjustment",
+        "label": "Total HT avant ajustement",
+        "description": "Montant HT calcule avant application de l'avoir/dette.",
         "example": "1075.00",
+    },
+    {
+        "key": "total_ht_after_adjustment",
+        "label": "Total HT apres ajustement",
+        "description": "Alias explicite du total HT facture (apres ajustement).",
+        "example": "1050.00",
     },
     {
         "key": "vat_rate",
@@ -85,8 +103,20 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     {
         "key": "vat_amount",
         "label": "Montant TVA",
-        "description": "Montant de TVA calcule.",
+        "description": "Montant TVA facture (apres ajustement).",
         "example": "215.00",
+    },
+    {
+        "key": "vat_amount_before_adjustment",
+        "label": "TVA avant ajustement",
+        "description": "Montant TVA calcule avant application de l'avoir/dette.",
+        "example": "215.00",
+    },
+    {
+        "key": "vat_amount_after_adjustment",
+        "label": "TVA apres ajustement",
+        "description": "Alias explicite du montant TVA facture (apres ajustement).",
+        "example": "210.00",
     },
     {
         "key": "currency",
@@ -143,10 +173,28 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "100,00",
     },
     {
+        "key": "financial_adjustment_display_title",
+        "label": "Titre ajustement",
+        "description": "Libelle affiche (libelle ajuste ou type Avoir/Dette).",
+        "example": "Avoir au 30 juin 2025",
+    },
+    {
+        "key": "financial_adjustment_display_line",
+        "label": "Ligne ajustement prete",
+        "description": "Texte pret a afficher, vide si aucun ajustement.",
+        "example": "Avoir au 30 juin 2025 : 30,00 EUR",
+    },
+    {
         "key": "financial_adjustment_effective_date",
         "label": "Date ajustement",
         "description": "Date d effet de l ajustement (si renseignee).",
         "example": "15/09/2026",
+    },
+    {
+        "key": "financial_adjustment_impact_label",
+        "label": "Impact ajustement",
+        "description": "Impact metier de l ajustement (deduit/ajoute au total facture).",
+        "example": "Deduit du total facture",
     },
     {
         "key": "financial_adjustment_label",
@@ -157,8 +205,38 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     {
         "key": "financial_adjustment_block_html",
         "label": "Bloc ajustement financier (HTML)",
-        "description": "Bloc pret a afficher l ajustement (avoir/dette) dans le document.",
+        "description": "Bloc detail ajustement (avoir/dette), vide si aucun ajustement.",
         "example": "<p><strong>Avoir</strong> : 100,00 EUR</p>",
+    },
+    {
+        "key": "financial_adjustment_section_html",
+        "label": "Section ajustement (HTML)",
+        "description": "Section complete (titre + details), vide si aucun ajustement.",
+        "example": "<h2>Ajustement financier</h2><p><strong>Avoir</strong> : 100,00 EUR</p>",
+    },
+    {
+        "key": "financial_adjustment_none_html",
+        "label": "Bloc aucun ajustement (HTML)",
+        "description": "Texte de fallback si aucun ajustement n est applique.",
+        "example": "<p>Aucun avoir ou dette applique.</p>",
+    },
+    {
+        "key": "has_financial_adjustment",
+        "label": "Ajustement present",
+        "description": "Flag true/false si un avoir ou une dette est applique.",
+        "example": "true",
+    },
+    {
+        "key": "has_credit_adjustment",
+        "label": "Avoir present",
+        "description": "Flag true/false si l ajustement est un avoir.",
+        "example": "true",
+    },
+    {
+        "key": "has_debt_adjustment",
+        "label": "Dette presente",
+        "description": "Flag true/false si l ajustement est une dette.",
+        "example": "false",
     },
     {
         "key": "total_before_adjustment",

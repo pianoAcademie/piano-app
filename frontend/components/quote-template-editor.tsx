@@ -199,9 +199,12 @@ export default function QuoteTemplateEditor({
         key: "block_adjustment",
         label: "Bloc avoir / dette",
         value:
-          "<h2>Avoir / Dette</h2>"
-          + "{financial_adjustment_block_html}"
-          + "<p><strong>Total avant ajustement :</strong> {total_before_adjustment} {currency}</p>"
+          "{financial_adjustment_section_html}"
+          + "{financial_adjustment_none_html}"
+          + "{total_ttc_before_adjustment_html}"
+          + "<p><strong>Ligne ajustement :</strong> {financial_adjustment_display_line}</p>"
+          + "<p><strong>Impact :</strong> {financial_adjustment_impact_label}</p>"
+          + "<p><strong>Date :</strong> {financial_adjustment_effective_date}</p>"
           + "<p><strong>Total TTC facture :</strong> {total_after_adjustment} {currency}</p>",
       },
       {
@@ -225,10 +228,13 @@ export default function QuoteTemplateEditor({
         key: "totals_table",
         label: "Tableau totaux",
         value:
+          "{total_ttc_before_adjustment_html}"
+          + 
           "<table width='100%' cellpadding='6' cellspacing='0' border='1'>"
-          + "<tr><td><strong>Total HT</strong></td><td align='right'>{total_ht} {currency}</td></tr>"
-          + "<tr><td><strong>TVA ({vat_rate} %)</strong></td><td align='right'>{vat_amount} {currency}</td></tr>"
-          + "<tr><td><strong>Total TTC avant ajustement</strong></td><td align='right'>{total_ttc_before_adjustment} {currency}</td></tr>"
+          + "<tr><td><strong>Total HT avant ajustement</strong></td><td align='right'>{total_ht_before_adjustment} {currency}</td></tr>"
+          + "<tr><td><strong>TVA avant ajustement ({vat_rate} %)</strong></td><td align='right'>{vat_amount_before_adjustment} {currency}</td></tr>"
+          + "<tr><td><strong>Total HT facture</strong></td><td align='right'>{total_ht_after_adjustment} {currency}</td></tr>"
+          + "<tr><td><strong>TVA facture ({vat_rate} %)</strong></td><td align='right'>{vat_amount_after_adjustment} {currency}</td></tr>"
           + "<tr><td><strong>Total TTC facture</strong></td><td align='right'><strong>{total_ttc_after_adjustment} {currency}</strong></td></tr>"
           + "</table>",
       },
