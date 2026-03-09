@@ -119,6 +119,48 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "2 cheques: inscription + fevrier",
     },
     {
+        "key": "financial_adjustment_type_label",
+        "label": "Type ajustement financier",
+        "description": "Aucun, Avoir ou Dette.",
+        "example": "Avoir",
+    },
+    {
+        "key": "financial_adjustment_amount_ttc",
+        "label": "Montant ajustement TTC",
+        "description": "Montant de l avoir ou de la dette.",
+        "example": "100,00",
+    },
+    {
+        "key": "financial_adjustment_effective_date",
+        "label": "Date ajustement",
+        "description": "Date d effet de l ajustement (si renseignee).",
+        "example": "15/09/2026",
+    },
+    {
+        "key": "financial_adjustment_label",
+        "label": "Libelle ajustement",
+        "description": "Libelle libre associe a l ajustement.",
+        "example": "Avoir fidelite",
+    },
+    {
+        "key": "financial_adjustment_block_html",
+        "label": "Bloc ajustement financier (HTML)",
+        "description": "Bloc pret a afficher l ajustement (avoir/dette) dans le document.",
+        "example": "<p><strong>Avoir</strong> : 100,00 EUR</p>",
+    },
+    {
+        "key": "total_before_adjustment",
+        "label": "Total avant ajustement",
+        "description": "Total TTC des lignes avant application de l avoir/dette.",
+        "example": "450,00",
+    },
+    {
+        "key": "total_after_adjustment",
+        "label": "Total TTC facture",
+        "description": "Total TTC final facture apres ajustement financier.",
+        "example": "350,00",
+    },
+    {
         "key": "payment_instruction",
         "label": "Consignes de paiement",
         "description": "Consigne textuelle associee au plan de paiement (envoi cheques, adresse, etc.).",
@@ -254,6 +296,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "key": "services_table_html",
         "label": "Tableau activites (HTML)",
         "description": "Tableau HTML des activites du devis.",
+        "example": "<table>...</table>",
+    },
+    {
+        "key": "activities_planning_table_html",
+        "label": "Tableau planning activites (HTML)",
+        "description": "Tableau type activite, lieu, jour, horaire et duree (issu des blocs planning du devis).",
         "example": "<table>...</table>",
     },
     {

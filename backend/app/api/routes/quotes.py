@@ -105,15 +105,20 @@ from app.services.quotes.quote_documents import (
     AUDIENCE_CLIENT_PDF,
     AUDIENCE_PUBLIC_PAGE,
     render_quote_document_bundle,
+    render_quote_pdf_from_combined_html,
     render_quote_parts_html,
 )
 from app.services.quotes.template_registry import (
     list_quote_template_variables,
 )
 from app.services.security import hash_password
-from app.services.teacher_invoice_documents import render_teacher_invoice_pdf_from_html
 
 router = APIRouter()
+
+QUOTE_FINANCIAL_ADJUSTMENT_META_KEY = "financial_adjustment"
+QUOTE_FINANCIAL_ADJUSTMENT_NONE = "none"
+QUOTE_FINANCIAL_ADJUSTMENT_CREDIT = "credit"
+QUOTE_FINANCIAL_ADJUSTMENT_DEBT = "debt"
 
 
 def _utcnow() -> datetime:
@@ -138,6 +143,75 @@ def _decimal_or_none(value: object | None) -> Decimal | None:
     if not parsed.is_finite():
         return None
     return parsed
+
+
+def _normalize_quote_meta(value: object | None) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return dict(value)
+
+
+def _normalize_quote_adjustment(meta: dict[str, object] | None) -> dict[str, object]:
+    payload = meta.get(QUOTE_FINANCIAL_ADJUSTMENT_META_KEY) if isinstance(meta, dict) else None
+    source = payload if isinstance(payload, dict) else {}
+
+    kind = str(source.get("type") or "").strip().lower()
+    if kind not in {QUOTE_FINANCIAL_ADJUSTMENT_CREDIT, QUOTE_FINANCIAL_ADJUSTMENT_DEBT}:
+        kind = QUOTE_FINANCIAL_ADJUSTMENT_NONE
+
+    raw_amount = source.get("amount_ttc")
+    amount = _decimal_or_none(raw_amount)
+    if amount is None:
+        amount = Decimal("0")
+    amount = _q2(abs(amount))
+    if amount <= Decimal("0"):
+        kind = QUOTE_FINANCIAL_ADJUSTMENT_NONE
+
+    effective_date = str(source.get("effective_date") or "").strip()
+    if effective_date:
+        try:
+            parsed = date.fromisoformat(effective_date)
+            effective_date = parsed.isoformat()
+        except ValueError:
+            effective_date = ""
+    label = str(source.get("label") or "").strip()[:200]
+
+    return {
+        "type": kind,
+        "amount_ttc": str(amount),
+        "effective_date": effective_date or None,
+        "label": label or None,
+    }
+
+
+def _quote_adjustment_signature(meta: dict[str, object] | None) -> tuple[str, str, str, str]:
+    normalized = _normalize_quote_adjustment(meta)
+    return (
+        str(normalized.get("type") or QUOTE_FINANCIAL_ADJUSTMENT_NONE),
+        str(normalized.get("amount_ttc") or "0.00"),
+        str(normalized.get("effective_date") or ""),
+        str(normalized.get("label") or ""),
+    )
+
+
+def _quote_adjustment_signed_amount(meta: dict[str, object] | None) -> Decimal:
+    normalized = _normalize_quote_adjustment(meta)
+    amount = _decimal_or_none(normalized.get("amount_ttc")) or Decimal("0")
+    if amount <= Decimal("0"):
+        return Decimal("0")
+    kind = str(normalized.get("type") or QUOTE_FINANCIAL_ADJUSTMENT_NONE).strip().lower()
+    if kind == QUOTE_FINANCIAL_ADJUSTMENT_CREDIT:
+        return _q2(-abs(amount))
+    if kind == QUOTE_FINANCIAL_ADJUSTMENT_DEBT:
+        return _q2(abs(amount))
+    return Decimal("0")
+
+
+def _quote_total_with_adjustment(*, lines_total_ttc: Decimal, meta: dict[str, object] | None) -> Decimal:
+    adjusted = _q2(lines_total_ttc + _quote_adjustment_signed_amount(meta))
+    if adjusted < Decimal("0"):
+        return Decimal("0.00")
+    return adjusted
 
 
 def _split_ttc(unit_price_ttc: Decimal, vat_rate: Decimal) -> tuple[Decimal, Decimal]:
@@ -250,6 +324,9 @@ def _build_payment_terms_snapshot_from_plan(
     registration_date: date,
 ) -> dict[str, object]:
     rules = dict(plan.schedule_rules or {})
+    normalized_adjustment = _normalize_quote_adjustment(quote.meta or {})
+    adjustment_signed = _quote_adjustment_signed_amount(quote.meta or {})
+    lines_total_ttc = _q2(total_ttc - adjustment_signed)
     payment_method_label = _payment_method_label_from_code(plan.payment_method)
     schedule = build_payment_schedule(
         PaymentPlanScheduleInput(
@@ -314,6 +391,10 @@ def _build_payment_terms_snapshot_from_plan(
         "schedule_visibility": schedule_visibility,
         "check_submission_address": check_submission_address,
         "payment_instruction": check_submission_instruction,
+        "lines_total_ttc": str(lines_total_ttc),
+        "adjustment": normalized_adjustment,
+        "adjustment_signed_amount_ttc": str(_q2(adjustment_signed)),
+        "total_ttc_after_adjustment": str(_q2(total_ttc)),
     }
 
 
@@ -1840,10 +1921,32 @@ def _resolve_quote_pdf_bytes(
     freeze_state: str,
     audience: str = AUDIENCE_CLIENT_PDF,
 ) -> bytes:
+    if freeze_state == "generated" and (quote.document_status or "") != "frozen":
+        snapshot = _freeze_quote_document_snapshot(
+            db,
+            quote=quote,
+            lines=lines,
+            state=freeze_state,
+            audience=audience,
+        )
+        return render_quote_pdf_from_combined_html(
+            db=db,
+            quote=quote,
+            lines=lines,
+            combined_html=str(snapshot.combined_html_snapshot),
+            audience=audience,
+        )
+
     if quote.document_snapshot_id:
         snapshot = db.scalar(select(QuoteDocumentSnapshot).where(QuoteDocumentSnapshot.id == quote.document_snapshot_id))
         if snapshot is not None and snapshot.combined_html_snapshot:
-            return render_teacher_invoice_pdf_from_html(snapshot.combined_html_snapshot)
+            return render_quote_pdf_from_combined_html(
+                db=db,
+                quote=quote,
+                lines=lines,
+                combined_html=str(snapshot.combined_html_snapshot),
+                audience=audience,
+            )
     snapshot = _freeze_quote_document_snapshot(
         db,
         quote=quote,
@@ -1851,7 +1954,13 @@ def _resolve_quote_pdf_bytes(
         state=freeze_state,
         audience=audience,
     )
-    return render_teacher_invoice_pdf_from_html(snapshot.combined_html_snapshot)
+    return render_quote_pdf_from_combined_html(
+        db=db,
+        quote=quote,
+        lines=lines,
+        combined_html=str(snapshot.combined_html_snapshot),
+        audience=audience,
+    )
 
 
 def _effective_item_price(
@@ -1956,7 +2065,7 @@ def _materialize_quote_lines(
     lines_in: list[QuoteLineIn],
 ) -> Decimal:
     db.query(QuoteLine).filter(QuoteLine.quote_id == quote.id).delete(synchronize_session=False)
-    total = Decimal("0.00")
+    lines_total = Decimal("0.00")
 
     for item in lines_in:
         if item.line_category == "service" and item.line_type == "item" and item.activity_id is None:
@@ -2014,13 +2123,18 @@ def _materialize_quote_lines(
             meta=meta,
         )
         db.add(row)
-        total += amount
+        lines_total += amount
 
-    quote.total_ttc = _q2(total)
+    quote.total_ttc = _quote_total_with_adjustment(lines_total_ttc=_q2(lines_total), meta=quote.meta or {})
     quote.updated_at = _utcnow()
     db.add(quote)
     db.flush()
-    return _q2(total)
+    return _q2(quote.total_ttc)
+
+
+def _quote_lines_total_ttc(db: Session, *, quote_id: UUID) -> Decimal:
+    raw = db.scalar(select(func.coalesce(func.sum(QuoteLine.amount_ttc), Decimal("0"))).where(QuoteLine.quote_id == quote_id))
+    return _q2(Decimal(raw or 0))
 
 
 def _ensure_quote_editable(quote: Quote) -> None:
@@ -2364,7 +2478,7 @@ def create_quote(
     now = _utcnow()
     quote_dt = datetime.combine(payload.quote_date or now.date(), time(0, 0), tzinfo=timezone.utc)
     expires_at = quote_dt + timedelta(days=int(payload.expiry_days))
-    quote_meta = dict(payload.meta or {})
+    quote_meta = _normalize_quote_meta(payload.meta)
     if payload.language is not None and payload.language.strip():
         quote_meta["language"] = payload.language.strip().lower()
     if payload.vat_rate is not None:
@@ -2411,6 +2525,7 @@ def create_quote(
         quote_meta["terms_template_id"] = str(selected_terms_template.id)
     if selected_terms_template_version is not None:
         quote_meta["terms_template_version_id"] = str(selected_terms_template_version.id)
+    quote_meta[QUOTE_FINANCIAL_ADJUSTMENT_META_KEY] = _normalize_quote_adjustment(quote_meta)
 
     row = Quote(
         quote_number=_new_quote_number(),
@@ -2467,12 +2582,14 @@ def create_quote(
     db.flush()
 
     total = _materialize_quote_lines(db, quote=row, lines_in=payload.lines)
+    lines_total = _quote_lines_total_ttc(db, quote_id=row.id)
     if not row.payment_terms_snapshot:
         row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total)
     if not row.price_snapshot:
         row.price_snapshot = {
             "catalog_id": str(row.pricing_catalog_id) if row.pricing_catalog_id else None,
             "currency": row.currency,
+            "lines_total_ttc": str(lines_total),
             "total_ttc": str(total),
         }
 
@@ -2511,7 +2628,9 @@ def update_quote(
     _ensure_quote_editable(row)
     document_dirty = False
     payment_plan_changed = False
+    adjustment_changed = False
     computed_total: Decimal | None = None
+    previous_adjustment_signature = _quote_adjustment_signature(row.meta or {})
 
     if payload.quote_type is not None:
         row.quote_type = payload.quote_type
@@ -2627,17 +2746,34 @@ def update_quote(
     if payload.price_snapshot is not None:
         row.price_snapshot = payload.price_snapshot
     if payload.meta is not None:
-        row.meta = payload.meta
+        next_meta = _normalize_quote_meta(payload.meta)
+        next_meta[QUOTE_FINANCIAL_ADJUSTMENT_META_KEY] = _normalize_quote_adjustment(next_meta)
+        adjustment_changed = _quote_adjustment_signature(next_meta) != previous_adjustment_signature
+        row.meta = next_meta
         row.vat_rate = _extract_vat_rate(row.meta or {})
         document_dirty = True
 
     if payload.lines is not None:
         computed_total = _materialize_quote_lines(db, quote=row, lines_in=payload.lines)
         document_dirty = True
+    elif adjustment_changed:
+        lines_total = _quote_lines_total_ttc(db, quote_id=row.id)
+        computed_total = _quote_total_with_adjustment(lines_total_ttc=lines_total, meta=row.meta or {})
+        row.total_ttc = computed_total
+        document_dirty = True
 
-    if payload.payment_terms_snapshot is None and (payment_plan_changed or payload.lines is not None):
+    if payload.payment_terms_snapshot is None and (payment_plan_changed or payload.lines is not None or adjustment_changed):
         total_for_schedule = computed_total if computed_total is not None else _q2(Decimal(row.total_ttc or 0))
         row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total_for_schedule)
+
+    if payload.price_snapshot is None and (payload.lines is not None or adjustment_changed):
+        lines_total_ttc = _quote_lines_total_ttc(db, quote_id=row.id)
+        row.price_snapshot = {
+            "catalog_id": str(row.pricing_catalog_id) if row.pricing_catalog_id else None,
+            "currency": row.currency,
+            "lines_total_ttc": str(lines_total_ttc),
+            "total_ttc": str(_q2(Decimal(row.total_ttc or 0))),
+        }
 
     document_fields = {
         "quote_template_uuid",

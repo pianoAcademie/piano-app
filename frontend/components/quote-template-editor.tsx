@@ -97,9 +97,21 @@ export default function QuoteTemplateEditor({
           + "{prospect_identity_block_html}",
       },
       {
+        key: "block_family_page",
+        label: "Page informations famille",
+        value:
+          "{page_break_html}"
+          + "{header_standard_html}"
+          + "<h2>Informations famille</h2>"
+          + "<div class='quote-block'>{prospect_identity_block_html}</div>"
+          + "{footer_standard_html}",
+      },
+      {
         key: "block_services",
         label: "Bloc activites",
-        value: "<h2>Activites</h2>{services_table_html}",
+        value:
+          "<h2>Activites</h2>{services_table_html}"
+          + "<h3>Planning detaille des activites</h3>{activities_planning_table_html}",
       },
       {
         key: "block_material",
@@ -114,6 +126,15 @@ export default function QuoteTemplateEditor({
           + "<p>{payment_schedule_summary}</p>"
           + "{payment_method_block_html}"
           + "{payment_schedule_table_html}",
+      },
+      {
+        key: "block_adjustment",
+        label: "Bloc avoir / dette",
+        value:
+          "<h2>Avoir / Dette</h2>"
+          + "{financial_adjustment_block_html}"
+          + "<p><strong>Total avant ajustement :</strong> {total_before_adjustment} {currency}</p>"
+          + "<p><strong>Total TTC facture :</strong> {total_after_adjustment} {currency}</p>",
       },
       {
         key: "block_calendar",

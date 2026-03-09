@@ -717,6 +717,32 @@ export default function QuoteWizardForm({
               Delai expiration (jours)
               <input type="number" name="expiry_days" min={1} max={120} defaultValue={10} required />
             </label>
+            <label>
+              Ajustement financier
+              <select name="financial_adjustment_type" defaultValue="none">
+                <option value="none">Aucun</option>
+                <option value="credit">Avoir</option>
+                <option value="debt">Dette</option>
+              </select>
+            </label>
+            <label>
+              Montant ajustement TTC
+              <input
+                type="number"
+                name="financial_adjustment_amount_ttc"
+                min={0}
+                step="0.01"
+                placeholder="100.00"
+              />
+            </label>
+            <label>
+              Date ajustement
+              <input type="date" name="financial_adjustment_effective_date" />
+            </label>
+            <label>
+              Libelle ajustement (optionnel)
+              <input type="text" name="financial_adjustment_label" placeholder="Ex: Avoir fidelite septembre" />
+            </label>
           </div>
         </article>
 

@@ -479,6 +479,68 @@ function parseDateOnly(raw: string): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
+type QuoteFinancialAdjustmentType = "none" | "credit" | "debt";
+
+type QuoteFinancialAdjustmentPayload = {
+  type: QuoteFinancialAdjustmentType;
+  amount_ttc: string;
+  effective_date: string | null;
+  label: string | null;
+};
+
+function parseQuoteFinancialAdjustment(formData: FormData): { value: QuoteFinancialAdjustmentPayload; error: string | null } {
+  const rawType = String(formData.get("financial_adjustment_type") ?? "none").trim().toLowerCase();
+  let type: QuoteFinancialAdjustmentType = "none";
+  if (rawType === "credit" || rawType === "debt") {
+    type = rawType;
+  } else if (rawType && rawType !== "none") {
+    return {
+      value: { type: "none", amount_ttc: "0.00", effective_date: null, label: null },
+      error: "Type d ajustement financier invalide",
+    };
+  }
+
+  const amountRaw = String(formData.get("financial_adjustment_amount_ttc") ?? "").trim().replace(",", ".");
+  const dateRaw = String(formData.get("financial_adjustment_effective_date") ?? "").trim();
+  const labelRaw = String(formData.get("financial_adjustment_label") ?? "").trim();
+
+  if (dateRaw && !parseDateOnly(dateRaw)) {
+    return {
+      value: { type: "none", amount_ttc: "0.00", effective_date: null, label: null },
+      error: "Date d ajustement invalide",
+    };
+  }
+
+  let amount = 0;
+  if (type !== "none") {
+    if (!amountRaw) {
+      return {
+        value: { type: "none", amount_ttc: "0.00", effective_date: null, label: null },
+        error: "Montant obligatoire pour un avoir ou une dette",
+      };
+    }
+    const parsedAmount = parseNonNegativeDecimal(amountRaw);
+    if (parsedAmount === null || parsedAmount <= 0) {
+      return {
+        value: { type: "none", amount_ttc: "0.00", effective_date: null, label: null },
+        error: "Montant d ajustement invalide",
+      };
+    }
+    amount = parsedAmount;
+  }
+
+  const defaultLabel = type === "credit" ? "Avoir" : type === "debt" ? "Dette" : "";
+  return {
+    value: {
+      type,
+      amount_ttc: amount.toFixed(2),
+      effective_date: dateRaw || null,
+      label: (labelRaw || defaultLabel || "").slice(0, 200) || null,
+    },
+    error: null,
+  };
+}
+
 type CatalogKitItemPayload = {
   product_id: string;
   quantity: number;
@@ -8814,6 +8876,10 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     .map((entry) => Number.parseInt(String(entry), 10))
     .filter((value) => Number.isFinite(value) && value >= 0 && value <= 6);
   const lines = parseQuoteWizardLines(String(formData.get("lines_json") ?? ""));
+  const financialAdjustment = parseQuoteFinancialAdjustment(formData);
+  if (financialAdjustment.error) {
+    redirect(appendQueryMessage(returnTo, "error", financialAdjustment.error));
+  }
 
   let tvaRate: string | null = null;
   if (tvaRateRaw) {
@@ -8893,6 +8959,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     vat_rate: tvaRate,
     meta: {
       ...(tvaRate ? { tva_rate: tvaRate } : {}),
+      financial_adjustment: financialAdjustment.value,
       ...(resolvedSolfegeSlot ? { selected_solfege_slot: resolvedSolfegeSlot } : {}),
       ...(firstActivitySolfege ? {
         activity_solfege: planningBlocks
@@ -9085,6 +9152,11 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
       delete meta.tva_rate;
     }
   }
+  const financialAdjustment = parseQuoteFinancialAdjustment(formData);
+  if (financialAdjustment.error) {
+    redirect(appendQueryMessage(returnTo, "error", financialAdjustment.error));
+  }
+  meta.financial_adjustment = financialAdjustment.value;
 
   const payload: Record<string, unknown> = {
     quote_type_id: quoteTypeId,

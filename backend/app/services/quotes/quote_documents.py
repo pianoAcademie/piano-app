@@ -51,6 +51,16 @@ def _decimal_str(value: Decimal) -> str:
     return f"{amount:.2f}".replace(".", ",")
 
 
+def _decimal_from_any(value: Any, default: Decimal = Decimal("0")) -> Decimal:
+    try:
+        parsed = Decimal(str(value))
+    except Exception:
+        return default
+    if not parsed.is_finite():
+        return default
+    return parsed
+
+
 def _money(value: Decimal, currency: str) -> str:
     return f"{_decimal_str(value)} {currency}"
 
@@ -102,12 +112,13 @@ def _document_style_html() -> str:
         ".quote-cover-subtitle{font-size:14px;color:#4b5563;margin-bottom:9mm;}"
         ".quote-cover-name{font-size:22px;margin-bottom:4mm;}"
         ".quote-cover-meta{font-size:12px;color:#4b5563;line-height:1.6;}"
-        ".quote-table{width:100%;border-collapse:collapse;margin:6px 0 10px 0;font-size:11px;}"
+        ".quote-table{width:100%;border-collapse:collapse;border-spacing:0;margin:6px 0 10px 0;font-size:11px;table-layout:auto;}"
         ".quote-table thead{display:table-header-group;}"
         ".quote-table tfoot{display:table-footer-group;}"
         ".quote-table tr{page-break-inside:avoid;}"
-        ".quote-table th{background:#edf1f6;color:#111827;border:1px solid #c9d2dd;padding:6px 7px;text-align:left;font-weight:700;}"
-        ".quote-table td{border:1px solid #d8dee7;padding:6px 7px;vertical-align:top;color:#111827;}"
+        ".quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:10px 8px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:top !important;height:auto !important;min-height:26px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
+        ".quote-table td{border:1px solid #d3dbe7 !important;padding:10px 8px !important;vertical-align:top !important;color:#111827 !important;line-height:1.45 !important;height:auto !important;min-height:24px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
+        ".quote-table td>*{margin-top:0;margin-bottom:0;}"
         ".quote-footer{width:100%;border-collapse:collapse;margin-top:12px;padding-top:8px;border-top:1px solid #cdd4de;font-size:10px;color:#475467;}"
         ".quote-footer td{vertical-align:top;}"
         ".quote-terms-title{margin-top:0;}"
@@ -246,7 +257,8 @@ def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) 
     if not rows:
         return f"<p class='quote-muted'>{escape(empty_label)}</p>"
     head = "".join(
-        "<th style='background:#edf1f6;color:#111827;border:1px solid #c9d2dd;padding:6px 7px;text-align:left;font-weight:700;'>"
+        "<th bgcolor='#E7EDF7' "
+        "style='background-color:#E7EDF7;color:#111827;border:1px solid #c2ccda;padding:10px 8px;text-align:left;font-weight:700;line-height:1.4;vertical-align:top;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
         f"{escape(cell)}"
         "</th>"
         for cell in headers
@@ -256,7 +268,7 @@ def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) 
         body_rows.append(
             "<tr>"
             + "".join(
-                "<td style='border:1px solid #d8dee7;padding:6px 7px;vertical-align:top;color:#111827;'>"
+                "<td valign='top' style='border:1px solid #d8dee7;padding:10px 8px;vertical-align:top;color:#111827;line-height:1.45;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
                 f"{escape(cell)}"
                 "</td>"
                 for cell in row
@@ -266,10 +278,88 @@ def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) 
     body = "".join(body_rows)
     return (
         "<table class='quote-table' border='1' cellspacing='0' cellpadding='0' width='100%' "
-        "style='width:100%;border-collapse:collapse;margin:6px 0 10px 0;font-size:11px;'>"
+        "style='width:100%;border-collapse:collapse;border-spacing:0;margin:6px 0 10px 0;font-size:11px;table-layout:auto;'>"
         f"<thead><tr>{head}</tr></thead>"
         f"<tbody>{body}</tbody>"
         "</table>"
+    )
+
+
+def _weekday_label(value: Any) -> str:
+    labels = ("Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche")
+    try:
+        day = int(value)
+    except (TypeError, ValueError):
+        return "-"
+    if day < 0 or day > 6:
+        return "-"
+    return labels[day]
+
+
+def _parse_hhmm_to_minutes(value: Any) -> int | None:
+    raw = str(value or "").strip()
+    parsed = re.match(r"^(\d{2}):(\d{2})$", raw)
+    if parsed is None:
+        return None
+    hours = int(parsed.group(1))
+    minutes = int(parsed.group(2))
+    if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+
+def _duration_label(*, start_time: Any, end_time: Any, fallback_minutes: Any) -> str:
+    try:
+        fallback = int(fallback_minutes)
+    except (TypeError, ValueError):
+        fallback = 0
+    if fallback > 0:
+        return f"{fallback} min"
+    start_minutes = _parse_hhmm_to_minutes(start_time)
+    end_minutes = _parse_hhmm_to_minutes(end_time)
+    if start_minutes is None or end_minutes is None:
+        return "-"
+    delta = end_minutes - start_minutes
+    if delta <= 0:
+        delta += 24 * 60
+    return f"{delta} min"
+
+
+def _modality_label(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "Cours"
+    mapping = {
+        "ONLINE": "En ligne",
+        "ONSITE": "Presentiel",
+        "HYBRID": "Hybride",
+    }
+    return mapping.get(raw.upper(), raw)
+
+
+def _planning_blocks_table_html(snapshot: dict[str, Any]) -> str:
+    blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
+    rows: list[list[str]] = []
+    for block in blocks:
+        activity_label = str(block.get("activity_label") or "-").strip() or "-"
+        activity_type = str(block.get("activity_type_label") or "").strip()
+        if not activity_type:
+            activity_type = _modality_label(block.get("modality"))
+        location_label = str(block.get("location_label") or "-").strip() or "-"
+        weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"))
+        start_time = str(block.get("start_time") or "").strip()
+        end_time = str(block.get("end_time") or "").strip()
+        time_range = f"{start_time} - {end_time}" if start_time and end_time else "-"
+        duration = _duration_label(
+            start_time=start_time,
+            end_time=end_time,
+            fallback_minutes=block.get("duration_minutes"),
+        )
+        rows.append([activity_type, activity_label, location_label, weekday, time_range, duration])
+    return _table_html(
+        ["Type activite", "Activite", "Lieu", "Jour", "Horaire", "Duree"],
+        rows,
+        empty_label="Aucun bloc planning.",
     )
 
 
@@ -578,7 +668,7 @@ def build_quote_document_context(
     return context
 
 
-TOKEN_RE = re.compile(r"\{([a-zA-Z0-9_]+)\}")
+TOKEN_RE = re.compile(r"\{[\s\xa0]*([a-zA-Z0-9_]+)[\s\xa0]*\}")
 
 
 def _apply_template(
@@ -614,8 +704,27 @@ def _normalize_template_source(template: str) -> str:
     if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
         raw = raw[1:-1].strip()
     if any(token in raw for token in ("&lt;", "&gt;", "&#60;", "&#62;", "&#123;", "&#125;", "&#x7b;", "&#x7d;")):
-        raw = html_unescape(raw)
+        for _ in range(3):
+            decoded = html_unescape(raw)
+            if decoded == raw:
+                break
+            raw = decoded
+    raw = raw.replace("\uFF5B", "{").replace("\uFF5D", "}")
+    raw = raw.replace("\u00A0", " ")
+    raw = raw.replace("\u200B", "").replace("\u200C", "").replace("\u200D", "")
     return raw
+
+
+def _enforce_family_page_break(content: str) -> str:
+    marker = "quote-page-break"
+    pattern = re.compile(r"(<h[1-3][^>]*>\s*Informations?\s+(de\s+la\s+)?famille\s*</h[1-3]>)", re.IGNORECASE)
+    match = pattern.search(content or "")
+    if match is None:
+        return content
+    prefix = (content or "")[max(0, match.start() - 260):match.start()]
+    if marker in prefix:
+        return content
+    return (content or "")[:match.start()] + "<div class='quote-page-break'></div>" + (content or "")[match.start():]
 
 
 _INLINE_FOOTER_RE = re.compile(
@@ -623,41 +732,97 @@ _INLINE_FOOTER_RE = re.compile(
     flags=re.IGNORECASE | re.DOTALL,
 )
 
+_INLINE_RUNNING_FOOTER_RE = re.compile(
+    r"<table[^>]*class=['\"][^'\"]*quote-running-footer[^'\"]*['\"][^>]*>.*?</table>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+_INLINE_HEADER_RE = re.compile(
+    r"<table[^>]*class=['\"][^'\"]*quote-header[^'\"]*['\"][^>]*>.*?</table>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+_INLINE_RUNNING_HEADER_RE = re.compile(
+    r"<table[^>]*class=['\"][^'\"]*quote-running-header[^'\"]*['\"][^>]*>.*?</table>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+_INLINE_STYLE_RE = re.compile(r"<style[^>]*>(.*?)</style>", flags=re.IGNORECASE | re.DOTALL)
+
 
 def _strip_inline_footers(content: str) -> str:
-    return _INLINE_FOOTER_RE.sub("", content or "")
+    without_table = _INLINE_FOOTER_RE.sub("", content or "")
+    return _INLINE_RUNNING_FOOTER_RE.sub("", without_table)
 
 
-def _pdf_shell_html(*, content_html: str, footer_html: str) -> str:
+def _strip_inline_headers(content: str) -> str:
+    without_table = _INLINE_HEADER_RE.sub("", content or "")
+    return _INLINE_RUNNING_HEADER_RE.sub("", without_table)
+
+
+def _strip_overriding_page_styles(content: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        style_body = match.group(1) or ""
+        if "@page" in style_body.lower():
+            return ""
+        return match.group(0)
+
+    return _INLINE_STYLE_RE.sub(_replace, content or "")
+
+
+def _strip_inline_style_blocks(content: str) -> str:
+    return _INLINE_STYLE_RE.sub("", content or "")
+
+
+def _extract_body_inner_html(content: str) -> str:
+    raw = str(content or "")
+    matched = re.search(r"<body[^>]*>(.*)</body>", raw, flags=re.IGNORECASE | re.DOTALL)
+    if matched is None:
+        return raw
+    return matched.group(1)
+
+
+def _pdf_shell_html(*, content_html: str, header_html: str, footer_html: str) -> str:
     return (
         "<html><head><meta charset='utf-8'/>"
         "<style>"
         "@page {"
-        "  size: A4;"
-        "  margin: 14mm 12mm 20mm 12mm;"
-        "  @frame content_frame { left: 12mm; top: 14mm; width: 186mm; height: 258mm; }"
-        "  @frame footer_frame { -pdf-frame-content: footer_content; left: 12mm; top: 276mm; width: 186mm; height: 12mm; }"
+        "  size: a4 portrait;"
+        "  margin: 0;"
+        "  @frame header_frame { -pdf-frame-content: header_content; left: 36pt; top: 14pt; width: 523pt; height: 44pt; }"
+        "  @frame content_frame { left: 36pt; top: 64pt; width: 523pt; height: 700pt; }"
+        "  @frame footer_frame { -pdf-frame-content: footer_content; left: 36pt; top: 770pt; width: 523pt; height: 58pt; }"
         "}"
         "body{font-family:Arial,Helvetica,sans-serif;color:#1f1f1f;font-size:11px;line-height:1.42;}"
         "h1,h2,h3{color:#101828;margin:0 0 8px 0;}"
         "p{margin:0 0 7px 0;}"
         ".quote-page-break{page-break-before:always;}"
         ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:avoid;}"
-        ".quote-table{width:100%;border-collapse:collapse;table-layout:fixed;margin:6px 0 10px 0;font-size:10.8px;}"
-        ".quote-table th{background:#e8edf5 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:6px 7px !important;text-align:left !important;font-weight:700 !important;}"
-        ".quote-table td{border:1px solid #d3dbe7 !important;padding:6px 7px !important;vertical-align:top;color:#111827 !important;word-wrap:break-word;}"
-        "thead{display:table-header-group;}"
-        "tfoot{display:table-footer-group;}"
-        "tr{page-break-inside:avoid;}"
-        ".quote-brand-logo-img{display:inline-block;max-width:92px;max-height:56px;object-fit:contain;}"
-        ".quote-footer{width:100%;border-collapse:collapse;padding-top:3mm;border-top:1px solid #ccd5e1;font-size:9.6px;color:#4b5563;}"
-        ".quote-footer td{vertical-align:top;}"
+        ".quote-content table,.quote-table{width:100%;border-collapse:collapse;border-spacing:0;table-layout:auto;margin:8px 0 12px 0;font-size:10.9px;}"
+        ".quote-content th,.quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:10px 8px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:top !important;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;height:auto !important;min-height:26px;}"
+        ".quote-content td,.quote-table td{border:1px solid #d3dbe7 !important;padding:10px 8px !important;vertical-align:top !important;color:#111827 !important;line-height:1.45 !important;word-break:break-word !important;white-space:normal !important;overflow-wrap:anywhere !important;height:auto !important;min-height:24px;}"
+        ".quote-content td>*{margin-top:0 !important;margin-bottom:0 !important;}"
+        ".quote-content thead,thead{display:table-header-group !important;}"
+        ".quote-content tfoot,tfoot{display:table-footer-group !important;}"
+        ".quote-content tr,tr{page-break-inside:avoid !important;break-inside:avoid-page !important;height:auto !important;}"
+        ".quote-brand-logo-img{display:inline-block;max-width:120px;max-height:34px;object-fit:contain;}"
+        ".quote-running-header{width:100%;border-collapse:collapse;font-size:10px;color:#334155;border-bottom:1px solid #d7dee8;}"
+        ".quote-running-header td{vertical-align:middle;padding:0 0 4px 0;}"
+        ".quote-running-footer{width:100%;border-collapse:collapse;font-size:9.4px;color:#475467;border-top:1px solid #d7dee8;}"
+        ".quote-running-footer td{vertical-align:top;padding-top:5px;line-height:1.35;}"
         "</style>"
         "</head><body>"
+        "<div id='header_content'>"
+        f"{header_html}"
+        "</div>"
         "<div id='footer_content'>"
         f"{footer_html}"
         "</div>"
+        "<div class='quote-content'>"
         f"{content_html}"
+        "</div>"
         "</body></html>"
     )
 
@@ -680,6 +845,45 @@ def _build_template_values(
         vat_rate = Decimal("0.00")
     else:
         vat_rate = ((vat_amount / total_ht) * Decimal("100")).quantize(Decimal("0.01"))
+
+    payment_terms_snapshot = _json_object(quote.payment_terms_snapshot)
+    adjustment_data = _json_object(payment_terms_snapshot.get("adjustment"))
+    if not adjustment_data:
+        adjustment_data = _json_object(_json_object(quote.meta).get("financial_adjustment"))
+    adjustment_type = str(adjustment_data.get("type") or "").strip().lower()
+    if adjustment_type not in {"credit", "debt"}:
+        adjustment_type = "none"
+    adjustment_amount = _decimal_from_any(adjustment_data.get("amount_ttc"), Decimal("0")).quantize(Decimal("0.01"))
+    if adjustment_amount <= Decimal("0"):
+        adjustment_amount = Decimal("0.00")
+        adjustment_type = "none"
+    adjustment_signed_amount = (
+        -adjustment_amount
+        if adjustment_type == "credit"
+        else adjustment_amount
+        if adjustment_type == "debt"
+        else Decimal("0.00")
+    )
+    total_before_adjustment = (total_ttc - adjustment_signed_amount).quantize(Decimal("0.01"))
+    total_after_adjustment = total_ttc
+    adjustment_effective_date = _birth_date_label(str(adjustment_data.get("effective_date") or ""))
+    adjustment_label = str(adjustment_data.get("label") or "").strip()
+    adjustment_type_label = (
+        "Avoir" if adjustment_type == "credit" else "Dette" if adjustment_type == "debt" else "Aucun"
+    )
+    if adjustment_type == "none":
+        financial_adjustment_block_html = "<p>Aucun avoir ou dette applique.</p>"
+    else:
+        impact_label = "Deduit du total facture" if adjustment_type == "credit" else "Ajoute au total facture"
+        adjustment_parts = [
+            f"<p><strong>{escape(adjustment_type_label)}</strong> : {escape(_money(adjustment_amount, currency))}</p>",
+            f"<p><strong>Impact:</strong> {escape(impact_label)}</p>",
+        ]
+        if adjustment_effective_date and adjustment_effective_date != "-":
+            adjustment_parts.append(f"<p><strong>Date:</strong> {escape(adjustment_effective_date)}</p>")
+        if adjustment_label:
+            adjustment_parts.append(f"<p><strong>Libelle:</strong> {escape(adjustment_label)}</p>")
+        financial_adjustment_block_html = "".join(adjustment_parts)
 
     services_table_html = _table_html(
         ["Activite", "Quantite", "Duree", "TVA", "PU TTC", "Montant TTC"],
@@ -760,6 +964,7 @@ def _build_template_values(
         payment_schedule_table_html = f"<p>{escape(compact_notice)}</p>"
 
     sessions = [item for item in _json_list(_json_object(quote.calendar_snapshot).get("sessions")) if isinstance(item, dict)]
+    planning_blocks_table_html = _planning_blocks_table_html(_json_object(quote.calendar_snapshot))
     calendar_sessions_table_html = _table_html(
         ["Date", "Debut", "Fin", "Duree", "Modalite"],
         [
@@ -889,10 +1094,14 @@ def _build_template_values(
     brand_logo_html = _brand_logo_html(db=db, variant="header")
     cover_logo_html = _brand_logo_html(db=db, variant="cover")
     header_standard_html = (
-        "<table class='quote-header' width='100%' cellspacing='0' cellpadding='0'>"
+        "<table class='quote-running-header' width='100%' cellspacing='0' cellpadding='0'>"
         "<tr>"
-        f"<td>{brand_logo_html}</td>"
-        f"<td align='right' style='font-size:11px;color:#475467;'><strong>Devis {escape(quote.quote_number or '-')}</strong></td>"
+        "<td width='68%' align='left' valign='middle'>"
+        "<span style='font-size:11px;font-weight:700;color:#111827;'>PIANO ACADEMIE</span>"
+        "</td>"
+        "<td width='32%' align='right' valign='middle' style='font-size:10px;color:#334155;'>"
+        f"<strong>Devis {escape(quote.quote_number or '-')}</strong>"
+        "</td>"
         "</tr>"
         "</table>"
     )
@@ -926,6 +1135,15 @@ def _build_template_values(
         "school_year_label": (quote.school_year_label or "-"),
         "calendar_summary": calendar_summary,
         "payment_schedule_summary": payment_schedule_summary,
+        "financial_adjustment_type": adjustment_type,
+        "financial_adjustment_type_label": adjustment_type_label,
+        "financial_adjustment_amount_ttc": _decimal_str(adjustment_amount),
+        "financial_adjustment_signed_amount_ttc": _decimal_str(adjustment_signed_amount),
+        "financial_adjustment_effective_date": adjustment_effective_date,
+        "financial_adjustment_label": adjustment_label,
+        "financial_adjustment_block_html": financial_adjustment_block_html,
+        "total_before_adjustment": _decimal_str(total_before_adjustment),
+        "total_after_adjustment": _decimal_str(total_after_adjustment),
         "payment_method_label": payment_method_label,
         "payment_instruction": payment_instruction,
         "payment_schedule_compact_notice": document_context["payment_schedule_compact_notice"] or "",
@@ -935,18 +1153,18 @@ def _build_template_values(
         "cover_page_standard_html": cover_page_standard_html,
         "page_break_html": "<div class='quote-page-break'></div>",
         "footer_standard_html": (
-            "<table class='quote-footer' width='100%' cellspacing='0' cellpadding='0'>"
+            "<table class='quote-running-footer' width='100%' cellspacing='0' cellpadding='0'>"
             "<tr>"
-            "<td align='left' valign='top'>"
+            "<td width='33%' align='left' valign='top'>"
             "Piano Academie<br/>"
             "1 rue de Richelieu<br/>"
             "75001 Paris"
             "</td>"
-            "<td align='center' valign='top'>"
+            "<td width='34%' align='center' valign='top'>"
             "SIRET 82805141700032<br/>"
             "FR 74828051417"
             "</td>"
-            f"<td align='right' valign='top'>{escape(quote.quote_number or '-')}</td>"
+            f"<td width='33%' align='right' valign='top'>{escape(quote.quote_number or '-')}</td>"
             "</tr>"
             "</table>"
         ),
@@ -961,6 +1179,7 @@ def _build_template_values(
         "pass_recup_block_html": pass_recup_block_html,
         "payment_method_block_html": payment_method_block_html,
         "services_table_html": services_table_html,
+        "activities_planning_table_html": planning_blocks_table_html,
         "products_table_html": products_table_html,
         "kits_table_html": kits_table_html,
         "lines_table_html": lines_table_html,
@@ -984,7 +1203,9 @@ def _build_template_values(
         "masterclass_block_html",
         "pass_recup_block_html",
         "payment_method_block_html",
+        "financial_adjustment_block_html",
         "services_table_html",
+        "activities_planning_table_html",
         "products_table_html",
         "kits_table_html",
         "lines_table_html",
@@ -1011,21 +1232,26 @@ def _default_quote_body_template() -> str:
         "<p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p>"
         "<p><strong>Annee scolaire:</strong> {school_year_label}</p>"
         "<p><strong>Expiration:</strong> {expires_at}</p>"
+        "{page_break_html}"
+        "<h2>Informations famille</h2>"
         "<div class='quote-block'>"
         "{prospect_identity_block_html}"
         "</div>"
         "<h2>Activites</h2>{services_table_html}"
+        "<h3>Planning detaille des activites</h3>{activities_planning_table_html}"
         "<h2>Materiel</h2>{products_table_html}"
         "<h2>Kits</h2>{kits_table_html}"
         "{payment_method_block_html}"
         "<h2>Echeancier de paiement</h2>{payment_schedule_table_html}"
+        "<h2>Ajustement financier</h2>{financial_adjustment_block_html}"
         "{solfege_block_html}"
         "{masterclass_block_html}"
         "{pass_recup_block_html}"
         "<h2>Calendrier des cours</h2>{calendar_table_html}"
+        "<p><strong>Total avant ajustement:</strong> {total_before_adjustment} {currency}</p>"
         "<p><strong>Total HT:</strong> {total_ht} {currency}</p>"
         "<p><strong>TVA ({vat_rate}%):</strong> {vat_amount} {currency}</p>"
-        "<p><strong>Total TTC:</strong> {total_ttc} {currency}</p>"
+        "<p><strong>Total TTC facture:</strong> {total_after_adjustment} {currency}</p>"
         "{footer_standard_html}"
     )
 
@@ -1041,6 +1267,12 @@ def _render_quote_body_html(
     template = _normalize_template_source(body_template or _default_quote_body_template())
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered = _apply_template(template, values=values, html_keys=html_keys, html_output=True)
+    if "{activities_planning_table_html}" not in template.lower():
+        rendered += (
+            "<h3>Planning detaille des activites</h3>"
+            + values.get("activities_planning_table_html", "<p>Aucun bloc planning.</p>")
+        )
+    rendered = _enforce_family_page_break(rendered)
     return _as_html_fragment(rendered)
 
 
@@ -1158,12 +1390,32 @@ def render_quote_pdf(
 ) -> bytes:
     body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
     terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
-    values, _, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
-    footer_html = values.get("footer_standard_html", "")
-    content_html = (
-        f"<section>{_strip_inline_footers(body_html)}</section>"
+    combined_html = (
+        f"<section>{body_html}</section>"
         "<div class='quote-page-break'></div>"
-        f"{_strip_inline_footers(terms_html)}"
+        f"{terms_html}"
     )
-    pdf_html = _pdf_shell_html(content_html=content_html, footer_html=footer_html)
+    return render_quote_pdf_from_combined_html(
+        db=db,
+        quote=quote,
+        lines=lines,
+        combined_html=combined_html,
+        audience=audience,
+    )
+
+
+def render_quote_pdf_from_combined_html(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    combined_html: str,
+    audience: str = DEFAULT_AUDIENCE,
+) -> bytes:
+    values, _, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
+    header_html = values.get("header_standard_html", "")
+    footer_html = values.get("footer_standard_html", "")
+    content_html = _extract_body_inner_html(combined_html)
+    content_html = _strip_inline_style_blocks(_strip_inline_footers(_strip_inline_headers(content_html)))
+    pdf_html = _pdf_shell_html(content_html=content_html, header_html=header_html, footer_html=footer_html)
     return render_teacher_invoice_pdf_from_html(pdf_html)

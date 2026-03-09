@@ -382,6 +382,52 @@ function getProposedSolfegeSlots(meta: Record<string, unknown>, snapshot: Record
     .filter((row): row is { key: string; label: string; start_time: string; end_time: string } => row !== null);
 }
 
+type QuoteFinancialAdjustment = {
+  type: "none" | "credit" | "debt";
+  amountTtc: number;
+  effectiveDate: string;
+  label: string;
+};
+
+function parseQuoteFinancialAdjustment(meta: Record<string, unknown>): QuoteFinancialAdjustment {
+  const row = readObject(meta.financial_adjustment);
+  const rawType = String(row?.type ?? "").trim().toLowerCase();
+  const type = rawType === "credit" || rawType === "debt" ? rawType : "none";
+  const amount = Number(String(row?.amount_ttc ?? "0"));
+  const normalizedAmount = Number.isFinite(amount) && amount > 0 ? amount : 0;
+  const effectiveDate = String(row?.effective_date ?? "").trim();
+  const label = String(row?.label ?? "").trim();
+  if (type === "none" || normalizedAmount <= 0) {
+    return { type: "none", amountTtc: 0, effectiveDate: "", label: "" };
+  }
+  return {
+    type,
+    amountTtc: normalizedAmount,
+    effectiveDate: /^\d{4}-\d{2}-\d{2}$/.test(effectiveDate) ? effectiveDate : "",
+    label,
+  };
+}
+
+function adjustmentSignedAmount(adjustment: QuoteFinancialAdjustment): number {
+  if (adjustment.type === "credit") {
+    return -adjustment.amountTtc;
+  }
+  if (adjustment.type === "debt") {
+    return adjustment.amountTtc;
+  }
+  return 0;
+}
+
+function adjustmentTypeLabel(type: QuoteFinancialAdjustment["type"]): string {
+  if (type === "credit") {
+    return "Avoir";
+  }
+  if (type === "debt") {
+    return "Dette";
+  }
+  return "Aucun";
+}
+
 export default async function AdminQuoteDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -475,6 +521,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
   const planningSummary = planningVisualSummary(calendarSessions);
   const proposedSolfegeSlots = getProposedSolfegeSlots(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
+  const quoteAdjustment = parseQuoteFinancialAdjustment(detail.quote.meta || {});
+  const signedAdjustment = adjustmentSignedAmount(quoteAdjustment);
+  const totalTtcNumber = Number(detail.quote.total_ttc);
+  const totalBeforeAdjustment = Number.isFinite(totalTtcNumber) ? totalTtcNumber - signedAdjustment : null;
   const languageQuoteTemplates = quoteTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
   const selectedTemplate = quoteTemplates.find((row) => row.id === quoteTemplateId);
   const templateOptions = (() => {
@@ -662,11 +712,68 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             Annee scolaire
             <input type="text" name="school_year_label" defaultValue={detail.quote.school_year_label ?? ""} disabled={detail.quote.status !== "created"} />
           </label>
+          <label>
+            Ajustement financier
+            <select name="financial_adjustment_type" defaultValue={quoteAdjustment.type} disabled={detail.quote.status !== "created"}>
+              <option value="none">Aucun</option>
+              <option value="credit">Avoir</option>
+              <option value="debt">Dette</option>
+            </select>
+          </label>
+          <label>
+            Montant ajustement TTC
+            <input
+              type="number"
+              name="financial_adjustment_amount_ttc"
+              min={0}
+              step="0.01"
+              defaultValue={quoteAdjustment.type === "none" ? "" : quoteAdjustment.amountTtc.toFixed(2)}
+              placeholder="100.00"
+              disabled={detail.quote.status !== "created"}
+            />
+          </label>
+          <label>
+            Date ajustement
+            <input
+              type="date"
+              name="financial_adjustment_effective_date"
+              defaultValue={quoteAdjustment.effectiveDate}
+              disabled={detail.quote.status !== "created"}
+            />
+          </label>
+          <label className="span-3">
+            Libelle ajustement (optionnel)
+            <input
+              type="text"
+              name="financial_adjustment_label"
+              defaultValue={quoteAdjustment.label}
+              placeholder="Ex: Avoir fidelite septembre"
+              disabled={detail.quote.status !== "created"}
+            />
+          </label>
           <div className="row span-3 top-gap-sm">
             <button type="submit" disabled={detail.quote.status !== "created"}>Enregistrer parametres</button>
             {detail.quote.status !== "created" ? <small className="muted">Le devis est immuable apres envoi.</small> : null}
           </div>
         </form>
+        <p className="muted top-gap-sm">
+          Ajustement courant: <strong>{adjustmentTypeLabel(quoteAdjustment.type)}</strong>
+          {quoteAdjustment.type !== "none" ? (
+            <>
+              {" · "}
+              <strong>{formatAmount(String(quoteAdjustment.amountTtc), detail.quote.currency)}</strong>
+              {quoteAdjustment.effectiveDate ? <> · Date: <strong>{quoteAdjustment.effectiveDate}</strong></> : null}
+              {quoteAdjustment.label ? <> · Libelle: <strong>{quoteAdjustment.label}</strong></> : null}
+            </>
+          ) : null}
+        </p>
+        {totalBeforeAdjustment !== null ? (
+          <p className="muted">
+            Total lignes avant ajustement: <strong>{formatAmount(String(totalBeforeAdjustment), detail.quote.currency)}</strong>
+            {" · "}
+            Total facture apres ajustement: <strong>{formatAmount(detail.quote.total_ttc, detail.quote.currency)}</strong>
+          </p>
+        ) : null}
         <p className="muted top-gap-sm">
           CGV snapshot active: <strong>{String(detail.quote.cgv_snapshot?.version_label || "-")}</strong>
         </p>
