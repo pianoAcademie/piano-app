@@ -4226,6 +4226,7 @@ button.danger:focus-visible {
   border-radius: 10px;
   background: #fffdf9;
   overflow: hidden;
+  position: relative;
 }
 
 .quote-template-toolbar {
@@ -4235,6 +4236,9 @@ button.danger:focus-visible {
   padding: 8px;
   border-bottom: 1px solid #e6d9c4;
   background: #fff7ea;
+  position: sticky;
+  top: 8px;
+  z-index: 8;
 }
 
 .quote-template-toolbar .toolbar-group {
@@ -4259,6 +4263,23 @@ button.danger:focus-visible {
 
 .quote-template-editor-surface:focus-visible {
   box-shadow: inset 0 0 0 2px #4d90fe;
+}
+
+.quote-template-inline-placeholder {
+  min-height: 240px;
+  padding: 14px;
+  background: #ffffff;
+  border-top: 1px solid #e6d9c4;
+}
+
+.quote-template-editor-modal {
+  width: min(1200px, 96vw);
+  max-height: 92vh;
+}
+
+.wysiwyg-editor-modal {
+  width: min(1100px, 96vw);
+  max-height: 92vh;
 }
 
 .calendar-inline-help {

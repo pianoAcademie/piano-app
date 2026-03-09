@@ -100,6 +100,7 @@ export default function WysiwygField({
   const [value, setValue] = useState<string>(initialValue);
   const [fontFamily, setFontFamily] = useState<string>("");
   const [fontSize, setFontSize] = useState<string>("");
+  const [editorPopupOpen, setEditorPopupOpen] = useState<boolean>(false);
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -244,6 +245,7 @@ export default function WysiwygField({
     if (editor) {
       setValue(editor.getHTML());
     }
+    setEditorPopupOpen(false);
     setMode("html");
   }
 
@@ -287,6 +289,63 @@ export default function WysiwygField({
     setValue(editor.getHTML());
   }
 
+  function renderToolbar(): JSX.Element {
+    return (
+      <div className="quote-template-toolbar" aria-label="Outils de mise en forme">
+        <div className="toolbar-group">
+          {toolbar.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className="ghost small-btn"
+              onClick={() => {
+                applyCommand(item.action as Parameters<typeof applyCommand>[0]);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="toolbar-group">
+          <select
+            className="ghost small-btn"
+            value={fontFamily}
+            onChange={(event) => applyFontFamily(event.target.value)}
+            aria-label="Famille de police"
+          >
+            {FONT_FAMILY_OPTIONS.map((option) => (
+              <option key={option.label} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="ghost small-btn"
+            value={fontSize}
+            onChange={(event) => applyFontSize(event.target.value)}
+            aria-label="Taille de police"
+          >
+            {FONT_SIZE_OPTIONS.map((option) => (
+              <option key={option.label} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="ghost small-btn" onClick={insertLink}>
+            Lien
+          </button>
+          <button
+            type="button"
+            className="ghost small-btn"
+            onClick={() => setEditorPopupOpen(true)}
+          >
+            Ouvrir en popup
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <label>
       {label}
@@ -309,48 +368,16 @@ export default function WysiwygField({
 
       {mode === "wysiwyg" ? (
         <div className="top-gap-sm">
-          <div className="row wrap gap-sm">
-            {toolbar.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                className="ghost"
-                onClick={() => {
-                  applyCommand(item.action as Parameters<typeof applyCommand>[0]);
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-            <select
-              className="ghost small-btn"
-              value={fontFamily}
-              onChange={(event) => applyFontFamily(event.target.value)}
-              aria-label="Famille de police"
-            >
-              {FONT_FAMILY_OPTIONS.map((option) => (
-                <option key={option.label} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <select
-              className="ghost small-btn"
-              value={fontSize}
-              onChange={(event) => applyFontSize(event.target.value)}
-              aria-label="Taille de police"
-            >
-              {FONT_SIZE_OPTIONS.map((option) => (
-                <option key={option.label} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <button type="button" className="ghost small-btn" onClick={insertLink}>
-              Lien
-            </button>
+          <div className="quote-template-editor-shell">
+            {renderToolbar()}
+            {editorPopupOpen ? (
+              <div className="quote-template-inline-placeholder muted">
+                Edition en popup ouverte.
+              </div>
+            ) : (
+              <EditorContent editor={editor} />
+            )}
           </div>
-          <EditorContent editor={editor} />
         </div>
       ) : (
         <textarea
@@ -363,6 +390,29 @@ export default function WysiwygField({
 
       <textarea name={name} value={value} onChange={() => {}} hidden readOnly />
       {helpText ? <small className="muted">{helpText}</small> : null}
+
+      {editorPopupOpen && mode === "wysiwyg" ? (
+        <section className="modal-overlay" onClick={() => setEditorPopupOpen(false)}>
+          <article
+            className="modal-panel wysiwyg-editor-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              className="modal-close-x"
+              type="button"
+              onClick={() => setEditorPopupOpen(false)}
+              aria-label="Fermer"
+            >
+              ×
+            </button>
+            <h3 className="modal-title">Editeur WYSIWYG</h3>
+            <div className="quote-template-editor-shell">
+              {renderToolbar()}
+              <EditorContent editor={editor} />
+            </div>
+          </article>
+        </section>
+      ) : null}
     </label>
   );
 }

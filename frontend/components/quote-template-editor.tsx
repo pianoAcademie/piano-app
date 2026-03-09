@@ -236,6 +236,7 @@ export default function QuoteTemplateEditor({
   const [editorMode, setEditorMode] = useState<"wysiwyg" | "html">("wysiwyg");
   const [fontFamily, setFontFamily] = useState<string>("");
   const [fontSize, setFontSize] = useState<string>("");
+  const [editorPopupOpen, setEditorPopupOpen] = useState<boolean>(false);
   const [selectedVariable, setSelectedVariable] = useState<string>(variables[0]?.key || "quote_number");
   const [selectedSnippet, setSelectedSnippet] = useState<string>(snippets[0]?.key || "page_break");
   const editor = useEditor({
@@ -375,6 +376,7 @@ export default function QuoteTemplateEditor({
     if (editor) {
       setBody(editor.getHTML());
     }
+    setEditorPopupOpen(false);
     setEditorMode("html");
   }
 
@@ -463,6 +465,74 @@ export default function QuoteTemplateEditor({
     setBody(editor.getHTML());
   }
 
+  function renderToolbar(): JSX.Element {
+    return (
+      <div className="quote-template-toolbar" aria-label="Outils de mise en forme">
+        <div className="toolbar-group">
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("bold")}>B</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("italic")}>I</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("underline")}>U</button>
+        </div>
+        <div className="toolbar-group">
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading1")}>H1</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading2")}>H2</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading3")}>H3</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("paragraph")}>P</button>
+        </div>
+        <div className="toolbar-group">
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("bulletList")}>• Liste</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("orderedList")}>1. Liste</button>
+        </div>
+        <div className="toolbar-group">
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignLeft")}>Gauche</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignCenter")}>Centre</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignRight")}>Droite</button>
+        </div>
+        <div className="toolbar-group">
+          <button type="button" className="ghost small-btn" onClick={insertLink}>Lien</button>
+          <button type="button" className="ghost small-btn" onClick={insertImageUrl}>Image URL</button>
+        </div>
+        <div className="toolbar-group">
+          <select
+            className="ghost small-btn"
+            value={fontFamily}
+            onChange={(event) => applyFontFamily(event.target.value)}
+            aria-label="Famille de police"
+          >
+            {FONT_FAMILY_OPTIONS.map((option) => (
+              <option key={option.label} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="ghost small-btn"
+            value={fontSize}
+            onChange={(event) => applyFontSize(event.target.value)}
+            aria-label="Taille de police"
+          >
+            {FONT_SIZE_OPTIONS.map((option) => (
+              <option key={option.label} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="toolbar-group">
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("undo")}>↶</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("redo")}>↷</button>
+          <button
+            type="button"
+            className="ghost small-btn"
+            onClick={() => setEditorPopupOpen(true)}
+          >
+            Ouvrir en popup
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="grid config-form-grid">
       <label>
@@ -492,63 +562,14 @@ export default function QuoteTemplateEditor({
         </p>
         {editorMode === "wysiwyg" ? (
           <div className="quote-template-editor-shell top-gap-sm">
-            <div className="quote-template-toolbar" aria-label="Outils de mise en forme">
-              <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("bold")}>B</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("italic")}>I</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("underline")}>U</button>
+            {renderToolbar()}
+            {editorPopupOpen ? (
+              <div className="quote-template-inline-placeholder muted">
+                Edition en popup ouverte.
               </div>
-              <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading1")}>H1</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading2")}>H2</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("heading3")}>H3</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("paragraph")}>P</button>
-              </div>
-              <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("bulletList")}>• Liste</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("orderedList")}>1. Liste</button>
-              </div>
-              <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignLeft")}>Gauche</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignCenter")}>Centre</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignRight")}>Droite</button>
-              </div>
-              <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={insertLink}>Lien</button>
-                <button type="button" className="ghost small-btn" onClick={insertImageUrl}>Image URL</button>
-              </div>
-              <div className="toolbar-group">
-                <select
-                  className="ghost small-btn"
-                  value={fontFamily}
-                  onChange={(event) => applyFontFamily(event.target.value)}
-                  aria-label="Famille de police"
-                >
-                  {FONT_FAMILY_OPTIONS.map((option) => (
-                    <option key={option.label} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="ghost small-btn"
-                  value={fontSize}
-                  onChange={(event) => applyFontSize(event.target.value)}
-                  aria-label="Taille de police"
-                >
-                  {FONT_SIZE_OPTIONS.map((option) => (
-                    <option key={option.label} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="toolbar-group">
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("undo")}>↶</button>
-                <button type="button" className="ghost small-btn" onClick={() => applyCommand("redo")}>↷</button>
-              </div>
-            </div>
-            <EditorContent editor={editor} />
+            ) : (
+              <EditorContent editor={editor} />
+            )}
           </div>
         ) : (
           <textarea
@@ -601,6 +622,29 @@ export default function QuoteTemplateEditor({
           <p className="muted top-gap-sm"><code>{selectedSnippetDef.value}</code></p>
         ) : null}
       </div>
+
+      {editorPopupOpen && editorMode === "wysiwyg" ? (
+        <section className="modal-overlay" onClick={() => setEditorPopupOpen(false)}>
+          <article
+            className="modal-panel quote-template-editor-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              className="modal-close-x"
+              type="button"
+              onClick={() => setEditorPopupOpen(false)}
+              aria-label="Fermer"
+            >
+              ×
+            </button>
+            <h3 className="modal-title">Editeur de modele de devis</h3>
+            <div className="quote-template-editor-shell">
+              {renderToolbar()}
+              <EditorContent editor={editor} />
+            </div>
+          </article>
+        </section>
+      ) : null}
     </div>
   );
 }
