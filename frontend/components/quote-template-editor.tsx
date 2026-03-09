@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import FontFamily from "@tiptap/extension-font-family";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
@@ -282,16 +282,6 @@ export default function QuoteTemplateEditor({
     () => snippets.find((item) => item.key === selectedSnippet) ?? snippets[0] ?? null,
     [selectedSnippet, snippets],
   );
-
-  useEffect(() => {
-    if (!editor || editorMode !== "wysiwyg") {
-      return;
-    }
-    const next = normalizeInitialEditorValue(body);
-    if (editor.getHTML() !== next) {
-      editor.commands.setContent(next, false);
-    }
-  }, [editor, editorMode, body]);
 
   function applyCommand(
     action:

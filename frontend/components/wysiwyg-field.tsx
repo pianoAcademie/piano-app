@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import FontFamily from "@tiptap/extension-font-family";
 import Link from "@tiptap/extension-link";
 import TextStyle from "@tiptap/extension-text-style";
@@ -145,16 +145,6 @@ export default function WysiwygField({
     ],
     [],
   );
-
-  useEffect(() => {
-    if (!editor || mode !== "wysiwyg") {
-      return;
-    }
-    const next = looksLikeHtml(value) ? value : plainTextToHtml(value);
-    if (editor.getHTML() !== next) {
-      editor.commands.setContent(next, false);
-    }
-  }, [editor, mode, value]);
 
   function applyCommand(
     action:
