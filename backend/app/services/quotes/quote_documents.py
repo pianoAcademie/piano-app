@@ -2485,7 +2485,7 @@ def _render_quote_pdf_blocks(
         financial_rows.append(["Total TTC facture", f"{values.get('total_ttc', '0,00')} {values.get('currency', 'EUR')}"])
     story.append(
         _table_for_pdf(
-            ["Libelle", "Valeur"],
+            ["", ""],
             financial_rows,
             width=content_width,
             styles=styles,
