@@ -2375,7 +2375,7 @@ def _render_quote_pdf_blocks(
             line.title or "-",
             _decimal_str(Decimal(line.quantity or 0)),
             f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
-            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
             _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
         ]
@@ -2406,7 +2406,7 @@ def _render_quote_pdf_blocks(
             ),
             line.title or "-",
             _decimal_str(Decimal(line.quantity or 0)),
-            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
             _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
         ]
@@ -2428,7 +2428,7 @@ def _render_quote_pdf_blocks(
         [
             line.title or "-",
             _decimal_str(Decimal(line.quantity or 0)),
-            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
             _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
         ]
@@ -2450,7 +2450,7 @@ def _render_quote_pdf_blocks(
         [
             line.title or "-",
             _decimal_str(Decimal(line.quantity or 0)),
-            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
             _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
         ]
