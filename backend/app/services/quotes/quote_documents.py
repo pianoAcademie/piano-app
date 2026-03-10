@@ -2215,29 +2215,37 @@ def _draw_quote_pdf_header_footer(
     left_x = doc.leftMargin
     right_x = page_width - doc.rightMargin
 
-    header_top = page_height - 13 * mm
+    # Header band: center visual elements vertically between top band and separator line.
+    header_band_top = page_height - 10 * mm
+    header_rule_y = page_height - 24 * mm
+    header_band_center_y = (header_band_top + header_rule_y) / 2
+
+    logo_width = 28 * mm
+    logo_height = 10 * mm
+    logo_y = header_band_center_y - (logo_height / 2)
     if logo_reader is not None:
         try:
             canvas_obj.drawImage(
                 logo_reader,
                 left_x,
-                header_top - 12 * mm,
-                width=28 * mm,
-                height=10 * mm,
+                logo_y,
+                width=logo_width,
+                height=logo_height,
                 preserveAspectRatio=True,
                 mask="auto",
             )
         except Exception:
             logo_reader = None
 
+    title_baseline_y = header_band_center_y - (3.2 * mm)
     canvas_obj.setFont("Helvetica-Bold", 11)
     canvas_obj.setFillColor(colors.HexColor("#0f172a"))
     if logo_reader is None:
-        canvas_obj.drawString(left_x, header_top - 6 * mm, "PIANO ACADEMIE")
-    canvas_obj.drawRightString(right_x, header_top - 6 * mm, f"Devis {quote_number or '-'}")
+        canvas_obj.drawString(left_x, title_baseline_y, "PIANO ACADEMIE")
+    canvas_obj.drawRightString(right_x, title_baseline_y, f"Devis {quote_number or '-'}")
     canvas_obj.setStrokeColor(colors.HexColor("#cfd8e6"))
     canvas_obj.setLineWidth(0.8)
-    canvas_obj.line(left_x, page_height - 24 * mm, right_x, page_height - 24 * mm)
+    canvas_obj.line(left_x, header_rule_y, right_x, header_rule_y)
 
     footer_y = 15 * mm
     canvas_obj.setStrokeColor(colors.HexColor("#cfd8e6"))
