@@ -371,18 +371,6 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "<p><strong>Mode de paiement:</strong> Cheque en 4 fois</p>",
     },
     {
-        "key": "solfege_block_html",
-        "label": "Bloc solfege (HTML)",
-        "description": "Bloc conditionnel: details solfege ou mention non souscrit.",
-        "example": "<p>Solfege souscrit - Niveau 1</p>",
-    },
-    {
-        "key": "masterclass_block_html",
-        "label": "Bloc masterclass (HTML)",
-        "description": "Bloc conditionnel: details masterclass ou mention non souscrite.",
-        "example": "<p>Masterclass du samedi : non souscrite.</p>",
-    },
-    {
         "key": "pass_recup_block_html",
         "label": "Bloc Pass Recup (HTML)",
         "description": "Bloc conditionnel: details Pass Recup ou mention non souscrit.",
@@ -399,6 +387,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "label": "Tableau planning activites (HTML)",
         "description": "Tableau type activite, lieu, jour, horaire et duree (issu des blocs planning du devis).",
         "example": "<table>...</table>",
+    },
+    {
+        "key": "activities_planning_section_html",
+        "label": "Section activites retenues (HTML)",
+        "description": "Section complete (titre + tableau) masquee automatiquement si vide.",
+        "example": "<h2>Les Activites retenues</h2><table>...</table>",
     },
     {
         "key": "products_table_html",
@@ -419,6 +413,30 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "<table>...</table>",
     },
     {
+        "key": "services_section_html",
+        "label": "Section prestations (HTML)",
+        "description": "Section complete (titre + tableau) masquee automatiquement si vide.",
+        "example": "<h2>Prestations</h2><table>...</table>",
+    },
+    {
+        "key": "adjustments_section_html",
+        "label": "Section remises et supplements (HTML)",
+        "description": "Section complete (titre + tableau) masquee automatiquement si vide.",
+        "example": "<h2>Remises et supplements</h2><table>...</table>",
+    },
+    {
+        "key": "products_section_html",
+        "label": "Section materiel (HTML)",
+        "description": "Section complete (titre + tableau) masquee automatiquement si vide.",
+        "example": "<h2>Materiel</h2><table>...</table>",
+    },
+    {
+        "key": "kits_section_html",
+        "label": "Section kits (HTML)",
+        "description": "Section complete (titre + tableau) masquee automatiquement si vide.",
+        "example": "<h2>Kits</h2><table>...</table>",
+    },
+    {
         "key": "lines_table_html",
         "label": "Tableau lignes (HTML)",
         "description": "Tableau HTML global des lignes du devis.",
@@ -431,6 +449,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "<table>...</table>",
     },
     {
+        "key": "payment_schedule_section_html",
+        "label": "Section echeancier (HTML)",
+        "description": "Section complete (titre + tableau) masquee automatiquement si vide.",
+        "example": "<h2>Echeancier de paiement</h2><table>...</table>",
+    },
+    {
         "key": "calendar_table_html",
         "label": "Calendrier visuel (HTML)",
         "description": "Calendrier visuel par activite, semestres, mois et nombre de cours.",
@@ -441,6 +465,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "label": "Calendrier visuel par activite (HTML)",
         "description": "Alias du calendrier visuel par activite (1er/2e semestre).",
         "example": "<div>1er semestre ...</div>",
+    },
+    {
+        "key": "calendar_section_html",
+        "label": "Section calendrier des cours (HTML)",
+        "description": "Section complete (titre + calendrier) masquee automatiquement si vide.",
+        "example": "<h2>Calendrier des cours</h2><div>...</div>",
     },
     {
         "key": "calendar_sessions_table_html",

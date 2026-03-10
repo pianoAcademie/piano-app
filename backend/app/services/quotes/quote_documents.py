@@ -335,7 +335,7 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
 
 def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) -> str:
     if not rows:
-        return f"<p class='quote-muted'>{escape(empty_label)}</p>"
+        return ""
     head = "".join(
         "<th bgcolor='#E7EDF7' "
         "style='background-color:#E7EDF7;color:#111827;border:1px solid #c2ccda;padding:12px 10px 12px 10px;padding-top:12px;padding-right:10px;padding-bottom:12px;padding-left:10px;text-align:left;font-weight:700;line-height:1.4;vertical-align:middle;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
@@ -363,6 +363,14 @@ def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) 
         f"<tbody>{body}</tbody>"
         "</table>"
     )
+
+
+def _section_html(title: str, content_html: str, *, level: int = 2) -> str:
+    content = str(content_html or "").strip()
+    if not content:
+        return ""
+    tag = "h3" if level == 3 else "h2"
+    return f"<{tag}>{escape(title)}</{tag}>{content}"
 
 
 def _weekday_label(value: Any) -> str:
@@ -417,7 +425,7 @@ def _modality_label(value: Any) -> str:
     return mapping.get(raw.upper(), raw)
 
 
-def _planning_blocks_table_html(snapshot: dict[str, Any]) -> str:
+def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
     blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     rows: list[list[str]] = []
     for block in blocks:
@@ -463,10 +471,13 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> str:
                 fallback_minutes=block.get("duration_minutes"),
             )
         rows.append([activity_type, activity_label, location_label, weekday, time_range, duration])
-    return _table_html(
-        ["Type activite", "Activite", "Lieu", "Jour", "Horaire", "Duree"],
-        rows,
-        empty_label="Aucun bloc planning.",
+    return (
+        _table_html(
+            ["Type activite", "Activite", "Lieu", "Jour", "Horaire", "Duree"],
+            rows,
+            empty_label="Aucun bloc planning.",
+        ),
+        len(rows),
     )
 
 
@@ -1467,7 +1478,7 @@ def _build_template_values(
             payment_schedule_table_html = ""
 
     sessions = [item for item in _json_list(_json_object(quote.calendar_snapshot).get("sessions")) if isinstance(item, dict)]
-    planning_blocks_table_html = _planning_blocks_table_html(_json_object(quote.calendar_snapshot))
+    planning_blocks_table_html, _ = _planning_blocks_table_html(_json_object(quote.calendar_snapshot))
     calendar_sessions_table_html = _table_html(
         ["Date", "Debut", "Fin", "Duree", "Modalite"],
         [
@@ -1494,6 +1505,17 @@ def _build_template_values(
         payment_schedule_summary = f"{len(schedule)} {unit_label} : {due_labels}"
     else:
         payment_schedule_summary = "Paiement non planifie"
+
+    activities_planning_section_html = _section_html(
+        "Les Activites retenues",
+        planning_blocks_table_html,
+    )
+    services_section_html = _section_html("Prestations", services_table_html)
+    adjustments_section_html = _section_html("Remises et supplements", adjustments_table_html)
+    products_section_html = _section_html("Materiel", products_table_html)
+    kits_section_html = _section_html("Kits", kits_table_html)
+    payment_schedule_section_html = _section_html("Echeancier de paiement", payment_schedule_table_html)
+    calendar_section_html = _section_html("Calendrier des cours", calendar_table_html)
 
     cgv_label, _ = _load_terms_template_content(db=db, quote=quote)
     prospect_data = document_context["prospect_data"]
@@ -1621,16 +1643,9 @@ def _build_template_values(
         + (child_identity_card_html + responsible_identity_card_html if display_flags["showChildBlock"] else adult_identity_card_html)
         + "</div>"
     )
-    solfege_block_html = (
-        f"<p>{escape(solfege_full)}</p>"
-        if display_flags["showSolfegeSection"]
-        else "<p>Solfege non souscrit. Aucun cours de solfege n est inclus dans cette formule.</p>"
-    )
-    masterclass_block_html = (
-        f"<p>{escape(masterclass_full)}</p>"
-        if display_flags["showMasterclassSection"]
-        else "<p>Masterclass du samedi : non souscrite.</p>"
-    )
+    # Solfege et masterclass sont geres comme activites de planning: pas de bloc dedie dans le document.
+    solfege_block_html = ""
+    masterclass_block_html = ""
     pass_recup_block_html = (
         "<p>Option Pass Recup souscrite. Les regles d usage sont appliquees selon la formule.</p>"
         if display_flags["showPassRecupSection"]
@@ -1747,6 +1762,13 @@ def _build_template_values(
         "masterclass_block_html": masterclass_block_html,
         "pass_recup_block_html": pass_recup_block_html,
         "payment_method_block_html": payment_method_block_html,
+        "activities_planning_section_html": activities_planning_section_html,
+        "services_section_html": services_section_html,
+        "adjustments_section_html": adjustments_section_html,
+        "products_section_html": products_section_html,
+        "kits_section_html": kits_section_html,
+        "payment_schedule_section_html": payment_schedule_section_html,
+        "calendar_section_html": calendar_section_html,
         "services_table_html": services_table_html,
         "activities_planning_table_html": planning_blocks_table_html,
         "products_table_html": products_table_html,
@@ -1773,6 +1795,13 @@ def _build_template_values(
         "masterclass_block_html",
         "pass_recup_block_html",
         "payment_method_block_html",
+        "activities_planning_section_html",
+        "services_section_html",
+        "adjustments_section_html",
+        "products_section_html",
+        "kits_section_html",
+        "payment_schedule_section_html",
+        "calendar_section_html",
         "financial_adjustment_block_html",
         "financial_adjustment_section_html",
         "financial_adjustment_none_html",
@@ -1812,18 +1841,16 @@ def _default_quote_body_template() -> str:
         "<div class='quote-block'>"
         "{prospect_identity_block_html}"
         "</div>"
-        "<h2>Activites</h2>{services_table_html}"
-        "<h3>Planning detaille des activites</h3>{activities_planning_table_html}"
-        "<h2>Materiel</h2>{products_table_html}"
-        "<h2>Kits</h2>{kits_table_html}"
-        "<h2>Remises et supplements</h2>{adjustments_table_html}"
+        "{activities_planning_section_html}"
+        "{services_section_html}"
+        "{adjustments_section_html}"
+        "{products_section_html}"
+        "{kits_section_html}"
         "{payment_method_block_html}"
-        "<h2>Echeancier de paiement</h2>{payment_schedule_table_html}"
+        "{payment_schedule_section_html}"
         "{financial_adjustment_section_html}"
-        "{solfege_block_html}"
-        "{masterclass_block_html}"
         "{pass_recup_block_html}"
-        "<h2>Calendrier des cours</h2>{calendar_table_html}"
+        "{calendar_section_html}"
         "{financial_recap_block_html}"
         "{footer_standard_html}"
     )
@@ -1876,6 +1903,13 @@ def _render_quote_body_html(
             "masterclass_block_html",
             "pass_recup_block_html",
             "payment_method_block_html",
+            "activities_planning_section_html",
+            "services_section_html",
+            "adjustments_section_html",
+            "products_section_html",
+            "kits_section_html",
+            "payment_schedule_section_html",
+            "calendar_section_html",
             "services_table_html",
             "activities_planning_table_html",
             "products_table_html",
@@ -1896,11 +1930,9 @@ def _render_quote_body_html(
     rendered = _apply_template(template, values=values, html_keys=html_keys, html_output=True)
     rendered = _cleanup_rendered_block_markup(rendered)
     rendered = _dedupe_retained_activities_tables(rendered)
-    if "{activities_planning_table_html}" not in template.lower():
-        rendered += (
-            "<h3>Planning detaille des activites</h3>"
-            + values.get("activities_planning_table_html", "<p>Aucun bloc planning.</p>")
-        )
+    lowered_template = template.lower()
+    if "{activities_planning_table_html}" not in lowered_template and "{activities_planning_section_html}" not in lowered_template:
+        rendered += values.get("activities_planning_section_html", "")
     rendered = _enforce_family_page_break(rendered)
     return _as_html_fragment(rendered)
 
@@ -1926,6 +1958,13 @@ def _render_quote_terms_html(
             "footer_standard_html",
             "prospect_identity_block_html",
             "payment_method_block_html",
+            "activities_planning_section_html",
+            "services_section_html",
+            "adjustments_section_html",
+            "products_section_html",
+            "kits_section_html",
+            "payment_schedule_section_html",
+            "calendar_section_html",
             "payment_schedule_table_html",
             "calendar_table_html",
             "calendar_activity_semesters_html",

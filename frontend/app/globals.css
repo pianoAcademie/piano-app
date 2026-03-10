@@ -9851,6 +9851,62 @@ button.danger:focus-visible {
   gap: 0.2rem;
 }
 
+.quote-workstream-card {
+  border-width: 1px;
+  border-style: solid;
+}
+
+.quote-workstream-card-planning {
+  border-color: #c7d7f0;
+  background: linear-gradient(180deg, #f7faff 0%, #ffffff 100%);
+}
+
+.quote-workstream-card-pricing {
+  border-color: #d8ccb0;
+  background: linear-gradient(180deg, #fffaf2 0%, #ffffff 100%);
+}
+
+.quote-workstream-head {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.quote-workstream-head h3 {
+  margin: 0;
+}
+
+.quote-workstream-badge {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.quote-workstream-badge-planning {
+  background: #dfeafc;
+  color: #1b3a72;
+}
+
+.quote-workstream-badge-pricing {
+  background: #f2e5c9;
+  color: #5d3a08;
+}
+
+.quote-preview-details {
+  gap: 0;
+}
+
+.quote-preview-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.2rem 0;
+}
+
 .quote-detail-panel {
   max-height: min(92vh, 980px);
   overflow-y: auto;

@@ -58,6 +58,9 @@ type QuoteLinesEditorProps = {
   activities: ActivityOption[];
   products: ProductOption[];
   kits: KitOption[];
+  activityCatalogPriceByActivityId?: Record<string, string>;
+  productCatalogPriceByProductId?: Record<string, string>;
+  kitCatalogPriceByKitId?: Record<string, string>;
   saveAction: (formData: FormData) => Promise<void>;
 };
 
@@ -233,6 +236,9 @@ export default function QuoteLinesEditor({
   activities,
   products,
   kits,
+  activityCatalogPriceByActivityId = {},
+  productCatalogPriceByProductId = {},
+  kitCatalogPriceByKitId = {},
   saveAction,
 }: QuoteLinesEditorProps): JSX.Element {
   const [lines, setLines] = useState<EditableLine[]>(
@@ -279,33 +285,48 @@ export default function QuoteLinesEditor({
       updateLine(uid, { refId: "", title: "", unitPrice: "0" });
       return;
     }
-    if (kind === "activity") {
-      const activity = activities.find((item) => item.id === refId);
-      updateLine(uid, {
-        refId,
-        title: activity?.name ?? "Activite",
-        vatRate: "0",
-        unitPrice: activity?.default_course_rate_ttc ?? "0",
-      });
-      return;
-    }
-    if (kind === "product") {
-      const product = products.find((item) => item.id === refId);
-      updateLine(uid, {
-        refId,
-        title: product?.title ?? "Produit",
-        vatRate: product?.vat_rate ?? "0",
-        unitPrice: product?.price_incl_vat ?? "0",
-      });
-      return;
-    }
-    const kit = kits.find((item) => item.id === refId);
-    updateLine(uid, {
-      refId,
-      title: kit?.title ?? "Kit",
-      vatRate: kit?.vat_rate ?? "0",
-      unitPrice: kit?.effective_price_ttc ?? "0",
-    });
+    setLines((prev) =>
+      prev.map((line) => {
+        if (line.uid !== uid) {
+          return line;
+        }
+        if (kind === "activity") {
+          const activity = activities.find((item) => item.id === refId);
+          const catalogPrice = activityCatalogPriceByActivityId[refId];
+          const resolvedUnitPrice = catalogPrice ?? activity?.default_course_rate_ttc ?? line.unitPrice;
+          return {
+            ...line,
+            refId,
+            title: activity?.name ?? "Activite",
+            unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+          };
+        }
+        if (kind === "product") {
+          const product = products.find((item) => item.id === refId);
+          const catalogPrice = productCatalogPriceByProductId[refId];
+          const resolvedVatRate = product?.vat_rate ?? line.vatRate;
+          const resolvedUnitPrice = catalogPrice ?? product?.price_incl_vat ?? line.unitPrice;
+          return {
+            ...line,
+            refId,
+            title: product?.title ?? "Produit",
+            vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
+            unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+          };
+        }
+        const kit = kits.find((item) => item.id === refId);
+        const catalogPrice = kitCatalogPriceByKitId[refId];
+        const resolvedVatRate = kit?.vat_rate ?? line.vatRate;
+        const resolvedUnitPrice = catalogPrice ?? kit?.effective_price_ttc ?? line.unitPrice;
+        return {
+          ...line,
+          refId,
+          title: kit?.title ?? "Kit",
+          vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
+          unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+        };
+      }),
+    );
   }
 
   return (

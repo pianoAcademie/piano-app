@@ -127,6 +127,31 @@ type PricingCatalogOut = {
   name: string;
 };
 
+type PricingActivityPriceOut = {
+  id: string;
+  catalog_id: string;
+  activity_id: string;
+  location_id: string | null;
+  unit_price_ttc: string;
+  is_active: boolean;
+};
+
+type PricingProductPriceOut = {
+  id: string;
+  catalog_id: string;
+  product_id: string;
+  unit_price_ttc: string;
+  is_active: boolean;
+};
+
+type PricingKitPriceOut = {
+  id: string;
+  catalog_id: string;
+  kit_id: string;
+  unit_price_ttc: string;
+  is_active: boolean;
+};
+
 type TermsTemplateOut = {
   id: string;
   name: string;
@@ -518,6 +543,26 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   }
 
   const detail = detailResult.data;
+  const pricingCatalogId = detail.quote.pricing_catalog_id || "";
+  const [activityPricesResult, productPricesResult, kitPricesResult] = pricingCatalogId
+    ? await Promise.all([
+      backendRequest<PricingActivityPriceOut[]>(
+        `/api/v1/pricing-activity-prices?catalog_id=${encodeURIComponent(pricingCatalogId)}`,
+        {},
+        token,
+      ),
+      backendRequest<PricingProductPriceOut[]>(
+        `/api/v1/pricing-product-prices?catalog_id=${encodeURIComponent(pricingCatalogId)}`,
+        {},
+        token,
+      ),
+      backendRequest<PricingKitPriceOut[]>(
+        `/api/v1/pricing-kit-prices?catalog_id=${encodeURIComponent(pricingCatalogId)}`,
+        {},
+        token,
+      ),
+    ])
+    : [null, null, null];
   const followups = followupsResult.ok ? followupsResult.data : [];
   const activeFollowup = followups[0] ?? null;
   const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
@@ -533,6 +578,36 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
   const documentPreview = documentPreviewResult.ok ? documentPreviewResult.data : null;
+  const activityPrices = activityPricesResult?.ok ? activityPricesResult.data : [];
+  const productPrices = productPricesResult?.ok ? productPricesResult.data : [];
+  const kitPrices = kitPricesResult?.ok ? kitPricesResult.data : [];
+
+  const activityCatalogPriceByActivityId: Record<string, string> = {};
+  const activityCatalogPriceSpecificity: Record<string, number> = {};
+  for (const row of activityPrices) {
+    if (!row.is_active) {
+      continue;
+    }
+    const specificity = row.location_id ? 1 : 2;
+    if (!(row.activity_id in activityCatalogPriceByActivityId) || specificity > (activityCatalogPriceSpecificity[row.activity_id] || 0)) {
+      activityCatalogPriceByActivityId[row.activity_id] = String(row.unit_price_ttc ?? "0");
+      activityCatalogPriceSpecificity[row.activity_id] = specificity;
+    }
+  }
+  const productCatalogPriceByProductId: Record<string, string> = {};
+  for (const row of productPrices) {
+    if (!row.is_active || row.product_id in productCatalogPriceByProductId) {
+      continue;
+    }
+    productCatalogPriceByProductId[row.product_id] = String(row.unit_price_ttc ?? "0");
+  }
+  const kitCatalogPriceByKitId: Record<string, string> = {};
+  for (const row of kitPrices) {
+    if (!row.is_active || row.kit_id in kitCatalogPriceByKitId) {
+      continue;
+    }
+    kitCatalogPriceByKitId[row.kit_id] = String(row.unit_price_ttc ?? "0");
+  }
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
@@ -838,62 +913,64 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       </section>
 
       <section className="card">
-        <div className="row spread wrap gap-sm">
-          <h3>Apercu documentaire (admin)</h3>
-          <small className="muted">Audience: admin_preview</small>
-        </div>
-        {documentPreview ? (
-          <>
-            <p className="muted top-gap-sm">
-              Hash rendu: <strong>{documentPreview.document_hash}</strong>
-            </p>
-            <div className="grid cols-2 top-gap-sm">
-              <article className="item">
-                <strong>Blocs visibles</strong>
-                {documentPreview.visible_blocks.length === 0 ? (
-                  <p className="muted top-gap-sm">Aucun bloc visible.</p>
-                ) : (
-                  <ul className="top-gap-sm">
-                    {documentPreview.visible_blocks.map((name) => (
-                      <li key={`visible-${name}`}>{name}</li>
-                    ))}
-                  </ul>
-                )}
+        <details className="modal-details quote-preview-details">
+          <summary className="quote-preview-summary">
+            <span>Apercu documentaire (admin)</span>
+            <small className="muted">Audience: admin_preview</small>
+          </summary>
+          {documentPreview ? (
+            <div className="top-gap-sm">
+              <p className="muted">
+                Hash rendu: <strong>{documentPreview.document_hash}</strong>
+              </p>
+              <div className="grid cols-2 top-gap-sm">
+                <article className="item">
+                  <strong>Blocs visibles</strong>
+                  {documentPreview.visible_blocks.length === 0 ? (
+                    <p className="muted top-gap-sm">Aucun bloc visible.</p>
+                  ) : (
+                    <ul className="top-gap-sm">
+                      {documentPreview.visible_blocks.map((name) => (
+                        <li key={`visible-${name}`}>{name}</li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+                <article className="item">
+                  <strong>Blocs masques</strong>
+                  {documentPreview.hidden_blocks.length === 0 ? (
+                    <p className="muted top-gap-sm">Aucun bloc masque.</p>
+                  ) : (
+                    <ul className="top-gap-sm">
+                      {documentPreview.hidden_blocks.map((name) => (
+                        <li key={`hidden-${name}`}>{name}</li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              </div>
+              <article className="item top-gap-sm">
+                <h4>Apercu devis</h4>
+                <div
+                  className="top-gap-sm"
+                  dangerouslySetInnerHTML={{ __html: documentPreview.quote_body_html || documentPreview.combined_html }}
+                />
               </article>
-              <article className="item">
-                <strong>Blocs masques</strong>
-                {documentPreview.hidden_blocks.length === 0 ? (
-                  <p className="muted top-gap-sm">Aucun bloc masque.</p>
-                ) : (
-                  <ul className="top-gap-sm">
-                    {documentPreview.hidden_blocks.map((name) => (
-                      <li key={`hidden-${name}`}>{name}</li>
-                    ))}
-                  </ul>
-                )}
-              </article>
+              <details className="modal-details top-gap-sm">
+                <summary>Conditions generales (CGV)</summary>
+                <article className="item">
+                  {documentPreview.terms_html ? (
+                    <div dangerouslySetInnerHTML={{ __html: documentPreview.terms_html }} />
+                  ) : (
+                    <p className="muted">Aucune CGV disponible pour ce devis.</p>
+                  )}
+                </article>
+              </details>
             </div>
-            <article className="item top-gap-sm">
-              <h4>Apercu devis</h4>
-              <div
-                className="top-gap-sm"
-                dangerouslySetInnerHTML={{ __html: documentPreview.quote_body_html || documentPreview.combined_html }}
-              />
-            </article>
-            <details className="modal-details top-gap-sm">
-              <summary>Conditions generales (CGV)</summary>
-              <article className="item">
-                {documentPreview.terms_html ? (
-                  <div dangerouslySetInnerHTML={{ __html: documentPreview.terms_html }} />
-                ) : (
-                  <p className="muted">Aucune CGV disponible pour ce devis.</p>
-                )}
-              </article>
-            </details>
-          </>
-        ) : (
-          <p className="muted top-gap-sm">Apercu documentaire indisponible.</p>
-        )}
+          ) : (
+            <p className="muted top-gap-sm">Apercu documentaire indisponible.</p>
+          )}
+        </details>
       </section>
 
       <section className="card">
@@ -904,29 +981,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <p><strong>Creation:</strong> {formatDate(detail.quote.created_at)}</p>
           <p><strong>Envoi:</strong> {formatDate(detail.quote.sent_at)}</p>
           <p><strong>Expiration:</strong> {formatDate(detail.quote.expires_at)}</p>
-          <p><strong>Solfege / Masterclass:</strong> Geres comme activites separees dans le planning</p>
+          <p><strong>Options pedagogiques:</strong> Gerees via les activites du planning</p>
         </div>
       </section>
 
-      <section className="card">
-        <div className="row spread wrap gap-sm">
-          <h3>Solfege (mode activite separee)</h3>
-          {detail.quote.status === "created" ? <a className="mode-link" href="#planning-editor">Modifier dans planning</a> : null}
+      <section className="card quote-workstream-card quote-workstream-card-planning" id="planning-editor">
+        <div className="quote-workstream-head">
+          <span className="quote-workstream-badge quote-workstream-badge-planning">Bloc 1 · Construction pedagogique</span>
+          <h3>Activites (planning)</h3>
+          <p className="muted">{calendarSessions.length} seances calculees. Configurez les cours, lieux, jours et horaires.</p>
         </div>
-        <p className="muted">Le solfege est desormais une activite distincte. Ajoutez un bloc activite "Solfege" dans le calendrier previsionnel.</p>
-      </section>
-
-      <section className="card">
-        <div className="row spread wrap gap-sm">
-          <h3>Masterclass (mode activite separee)</h3>
-          {detail.quote.status === "created" ? <a className="mode-link" href="#planning-editor">Modifier par activite</a> : null}
-        </div>
-        <p className="muted">La masterclass est desormais une activite distincte. Ajoutez un bloc activite "Masterclass" dans le calendrier previsionnel.</p>
-      </section>
-
-      <section className="card" id="planning-editor">
-        <h3>Calendrier previsionnel</h3>
-        <p className="muted">{calendarSessions.length} seances calculees.</p>
         {planningSummary.length > 0 ? (
           <div className="list top-gap-sm">
             {planningSummary.map((block) => (
@@ -1030,8 +1094,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         <QuoteSessionsViewer quoteNumber={detail.quote.quote_number} sessions={calendarSessionsForViewer} />
       </section>
 
-      <section className="card">
-        <h3>Lignes du devis</h3>
+      <section className="card quote-workstream-card quote-workstream-card-pricing">
+        <div className="quote-workstream-head">
+          <span className="quote-workstream-badge quote-workstream-badge-pricing">Bloc 2 · Construction commerciale</span>
+          <h3>Lignes du devis (tarification)</h3>
+          <p className="muted">Construisez le chiffrage: activites, materiel, kits, remises et supplements.</p>
+        </div>
         <QuoteLinesEditor
           quoteId={detail.quote.id}
           returnTo={selfPath}
@@ -1056,6 +1124,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             effective_price_ttc: row.price_effective_incl_vat,
             vat_rate: row.vat_rate,
           }))}
+          activityCatalogPriceByActivityId={activityCatalogPriceByActivityId}
+          productCatalogPriceByProductId={productCatalogPriceByProductId}
+          kitCatalogPriceByKitId={kitCatalogPriceByKitId}
           saveAction={updateQuoteLinesAction}
         />
       </section>
