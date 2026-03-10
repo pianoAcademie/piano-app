@@ -191,6 +191,8 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
         activities={activities.map((row) => ({
           id: row.id,
           name: row.name,
+          code: row.code,
+          service_code: row.service_code,
           duration_minutes: row.duration_minutes,
           default_course_rate_ttc: row.default_course_rate_ttc,
         }))}

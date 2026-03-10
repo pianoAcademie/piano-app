@@ -140,6 +140,16 @@ type QuoteTemplateV2Out = {
   is_default: boolean;
 };
 
+type SolfegeLevelRuleOut = {
+  id: string;
+  level_code: string;
+  duration_minutes: number;
+  allowed_weekdays: number[];
+  allowed_time_slots: Array<Record<string, unknown>>;
+  location_id: string | null;
+  modality: string | null;
+};
+
 type QuoteDocumentPreviewOut = {
   quote_id: string;
   audience: string;
@@ -352,6 +362,7 @@ function modalityLabel(value: unknown): string {
 
 function weekdayLabelFromNumber(value: unknown): string {
   const weekday = Number.parseInt(String(value ?? ""), 10);
+  if (weekday === -1) return "Selection a faire";
   if (weekday === 0) return "Lundi";
   if (weekday === 1) return "Mardi";
   if (weekday === 2) return "Mercredi";
@@ -470,7 +481,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, termsTemplatesResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, termsTemplatesResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, solfegeRulesResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
@@ -482,6 +493,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
     backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
+    backendRequest<SolfegeLevelRuleOut[]>("/api/v1/solfege-level-rules", {}, token),
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
     backendRequest<QuoteDocumentPreviewOut>(
@@ -517,6 +529,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const products = productsResult.ok ? productsResult.data : [];
   const kits = kitsResult.ok ? kitsResult.data : [];
   const locations = locationsResult.ok ? locationsResult.data : [];
+  const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
   const documentPreview = documentPreviewResult.ok ? documentPreviewResult.data : null;
@@ -951,6 +964,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             activities={activities.map((row) => ({
               id: row.id,
               name: row.name,
+              code: row.code,
+              service_code: row.service_code,
               duration_minutes: row.duration_minutes,
               exclude_holidays_in_recurrence: row.exclude_holidays_in_recurrence,
               exclude_school_vacations_in_recurrence: row.exclude_school_vacations_in_recurrence,
@@ -958,6 +973,15 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             locations={locations.map((row) => ({
               id: row.id,
               name: row.name,
+            }))}
+            solfegeRules={solfegeRules.map((row) => ({
+              id: row.id,
+              level_code: row.level_code,
+              duration_minutes: row.duration_minutes,
+              allowed_weekdays: row.allowed_weekdays,
+              allowed_time_slots: row.allowed_time_slots,
+              location_id: row.location_id,
+              modality: row.modality,
             }))}
             initialSnapshot={detail.quote.calendar_snapshot}
             initialMeta={detail.quote.meta || {}}
@@ -968,10 +992,27 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <div className="quote-public-lines top-gap-sm">
             {planningBlocks.map((block, index) => (
               <article key={`block-${index}`} className="quote-public-line-item">
+                {(() => {
+                  const selectionPending = Number.parseInt(String(block.weekday ?? ""), 10) === -1 || Boolean(block.selection_pending);
+                  const startTime = String(block.start_time ?? "--:--");
+                  const endTime = String(block.end_time ?? "--:--");
+                  const pendingSlotsRaw = Array.isArray(block.pending_slot_options) ? block.pending_slot_options : [];
+                  const pendingSlots = pendingSlotsRaw
+                    .map((slot) => (slot && typeof slot === "object" ? String((slot as Record<string, unknown>).label ?? "").trim() : ""))
+                    .filter((label) => label.length > 0);
+                  return (
+                    <>
                 <strong>{String(block.activity_label ?? activityById.get(String(block.activity_id ?? "")) ?? "Activite")}</strong>
                 <span>
-                  {weekdayLabelFromNumber(block.weekday)} · {String(block.start_time ?? "--:--")} - {String(block.end_time ?? "--:--")}
+                  {selectionPending
+                    ? "Selection a faire"
+                    : `${weekdayLabelFromNumber(block.weekday)} · ${startTime} - ${endTime}`}
                 </span>
+                {selectionPending && pendingSlots.length > 0 ? (
+                  <small className="muted">
+                    Creneaux disponibles: {pendingSlots.join(" ; ")}
+                  </small>
+                ) : null}
                 <small className="muted">
                   {String(block.start_date ?? "-")} → {String(block.end_date ?? "-")}
                   {" · "}
@@ -979,6 +1020,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   {" · "}
                   Calendrier: {String(block.calendar_name ?? "Par defaut")}
                 </small>
+                    </>
+                  );
+                })()}
               </article>
             ))}
           </div>

@@ -52,6 +52,8 @@ type LocationOption = {
 type ActivityOption = {
   id: string;
   name: string;
+  code?: string;
+  service_code?: string;
   duration_minutes: number;
   default_course_rate_ttc: string | null;
 };
@@ -142,6 +144,7 @@ type WizardLine = {
   unitPrice: string;
 };
 
+const WEEKDAY_UNSET = -1;
 const WEEKDAY_LABELS: Array<{ value: number; label: string }> = [
   { value: 0, label: "Lun" },
   { value: 1, label: "Mar" },
@@ -150,6 +153,10 @@ const WEEKDAY_LABELS: Array<{ value: number; label: string }> = [
   { value: 4, label: "Ven" },
   { value: 5, label: "Sam" },
   { value: 6, label: "Dim" },
+];
+const PLANNING_WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: WEEKDAY_UNSET, label: "Selection a faire" },
+  ...WEEKDAY_LABELS,
 ];
 
 function toMoney(value: string, currency = "EUR"): string {
@@ -272,6 +279,9 @@ function addMinutesToTime(startTime: string, deltaMinutes: number): string {
 }
 
 function weekdayLabel(weekday: number): string {
+  if (weekday === WEEKDAY_UNSET) {
+    return "Selection a faire";
+  }
   const row = WEEKDAY_LABELS.find((item) => item.value === weekday);
   return row?.label ?? String(weekday);
 }
@@ -344,6 +354,30 @@ function slotOptionsFromRule(rule: SolfegeRule | null | undefined): SolfegeSlotO
   return options;
 }
 
+function solfegeLevelFromActivity(activity: ActivityOption | undefined): string | null {
+  if (!activity) {
+    return null;
+  }
+  const candidates = [activity.name, activity.code, activity.service_code]
+    .filter(Boolean)
+    .map((value) => String(value));
+  for (const candidate of candidates) {
+    const match = candidate.match(/niveau\s*([1-5])/i) || candidate.match(/SOLFEGE[_\-\s]*NIVEAU[_\-\s]*([1-5])/i);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function isSolfegeActivity(activity: ActivityOption | undefined): boolean {
+  if (!activity) {
+    return false;
+  }
+  const haystack = [activity.name, activity.code, activity.service_code].filter(Boolean).join(" ").toLowerCase();
+  return haystack.includes("solfege");
+}
+
 function isCatalogKind(kind: LineKind): boolean {
   return kind === "activity" || kind === "product" || kind === "kit";
 }
@@ -380,6 +414,9 @@ export default function QuoteWizardForm({
 
   const sessionsCount = useMemo(
     () => planningBlocks.reduce((sum, block) => {
+      if (block.weekday === WEEKDAY_UNSET) {
+        return sum;
+      }
       const blockCount = countEstimatedSessions(block.start_date, block.end_date, [block.weekday]);
       return sum + blockCount;
     }, 0),
@@ -407,29 +444,56 @@ export default function QuoteWizardForm({
   const planningBlocksJson = useMemo(
     () =>
       JSON.stringify(
-        planningBlocks.map((row) => ({
-          activity_id: row.activity_id || null,
-          activity_label: activities.find((item) => item.id === row.activity_id)?.name || null,
-          location_id: row.location_id || null,
-          location_label: locations.find((item) => item.id === row.location_id)?.name || null,
-          weekday: row.weekday,
-          weekday_label: weekdayLabel(row.weekday),
-          start_date: row.start_date,
-          end_date: row.end_date,
-          start_time: row.start_time,
-          end_time: row.end_time,
-          modality: row.modality || null,
-          solfege_enabled: row.solfege_enabled,
-          solfege_level: row.solfege_level || null,
-          solfege_start_date: row.solfege_start_date || null,
-          solfege_slot: row.solfege_slot_key
-            ? slotOptionsFromRule(solfegeRules.find((rule) => String(rule.level_code) === String(row.solfege_level))).find((item) => item.key === row.solfege_slot_key) || null
-            : null,
-          masterclass_enabled: row.masterclass_enabled,
-          masterclass_session: row.masterclass_session || null,
-          masterclass_location_id: row.masterclass_location_id || null,
-          masterclass_location_label: locations.find((item) => item.id === row.masterclass_location_id)?.name || null,
-        })),
+        planningBlocks.map((row) => {
+          const activity = activities.find((item) => item.id === row.activity_id);
+          const locationLabel = locations.find((item) => item.id === row.location_id)?.name || null;
+          const selectionPending = row.weekday === WEEKDAY_UNSET;
+          const pendingLevel =
+            selectionPending && isSolfegeActivity(activity) ? solfegeLevelFromActivity(activity) : null;
+          const pendingRule = pendingLevel
+            ? solfegeRules.find((rule) => String(rule.level_code) === String(pendingLevel)) || null
+            : null;
+          const pendingSlotOptions =
+            selectionPending && pendingLevel
+              ? slotOptionsFromRule(pendingRule).map((slot) => ({
+                  weekday: slot.weekday,
+                  weekday_label: weekdayLabel(slot.weekday),
+                  start_time: slot.start_time,
+                  end_time: slot.end_time,
+                  duration_minutes: slot.duration_minutes,
+                  location_id: slot.location_id,
+                  location_label: locationLabel,
+                  modality: slot.modality,
+                  label: slot.label,
+                }))
+              : [];
+          return {
+            activity_id: row.activity_id || null,
+            activity_label: activity?.name || null,
+            location_id: row.location_id || null,
+            location_label: locationLabel,
+            weekday: row.weekday,
+            weekday_label: weekdayLabel(row.weekday),
+            start_date: row.start_date,
+            end_date: row.end_date,
+            start_time: selectionPending ? "" : row.start_time,
+            end_time: selectionPending ? "" : row.end_time,
+            modality: row.modality || null,
+            selection_pending: selectionPending,
+            pending_solfege_level: pendingLevel,
+            pending_slot_options: pendingSlotOptions,
+            solfege_enabled: row.solfege_enabled,
+            solfege_level: row.solfege_level || null,
+            solfege_start_date: row.solfege_start_date || null,
+            solfege_slot: row.solfege_slot_key
+              ? slotOptionsFromRule(solfegeRules.find((rule) => String(rule.level_code) === String(row.solfege_level))).find((item) => item.key === row.solfege_slot_key) || null
+              : null,
+            masterclass_enabled: row.masterclass_enabled,
+            masterclass_session: row.masterclass_session || null,
+            masterclass_location_id: row.masterclass_location_id || null,
+            masterclass_location_label: locations.find((item) => item.id === row.masterclass_location_id)?.name || null,
+          };
+        }),
       ),
     [planningBlocks, activities, locations, solfegeRules],
   );
@@ -758,11 +822,23 @@ export default function QuoteWizardForm({
           </div>
           {planningBlocks.length === 0 ? <p className="muted top-gap-sm">Aucun bloc planning configure.</p> : null}
           <div className="list top-gap-sm">
-            {planningBlocks.map((block, index) => (
+            {planningBlocks.map((block, index) => {
+              const activity = activities.find((item) => item.id === block.activity_id);
+              const selectionPending = block.weekday === WEEKDAY_UNSET;
+              const blockSolfegeLevel = isSolfegeActivity(activity) ? solfegeLevelFromActivity(activity) : null;
+              const pendingSlotOptions =
+                selectionPending && blockSolfegeLevel
+                  ? slotOptionsFromRule(
+                      solfegeRules.find((rule) => String(rule.level_code) === String(blockSolfegeLevel)) || null,
+                    )
+                  : [];
+              return (
               <article key={block.uid} className="item">
                 <div className="row spread wrap gap-sm">
-                  <strong>{activities.find((item) => item.id === block.activity_id)?.name || `Activite #${index + 1}`}</strong>
-                  <span className="badge">{countEstimatedSessions(block.start_date, block.end_date, [block.weekday])} cours</span>
+                  <strong>{activity?.name || `Activite #${index + 1}`}</strong>
+                  <span className="badge">
+                    {selectionPending ? 0 : countEstimatedSessions(block.start_date, block.end_date, [block.weekday])} cours
+                  </span>
                   <button type="button" className="ghost small-btn" onClick={() => removePlanningBlock(block.uid)}>
                     Supprimer
                   </button>
@@ -800,9 +876,29 @@ export default function QuoteWizardForm({
                     Jour
                     <select
                       value={String(block.weekday)}
-                      onChange={(event) => updatePlanningBlock(block.uid, { weekday: Number.parseInt(event.target.value, 10) || 0 })}
+                      onChange={(event) => {
+                        const parsed = Number.parseInt(event.target.value, 10);
+                        if (!Number.isFinite(parsed)) {
+                          return;
+                        }
+                        if (parsed === WEEKDAY_UNSET) {
+                          updatePlanningBlock(block.uid, {
+                            weekday: WEEKDAY_UNSET,
+                            start_time: "",
+                            end_time: "",
+                          });
+                          return;
+                        }
+                        const duration = activity?.duration_minutes ?? 60;
+                        const nextStart = block.start_time || "17:00";
+                        updatePlanningBlock(block.uid, {
+                          weekday: parsed,
+                          start_time: nextStart,
+                          end_time: addMinutesToTime(nextStart, duration),
+                        });
+                      }}
                     >
-                      {WEEKDAY_LABELS.map((entry) => (
+                      {PLANNING_WEEKDAY_OPTIONS.map((entry) => (
                         <option key={entry.value} value={entry.value}>
                           {entry.label}
                         </option>
@@ -842,12 +938,27 @@ export default function QuoteWizardForm({
                           end_time: addMinutesToTime(nextStart, duration),
                         });
                       }}
+                      disabled={selectionPending}
                     />
                   </label>
                   <label>
                     Heure fin (auto)
                     <input type="time" value={block.end_time} readOnly />
                   </label>
+                  {selectionPending ? (
+                    <div className="cols-span-4">
+                      <p className="muted">Selection du jour en attente: le creneau sera confirme ulterieurement.</p>
+                      {pendingSlotOptions.length > 0 ? (
+                        <ul className="muted top-gap-sm">
+                          {pendingSlotOptions.map((slot) => (
+                            <li key={`${block.uid}-pending-${slot.key}`}>{slot.label}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="muted top-gap-sm">Aucun creneau configure pour ce niveau.</p>
+                      )}
+                    </div>
+                  ) : null}
                   <label className="checkline cols-span-4">
                     <input
                       type="checkbox"
@@ -944,7 +1055,8 @@ export default function QuoteWizardForm({
                   ) : null}
                 </div>
               </article>
-            ))}
+              );
+            })}
           </div>
           <p className="muted top-gap-sm">Apercu rapide: {sessionsCount} seances estimees (hors jours feries/fermetures).</p>
         </article>

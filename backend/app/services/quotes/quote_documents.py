@@ -421,20 +421,47 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> str:
     blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     rows: list[list[str]] = []
     for block in blocks:
+        pending_slot_labels: list[str] = []
+        for raw_slot in _json_list(block.get("pending_slot_options")):
+            if not isinstance(raw_slot, dict):
+                continue
+            label = str(raw_slot.get("label") or "").strip()
+            if label:
+                pending_slot_labels.append(label)
+                continue
+            weekday_text = str(raw_slot.get("weekday_label") or "").strip() or _weekday_label(raw_slot.get("weekday"))
+            start = str(raw_slot.get("start_time") or raw_slot.get("start") or "").strip()
+            end = str(raw_slot.get("end_time") or raw_slot.get("end") or "").strip()
+            if weekday_text and start and end:
+                pending_slot_labels.append(f"{weekday_text} {start}-{end}")
+        deduped_pending_slots = list(dict.fromkeys(pending_slot_labels))
+        try:
+            weekday_value = int(block.get("weekday") or -99)
+        except (TypeError, ValueError):
+            weekday_value = -99
+        selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
         activity_label = str(block.get("activity_label") or "-").strip() or "-"
         activity_type = str(block.get("activity_type_label") or "").strip()
         if not activity_type:
             activity_type = _modality_label(block.get("modality"))
         location_label = str(block.get("location_label") or "-").strip() or "-"
-        weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"))
-        start_time = str(block.get("start_time") or "").strip()
-        end_time = str(block.get("end_time") or "").strip()
-        time_range = f"{start_time} - {end_time}" if start_time and end_time else "-"
-        duration = _duration_label(
-            start_time=start_time,
-            end_time=end_time,
-            fallback_minutes=block.get("duration_minutes"),
-        )
+        if selection_pending:
+            weekday = "Selection a faire"
+            if deduped_pending_slots:
+                time_range = "Selection a faire · Creneaux disponibles: " + " ; ".join(deduped_pending_slots)
+            else:
+                time_range = "Selection a faire"
+            duration = "-"
+        else:
+            weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"))
+            start_time = str(block.get("start_time") or "").strip()
+            end_time = str(block.get("end_time") or "").strip()
+            time_range = f"{start_time} - {end_time}" if start_time and end_time else "-"
+            duration = _duration_label(
+                start_time=start_time,
+                end_time=end_time,
+                fallback_minutes=block.get("duration_minutes"),
+            )
         rows.append([activity_type, activity_label, location_label, weekday, time_range, duration])
     return _table_html(
         ["Type activite", "Activite", "Lieu", "Jour", "Horaire", "Duree"],

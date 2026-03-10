@@ -5,6 +5,8 @@ import { useMemo, useState } from "react";
 type ActivityOption = {
   id: string;
   name: string;
+  code?: string;
+  service_code?: string;
   duration_minutes: number;
   exclude_holidays_in_recurrence?: boolean;
   exclude_school_vacations_in_recurrence?: boolean;
@@ -38,6 +40,29 @@ type PlanningBlock = {
   masterclass_location_id: string;
 };
 
+type SolfegeRule = {
+  id: string;
+  level_code: string;
+  duration_minutes: number;
+  allowed_weekdays: number[];
+  allowed_time_slots: Array<Record<string, unknown>>;
+  location_id: string | null;
+  modality: string | null;
+};
+
+type SolfegeSlotOption = {
+  key: string;
+  weekday: number;
+  weekday_label: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  location_id: string | null;
+  location_label: string | null;
+  modality: string | null;
+  label: string;
+};
+
 type QuotePlanningEditorProps = {
   quoteId: string;
   returnTo: string;
@@ -45,12 +70,15 @@ type QuotePlanningEditorProps = {
   schoolYearLabel?: string | null;
   activities: ActivityOption[];
   locations: LocationOption[];
+  solfegeRules?: SolfegeRule[];
   initialSnapshot: Record<string, unknown>;
   initialMeta: Record<string, unknown>;
   saveAction: (formData: FormData) => Promise<void>;
 };
 
+const WEEKDAY_UNSET = -1;
 const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: WEEKDAY_UNSET, label: "Selection a faire" },
   { value: 0, label: "Lundi" },
   { value: 1, label: "Mardi" },
   { value: 2, label: "Mercredi" },
@@ -232,7 +260,107 @@ function summarizeBySemester(dates: string[], semester: 1 | 2): Array<{ monthLab
 }
 
 function weekdayLabel(weekday: number): string {
+  if (weekday === WEEKDAY_UNSET) {
+    return "Selection a faire";
+  }
   return WEEKDAY_OPTIONS.find((entry) => entry.value === weekday)?.label ?? String(weekday);
+}
+
+function timeSlotParts(slot: Record<string, unknown>): { start: string; end: string } | null {
+  const start = typeof slot.start_time === "string" ? slot.start_time : typeof slot.start === "string" ? slot.start : "";
+  const end = typeof slot.end_time === "string" ? slot.end_time : typeof slot.end === "string" ? slot.end : "";
+  if (!start || !end) {
+    return null;
+  }
+  return { start, end };
+}
+
+function normalizeModality(value: string | null | undefined): "ONLINE" | "ONSITE" | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "ONLINE" || normalized === "ONSITE") {
+    return normalized;
+  }
+  return null;
+}
+
+function solfegeLevelFromActivity(activity: ActivityOption | undefined): string | null {
+  if (!activity) {
+    return null;
+  }
+  const candidates = [activity.name, activity.code, activity.service_code].filter(Boolean).map((value) => String(value));
+  for (const candidate of candidates) {
+    const match = candidate.match(/niveau\s*([1-5])/i) || candidate.match(/SOLFEGE[_\-\s]*NIVEAU[_\-\s]*([1-5])/i);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function isSolfegeActivity(activity: ActivityOption | undefined): boolean {
+  if (!activity) {
+    return false;
+  }
+  const haystack = [activity.name, activity.code, activity.service_code].filter(Boolean).join(" ").toLowerCase();
+  return haystack.includes("solfege");
+}
+
+function slotOptionsFromRule(rule: SolfegeRule | null | undefined, locationLabel: string | null): SolfegeSlotOption[] {
+  if (!rule) {
+    return [];
+  }
+  const options: SolfegeSlotOption[] = [];
+  const hasStructuredWeekdays = rule.allowed_time_slots.some((slot) => {
+    const weekday = Number.parseInt(String(slot.weekday ?? ""), 10);
+    return Number.isFinite(weekday) && weekday >= 0 && weekday <= 6;
+  });
+
+  const pushOption = (weekday: number, start: string, end: string): void => {
+    const weekdayText = weekdayLabel(weekday);
+    const locationSuffix = locationLabel ? ` · ${locationLabel}` : "";
+    const modalitySuffix = rule.modality ? ` · ${rule.modality}` : "";
+    options.push({
+      key: `${weekday}|${start}|${end}|${rule.id}|${locationLabel || "-"}`,
+      weekday,
+      weekday_label: weekdayText,
+      start_time: start,
+      end_time: end,
+      duration_minutes: rule.duration_minutes,
+      location_id: rule.location_id,
+      location_label: locationLabel,
+      modality: rule.modality,
+      label: `${weekdayText} ${start}-${end}${modalitySuffix}${locationSuffix}`,
+    });
+  };
+
+  if (hasStructuredWeekdays) {
+    for (const slot of rule.allowed_time_slots) {
+      const parts = timeSlotParts(slot);
+      if (!parts) {
+        continue;
+      }
+      const weekday = Number.parseInt(String(slot.weekday ?? ""), 10);
+      if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
+        continue;
+      }
+      pushOption(weekday, parts.start, parts.end);
+    }
+    return options;
+  }
+
+  const weekdays = rule.allowed_weekdays.length > 0
+    ? rule.allowed_weekdays.filter((day) => Number.isFinite(day) && day >= 0 && day <= 6)
+    : [0, 1, 2, 3, 4, 5, 6];
+  for (const weekday of weekdays) {
+    for (const slot of rule.allowed_time_slots) {
+      const parts = timeSlotParts(slot);
+      if (!parts) {
+        continue;
+      }
+      pushOption(weekday, parts.start, parts.end);
+    }
+  }
+  return options;
 }
 
 function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] {
@@ -245,11 +373,12 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         }
         const row = raw as Record<string, unknown>;
         const weekday = Number.parseInt(String(row.weekday ?? "0"), 10);
+        const selectionPending = Boolean(row.selection_pending);
         const activityId = typeof row.activity_id === "string" ? row.activity_id : "";
         const startDate = typeof row.start_date === "string" ? row.start_date : "";
         const endDate = typeof row.end_date === "string" ? row.end_date : "";
-        const startTime = typeof row.start_time === "string" ? row.start_time : "17:00";
-        const endTime = typeof row.end_time === "string" ? row.end_time : "18:00";
+        const startTime = typeof row.start_time === "string" ? row.start_time : "";
+        const endTime = typeof row.end_time === "string" ? row.end_time : "";
         const locationId = typeof row.location_id === "string" ? row.location_id : "";
         const modality = typeof row.modality === "string" ? row.modality : "";
         const holidayDates = Array.isArray(row.holiday_dates)
@@ -264,11 +393,15 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
           uid: `block-${index + 1}`,
           activity_id: activityId,
           location_id: locationId,
-          weekday: Number.isFinite(weekday) && weekday >= 0 && weekday <= 6 ? weekday : 0,
+          weekday: selectionPending
+            ? WEEKDAY_UNSET
+            : Number.isFinite(weekday) && weekday >= 0 && weekday <= 6
+            ? weekday
+            : WEEKDAY_UNSET,
           start_date: startDate,
           end_date: endDate,
-          start_time: startTime,
-          end_time: endTime,
+          start_time: selectionPending ? "" : startTime,
+          end_time: selectionPending ? "" : endTime,
           modality,
           calendar_name: calendarName,
           holiday_dates: holidayDates,
@@ -291,8 +424,8 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
 
   const startDate = typeof snapshot.start_date === "string" ? snapshot.start_date : "";
   const endDate = typeof snapshot.end_date === "string" ? snapshot.end_date : "";
-  const startTime = typeof snapshot.start_time === "string" ? snapshot.start_time : "17:00";
-  const endTime = typeof snapshot.end_time === "string" ? snapshot.end_time : "18:00";
+  const startTime = typeof snapshot.start_time === "string" ? snapshot.start_time : "";
+  const endTime = typeof snapshot.end_time === "string" ? snapshot.end_time : "";
   const weekdays = Array.isArray(snapshot.weekdays) ? snapshot.weekdays : [];
   const weekdayRaw = weekdays[0];
   const weekday = Number.isFinite(Number(weekdayRaw)) ? Number(weekdayRaw) : 0;
@@ -305,7 +438,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         uid: "block-1",
         activity_id: activityId,
         location_id: locationId,
-        weekday: weekday >= 0 && weekday <= 6 ? weekday : 0,
+        weekday: weekday >= 0 && weekday <= 6 ? weekday : WEEKDAY_UNSET,
         start_date: startDate,
         end_date: endDate,
         start_time: startTime,
@@ -335,6 +468,7 @@ export default function QuotePlanningEditor({
   schoolYearLabel,
   activities,
   locations,
+  solfegeRules = [],
   initialSnapshot,
   initialMeta,
   saveAction,
@@ -346,26 +480,51 @@ export default function QuotePlanningEditor({
     () =>
       JSON.stringify(
         blocks.map((row) => {
+          const activity = activities.find((item) => item.id === row.activity_id);
+          const locationLabel = locations.find((item) => item.id === row.location_id)?.name || null;
+          const selectionPending = row.weekday === WEEKDAY_UNSET;
+          const pendingLevel =
+            selectionPending && isSolfegeActivity(activity) ? solfegeLevelFromActivity(activity) : null;
+          const pendingRule = pendingLevel
+            ? solfegeRules.find((rule) => String(rule.level_code) === String(pendingLevel)) || null
+            : null;
+          const pendingSlotOptions =
+            selectionPending && pendingLevel
+              ? slotOptionsFromRule(pendingRule, locationLabel).map((slot) => ({
+                  weekday: slot.weekday,
+                  weekday_label: slot.weekday_label,
+                  start_time: slot.start_time,
+                  end_time: slot.end_time,
+                  duration_minutes: slot.duration_minutes,
+                  location_id: slot.location_id,
+                  location_label: slot.location_label,
+                  modality: slot.modality,
+                  label: slot.label,
+                }))
+              : [];
           return {
             activity_id: row.activity_id || null,
-            activity_label: activities.find((item) => item.id === row.activity_id)?.name || null,
+            activity_label: activity?.name || null,
             location_id: row.location_id || null,
-            location_label: locations.find((item) => item.id === row.location_id)?.name || null,
+            location_label: locationLabel,
             weekday: row.weekday,
             weekday_label: WEEKDAY_OPTIONS.find((item) => item.value === row.weekday)?.label || null,
             start_date: row.start_date,
             end_date: row.end_date,
-            start_time: row.start_time,
-            end_time: row.end_time,
+            start_time: selectionPending ? "" : row.start_time,
+            end_time: selectionPending ? "" : row.end_time,
             modality: row.modality || null,
+            selection_pending: selectionPending,
+            pending_solfege_level: pendingLevel,
+            pending_slot_options: pendingSlotOptions,
             exclude_holidays_in_recurrence:
-              activities.find((item) => item.id === row.activity_id)?.exclude_holidays_in_recurrence !== false,
+              activity?.exclude_holidays_in_recurrence !== false,
             exclude_school_vacations_in_recurrence:
-              activities.find((item) => item.id === row.activity_id)?.exclude_school_vacations_in_recurrence !== false,
+              activity?.exclude_school_vacations_in_recurrence !== false,
           };
         }),
       ),
-    [blocks, activities, locations],
+    [blocks, activities, locations, solfegeRules],
   );
 
   function addBlock(): void {
@@ -436,6 +595,14 @@ export default function QuotePlanningEditor({
       <div className="list top-gap-sm">
         {blocks.map((block, index) => {
           const activity = activities.find((item) => item.id === block.activity_id);
+          const locationLabel = locations.find((item) => item.id === block.location_id)?.name || null;
+          const selectionPending = block.weekday === WEEKDAY_UNSET;
+          const blockSolfegeLevel = isSolfegeActivity(activity) ? solfegeLevelFromActivity(activity) : null;
+          const blockSolfegeRule = blockSolfegeLevel
+            ? solfegeRules.find((rule) => String(rule.level_code) === String(blockSolfegeLevel)) || null
+            : null;
+          const pendingSlotOptions =
+            selectionPending && blockSolfegeLevel ? slotOptionsFromRule(blockSolfegeRule, locationLabel) : [];
           const calculatedDates = datesFromSnapshotSessions(block, snapshotSessions);
           const estimatedDates = calculatedDates.length > 0 ? calculatedDates : estimateSessionDates(block);
           const semester1 = summarizeBySemester(estimatedDates, 1);
@@ -464,11 +631,31 @@ export default function QuotePlanningEditor({
                   </div>
                 </div>
               ) : (
-                <p className="muted top-gap-sm">Dates manquantes pour calculer la synthese.</p>
+                <p className="muted top-gap-sm">
+                  {selectionPending
+                    ? "Selection du jour en attente: le calendrier sera calcule apres choix du creneau."
+                    : "Dates manquantes pour calculer la synthese."}
+                </p>
               )}
               <p className="muted top-gap-sm">
                 Calendrier: {block.calendar_name || "Par defaut"}.
               </p>
+              {selectionPending && blockSolfegeLevel ? (
+                <div className="top-gap-sm">
+                  <p className="muted">
+                    Niveau solfege {blockSolfegeLevel}: creneau a confirmer.
+                  </p>
+                  {pendingSlotOptions.length > 0 ? (
+                    <ul className="muted top-gap-sm">
+                      {pendingSlotOptions.map((slot) => (
+                        <li key={`${block.uid}-${slot.key}`}>{slot.label}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="muted top-gap-sm">Aucun creneau configure pour ce niveau.</p>
+                  )}
+                </div>
+              ) : null}
 
               <div className="row spread wrap gap-sm">
                 <button type="button" className="ghost small-btn" onClick={() => removeBlock(block.uid)} disabled={!editable}>
@@ -511,7 +698,27 @@ export default function QuotePlanningEditor({
                   Jour
                   <select
                     value={String(block.weekday)}
-                    onChange={(event) => updateBlock(block.uid, { weekday: Number.parseInt(event.target.value, 10) || 0 })}
+                    onChange={(event) => {
+                      const parsed = Number.parseInt(event.target.value, 10);
+                      if (!Number.isFinite(parsed)) {
+                        return;
+                      }
+                      if (parsed === WEEKDAY_UNSET) {
+                        updateBlock(block.uid, {
+                          weekday: WEEKDAY_UNSET,
+                          start_time: "",
+                          end_time: "",
+                        });
+                        return;
+                      }
+                      const duration = activity?.duration_minutes ?? 60;
+                      const nextStart = block.start_time || "17:00";
+                      updateBlock(block.uid, {
+                        weekday: parsed,
+                        start_time: nextStart,
+                        end_time: addMinutesToTime(nextStart, duration),
+                      });
+                    }}
                     disabled={!editable}
                   >
                     {WEEKDAY_OPTIONS.map((row) => (
@@ -555,7 +762,7 @@ export default function QuotePlanningEditor({
                         end_time: addMinutesToTime(nextStart, duration),
                       });
                     }}
-                    disabled={!editable}
+                    disabled={!editable || selectionPending}
                   />
                 </label>
                 <label>

@@ -9260,6 +9260,9 @@ type QuotePlanningBlockInput = {
   start_time: string;
   end_time: string;
   modality: string | null;
+  selection_pending?: boolean;
+  pending_solfege_level?: string | null;
+  pending_slot_options?: Array<Record<string, unknown>>;
   exclude_holidays_in_recurrence?: boolean;
   exclude_school_vacations_in_recurrence?: boolean;
   solfege_enabled?: boolean;
@@ -9311,6 +9314,32 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const locationIdRaw = String(item.location_id ?? "").trim();
       const locationLabel = String(item.location_label ?? "").trim();
       const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
+      const selectionPending = Boolean(item.selection_pending) || weekday === -1;
+      const pendingSolfegeLevel = String(item.pending_solfege_level ?? "").trim();
+      const pendingSlotsRaw = Array.isArray(item.pending_slot_options) ? item.pending_slot_options : [];
+      const pendingSlotOptions = pendingSlotsRaw
+        .map((slot) => (slot && typeof slot === "object" ? (slot as Record<string, unknown>) : null))
+        .filter((slot): slot is Record<string, unknown> => slot !== null)
+        .map((slot) => {
+          const start = String(slot.start_time ?? slot.start ?? "").trim();
+          const end = String(slot.end_time ?? slot.end ?? "").trim();
+          const weekdayValue = Number.parseInt(String(slot.weekday ?? ""), 10);
+          const weekdayValueLabel = String(slot.weekday_label ?? "").trim();
+          const slotLabel = String(slot.label ?? "").trim();
+          const durationRaw = Number.parseInt(String(slot.duration_minutes ?? ""), 10);
+          const modality = String(slot.modality ?? "").trim().toUpperCase();
+          return {
+            weekday: Number.isFinite(weekdayValue) && weekdayValue >= 0 && weekdayValue <= 6 ? weekdayValue : null,
+            weekday_label: weekdayValueLabel || null,
+            start_time: start || null,
+            end_time: end || null,
+            duration_minutes: Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : null,
+            location_id: parseUuid(String(slot.location_id ?? "").trim()),
+            location_label: String(slot.location_label ?? "").trim() || null,
+            modality: modality === "ONLINE" || modality === "ONSITE" ? modality : null,
+            label: slotLabel || null,
+          };
+        });
       const excludeHolidaysInRecurrence =
         typeof item.exclude_holidays_in_recurrence === "boolean"
           ? item.exclude_holidays_in_recurrence
@@ -9328,10 +9357,13 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const masterclassSession = String(item.masterclass_session ?? "").trim();
       const masterclassLocationId = parseUuid(String(item.masterclass_location_id ?? "").trim());
       const masterclassLocationLabel = String(item.masterclass_location_label ?? "").trim();
-      if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
+      if (!selectionPending && (!Number.isFinite(weekday) || weekday < 0 || weekday > 6)) {
         return null;
       }
-      if (!activityIdRaw || !startDate || !endDate || !startTime || !endTime) {
+      if (!activityIdRaw || !startDate || !endDate) {
+        return null;
+      }
+      if (!selectionPending && (!startTime || !endTime)) {
         return null;
       }
       const parsedActivityId = parseUuid(activityIdRaw);
@@ -9343,13 +9375,16 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         activity_label: activityLabel || null,
         location_id: parseUuid(locationIdRaw),
         location_label: locationLabel || null,
-        weekday,
-        weekday_label: weekdayLabel || null,
+        weekday: selectionPending ? -1 : weekday,
+        weekday_label: selectionPending ? (weekdayLabel || "Selection a faire") : (weekdayLabel || null),
         start_date: startDate,
         end_date: endDate,
-        start_time: startTime,
-        end_time: endTime,
+        start_time: selectionPending ? "" : startTime,
+        end_time: selectionPending ? "" : endTime,
         modality: modalityRaw === "ONLINE" || modalityRaw === "ONSITE" ? modalityRaw : null,
+        selection_pending: selectionPending,
+        pending_solfege_level: selectionPending && pendingSolfegeLevel ? pendingSolfegeLevel : null,
+        pending_slot_options: selectionPending ? pendingSlotOptions : [],
         exclude_holidays_in_recurrence: excludeHolidaysInRecurrence,
         exclude_school_vacations_in_recurrence: excludeSchoolVacationsInRecurrence,
         solfege_enabled: solfegeEnabled,
@@ -9513,6 +9548,20 @@ async function buildCalendarSnapshotFromBlocks({
     const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel);
     const holidayDates = block.exclude_holidays_in_recurrence === false ? [] : resolvedCalendar.holiday_dates;
     const closureDates = block.exclude_school_vacations_in_recurrence === false ? [] : resolvedCalendar.closure_dates;
+    if (block.selection_pending) {
+      Object.assign(block, {
+        calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
+        calendar_name: String(resolvedCalendar.calendar?.name ?? ""),
+        calendar_school_year: String(resolvedCalendar.calendar?.school_year_label ?? ""),
+        holiday_dates: holidayDates,
+        closure_dates: closureDates,
+        weekday: -1,
+        weekday_label: block.weekday_label || "Selection a faire",
+        start_time: "",
+        end_time: "",
+      });
+      continue;
+    }
     const preview = await backendRequest<Record<string, unknown>>(
       "/api/v1/quotes/calendar/preview",
       {
