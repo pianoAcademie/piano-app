@@ -85,18 +85,12 @@ type PlanningBlock = {
   activity_id: string;
   location_id: string;
   weekday: number;
+  recurrence_frequency: "weekly" | "biweekly" | "monthly";
   start_date: string;
   end_date: string;
   start_time: string;
   end_time: string;
   modality: string;
-  solfege_enabled: boolean;
-  solfege_level: string;
-  solfege_start_date: string;
-  solfege_slot_key: string;
-  masterclass_enabled: boolean;
-  masterclass_session: string;
-  masterclass_location_id: string;
 };
 
 type SolfegeSlotOption = {
@@ -157,6 +151,11 @@ const WEEKDAY_LABELS: Array<{ value: number; label: string }> = [
 const PLANNING_WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
   { value: WEEKDAY_UNSET, label: "Selection a faire" },
   ...WEEKDAY_LABELS,
+];
+const RECURRENCE_OPTIONS: Array<{ value: PlanningBlock["recurrence_frequency"]; label: string }> = [
+  { value: "weekly", label: "Hebdomadaire (1 fois/semaine)" },
+  { value: "biweekly", label: "Toutes les 2 semaines" },
+  { value: "monthly", label: "1 fois par mois" },
 ];
 
 function toMoney(value: string, currency = "EUR"): string {
@@ -239,7 +238,12 @@ function buildLinePayload(line: WizardLine, index: number): Record<string, unkno
   };
 }
 
-function countEstimatedSessions(startDate: string, endDate: string, weekdays: number[]): number {
+function countEstimatedSessions(
+  startDate: string,
+  endDate: string,
+  weekdays: number[],
+  recurrenceFrequency: PlanningBlock["recurrence_frequency"],
+): number {
   if (!startDate || !endDate || weekdays.length === 0) {
     return 0;
   }
@@ -249,13 +253,45 @@ function countEstimatedSessions(startDate: string, endDate: string, weekdays: nu
     return 0;
   }
   const set = new Set(weekdays);
-  let count = 0;
+  const matchedDates: Date[] = [];
   for (let d = new Date(start.getTime()); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
     const jsDay = d.getUTCDay();
     const mapped = (jsDay + 6) % 7;
     if (set.has(mapped)) {
-      count += 1;
+      matchedDates.push(new Date(d.getTime()));
     }
+  }
+  if (recurrenceFrequency === "weekly") {
+    return matchedDates.length;
+  }
+  if (recurrenceFrequency === "biweekly") {
+    const firstByWeekday = new Map<number, Date>();
+    let count = 0;
+    for (const row of matchedDates) {
+      const weekday = (row.getUTCDay() + 6) % 7;
+      const first = firstByWeekday.get(weekday);
+      if (!first) {
+        firstByWeekday.set(weekday, row);
+        count += 1;
+        continue;
+      }
+      const deltaDays = Math.floor((row.getTime() - first.getTime()) / 86_400_000);
+      if (deltaDays % 14 === 0) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+  const firstMonthByWeekday = new Set<string>();
+  let count = 0;
+  for (const row of matchedDates) {
+    const weekday = (row.getUTCDay() + 6) % 7;
+    const key = `${row.getUTCFullYear()}-${row.getUTCMonth() + 1}-${weekday}`;
+    if (firstMonthByWeekday.has(key)) {
+      continue;
+    }
+    firstMonthByWeekday.add(key);
+    count += 1;
   }
   return count;
 }
@@ -417,7 +453,7 @@ export default function QuoteWizardForm({
       if (block.weekday === WEEKDAY_UNSET) {
         return sum;
       }
-      const blockCount = countEstimatedSessions(block.start_date, block.end_date, [block.weekday]);
+      const blockCount = countEstimatedSessions(block.start_date, block.end_date, [block.weekday], block.recurrence_frequency);
       return sum + blockCount;
     }, 0),
     [planningBlocks],
@@ -474,6 +510,7 @@ export default function QuoteWizardForm({
             location_label: locationLabel,
             weekday: row.weekday,
             weekday_label: weekdayLabel(row.weekday),
+            recurrence_frequency: row.recurrence_frequency,
             start_date: row.start_date,
             end_date: row.end_date,
             start_time: selectionPending ? "" : row.start_time,
@@ -482,16 +519,6 @@ export default function QuoteWizardForm({
             selection_pending: selectionPending,
             pending_solfege_level: pendingLevel,
             pending_slot_options: pendingSlotOptions,
-            solfege_enabled: row.solfege_enabled,
-            solfege_level: row.solfege_level || null,
-            solfege_start_date: row.solfege_start_date || null,
-            solfege_slot: row.solfege_slot_key
-              ? slotOptionsFromRule(solfegeRules.find((rule) => String(rule.level_code) === String(row.solfege_level))).find((item) => item.key === row.solfege_slot_key) || null
-              : null,
-            masterclass_enabled: row.masterclass_enabled,
-            masterclass_session: row.masterclass_session || null,
-            masterclass_location_id: row.masterclass_location_id || null,
-            masterclass_location_label: locations.find((item) => item.id === row.masterclass_location_id)?.name || null,
           };
         }),
       ),
@@ -519,18 +546,12 @@ export default function QuoteWizardForm({
         activity_id: defaultActivityId,
         location_id: locations[0]?.id ?? "",
         weekday: 0,
+        recurrence_frequency: "weekly",
         start_date: "",
         end_date: "",
         start_time: startTime,
         end_time: addMinutesToTime(startTime, defaultDuration),
         modality: "",
-        solfege_enabled: false,
-        solfege_level: "",
-        solfege_start_date: "",
-        solfege_slot_key: "",
-        masterclass_enabled: false,
-        masterclass_session: "",
-        masterclass_location_id: "",
       },
     ]);
   }
@@ -792,6 +813,14 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
+              Option Pass Recup
+              <select name="pass_recup_mode" defaultValue="auto">
+                <option value="auto">Automatique (selon lignes devis)</option>
+                <option value="enabled">Souscrite</option>
+                <option value="disabled">Non souscrite</option>
+              </select>
+            </label>
+            <label>
               Montant ajustement TTC
               <input
                 type="number"
@@ -837,7 +866,7 @@ export default function QuoteWizardForm({
                 <div className="row spread wrap gap-sm">
                   <strong>{activity?.name || `Activite #${index + 1}`}</strong>
                   <span className="badge">
-                    {selectionPending ? 0 : countEstimatedSessions(block.start_date, block.end_date, [block.weekday])} cours
+                    {selectionPending ? 0 : countEstimatedSessions(block.start_date, block.end_date, [block.weekday], block.recurrence_frequency)} cours
                   </span>
                   <button type="button" className="ghost small-btn" onClick={() => removePlanningBlock(block.uid)}>
                     Supprimer
@@ -917,6 +946,24 @@ export default function QuoteWizardForm({
                     </select>
                   </label>
                   <label>
+                    Frequence
+                    <select
+                      value={block.recurrence_frequency}
+                      onChange={(event) => {
+                        const next = event.target.value === "biweekly" || event.target.value === "monthly"
+                          ? event.target.value
+                          : "weekly";
+                        updatePlanningBlock(block.uid, { recurrence_frequency: next });
+                      }}
+                    >
+                      {RECURRENCE_OPTIONS.map((entry) => (
+                        <option key={`${block.uid}-freq-${entry.value}`} value={entry.value}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
                     Date debut
                     <input type="date" value={block.start_date} onChange={(event) => updatePlanningBlock(block.uid, { start_date: event.target.value })} />
                   </label>
@@ -959,100 +1006,9 @@ export default function QuoteWizardForm({
                       )}
                     </div>
                   ) : null}
-                  <label className="checkline cols-span-4">
-                    <input
-                      type="checkbox"
-                      checked={block.solfege_enabled}
-                      onChange={(event) => updatePlanningBlock(block.uid, {
-                        solfege_enabled: event.target.checked,
-                        solfege_level: event.target.checked ? block.solfege_level : "",
-                        solfege_start_date: event.target.checked ? block.solfege_start_date : "",
-                        solfege_slot_key: event.target.checked ? block.solfege_slot_key : "",
-                      })}
-                    />
-                    Cette activite inclut le solfege
-                  </label>
-                  {block.solfege_enabled ? (
-                    <>
-                      <label>
-                        Niveau solfege
-                        <select
-                          value={block.solfege_level}
-                          onChange={(event) => updatePlanningBlock(block.uid, {
-                            solfege_level: event.target.value,
-                            solfege_slot_key: "",
-                          })}
-                        >
-                          <option value="">Selectionner</option>
-                          {["1", "2", "3", "4", "5"].map((level) => (
-                            <option key={`${block.uid}-solfege-level-${level}`} value={level}>Niveau {level}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        Date demarrage solfege
-                        <input
-                          type="date"
-                          value={block.solfege_start_date}
-                          onChange={(event) => updatePlanningBlock(block.uid, { solfege_start_date: event.target.value })}
-                        />
-                      </label>
-                      <label className="cols-span-2">
-                        Creneau solfege
-                        <select
-                          value={block.solfege_slot_key}
-                          onChange={(event) => updatePlanningBlock(block.uid, { solfege_slot_key: event.target.value })}
-                        >
-                          <option value="">Selectionner</option>
-                          {slotOptionsFromRule(solfegeRules.find((rule) => String(rule.level_code) === String(block.solfege_level))).map((slot) => (
-                            <option key={`${block.uid}-solfege-slot-${slot.key}`} value={slot.key}>{slot.label}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </>
-                  ) : (
-                    <p className="muted cols-span-4">Sans solfege pour cette activite.</p>
-                  )}
-                  <label className="checkline cols-span-4">
-                    <input
-                      type="checkbox"
-                      checked={block.masterclass_enabled}
-                      onChange={(event) => updatePlanningBlock(block.uid, {
-                        masterclass_enabled: event.target.checked,
-                        masterclass_session: event.target.checked ? block.masterclass_session : "",
-                        masterclass_location_id: event.target.checked ? block.masterclass_location_id : "",
-                      })}
-                    />
-                    Participation Masterclass du samedi
-                  </label>
-                  {block.masterclass_enabled ? (
-                    <>
-                      <label>
-                        Session masterclass
-                        <select
-                          value={block.masterclass_session}
-                          onChange={(event) => updatePlanningBlock(block.uid, { masterclass_session: event.target.value })}
-                        >
-                          <option value="">Selectionner</option>
-                          <option value="morning">Matin 09:00-12:00</option>
-                          <option value="afternoon_1330">Apres-midi 13:30-16:30</option>
-                          <option value="afternoon_1400">Apres-midi 14:00-17:00</option>
-                        </select>
-                      </label>
-                      <label>
-                        Local masterclass
-                        <select
-                          value={block.masterclass_location_id}
-                          onChange={(event) => updatePlanningBlock(block.uid, { masterclass_location_id: event.target.value })}
-                        >
-                          <option value="">Selectionner</option>
-                          {locations.map((item) => (
-                            <option key={`${block.uid}-masterclass-location-${item.id}`} value={item.id}>{item.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </>
-                  ) : null}
+                  <p className="muted cols-span-4">
+                    Solfege, Masterclass et Pass Recup se parametrent desormais par activite et/ou via les parametres du devis.
+                  </p>
                 </div>
               </article>
               );

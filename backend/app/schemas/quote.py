@@ -215,6 +215,7 @@ class QuoteCalendarPreviewRequest(BaseModel):
     start_date: date
     end_date: date
     weekdays: list[int] = Field(default_factory=list)
+    recurrence_frequency: Literal["weekly", "biweekly", "monthly"] = "weekly"
     start_time: str = Field(min_length=4, max_length=5)
     end_time: str = Field(min_length=4, max_length=5)
     activity_id: UUID | None = None

@@ -22,6 +22,7 @@ type PlanningBlock = {
   activity_id: string;
   location_id: string;
   weekday: number;
+  recurrence_frequency: "weekly" | "biweekly" | "monthly";
   start_date: string;
   end_date: string;
   start_time: string;
@@ -30,14 +31,6 @@ type PlanningBlock = {
   calendar_name: string;
   holiday_dates: string[];
   closure_dates: string[];
-  solfege_enabled: boolean;
-  solfege_level: string;
-  solfege_start_date: string;
-  solfege_slot_key: string;
-  solfege_slot_raw: Record<string, unknown> | null;
-  masterclass_enabled: boolean;
-  masterclass_session: string;
-  masterclass_location_id: string;
 };
 
 type SolfegeRule = {
@@ -86,6 +79,11 @@ const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 4, label: "Vendredi" },
   { value: 5, label: "Samedi" },
   { value: 6, label: "Dimanche" },
+];
+const RECURRENCE_OPTIONS: Array<{ value: PlanningBlock["recurrence_frequency"]; label: string }> = [
+  { value: "weekly", label: "Hebdomadaire (1 fois/semaine)" },
+  { value: "biweekly", label: "Toutes les 2 semaines" },
+  { value: "monthly", label: "1 fois par mois" },
 ];
 
 const MONTH_LABELS = [
@@ -141,17 +139,51 @@ function estimateSessionDates(block: PlanningBlock): string[] {
     return [];
   }
   const excluded = new Set(uniqueSortedDateList([...block.holiday_dates, ...block.closure_dates]));
-  const out: string[] = [];
+  const matchedDates: string[] = [];
   const cursor = new Date(start);
   while (cursor <= end) {
     const normalizedWeekday = (cursor.getUTCDay() + 6) % 7;
     const dayIso = cursor.toISOString().slice(0, 10);
     if (normalizedWeekday === block.weekday && !excluded.has(dayIso)) {
-      out.push(dayIso);
+      matchedDates.push(dayIso);
     }
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
-  return out;
+  if (block.recurrence_frequency === "weekly") {
+    return matchedDates;
+  }
+  if (block.recurrence_frequency === "biweekly") {
+    if (matchedDates.length <= 1) {
+      return matchedDates;
+    }
+    const firstDate = parseDateOnly(matchedDates[0]);
+    if (!firstDate) {
+      return matchedDates;
+    }
+    return matchedDates.filter((item) => {
+      const parsed = parseDateOnly(item);
+      if (!parsed) {
+        return false;
+      }
+      const deltaDays = Math.floor((parsed.getTime() - firstDate.getTime()) / 86_400_000);
+      return deltaDays % 14 === 0;
+    });
+  }
+  const monthSet = new Set<string>();
+  const monthly: string[] = [];
+  for (const row of matchedDates) {
+    const parsed = parseDateOnly(row);
+    if (!parsed) {
+      continue;
+    }
+    const key = `${parsed.getUTCFullYear()}-${parsed.getUTCMonth() + 1}`;
+    if (monthSet.has(key)) {
+      continue;
+    }
+    monthSet.add(key);
+    monthly.push(row);
+  }
+  return monthly;
 }
 
 type SnapshotSession = {
@@ -375,6 +407,9 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         const weekday = Number.parseInt(String(row.weekday ?? "0"), 10);
         const selectionPending = Boolean(row.selection_pending);
         const activityId = typeof row.activity_id === "string" ? row.activity_id : "";
+        const recurrenceRaw = String(row.recurrence_frequency ?? "").trim().toLowerCase();
+        const recurrenceFrequency: PlanningBlock["recurrence_frequency"] =
+          recurrenceRaw === "biweekly" || recurrenceRaw === "monthly" ? recurrenceRaw : "weekly";
         const startDate = typeof row.start_date === "string" ? row.start_date : "";
         const endDate = typeof row.end_date === "string" ? row.end_date : "";
         const startTime = typeof row.start_time === "string" ? row.start_time : "";
@@ -398,6 +433,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
             : Number.isFinite(weekday) && weekday >= 0 && weekday <= 6
             ? weekday
             : WEEKDAY_UNSET,
+          recurrence_frequency: recurrenceFrequency,
           start_date: startDate,
           end_date: endDate,
           start_time: selectionPending ? "" : startTime,
@@ -406,14 +442,6 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
           calendar_name: calendarName,
           holiday_dates: holidayDates,
           closure_dates: closureDates,
-          solfege_enabled: false,
-          solfege_level: "",
-          solfege_start_date: "",
-          solfege_slot_key: "",
-          solfege_slot_raw: null,
-          masterclass_enabled: false,
-          masterclass_session: "",
-          masterclass_location_id: "",
         };
       })
       .filter((item): item is PlanningBlock => item !== null);
@@ -439,6 +467,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         activity_id: activityId,
         location_id: locationId,
         weekday: weekday >= 0 && weekday <= 6 ? weekday : WEEKDAY_UNSET,
+        recurrence_frequency: "weekly",
         start_date: startDate,
         end_date: endDate,
         start_time: startTime,
@@ -447,14 +476,6 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         calendar_name: "",
         holiday_dates: [],
         closure_dates: [],
-        solfege_enabled: false,
-        solfege_level: "",
-        solfege_start_date: "",
-        solfege_slot_key: "",
-        solfege_slot_raw: null,
-        masterclass_enabled: false,
-        masterclass_session: "",
-        masterclass_location_id: "",
       },
     ];
   }
@@ -509,6 +530,7 @@ export default function QuotePlanningEditor({
             location_label: locationLabel,
             weekday: row.weekday,
             weekday_label: WEEKDAY_OPTIONS.find((item) => item.value === row.weekday)?.label || null,
+            recurrence_frequency: row.recurrence_frequency,
             start_date: row.start_date,
             end_date: row.end_date,
             start_time: selectionPending ? "" : row.start_time,
@@ -539,6 +561,7 @@ export default function QuotePlanningEditor({
         activity_id: defaultActivityId,
         location_id: locations[0]?.id ?? "",
         weekday: 0,
+        recurrence_frequency: "weekly",
         start_date: "",
         end_date: "",
         start_time: startTime,
@@ -547,14 +570,6 @@ export default function QuotePlanningEditor({
         calendar_name: "",
         holiday_dates: [],
         closure_dates: [],
-        solfege_enabled: false,
-        solfege_level: "",
-        solfege_start_date: "",
-        solfege_slot_key: "",
-        solfege_slot_raw: null,
-        masterclass_enabled: false,
-        masterclass_session: "",
-        masterclass_location_id: "",
       },
     ]);
   }
@@ -738,6 +753,25 @@ export default function QuotePlanningEditor({
                     <option value="">Auto</option>
                     <option value="ONLINE">En ligne</option>
                     <option value="ONSITE">Presentiel</option>
+                  </select>
+                </label>
+                <label>
+                  Frequence
+                  <select
+                    value={block.recurrence_frequency}
+                    onChange={(event) => {
+                      const next = event.target.value === "biweekly" || event.target.value === "monthly"
+                        ? event.target.value
+                        : "weekly";
+                      updateBlock(block.uid, { recurrence_frequency: next });
+                    }}
+                    disabled={!editable}
+                  >
+                    {RECURRENCE_OPTIONS.map((entry) => (
+                      <option key={`${block.uid}-freq-${entry.value}`} value={entry.value}>
+                        {entry.label}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label>

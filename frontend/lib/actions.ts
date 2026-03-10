@@ -8839,6 +8839,8 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
   const estimatedSolfegeLevel = String(formData.get("estimated_solfege_level") ?? "").trim() || null;
   const solfegeSlotJsonRaw = String(formData.get("solfege_slot_json") ?? "").trim();
+  const passRecupModeRaw = String(formData.get("pass_recup_mode") ?? "auto").trim().toLowerCase();
+  const passRecupMode = passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
   const parsedSolfegeSlot = parseSolfegeSlotJson(solfegeSlotJsonRaw);
   if (parsedSolfegeSlot === undefined) {
     redirect(appendQueryMessage(returnTo, "error", "Creneau solfege invalide"));
@@ -8848,24 +8850,8 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   if (planningBlocks === null) {
     redirect(appendQueryMessage(returnTo, "error", "Planning devis invalide"));
   }
-  const firstActivitySolfege = planningBlocks.find((block) => block.solfege_enabled && block.solfege_level);
-  const fallbackSolfegeSlot = firstActivitySolfege?.solfege_slot
-    ? parseSolfegeSlotJson(JSON.stringify(firstActivitySolfege.solfege_slot))
-    : null;
-  if (fallbackSolfegeSlot === undefined) {
-    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege activite invalide"));
-  }
-  const resolvedEstimatedSolfegeLevel = estimatedSolfegeLevel || firstActivitySolfege?.solfege_level || null;
-  const resolvedSolfegeSlot = parsedSolfegeSlot || fallbackSolfegeSlot || null;
-  const masterclassBlocks = planningBlocks
-    .filter((block) => block.masterclass_enabled)
-    .map((block) => ({
-      activity_id: block.activity_id,
-      activity_label: block.activity_label,
-      session: block.masterclass_session || null,
-      location_id: block.masterclass_location_id || null,
-      location_label: block.masterclass_location_label || null,
-    }));
+  const resolvedEstimatedSolfegeLevel = estimatedSolfegeLevel;
+  const resolvedSolfegeSlot = parsedSolfegeSlot || null;
   const calendarActivityId = parseUuid(String(formData.get("calendar_activity_id") ?? ""));
   const startDate = parseDateOnly(String(formData.get("calendar_start_date") ?? ""));
   const endDate = parseDateOnly(String(formData.get("calendar_end_date") ?? ""));
@@ -8914,6 +8900,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
           start_date: startDate,
           end_date: endDate,
           weekdays,
+          recurrence_frequency: "weekly",
           start_time: startTime,
           end_time: endTime,
           activity_id: calendarActivityId,
@@ -8935,11 +8922,16 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
       },
     };
   }
-  if (masterclassBlocks.length > 0) {
-    calendarSnapshot = {
-      ...(calendarSnapshot || {}),
-      masterclass_blocks: masterclassBlocks,
-    };
+  const nextMeta: Record<string, unknown> = {
+    ...(tvaRate ? { tva_rate: tvaRate } : {}),
+    financial_adjustment: financialAdjustment.value,
+    pass_recup_mode: passRecupMode,
+    ...(resolvedSolfegeSlot ? { selected_solfege_slot: resolvedSolfegeSlot } : {}),
+  };
+  if (passRecupMode === "enabled") {
+    nextMeta.pass_recup_enabled = true;
+  } else if (passRecupMode === "disabled") {
+    nextMeta.pass_recup_enabled = false;
   }
 
   const payload = {
@@ -8957,23 +8949,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     currency,
     language,
     vat_rate: tvaRate,
-    meta: {
-      ...(tvaRate ? { tva_rate: tvaRate } : {}),
-      financial_adjustment: financialAdjustment.value,
-      ...(resolvedSolfegeSlot ? { selected_solfege_slot: resolvedSolfegeSlot } : {}),
-      ...(firstActivitySolfege ? {
-        activity_solfege: planningBlocks
-          .filter((block) => block.solfege_enabled)
-          .map((block) => ({
-            activity_id: block.activity_id,
-            activity_label: block.activity_label,
-            level: block.solfege_level || null,
-            start_date: block.solfege_start_date || null,
-            slot: block.solfege_slot || null,
-          })),
-      } : {}),
-      ...(masterclassBlocks.length > 0 ? { masterclass_blocks: masterclassBlocks } : {}),
-    },
+    meta: nextMeta,
     expiry_days: expiryDays,
     estimated_solfege_level: resolvedEstimatedSolfegeLevel,
     calendar_snapshot: calendarSnapshot,
@@ -9122,6 +9098,8 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   const hasEstimatedSolfegeLevel = formData.has("estimated_solfege_level");
   const estimatedSolfegeLevelRaw = String(formData.get("estimated_solfege_level") ?? "").trim();
   const estimatedSolfegeLevel = estimatedSolfegeLevelRaw || null;
+  const passRecupModeRaw = String(formData.get("pass_recup_mode") ?? "").trim().toLowerCase();
+  const hasPassRecupMode = formData.has("pass_recup_mode");
   const hasTvaRate = formData.has("tva_rate");
   const tvaRateRaw = String(formData.get("tva_rate") ?? "").trim();
 
@@ -9157,6 +9135,18 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     redirect(appendQueryMessage(returnTo, "error", financialAdjustment.error));
   }
   meta.financial_adjustment = financialAdjustment.value;
+  if (hasPassRecupMode) {
+    const normalizedPassRecupMode =
+      passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
+    meta.pass_recup_mode = normalizedPassRecupMode;
+    if (normalizedPassRecupMode === "enabled") {
+      meta.pass_recup_enabled = true;
+    } else if (normalizedPassRecupMode === "disabled") {
+      meta.pass_recup_enabled = false;
+    } else {
+      delete meta.pass_recup_enabled;
+    }
+  }
 
   const payload: Record<string, unknown> = {
     quote_type_id: quoteTypeId,
@@ -9255,6 +9245,7 @@ type QuotePlanningBlockInput = {
   location_label: string | null;
   weekday: number;
   weekday_label: string | null;
+  recurrence_frequency: "weekly" | "biweekly" | "monthly";
   start_date: string;
   end_date: string;
   start_time: string;
@@ -9265,14 +9256,6 @@ type QuotePlanningBlockInput = {
   pending_slot_options?: Array<Record<string, unknown>>;
   exclude_holidays_in_recurrence?: boolean;
   exclude_school_vacations_in_recurrence?: boolean;
-  solfege_enabled?: boolean;
-  solfege_level?: string | null;
-  solfege_start_date?: string | null;
-  solfege_slot?: Record<string, unknown> | null;
-  masterclass_enabled?: boolean;
-  masterclass_session?: string | null;
-  masterclass_location_id?: string | null;
-  masterclass_location_label?: string | null;
 };
 
 type QuoteSolfegeSlotInput = {
@@ -9314,6 +9297,9 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const locationIdRaw = String(item.location_id ?? "").trim();
       const locationLabel = String(item.location_label ?? "").trim();
       const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
+      const recurrenceRaw = String(item.recurrence_frequency ?? "").trim().toLowerCase();
+      const recurrenceFrequency: QuotePlanningBlockInput["recurrence_frequency"] =
+        recurrenceRaw === "biweekly" || recurrenceRaw === "monthly" ? recurrenceRaw : "weekly";
       const selectionPending = Boolean(item.selection_pending) || weekday === -1;
       const pendingSolfegeLevel = String(item.pending_solfege_level ?? "").trim();
       const pendingSlotsRaw = Array.isArray(item.pending_slot_options) ? item.pending_slot_options : [];
@@ -9348,15 +9334,6 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         typeof item.exclude_school_vacations_in_recurrence === "boolean"
           ? item.exclude_school_vacations_in_recurrence
           : true;
-      const solfegeEnabled = Boolean(item.solfege_enabled);
-      const solfegeLevel = String(item.solfege_level ?? "").trim();
-      const solfegeStartDate = String(item.solfege_start_date ?? "").trim();
-      const solfegeSlotRaw = item.solfege_slot;
-      const solfegeSlot = solfegeSlotRaw && typeof solfegeSlotRaw === "object" ? (solfegeSlotRaw as Record<string, unknown>) : null;
-      const masterclassEnabled = Boolean(item.masterclass_enabled);
-      const masterclassSession = String(item.masterclass_session ?? "").trim();
-      const masterclassLocationId = parseUuid(String(item.masterclass_location_id ?? "").trim());
-      const masterclassLocationLabel = String(item.masterclass_location_label ?? "").trim();
       if (!selectionPending && (!Number.isFinite(weekday) || weekday < 0 || weekday > 6)) {
         return null;
       }
@@ -9377,6 +9354,7 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         location_label: locationLabel || null,
         weekday: selectionPending ? -1 : weekday,
         weekday_label: selectionPending ? (weekdayLabel || "Selection a faire") : (weekdayLabel || null),
+        recurrence_frequency: recurrenceFrequency,
         start_date: startDate,
         end_date: endDate,
         start_time: selectionPending ? "" : startTime,
@@ -9387,14 +9365,6 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         pending_slot_options: selectionPending ? pendingSlotOptions : [],
         exclude_holidays_in_recurrence: excludeHolidaysInRecurrence,
         exclude_school_vacations_in_recurrence: excludeSchoolVacationsInRecurrence,
-        solfege_enabled: solfegeEnabled,
-        solfege_level: solfegeEnabled && solfegeLevel ? solfegeLevel : null,
-        solfege_start_date: solfegeEnabled && /^\d{4}-\d{2}-\d{2}$/.test(solfegeStartDate) ? solfegeStartDate : null,
-        solfege_slot: solfegeEnabled ? solfegeSlot : null,
-        masterclass_enabled: masterclassEnabled,
-        masterclass_session: masterclassEnabled && masterclassSession ? masterclassSession : null,
-        masterclass_location_id: masterclassEnabled ? masterclassLocationId : null,
-        masterclass_location_label: masterclassEnabled ? (masterclassLocationLabel || null) : null,
       });
     }
     return out;
@@ -9570,6 +9540,7 @@ async function buildCalendarSnapshotFromBlocks({
           start_date: block.start_date,
           end_date: block.end_date,
           weekdays: [block.weekday],
+          recurrence_frequency: block.recurrence_frequency || "weekly",
           start_time: block.start_time,
           end_time: block.end_time,
           activity_id: block.activity_id,

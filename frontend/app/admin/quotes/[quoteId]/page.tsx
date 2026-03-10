@@ -638,6 +638,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const planningSummary = planningVisualSummary(calendarSessions);
   const proposedSolfegeSlots = getProposedSolfegeSlots(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
   const quoteAdjustment = parseQuoteFinancialAdjustment(detail.quote.meta || {});
+  const passRecupModeRaw = String((detail.quote.meta || {}).pass_recup_mode || "").trim().toLowerCase();
+  const passRecupMode = passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
   const defaultVatRate = String(detail.quote.vat_rate ?? readStringMeta(detail.quote.meta || {}, "tva_rate", "0"));
   const signedAdjustment = adjustmentSignedAmount(quoteAdjustment);
   const totalTtcNumber = Number(detail.quote.total_ttc);
@@ -842,6 +844,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               <option value="none">Aucun</option>
               <option value="credit">Avoir</option>
               <option value="debt">Dette</option>
+            </select>
+          </label>
+          <label>
+            Option Pass Recup
+            <select name="pass_recup_mode" defaultValue={passRecupMode} disabled={detail.quote.status !== "created"}>
+              <option value="auto">Automatique (selon lignes devis)</option>
+              <option value="enabled">Souscrite</option>
+              <option value="disabled">Non souscrite</option>
             </select>
           </label>
           <label>

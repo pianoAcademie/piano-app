@@ -333,12 +333,22 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
     return "".join(blocks), len(grouped)
 
 
-def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) -> str:
+def _table_html(headers: list[str], rows: list[list[Any]], *, empty_label: str) -> str:
     if not rows:
         return ""
+
+    def _cell_html(value: Any) -> str:
+        if isinstance(value, dict):
+            raw_html = value.get("html")
+            if raw_html is not None:
+                return str(raw_html)
+            if "text" in value:
+                return escape(str(value.get("text") or ""))
+        return escape(str(value if value is not None else "-"))
+
     head = "".join(
         "<th bgcolor='#E7EDF7' "
-        "style='background-color:#E7EDF7;color:#111827;border:1px solid #c2ccda;padding:12px 10px 12px 10px;padding-top:12px;padding-right:10px;padding-bottom:12px;padding-left:10px;text-align:left;font-weight:700;line-height:1.4;vertical-align:middle;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
+        "style='background-color:#E7EDF7;color:#111827;border:1px solid #c2ccda;padding:12px 10px 12px 10px;padding-top:12px;padding-right:10px;padding-bottom:12px;padding-left:10px;text-align:left;font-weight:700;line-height:1.4;vertical-align:middle;height:auto;white-space:nowrap;word-break:normal;overflow-wrap:normal;'>"
         f"{escape(cell)}"
         "</th>"
         for cell in headers
@@ -348,8 +358,8 @@ def _table_html(headers: list[str], rows: list[list[str]], *, empty_label: str) 
         body_rows.append(
             "<tr>"
             + "".join(
-                "<td valign='middle' style='border:1px solid #d8dee7;padding:12px 10px 12px 10px;padding-top:12px;padding-right:10px;padding-bottom:12px;padding-left:10px;vertical-align:middle;color:#111827;line-height:1.45;height:auto;white-space:normal;word-break:break-word;overflow-wrap:anywhere;'>"
-                f"{escape(cell)}"
+                "<td valign='middle' style='border:1px solid #d8dee7;padding:12px 10px 12px 10px;padding-top:12px;padding-right:10px;padding-bottom:12px;padding-left:10px;vertical-align:middle;color:#111827;line-height:1.45;height:auto;white-space:normal;word-break:normal;overflow-wrap:break-word;'>"
+                f"{_cell_html(cell)}"
                 "</td>"
                 for cell in row
             )
@@ -487,14 +497,21 @@ def _is_adjustment_line(line: QuoteLine) -> bool:
     return line_type in {"discount", "surcharge"} or master_item_type in {"discount_rule", "surcharge_rule"}
 
 
-def _line_groups(lines: list[QuoteLine]) -> tuple[list[QuoteLine], list[QuoteLine], list[QuoteLine], list[QuoteLine]]:
+def _line_groups(
+    lines: list[QuoteLine],
+) -> tuple[list[QuoteLine], list[QuoteLine], list[QuoteLine], list[QuoteLine], list[QuoteLine]]:
     services: list[QuoteLine] = []
     products: list[QuoteLine] = []
     kits: list[QuoteLine] = []
     adjustments: list[QuoteLine] = []
+    other_fees: list[QuoteLine] = []
     for line in lines:
         if _is_adjustment_line(line):
             adjustments.append(line)
+            continue
+        category = (line.line_category or "").strip().lower()
+        if _line_matches_pass_recup(line) or category in {"other_fee", "fee", "immaterial_fee"}:
+            other_fees.append(line)
             continue
         if (line.line_category or "").strip().lower() == "service":
             services.append(line)
@@ -503,7 +520,7 @@ def _line_groups(lines: list[QuoteLine]) -> tuple[list[QuoteLine], list[QuoteLin
             kits.append(line)
             continue
         products.append(line)
-    return services, products, kits, adjustments
+    return services, products, kits, adjustments, other_fees
 
 
 def _load_quote_template_snapshot(*, db: Session | None, quote: Quote) -> tuple[str, str]:
@@ -683,6 +700,29 @@ def _resolve_payment_method_label(*, quote: Quote) -> str:
     return "Paiement non precise"
 
 
+def _line_matches_pass_recup(line: QuoteLine) -> bool:
+    tokens = [
+        str(line.title or ""),
+        str(line.code or ""),
+        str(line.line_type or ""),
+        str(line.line_category or ""),
+        str(line.master_item_type or ""),
+    ]
+    haystack = " ".join(tokens).strip().lower()
+    return "pass recup" in haystack or "pass_recup" in haystack or "passrecup" in haystack
+
+
+def _resolve_pass_recup_enabled(*, meta: dict[str, Any], lines: list[QuoteLine]) -> bool:
+    mode = str(meta.get("pass_recup_mode") or "").strip().lower()
+    if mode == "enabled":
+        return True
+    if mode == "disabled":
+        return False
+    if _is_true(meta.get("pass_recup_enabled")):
+        return True
+    return any(_line_matches_pass_recup(line) for line in lines)
+
+
 def _extract_document_context(
     *,
     db: Session | None,
@@ -707,7 +747,8 @@ def _extract_document_context(
     meta = _json_object(quote.meta)
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
-    pass_recup_enabled = _is_true(meta.get("pass_recup_enabled"))
+    pass_recup_mode = str(meta.get("pass_recup_mode") or "").strip().lower() or "auto"
+    pass_recup_enabled = _resolve_pass_recup_enabled(meta=meta, lines=lines)
 
     solfege_enabled = bool(
         quote.estimated_solfege_level
@@ -760,6 +801,7 @@ def _extract_document_context(
         "solfege_selected_slot": selected_solfege_slot,
         "masterclass_enabled": masterclass_enabled,
         "masterclass_blocks": masterclass_blocks,
+        "pass_recup_mode": pass_recup_mode,
         "pass_recup_enabled": pass_recup_enabled,
         "display_flags": display_flags,
         "prospect_data": prospect_data,
@@ -1150,14 +1192,11 @@ def _build_quote_pdf_blocks_html(
         "{page_break_html}"
         "<h2>Les Activites retenues</h2>"
         "{activities_planning_table_html}"
-        "<h2>Prestations</h2>"
-        "{services_table_html}"
-        "<h2>Remises et supplements</h2>"
-        "{adjustments_table_html}"
-        "<h2>Materiel</h2>"
-        "{products_table_html}"
-        "<h2>Kits</h2>"
-        "{kits_table_html}"
+        "{services_section_html}"
+        "{adjustments_section_html}"
+        "{products_section_html}"
+        "{kits_section_html}"
+        "{other_fees_section_html}"
         "{financial_recap_block_html}"
         "{page_break_html}"
         "<h2>Les modalites de paiement</h2>"
@@ -1241,7 +1280,7 @@ def _build_template_values(
     audience: str = DEFAULT_AUDIENCE,
 ) -> tuple[dict[str, str], set[str], dict[str, Any]]:
     currency = (quote.currency or "EUR").upper()
-    services, products, kits, adjustments = _line_groups(lines)
+    services, products, kits, adjustments, other_fees = _line_groups(lines)
     document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
     display_flags = document_context["display_flags"]
     total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
@@ -1398,7 +1437,18 @@ def _build_template_values(
         ["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
             [
-                line.title or "-",
+                {
+                    "html": (
+                        f"<div>{escape(line.title or '-')}</div>"
+                        + (
+                            f"<div style='font-size:10px;line-height:1.35;color:#64748b;margin-top:4px;'>"
+                            f"{escape(str(line.description or '').strip()).replace(chr(10), '<br/>')}"
+                            "</div>"
+                        )
+                        if str(line.description or "").strip()
+                        else ""
+                    )
+                },
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -1430,6 +1480,20 @@ def _build_template_values(
             for line in adjustments
         ],
         empty_label="Aucune remise ni supplement.",
+    )
+    other_fees_table_html = _table_html(
+        ["Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+        [
+            [
+                line.title or "-",
+                _decimal_str(Decimal(line.quantity or 0)),
+                f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+                _money(Decimal(line.unit_price_ttc or 0), currency),
+                _money(Decimal(line.amount_ttc or 0), currency),
+            ]
+            for line in other_fees
+        ],
+        empty_label="Aucun autre frais.",
     )
     lines_table_html = _table_html(
         ["Categorie", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
@@ -1514,6 +1578,7 @@ def _build_template_values(
     adjustments_section_html = _section_html("Remises et supplements", adjustments_table_html)
     products_section_html = _section_html("Materiel", products_table_html)
     kits_section_html = _section_html("Kits", kits_table_html)
+    other_fees_section_html = _section_html("Autres frais", other_fees_table_html)
     payment_schedule_section_html = _section_html("Echeancier de paiement", payment_schedule_table_html)
     calendar_section_html = _section_html("Calendrier des cours", calendar_table_html)
 
@@ -1756,6 +1821,7 @@ def _build_template_values(
         "products_count": str(len(products)),
         "kits_count": str(len(kits)),
         "adjustments_count": str(len(adjustments)),
+        "other_fees_count": str(len(other_fees)),
         "lines_count": str(len(lines)),
         "prospect_identity_block_html": prospect_identity_block_html,
         "solfege_block_html": solfege_block_html,
@@ -1767,6 +1833,7 @@ def _build_template_values(
         "adjustments_section_html": adjustments_section_html,
         "products_section_html": products_section_html,
         "kits_section_html": kits_section_html,
+        "other_fees_section_html": other_fees_section_html,
         "payment_schedule_section_html": payment_schedule_section_html,
         "calendar_section_html": calendar_section_html,
         "services_table_html": services_table_html,
@@ -1774,6 +1841,7 @@ def _build_template_values(
         "products_table_html": products_table_html,
         "kits_table_html": kits_table_html,
         "adjustments_table_html": adjustments_table_html,
+        "other_fees_table_html": other_fees_table_html,
         "lines_table_html": lines_table_html,
         "payment_schedule_table_html": payment_schedule_table_html,
         "calendar_table_html": calendar_table_html,
@@ -1800,6 +1868,7 @@ def _build_template_values(
         "adjustments_section_html",
         "products_section_html",
         "kits_section_html",
+        "other_fees_section_html",
         "payment_schedule_section_html",
         "calendar_section_html",
         "financial_adjustment_block_html",
@@ -1812,6 +1881,7 @@ def _build_template_values(
         "products_table_html",
         "kits_table_html",
         "adjustments_table_html",
+        "other_fees_table_html",
         "lines_table_html",
         "payment_schedule_table_html",
         "calendar_table_html",
@@ -1846,6 +1916,7 @@ def _default_quote_body_template() -> str:
         "{adjustments_section_html}"
         "{products_section_html}"
         "{kits_section_html}"
+        "{other_fees_section_html}"
         "{payment_method_block_html}"
         "{payment_schedule_section_html}"
         "{financial_adjustment_section_html}"
@@ -1865,6 +1936,14 @@ def _render_quote_body_html(
 ) -> str:
     _, body_template = _load_quote_template_snapshot(db=db, quote=quote)
     template = _normalize_template_source(body_template or _default_quote_body_template())
+    lowered_template = template.lower()
+    if "{other_fees_section_html}" not in lowered_template and "{other_fees_table_html}" not in lowered_template:
+        if "{kits_section_html}" in lowered_template:
+            template = template.replace("{kits_section_html}", "{kits_section_html}{other_fees_section_html}", 1)
+        elif "{kits_table_html}" in lowered_template:
+            template = template.replace("{kits_table_html}", "{kits_table_html}{other_fees_section_html}", 1)
+        else:
+            template += "{other_fees_section_html}"
     if "{financial_recap_block_html}" not in template:
         legacy_financial_tokens = (
             "{total_ttc_before_adjustment_html}",
@@ -1908,6 +1987,7 @@ def _render_quote_body_html(
             "adjustments_section_html",
             "products_section_html",
             "kits_section_html",
+            "other_fees_section_html",
             "payment_schedule_section_html",
             "calendar_section_html",
             "services_table_html",
@@ -1915,6 +1995,7 @@ def _render_quote_body_html(
             "products_table_html",
             "kits_table_html",
             "adjustments_table_html",
+            "other_fees_table_html",
             "lines_table_html",
             "payment_schedule_table_html",
             "calendar_table_html",
@@ -1930,6 +2011,13 @@ def _render_quote_body_html(
     rendered = _apply_template(template, values=values, html_keys=html_keys, html_output=True)
     rendered = _cleanup_rendered_block_markup(rendered)
     rendered = _dedupe_retained_activities_tables(rendered)
+    if not str(values.get("adjustments_section_html") or "").strip():
+        rendered = re.sub(
+            r"<h[1-6]\b[^>]*>\s*Remises\s+et\s+suppl(?:e|é)ments\s*</h[1-6]>\s*",
+            "",
+            rendered,
+            flags=re.IGNORECASE,
+        )
     lowered_template = template.lower()
     if "{activities_planning_table_html}" not in lowered_template and "{activities_planning_section_html}" not in lowered_template:
         rendered += values.get("activities_planning_section_html", "")
@@ -1963,12 +2051,14 @@ def _render_quote_terms_html(
             "adjustments_section_html",
             "products_section_html",
             "kits_section_html",
+            "other_fees_section_html",
             "payment_schedule_section_html",
             "calendar_section_html",
             "payment_schedule_table_html",
             "calendar_table_html",
             "calendar_activity_semesters_html",
             "financial_recap_block_html",
+            "other_fees_table_html",
         },
     )
     rendered_terms = _apply_template(normalized_terms, values=values, html_keys=html_keys, html_output=True)
@@ -2207,13 +2297,28 @@ def _quote_pdf_styles() -> dict[str, ParagraphStyle]:
 
 def _table_for_pdf(
     headers: list[str],
-    rows: list[list[str]],
+    rows: list[list[Any]],
     *,
     width: float,
     styles: dict[str, ParagraphStyle],
     col_widths: list[float] | None = None,
 ) -> Table:
     def _as_cell(value: Any, style: ParagraphStyle) -> Paragraph:
+        if isinstance(value, Paragraph):
+            return value
+        if isinstance(value, dict):
+            raw_html = value.get("html")
+            if raw_html is not None:
+                return Paragraph(str(raw_html), style)
+            text = escape(str(value.get("text") or "")).replace("\n", "<br/>")
+            subtext = str(value.get("subtext") or "").strip()
+            if subtext:
+                text += (
+                    "<br/><font size='9' color='#64748b'>"
+                    + escape(subtext).replace("\n", "<br/>")
+                    + "</font>"
+                )
+            return Paragraph(text or "-", style)
         text = str(value if value is not None else "-")
         text = escape(text).replace("\n", "<br/>")
         return Paragraph(text, style)
@@ -2342,7 +2447,7 @@ def _render_quote_pdf_blocks(
     calendar_snapshot = _json_object(quote.calendar_snapshot)
     sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
     planning_blocks = [item for item in _json_list(calendar_snapshot.get("blocks")) if isinstance(item, dict)]
-    services, products, kits, adjustments = _line_groups(lines)
+    services, products, kits, adjustments, other_fees = _line_groups(lines)
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     terms_lines = _terms_lines_for_pdf(cgv_content, values=values)
     schedule = [item for item in _json_list(context.get("schedule")) if isinstance(item, dict)]
@@ -2459,8 +2564,6 @@ def _render_quote_pdf_blocks(
         )
     )
 
-    story.append(Spacer(1, 6))
-    story.append(Paragraph("Remises et supplements", styles["h2"]))
     adjustment_rows = [
         [
             "Remise"
@@ -2480,18 +2583,19 @@ def _render_quote_pdf_blocks(
         ]
         for line in adjustments
     ]
-    story.append(
-        _table_for_pdf(
-            ["Type", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
-            adjustment_rows,
-            width=content_width,
-            styles=styles,
-            col_widths=[0.12, 0.28, 0.11, 0.11, 0.17, 0.21],
+    if adjustment_rows:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("Remises et supplements", styles["h2"]))
+        story.append(
+            _table_for_pdf(
+                ["Type", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+                adjustment_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.12, 0.28, 0.11, 0.11, 0.17, 0.21],
+            )
         )
-    )
 
-    story.append(Spacer(1, 6))
-    story.append(Paragraph("Materiel", styles["h2"]))
     product_rows = [
         [
             line.title or "-",
@@ -2502,21 +2606,25 @@ def _render_quote_pdf_blocks(
         ]
         for line in products
     ]
-    story.append(
-        _table_for_pdf(
-            ["Materiel", "Quantite", "TVA", "PU TTC", "Montant TTC"],
-            product_rows,
-            width=content_width,
-            styles=styles,
-            col_widths=[0.35, 0.12, 0.11, 0.18, 0.24],
+    if product_rows:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("Materiel", styles["h2"]))
+        story.append(
+            _table_for_pdf(
+                ["Materiel", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+                product_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.35, 0.12, 0.11, 0.18, 0.24],
+            )
         )
-    )
 
-    story.append(Spacer(1, 6))
-    story.append(Paragraph("Kits", styles["h2"]))
     kit_rows = [
         [
-            line.title or "-",
+            {
+                "text": line.title or "-",
+                "subtext": str(line.description or "").strip(),
+            },
             _decimal_str(Decimal(line.quantity or 0)),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
@@ -2524,15 +2632,41 @@ def _render_quote_pdf_blocks(
         ]
         for line in kits
     ]
-    story.append(
-        _table_for_pdf(
-            ["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
-            kit_rows,
-            width=content_width,
-            styles=styles,
-            col_widths=[0.35, 0.12, 0.11, 0.18, 0.24],
+    if kit_rows:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("Kits", styles["h2"]))
+        story.append(
+            _table_for_pdf(
+                ["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+                kit_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.35, 0.12, 0.11, 0.18, 0.24],
+            )
         )
-    )
+
+    other_fee_rows = [
+        [
+            line.title or "-",
+            _decimal_str(Decimal(line.quantity or 0)),
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
+            _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
+            _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
+        ]
+        for line in other_fees
+    ]
+    if other_fee_rows:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("Autres frais", styles["h2"]))
+        story.append(
+            _table_for_pdf(
+                ["Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+                other_fee_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.35, 0.12, 0.11, 0.18, 0.24],
+            )
+        )
 
     story.append(PageBreak())
     story.append(Paragraph("Recapitulatif financier", styles["h2"]))

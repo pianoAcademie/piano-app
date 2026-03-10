@@ -2384,6 +2384,7 @@ def preview_quote_calendar(
             start_date=payload.start_date,
             end_date=payload.end_date,
             weekdays=payload.weekdays,
+            recurrence_frequency=payload.recurrence_frequency,
             start_time=_time_from_hhmm(payload.start_time, field="start_time"),
             end_time=_time_from_hhmm(payload.end_time, field="end_time"),
             activity_id=payload.activity_id,
