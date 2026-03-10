@@ -2346,7 +2346,6 @@ def _render_quote_pdf_blocks(
     story.append(Paragraph("Les Activites retenues", styles["h1"]))
     planning_rows: list[list[str]] = []
     for block in planning_blocks:
-        activity_type = _modality_label(block.get("modality"))
         activity = str(block.get("activity_label") or "-")
         location = str(block.get("location_label") or "-")
         day = str(block.get("weekday_label") or _weekday_label(block.get("weekday")) or "-")
@@ -2358,14 +2357,14 @@ def _render_quote_pdf_blocks(
             end_time=block.get("end_time"),
             fallback_minutes=block.get("duration_minutes"),
         )
-        planning_rows.append([activity_type, activity, location, day, time_range, duration])
+        planning_rows.append([activity, location, day, time_range, duration])
     story.append(
         _table_for_pdf(
-            ["Type activite", "Activite", "Lieu", "Jour", "Horaire", "Duree"],
+            ["Activite", "Lieu", "Jour", "Horaire", "Duree"],
             planning_rows,
             width=content_width,
             styles=styles,
-            col_widths=[0.14, 0.28, 0.17, 0.11, 0.17, 0.13],
+            col_widths=[0.37, 0.23, 0.12, 0.17, 0.11],
         )
     )
 
