@@ -1058,6 +1058,92 @@ def _normalize_tables_for_pdf(content: str) -> str:
     return normalized
 
 
+def _simplify_rich_text_to_pdf_paragraphs(content: str, *, values: dict[str, str]) -> str:
+    normalized = _normalize_template_source(content or "")
+    if not normalized:
+        return "<p>Aucune condition generale.</p>"
+    substituted = _apply_template(normalized, values=values, html_keys=set(), html_output=False)
+    raw = str(substituted or "")
+    raw = re.sub(r"(?is)<(style|script)[^>]*>.*?</\1>", "", raw)
+    raw = re.sub(r"(?i)<br\s*/?>", "\n", raw)
+    raw = re.sub(r"(?i)<li\b[^>]*>", "• ", raw)
+    raw = re.sub(r"(?i)</(p|div|section|h[1-6]|li|tr|table|ul|ol)>", "\n", raw)
+    raw = re.sub(r"(?i)</(td|th)>", "  ", raw)
+    raw = re.sub(r"<[^>]+>", "", raw)
+    raw = html_unescape(raw)
+    raw = raw.replace("\r", "")
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
+    lines = [line.strip() for line in raw.split("\n") if line.strip()]
+    if not lines:
+        return "<p>Aucune condition generale.</p>"
+    return "".join(f"<p>{escape(line)}</p>" for line in lines)
+
+
+def _build_quote_pdf_blocks_html(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str,
+) -> str:
+    values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
+    cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
+    terms_html = _simplify_rich_text_to_pdf_paragraphs(cgv_content, values=values)
+
+    template = (
+        "<section class='quote-block'>"
+        "<h1>Dossier d inscription</h1>"
+        "<p><strong>Devis :</strong> {quote_number}</p>"
+        "<p><strong>Annee scolaire :</strong> {school_year_label}</p>"
+        "<p><strong>Validite :</strong> {expires_at}</p>"
+        "<p><strong>Eleve :</strong> {child_full_name}</p>"
+        "</section>"
+        "{page_break_html}"
+        "<h2>Informations famille</h2>"
+        "<div class='quote-block'>{prospect_identity_block_html}</div>"
+        "{page_break_html}"
+        "<h2>Les Activites retenues</h2>"
+        "{activities_planning_table_html}"
+        "<h2>Prestations</h2>"
+        "{services_table_html}"
+        "<h2>Remises et supplements</h2>"
+        "{adjustments_table_html}"
+        "<h2>Materiel</h2>"
+        "{products_table_html}"
+        "<h2>Kits</h2>"
+        "{kits_table_html}"
+        "{financial_recap_block_html}"
+        "{page_break_html}"
+        "<h2>Les modalites de paiement</h2>"
+        "{payment_method_block_html}"
+        "<p>{payment_schedule_summary}</p>"
+        "{payment_schedule_table_html}"
+        "<h2>Vos options</h2>"
+        "{solfege_block_html}"
+        "{masterclass_block_html}"
+        "{pass_recup_block_html}"
+        "{page_break_html}"
+        "<h2>Calendrier des cours</h2>"
+        "<p><strong>Resume :</strong> {calendar_summary}</p>"
+        "{calendar_activity_semesters_html}"
+        "{page_break_html}"
+        "<h2>Conditions generales</h2>"
+        "<div class='quote-block'>"
+        "<p><strong>{cgv_version}</strong></p>"
+        "{terms_plain_pdf_html}"
+        "</div>"
+    )
+    block_values = dict(values)
+    block_values["cgv_version"] = cgv_label or values.get("cgv_version", "-")
+    block_values["terms_plain_pdf_html"] = terms_html
+    local_html_keys = set(html_keys)
+    local_html_keys.add("terms_plain_pdf_html")
+    rendered = _apply_template(template, values=block_values, html_keys=local_html_keys, html_output=True)
+    rendered = _cleanup_rendered_block_markup(rendered)
+    rendered = _normalize_tables_for_pdf(rendered)
+    return rendered
+
+
 def _pdf_shell_html(*, content_html: str, header_html: str, footer_html: str) -> str:
     return (
         "<html><head><meta charset='utf-8'/>"
@@ -1943,8 +2029,8 @@ def render_quote_pdf_from_combined_html(
     values, _, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     header_html = values.get("header_standard_html", "")
     footer_html = values.get("footer_standard_html", "")
-    content_html = _extract_body_inner_html(combined_html)
-    content_html = _strip_inline_style_blocks(_strip_inline_footers(_strip_inline_headers(content_html)))
-    content_html = _normalize_tables_for_pdf(content_html)
+    # Canonical PDF rendering intentionally ignores ad-hoc WYSIWYG structure
+    # and rebuilds the document from stable business blocks.
+    content_html = _build_quote_pdf_blocks_html(db=db, quote=quote, lines=lines, audience=audience)
     pdf_html = _pdf_shell_html(content_html=content_html, header_html=header_html, footer_html=footer_html)
     return render_teacher_invoice_pdf_from_html(pdf_html)
