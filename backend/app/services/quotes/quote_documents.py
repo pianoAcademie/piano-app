@@ -2332,7 +2332,7 @@ def _render_quote_pdf_blocks(
         )
     story.append(
         _table_for_pdf(
-            ["Champ", "Valeur"],
+            ["", ""],
             identity_rows,
             width=content_width,
             styles=styles,
