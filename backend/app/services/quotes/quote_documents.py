@@ -2468,7 +2468,7 @@ def _render_quote_pdf_blocks(
         )
     )
 
-    story.append(Spacer(1, 8))
+    story.append(PageBreak())
     story.append(Paragraph("Recapitulatif financier", styles["h2"]))
     financial_rows: list[list[str]] = []
     if values.get("has_financial_adjustment") == "true":
