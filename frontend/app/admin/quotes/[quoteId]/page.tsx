@@ -72,6 +72,7 @@ type QuoteOut = {
   currency: string;
   language: string | null;
   total_ttc: string;
+  vat_rate: string | null;
   expiry_days: number;
   created_at: string;
   expires_at: string | null;
@@ -637,6 +638,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const planningSummary = planningVisualSummary(calendarSessions);
   const proposedSolfegeSlots = getProposedSolfegeSlots(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
   const quoteAdjustment = parseQuoteFinancialAdjustment(detail.quote.meta || {});
+  const defaultVatRate = String(detail.quote.vat_rate ?? readStringMeta(detail.quote.meta || {}, "tva_rate", "0"));
   const signedAdjustment = adjustmentSignedAmount(quoteAdjustment);
   const totalTtcNumber = Number(detail.quote.total_ttc);
   const totalBeforeAdjustment = Number.isFinite(totalTtcNumber) ? totalTtcNumber - signedAdjustment : null;
@@ -1110,6 +1112,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             id: row.id,
             name: row.name,
             duration_minutes: row.duration_minutes,
+            default_hourly_rate: row.default_hourly_rate,
             default_course_rate_ttc: row.default_course_rate_ttc,
           }))}
           products={products.map((row) => ({
@@ -1127,6 +1130,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           activityCatalogPriceByActivityId={activityCatalogPriceByActivityId}
           productCatalogPriceByProductId={productCatalogPriceByProductId}
           kitCatalogPriceByKitId={kitCatalogPriceByKitId}
+          defaultVatRate={defaultVatRate}
           saveAction={updateQuoteLinesAction}
         />
       </section>

@@ -6,6 +6,7 @@ type ActivityOption = {
   id: string;
   name: string;
   duration_minutes: number;
+  default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;
 };
 
@@ -61,6 +62,7 @@ type QuoteLinesEditorProps = {
   activityCatalogPriceByActivityId?: Record<string, string>;
   productCatalogPriceByProductId?: Record<string, string>;
   kitCatalogPriceByKitId?: Record<string, string>;
+  defaultVatRate?: string;
   saveAction: (formData: FormData) => Promise<void>;
 };
 
@@ -227,6 +229,30 @@ function isCatalogKind(kind: LineKind): boolean {
   return kind === "activity" || kind === "product" || kind === "kit";
 }
 
+function parsePositive(value: string | null | undefined): number | null {
+  const parsed = Number(String(value ?? "").trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function computeActivityFallbackPrice(activity: ActivityOption | undefined): string | null {
+  if (!activity) {
+    return null;
+  }
+  const direct = parsePositive(activity.default_course_rate_ttc);
+  if (direct !== null) {
+    return direct.toFixed(2);
+  }
+  const hourly = parsePositive(activity.default_hourly_rate);
+  const duration = Number(activity.duration_minutes || 0);
+  if (hourly !== null && Number.isFinite(duration) && duration > 0) {
+    return (hourly * (duration / 60)).toFixed(2);
+  }
+  return null;
+}
+
 export default function QuoteLinesEditor({
   quoteId,
   returnTo,
@@ -239,6 +265,7 @@ export default function QuoteLinesEditor({
   activityCatalogPriceByActivityId = {},
   productCatalogPriceByProductId = {},
   kitCatalogPriceByKitId = {},
+  defaultVatRate = "0",
   saveAction,
 }: QuoteLinesEditorProps): JSX.Element {
   const [lines, setLines] = useState<EditableLine[]>(
@@ -293,11 +320,15 @@ export default function QuoteLinesEditor({
         if (kind === "activity") {
           const activity = activities.find((item) => item.id === refId);
           const catalogPrice = activityCatalogPriceByActivityId[refId];
-          const resolvedUnitPrice = catalogPrice ?? activity?.default_course_rate_ttc ?? line.unitPrice;
+          const fallbackPrice = computeActivityFallbackPrice(activity);
+          const resolvedUnitPrice = catalogPrice ?? fallbackPrice ?? line.unitPrice;
+          const currentVat = Number(line.vatRate || "0");
+          const shouldPrefillVat = !Number.isFinite(currentVat) || currentVat <= 0;
           return {
             ...line,
             refId,
             title: activity?.name ?? "Activite",
+            vatRate: shouldPrefillVat ? (defaultVatRate || "0") : line.vatRate,
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
           };
         }
