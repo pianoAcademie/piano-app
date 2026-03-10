@@ -1,18 +1,26 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 from decimal import Decimal
 from html import escape, unescape as html_unescape
+import io
 import re
 from typing import Any
 
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.utils import ImageReader
+from reportlab.lib.units import mm
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.ops import AppSetting
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplateVersion, TermsTemplateVersion
 from app.models.user import User
-from app.services.teacher_invoice_documents import render_teacher_invoice_pdf_from_html
 
 
 AUDIENCE_ADMIN_PREVIEW = "admin_preview"
@@ -2002,20 +2010,450 @@ def render_quote_pdf(
     lines: list[QuoteLine],
     audience: str = DEFAULT_AUDIENCE,
 ) -> bytes:
-    body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
-    terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
-    combined_html = (
-        f"<section>{body_html}</section>"
-        "<div class='quote-page-break'></div>"
-        f"{terms_html}"
+    # Robust path: render from stable business blocks (no fragile HTML frame layout).
+    return _render_quote_pdf_blocks(db=db, quote=quote, lines=lines, audience=audience)
+
+
+def _safe_logo_reader(data_url: str) -> ImageReader | None:
+    raw = str(data_url or "").strip()
+    if not raw.startswith("data:image/") or "," not in raw:
+        return None
+    payload = raw.split(",", 1)[1]
+    try:
+        content = base64.b64decode(payload, validate=False)
+    except Exception:
+        return None
+    try:
+        return ImageReader(io.BytesIO(content))
+    except Exception:
+        return None
+
+
+def _quote_pdf_styles() -> dict[str, ParagraphStyle]:
+    base = getSampleStyleSheet()
+    return {
+        "cover_title": ParagraphStyle(
+            "cover_title",
+            parent=base["Heading1"],
+            fontName="Helvetica-Bold",
+            fontSize=24,
+            leading=28,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#0f172a"),
+            spaceAfter=8,
+        ),
+        "cover_subtitle": ParagraphStyle(
+            "cover_subtitle",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=12,
+            leading=16,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#475467"),
+            spaceAfter=8,
+        ),
+        "h1": ParagraphStyle(
+            "h1",
+            parent=base["Heading1"],
+            fontName="Helvetica-Bold",
+            fontSize=18,
+            leading=22,
+            textColor=colors.HexColor("#0f172a"),
+            spaceBefore=2,
+            spaceAfter=8,
+        ),
+        "h2": ParagraphStyle(
+            "h2",
+            parent=base["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=14,
+            leading=18,
+            textColor=colors.HexColor("#0f172a"),
+            spaceBefore=4,
+            spaceAfter=6,
+        ),
+        "h3": ParagraphStyle(
+            "h3",
+            parent=base["Heading3"],
+            fontName="Helvetica-Bold",
+            fontSize=12,
+            leading=15,
+            textColor=colors.HexColor("#111827"),
+            spaceBefore=2,
+            spaceAfter=5,
+        ),
+        "text": ParagraphStyle(
+            "text",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=11,
+            leading=15,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#1f2937"),
+            spaceAfter=5,
+        ),
+        "text_center": ParagraphStyle(
+            "text_center",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=11,
+            leading=15,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#1f2937"),
+            spaceAfter=5,
+        ),
+        "small_muted": ParagraphStyle(
+            "small_muted",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=9.5,
+            leading=12,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#667085"),
+            spaceAfter=4,
+        ),
+    }
+
+
+def _table_for_pdf(headers: list[str], rows: list[list[str]], *, width: float) -> Table:
+    data = [headers] + (rows if rows else [["-", "-", "-", "-", "-", "-"][: len(headers)]])
+    col_count = len(headers) if headers else 1
+    col_width = width / col_count
+    table = Table(data, colWidths=[col_width] * col_count, repeatRows=1, hAlign="LEFT")
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E7EDF7")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 10.5),
+                ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.9, colors.HexColor("#c4cfde")),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 1), (-1, -1), 10.5),
+                ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
     )
-    return render_quote_pdf_from_combined_html(
-        db=db,
-        quote=quote,
-        lines=lines,
-        combined_html=combined_html,
-        audience=audience,
+    return table
+
+
+def _terms_lines_for_pdf(content: str, *, values: dict[str, str]) -> list[str]:
+    normalized = _normalize_template_source(content or "")
+    if not normalized:
+        return ["Aucune condition generale."]
+    substituted = _apply_template(normalized, values=values, html_keys=set(), html_output=False)
+    raw = str(substituted or "")
+    raw = re.sub(r"(?is)<(style|script)[^>]*>.*?</\1>", "", raw)
+    raw = re.sub(r"(?i)<br\s*/?>", "\n", raw)
+    raw = re.sub(r"(?i)<li\b[^>]*>", "• ", raw)
+    raw = re.sub(r"(?i)</(p|div|section|h[1-6]|li|tr|table|ul|ol)>", "\n", raw)
+    raw = re.sub(r"(?i)</(td|th)>", "  ", raw)
+    raw = re.sub(r"<[^>]+>", "", raw)
+    raw = html_unescape(raw)
+    raw = raw.replace("\r", "")
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
+    lines = [line.strip() for line in raw.split("\n") if line.strip()]
+    return lines or ["Aucune condition generale."]
+
+
+def _draw_quote_pdf_header_footer(
+    canvas_obj: Any,
+    doc: SimpleDocTemplate,
+    *,
+    quote_number: str,
+    logo_reader: ImageReader | None,
+) -> None:
+    canvas_obj.saveState()
+    page_width, page_height = A4
+    left_x = doc.leftMargin
+    right_x = page_width - doc.rightMargin
+
+    header_top = page_height - 13 * mm
+    if logo_reader is not None:
+        try:
+            canvas_obj.drawImage(
+                logo_reader,
+                left_x,
+                header_top - 12 * mm,
+                width=28 * mm,
+                height=10 * mm,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        except Exception:
+            logo_reader = None
+
+    canvas_obj.setFont("Helvetica-Bold", 11)
+    canvas_obj.setFillColor(colors.HexColor("#0f172a"))
+    if logo_reader is None:
+        canvas_obj.drawString(left_x, header_top - 6 * mm, "PIANO ACADEMIE")
+    canvas_obj.drawRightString(right_x, header_top - 6 * mm, f"Devis {quote_number or '-'}")
+    canvas_obj.setStrokeColor(colors.HexColor("#cfd8e6"))
+    canvas_obj.setLineWidth(0.8)
+    canvas_obj.line(left_x, page_height - 24 * mm, right_x, page_height - 24 * mm)
+
+    footer_y = 15 * mm
+    canvas_obj.setStrokeColor(colors.HexColor("#cfd8e6"))
+    canvas_obj.setLineWidth(0.8)
+    canvas_obj.line(left_x, footer_y + 11 * mm, right_x, footer_y + 11 * mm)
+    canvas_obj.setFont("Helvetica", 9.5)
+    canvas_obj.setFillColor(colors.HexColor("#334155"))
+    canvas_obj.drawString(left_x, footer_y + 6 * mm, "Piano Academie")
+    canvas_obj.drawString(left_x, footer_y + 2 * mm, "1 rue de Richelieu")
+    canvas_obj.drawString(left_x, footer_y - 2 * mm, "75001 Paris")
+    canvas_obj.drawCentredString((left_x + right_x) / 2, footer_y + 6 * mm, "SIRET 82805141700032")
+    canvas_obj.drawCentredString((left_x + right_x) / 2, footer_y + 2 * mm, "FR 74828051417")
+    canvas_obj.drawRightString(right_x, footer_y + 6 * mm, quote_number or "-")
+    canvas_obj.restoreState()
+
+
+def _render_quote_pdf_blocks(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str,
+) -> bytes:
+    values, _, context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
+    prospect_data = context.get("prospect_data", {})
+    calendar_snapshot = _json_object(quote.calendar_snapshot)
+    sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
+    planning_blocks = [item for item in _json_list(calendar_snapshot.get("blocks")) if isinstance(item, dict)]
+    services, products, kits, adjustments = _line_groups(lines)
+    cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
+    terms_lines = _terms_lines_for_pdf(cgv_content, values=values)
+    schedule = [item for item in _json_list(context.get("schedule")) if isinstance(item, dict)]
+    styles = _quote_pdf_styles()
+    logo_reader = _safe_logo_reader(_account_logo_data_url(db=db))
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=30 * mm,
+        bottomMargin=24 * mm,
+        title=f"Devis {quote.quote_number or '-'}",
+        author="Piano Academie",
     )
+    content_width = A4[0] - doc.leftMargin - doc.rightMargin
+    story: list[Any] = []
+
+    story.append(Spacer(1, 18 * mm))
+    story.append(Paragraph("Dossier d inscription", styles["cover_title"]))
+    story.append(Paragraph(f"Devis : {escape(values.get('quote_number', '-'))}", styles["cover_subtitle"]))
+    story.append(Paragraph(f"Annee scolaire : {escape(values.get('school_year_label', '-'))}", styles["cover_subtitle"]))
+    story.append(Paragraph(f"Validite : {escape(values.get('expires_at', '-'))}", styles["cover_subtitle"]))
+    story.append(
+        Paragraph(
+            f"Eleve : {escape(prospect_data.get('child_full_name') or values.get('recipient_name', '-'))}",
+            styles["cover_subtitle"],
+        )
+    )
+    story.append(PageBreak())
+
+    story.append(Paragraph("Informations famille", styles["h1"]))
+    identity_rows: list[list[str]] = []
+    if str(prospect_data.get("prospect_type") or "").lower() == "child":
+        identity_rows.extend(
+            [
+                ["Eleve", str(prospect_data.get("child_full_name") or "-")],
+                ["Date de naissance", _birth_date_label(str(prospect_data.get("child_birth_date") or ""))],
+                ["Adulte responsable", str(prospect_data.get("parent_full_name") or "-")],
+                ["Email adulte responsable", str(prospect_data.get("parent_email") or values.get("recipient_email") or "-")],
+                ["Telephone adulte responsable", str(prospect_data.get("parent_phone") or "-")],
+                ["Adresse adulte responsable", str(prospect_data.get("parent_address") or "-")],
+            ]
+        )
+    else:
+        identity_rows.extend(
+            [
+                ["Adulte responsable", str(prospect_data.get("adult_full_name") or values.get("recipient_name") or "-")],
+                ["Email", str(prospect_data.get("adult_email") or values.get("recipient_email") or "-")],
+                ["Telephone", str(prospect_data.get("adult_phone") or "-")],
+                ["Adresse", str(prospect_data.get("adult_address") or "-")],
+            ]
+        )
+    story.append(_table_for_pdf(["Champ", "Valeur"], identity_rows, width=content_width))
+    story.append(Spacer(1, 5))
+    story.append(Paragraph(f"Email contact : {escape(values.get('recipient_email', '-'))}", styles["text"]))
+    story.append(PageBreak())
+
+    story.append(Paragraph("Les Activites retenues", styles["h1"]))
+    planning_rows: list[list[str]] = []
+    for block in planning_blocks:
+        activity_type = _modality_label(block.get("modality"))
+        activity = str(block.get("activity_label") or "-")
+        location = str(block.get("location_label") or "-")
+        day = str(block.get("weekday_label") or _weekday_label(block.get("weekday")) or "-")
+        start = str(block.get("start_time") or "").strip()
+        end = str(block.get("end_time") or "").strip()
+        time_range = f"{start} - {end}" if start and end else "-"
+        duration = _duration_label(
+            start_time=block.get("start_time"),
+            end_time=block.get("end_time"),
+            fallback_minutes=block.get("duration_minutes"),
+        )
+        planning_rows.append([activity_type, activity, location, day, time_range, duration])
+    story.append(_table_for_pdf(["Type activite", "Activite", "Lieu", "Jour", "Horaire", "Duree"], planning_rows, width=content_width))
+
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("Prestations", styles["h2"]))
+    service_rows = [
+        [
+            line.title or "-",
+            _decimal_str(Decimal(line.quantity or 0)),
+            f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+            _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
+            _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
+        ]
+        for line in services
+    ]
+    story.append(_table_for_pdf(["Activite", "Quantite", "Duree", "TVA", "PU TTC", "Montant TTC"], service_rows, width=content_width))
+
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("Remises et supplements", styles["h2"]))
+    adjustment_rows = [
+        [
+            "Remise"
+            if (line.line_type or "").strip().lower() == "discount"
+            else "Supplement"
+            if (line.line_type or "").strip().lower() == "surcharge"
+            else (
+                "Remise"
+                if (line.master_item_type or "").strip().lower() == "discount_rule"
+                else "Supplement"
+            ),
+            line.title or "-",
+            _decimal_str(Decimal(line.quantity or 0)),
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+            _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
+            _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
+        ]
+        for line in adjustments
+    ]
+    story.append(_table_for_pdf(["Type", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"], adjustment_rows, width=content_width))
+
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("Materiel", styles["h2"]))
+    product_rows = [
+        [
+            line.title or "-",
+            _decimal_str(Decimal(line.quantity or 0)),
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+            _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
+            _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
+        ]
+        for line in products
+    ]
+    story.append(_table_for_pdf(["Materiel", "Quantite", "TVA", "PU TTC", "Montant TTC"], product_rows, width=content_width))
+
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("Kits", styles["h2"]))
+    kit_rows = [
+        [
+            line.title or "-",
+            _decimal_str(Decimal(line.quantity or 0)),
+            f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
+            _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
+            _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
+        ]
+        for line in kits
+    ]
+    story.append(_table_for_pdf(["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"], kit_rows, width=content_width))
+
+    story.append(Spacer(1, 8))
+    story.append(Paragraph("Recapitulatif financier", styles["h2"]))
+    financial_rows: list[list[str]] = []
+    if values.get("has_financial_adjustment") == "true":
+        financial_rows.append(["Total TTC avant ajustement", f"{values.get('total_ttc_before_adjustment', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append([values.get("financial_adjustment_type_label", "Ajustement"), f"{values.get('financial_adjustment_amount_ttc', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append(["Impact", values.get("financial_adjustment_impact_label", "-")])
+        effective_date = values.get("financial_adjustment_effective_date", "")
+        if effective_date and effective_date != "-":
+            financial_rows.append(["Date ajustement", effective_date])
+        financial_rows.append(["Total HT facture", f"{values.get('total_ht_after_adjustment', values.get('total_ht', '0,00'))} {values.get('currency', 'EUR')}"])
+        financial_rows.append([f"TVA facture ({values.get('vat_rate', '0,00')} %)", f"{values.get('vat_amount_after_adjustment', values.get('vat_amount', '0,00'))} {values.get('currency', 'EUR')}"])
+        financial_rows.append(["Total TTC facture", f"{values.get('total_ttc_after_adjustment', values.get('total_ttc', '0,00'))} {values.get('currency', 'EUR')}"])
+    else:
+        financial_rows.append(["Total HT", f"{values.get('total_ht', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append([f"TVA ({values.get('vat_rate', '0,00')} %)", f"{values.get('vat_amount', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append(["Total TTC facture", f"{values.get('total_ttc', '0,00')} {values.get('currency', 'EUR')}"])
+    story.append(_table_for_pdf(["Libelle", "Valeur"], financial_rows, width=content_width))
+
+    story.append(PageBreak())
+    story.append(Paragraph("Les modalites de paiement", styles["h1"]))
+    story.append(Paragraph(f"Mode de paiement : {escape(values.get('payment_method_label', '-'))}", styles["text"]))
+    story.append(Paragraph(escape(values.get("payment_schedule_summary", "Paiement non planifie")), styles["text"]))
+    if len(schedule) > 1:
+        schedule_rows = [
+            [
+                str(item.get("label") or "-"),
+                f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
+                _schedule_due_label(item),
+                str(item.get("payment_method") or "-"),
+            ]
+            for item in schedule
+        ]
+        story.append(_table_for_pdf(["Echeance", "Montant", "Quand", "Type"], schedule_rows, width=content_width))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph("Vos options", styles["h2"]))
+    story.append(Paragraph(_apply_template("{solfege_block_html}", values=values, html_keys={"solfege_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""), styles["text"]))
+    story.append(Paragraph(_apply_template("{masterclass_block_html}", values=values, html_keys={"masterclass_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""), styles["text"]))
+    story.append(Paragraph(_apply_template("{pass_recup_block_html}", values=values, html_keys={"pass_recup_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""), styles["text"]))
+
+    story.append(PageBreak())
+    story.append(Paragraph("Calendrier des cours", styles["h1"]))
+    story.append(Paragraph(f"Resume : {escape(values.get('calendar_summary', '-'))}", styles["text"]))
+    grouped: dict[str, dict[int, set[int]]] = {}
+    for session in sessions:
+        parsed = _session_month_day(session.get("date"))
+        if parsed is None:
+            continue
+        month, day = parsed
+        activity_label = str(session.get("activity_label") or "").strip() or "Activite"
+        location_label = str(session.get("location_label") or "").strip()
+        title = f"{activity_label} · {location_label}" if location_label else activity_label
+        grouped.setdefault(title, {}).setdefault(month, set()).add(day)
+    for idx, title in enumerate(sorted(grouped.keys()), start=1):
+        month_map = grouped[title]
+        count = sum(len(days) for days in month_map.values())
+        story.append(Spacer(1, 5))
+        story.append(Paragraph(f"Activite {idx}", styles["h3"]))
+        story.append(_table_for_pdf(["Activite / lieu", "Nombre de cours"], [[title, f"{count} cours"]], width=content_width))
+        sem_rows: list[list[str]] = []
+        for month_label, days in _calendar_semester_rows(month_map, semester=1):
+            sem_rows.append(["1er semestre", month_label, days])
+        for month_label, days in _calendar_semester_rows(month_map, semester=2):
+            sem_rows.append(["2e semestre", month_label, days])
+        if not sem_rows:
+            sem_rows.append(["-", "-", "Aucune seance"])
+        story.append(_table_for_pdf(["Semestre", "Mois", "Dates de cours"], sem_rows, width=content_width))
+
+    story.append(PageBreak())
+    story.append(Paragraph("Conditions generales", styles["h1"]))
+    story.append(Paragraph(escape(cgv_label or "Version non precisee"), styles["h3"]))
+    for line in terms_lines:
+        story.append(Paragraph(escape(line), styles["text"]))
+
+    def _on_page(canvas_obj: Any, document: SimpleDocTemplate) -> None:
+        _draw_quote_pdf_header_footer(
+            canvas_obj,
+            document,
+            quote_number=quote.quote_number or "-",
+            logo_reader=logo_reader,
+        )
+
+    doc.build(story, onFirstPage=_on_page, onLaterPages=_on_page)
+    return buffer.getvalue()
 
 
 def render_quote_pdf_from_combined_html(
@@ -2026,11 +2464,8 @@ def render_quote_pdf_from_combined_html(
     combined_html: str,
     audience: str = DEFAULT_AUDIENCE,
 ) -> bytes:
-    values, _, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
-    header_html = values.get("header_standard_html", "")
-    footer_html = values.get("footer_standard_html", "")
-    # Canonical PDF rendering intentionally ignores ad-hoc WYSIWYG structure
-    # and rebuilds the document from stable business blocks.
-    content_html = _build_quote_pdf_blocks_html(db=db, quote=quote, lines=lines, audience=audience)
-    pdf_html = _pdf_shell_html(content_html=content_html, header_html=header_html, footer_html=footer_html)
-    return render_teacher_invoice_pdf_from_html(pdf_html)
+    # Keep signature for callers using stored combined_html snapshots.
+    # The PDF itself is intentionally rebuilt from stable blocks to avoid
+    # CSS/page-frame collisions that caused overlapping sections.
+    _ = combined_html
+    return _render_quote_pdf_blocks(db=db, quote=quote, lines=lines, audience=audience)
