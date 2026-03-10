@@ -2112,27 +2112,68 @@ def _quote_pdf_styles() -> dict[str, ParagraphStyle]:
             textColor=colors.HexColor("#667085"),
             spaceAfter=4,
         ),
+        "table_header": ParagraphStyle(
+            "table_header",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=10.5,
+            leading=12.5,
+            textColor=colors.HexColor("#0f172a"),
+            alignment=TA_LEFT,
+            wordWrap="CJK",
+            spaceAfter=0,
+        ),
+        "table_cell": ParagraphStyle(
+            "table_cell",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=10.5,
+            leading=13,
+            textColor=colors.HexColor("#111827"),
+            alignment=TA_LEFT,
+            wordWrap="CJK",
+            spaceAfter=0,
+        ),
     }
 
 
-def _table_for_pdf(headers: list[str], rows: list[list[str]], *, width: float) -> Table:
-    data = [headers] + (rows if rows else [["-", "-", "-", "-", "-", "-"][: len(headers)]])
+def _table_for_pdf(
+    headers: list[str],
+    rows: list[list[str]],
+    *,
+    width: float,
+    styles: dict[str, ParagraphStyle],
+    col_widths: list[float] | None = None,
+) -> Table:
+    def _as_cell(value: Any, style: ParagraphStyle) -> Paragraph:
+        text = str(value if value is not None else "-")
+        text = escape(text).replace("\n", "<br/>")
+        return Paragraph(text, style)
+
+    normalized_rows = rows if rows else [["-"] * max(1, len(headers))]
+    data: list[list[Any]] = [
+        [_as_cell(cell, styles["table_header"]) for cell in headers],
+        *[[_as_cell(cell, styles["table_cell"]) for cell in row] for row in normalized_rows],
+    ]
     col_count = len(headers) if headers else 1
-    col_width = width / col_count
-    table = Table(data, colWidths=[col_width] * col_count, repeatRows=1, hAlign="LEFT")
+    if col_widths and len(col_widths) == col_count:
+        total_ratio = sum(max(0.0, float(value)) for value in col_widths)
+        if total_ratio > 0:
+            final_widths = [width * (max(0.0, float(value)) / total_ratio) for value in col_widths]
+        else:
+            col_width = width / col_count
+            final_widths = [col_width] * col_count
+    else:
+        col_width = width / col_count
+        final_widths = [col_width] * col_count
+    table = Table(data, colWidths=final_widths, repeatRows=1, hAlign="LEFT")
     table.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E7EDF7")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 10.5),
                 ("ALIGN", (0, 0), (-1, 0), "LEFT"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("GRID", (0, 0), (-1, -1), 0.9, colors.HexColor("#c4cfde")),
-                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-                ("FONTSIZE", (0, 1), (-1, -1), 10.5),
-                ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
                 ("TOPPADDING", (0, 0), (-1, -1), 7),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
                 ("LEFTPADDING", (0, 0), (-1, -1), 8),
@@ -2281,7 +2322,15 @@ def _render_quote_pdf_blocks(
                 ["Adresse", str(prospect_data.get("adult_address") or "-")],
             ]
         )
-    story.append(_table_for_pdf(["Champ", "Valeur"], identity_rows, width=content_width))
+    story.append(
+        _table_for_pdf(
+            ["Champ", "Valeur"],
+            identity_rows,
+            width=content_width,
+            styles=styles,
+            col_widths=[0.32, 0.68],
+        )
+    )
     story.append(Spacer(1, 5))
     story.append(Paragraph(f"Email contact : {escape(values.get('recipient_email', '-'))}", styles["text"]))
     story.append(PageBreak())
@@ -2302,7 +2351,15 @@ def _render_quote_pdf_blocks(
             fallback_minutes=block.get("duration_minutes"),
         )
         planning_rows.append([activity_type, activity, location, day, time_range, duration])
-    story.append(_table_for_pdf(["Type activite", "Activite", "Lieu", "Jour", "Horaire", "Duree"], planning_rows, width=content_width))
+    story.append(
+        _table_for_pdf(
+            ["Type activite", "Activite", "Lieu", "Jour", "Horaire", "Duree"],
+            planning_rows,
+            width=content_width,
+            styles=styles,
+            col_widths=[0.14, 0.28, 0.17, 0.11, 0.17, 0.13],
+        )
+    )
 
     story.append(Spacer(1, 6))
     story.append(Paragraph("Prestations", styles["h2"]))
@@ -2317,7 +2374,15 @@ def _render_quote_pdf_blocks(
         ]
         for line in services
     ]
-    story.append(_table_for_pdf(["Activite", "Quantite", "Duree", "TVA", "PU TTC", "Montant TTC"], service_rows, width=content_width))
+    story.append(
+        _table_for_pdf(
+            ["Activite", "Quantite", "Duree", "TVA", "PU TTC", "Montant TTC"],
+            service_rows,
+            width=content_width,
+            styles=styles,
+            col_widths=[0.34, 0.10, 0.11, 0.10, 0.17, 0.18],
+        )
+    )
 
     story.append(Spacer(1, 6))
     story.append(Paragraph("Remises et supplements", styles["h2"]))
@@ -2340,7 +2405,15 @@ def _render_quote_pdf_blocks(
         ]
         for line in adjustments
     ]
-    story.append(_table_for_pdf(["Type", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"], adjustment_rows, width=content_width))
+    story.append(
+        _table_for_pdf(
+            ["Type", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+            adjustment_rows,
+            width=content_width,
+            styles=styles,
+            col_widths=[0.12, 0.29, 0.10, 0.10, 0.17, 0.22],
+        )
+    )
 
     story.append(Spacer(1, 6))
     story.append(Paragraph("Materiel", styles["h2"]))
@@ -2354,7 +2427,15 @@ def _render_quote_pdf_blocks(
         ]
         for line in products
     ]
-    story.append(_table_for_pdf(["Materiel", "Quantite", "TVA", "PU TTC", "Montant TTC"], product_rows, width=content_width))
+    story.append(
+        _table_for_pdf(
+            ["Materiel", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+            product_rows,
+            width=content_width,
+            styles=styles,
+            col_widths=[0.36, 0.12, 0.10, 0.18, 0.24],
+        )
+    )
 
     story.append(Spacer(1, 6))
     story.append(Paragraph("Kits", styles["h2"]))
@@ -2368,7 +2449,15 @@ def _render_quote_pdf_blocks(
         ]
         for line in kits
     ]
-    story.append(_table_for_pdf(["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"], kit_rows, width=content_width))
+    story.append(
+        _table_for_pdf(
+            ["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
+            kit_rows,
+            width=content_width,
+            styles=styles,
+            col_widths=[0.36, 0.12, 0.10, 0.18, 0.24],
+        )
+    )
 
     story.append(Spacer(1, 8))
     story.append(Paragraph("Recapitulatif financier", styles["h2"]))
@@ -2387,7 +2476,15 @@ def _render_quote_pdf_blocks(
         financial_rows.append(["Total HT", f"{values.get('total_ht', '0,00')} {values.get('currency', 'EUR')}"])
         financial_rows.append([f"TVA ({values.get('vat_rate', '0,00')} %)", f"{values.get('vat_amount', '0,00')} {values.get('currency', 'EUR')}"])
         financial_rows.append(["Total TTC facture", f"{values.get('total_ttc', '0,00')} {values.get('currency', 'EUR')}"])
-    story.append(_table_for_pdf(["Libelle", "Valeur"], financial_rows, width=content_width))
+    story.append(
+        _table_for_pdf(
+            ["Libelle", "Valeur"],
+            financial_rows,
+            width=content_width,
+            styles=styles,
+            col_widths=[0.58, 0.42],
+        )
+    )
 
     story.append(PageBreak())
     story.append(Paragraph("Les modalites de paiement", styles["h1"]))
@@ -2403,7 +2500,15 @@ def _render_quote_pdf_blocks(
             ]
             for item in schedule
         ]
-        story.append(_table_for_pdf(["Echeance", "Montant", "Quand", "Type"], schedule_rows, width=content_width))
+        story.append(
+            _table_for_pdf(
+                ["Echeance", "Montant", "Quand", "Type"],
+                schedule_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.29, 0.18, 0.31, 0.22],
+            )
+        )
     story.append(Spacer(1, 6))
     story.append(Paragraph("Vos options", styles["h2"]))
     story.append(Paragraph(_apply_template("{solfege_block_html}", values=values, html_keys={"solfege_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""), styles["text"]))
@@ -2428,7 +2533,15 @@ def _render_quote_pdf_blocks(
         count = sum(len(days) for days in month_map.values())
         story.append(Spacer(1, 5))
         story.append(Paragraph(f"Activite {idx}", styles["h3"]))
-        story.append(_table_for_pdf(["Activite / lieu", "Nombre de cours"], [[title, f"{count} cours"]], width=content_width))
+        story.append(
+            _table_for_pdf(
+                ["Activite / lieu", "Nombre de cours"],
+                [[title, f"{count} cours"]],
+                width=content_width,
+                styles=styles,
+                col_widths=[0.70, 0.30],
+            )
+        )
         sem_rows: list[list[str]] = []
         for month_label, days in _calendar_semester_rows(month_map, semester=1):
             sem_rows.append(["1er semestre", month_label, days])
@@ -2436,7 +2549,15 @@ def _render_quote_pdf_blocks(
             sem_rows.append(["2e semestre", month_label, days])
         if not sem_rows:
             sem_rows.append(["-", "-", "Aucune seance"])
-        story.append(_table_for_pdf(["Semestre", "Mois", "Dates de cours"], sem_rows, width=content_width))
+        story.append(
+            _table_for_pdf(
+                ["Semestre", "Mois", "Dates de cours"],
+                sem_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.20, 0.20, 0.60],
+            )
+        )
 
     story.append(PageBreak())
     story.append(Paragraph("Conditions generales", styles["h1"]))
