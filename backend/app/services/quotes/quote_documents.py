@@ -2120,7 +2120,8 @@ def _quote_pdf_styles() -> dict[str, ParagraphStyle]:
             leading=12.5,
             textColor=colors.HexColor("#0f172a"),
             alignment=TA_LEFT,
-            wordWrap="CJK",
+            wordWrap="LTR",
+            splitLongWords=False,
             spaceAfter=0,
         ),
         "table_cell": ParagraphStyle(
@@ -2131,7 +2132,8 @@ def _quote_pdf_styles() -> dict[str, ParagraphStyle]:
             leading=13,
             textColor=colors.HexColor("#111827"),
             alignment=TA_LEFT,
-            wordWrap="CJK",
+            wordWrap="LTR",
+            splitLongWords=False,
             spaceAfter=0,
         ),
     }
@@ -2387,7 +2389,7 @@ def _render_quote_pdf_blocks(
             service_rows,
             width=content_width,
             styles=styles,
-            col_widths=[0.34, 0.10, 0.11, 0.10, 0.17, 0.18],
+            col_widths=[0.32, 0.12, 0.11, 0.11, 0.16, 0.18],
         )
     )
 
@@ -2418,7 +2420,7 @@ def _render_quote_pdf_blocks(
             adjustment_rows,
             width=content_width,
             styles=styles,
-            col_widths=[0.12, 0.29, 0.10, 0.10, 0.17, 0.22],
+            col_widths=[0.12, 0.28, 0.11, 0.11, 0.17, 0.21],
         )
     )
 
@@ -2440,7 +2442,7 @@ def _render_quote_pdf_blocks(
             product_rows,
             width=content_width,
             styles=styles,
-            col_widths=[0.36, 0.12, 0.10, 0.18, 0.24],
+            col_widths=[0.35, 0.12, 0.11, 0.18, 0.24],
         )
     )
 
@@ -2462,7 +2464,7 @@ def _render_quote_pdf_blocks(
             kit_rows,
             width=content_width,
             styles=styles,
-            col_widths=[0.36, 0.12, 0.10, 0.18, 0.24],
+            col_widths=[0.35, 0.12, 0.11, 0.18, 0.24],
         )
     )
 
