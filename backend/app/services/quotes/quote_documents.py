@@ -138,7 +138,7 @@ def _document_style_html() -> str:
         "p{margin:0 0 8px 0;}"
         ".quote-muted{color:#5b6470;}"
         ".quote-page-break{page-break-before:always;}"
-        ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:avoid;}"
+        ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:auto;}"
         ".quote-identity-grid{display:block;width:100%;}"
         ".quote-identity-card{border:1px solid #d3dbe7;background:#ffffff;padding:10px 12px;margin:0 0 10px 0;page-break-inside:avoid;}"
         ".quote-identity-card h3{margin:0 0 8px 0;font-size:13px;color:#111827;}"
@@ -264,14 +264,21 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
         sem1 = _calendar_semester_rows(month_map, semester=1)
         sem2 = _calendar_semester_rows(month_map, semester=2)
 
-        sem1_html = "".join(
-            f"<p style='margin:0 0 4px 0;'><strong>{escape(month_label)}:</strong> {escape(days)}</p>"
-            for month_label, days in sem1
-        ) or "<p style='margin:0;'>Aucune seance</p>"
-        sem2_html = "".join(
-            f"<p style='margin:0 0 4px 0;'><strong>{escape(month_label)}:</strong> {escape(days)}</p>"
-            for month_label, days in sem2
-        ) or "<p style='margin:0;'>Aucune seance</p>"
+        semester_rows: list[tuple[str, str, str]] = []
+        for month_label, days in sem1:
+            semester_rows.append(("1er semestre", month_label, days))
+        for month_label, days in sem2:
+            semester_rows.append(("2e semestre", month_label, days))
+        if not semester_rows:
+            semester_rows.append(("-", "-", "Aucune seance"))
+        semesters_html = "".join(
+            "<tr>"
+            f"<td valign='middle' style='border:1px solid #d8dee7;padding:10px;vertical-align:middle;'>{escape(semester)}</td>"
+            f"<td valign='middle' style='border:1px solid #d8dee7;padding:10px;vertical-align:middle;'><strong>{escape(month_label)}</strong></td>"
+            f"<td valign='top' style='border:1px solid #d8dee7;padding:10px;vertical-align:top;'>{escape(days)}</td>"
+            "</tr>"
+            for semester, month_label, days in semester_rows
+        )
 
         separator_html = (
             "<div style='height:8px;margin:6px 0 10px 0;border-top:2px dashed #d8deea;'></div>"
@@ -280,7 +287,7 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
         )
         blocks.append(
             separator_html
-            + "<div style='border:2px solid #cfd6e2;padding:0;margin:0 0 22px 0;page-break-inside:avoid;background:#ffffff;'>"
+            + "<div style='border:2px solid #cfd6e2;padding:0;margin:0 0 22px 0;page-break-inside:auto;background:#ffffff;'>"
             "<div style='background:#f8fafc;border-bottom:1px solid #d6d9de;padding:8px 10px;font-weight:700;color:#0f172a;'>"
             f"Activite {index}"
             "</div>"
@@ -301,15 +308,14 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
             "style='width:100%;border-collapse:collapse;border-spacing:0;margin:0;font-size:11px;'>"
             "<tbody>"
             "<tr>"
+            "<td bgcolor='#EEF3FC' width='22%' "
+            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>Semestre</td>"
+            "<td bgcolor='#EEF3FC' width='24%' "
+            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>Mois</td>"
             "<td bgcolor='#EEF3FC' "
-            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>1er semestre</td>"
-            "<td bgcolor='#EEF3FC' "
-            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>2e semestre</td>"
+            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>Dates de cours</td>"
             "</tr>"
-            "<tr>"
-            f"<td width='50%' valign='top' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:top;'>{sem1_html}</td>"
-            f"<td width='50%' valign='top' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:top;'>{sem2_html}</td>"
-            "</tr>"
+            f"{semesters_html}"
             "</tbody>"
             "</table>"
             "</div>"
@@ -783,6 +789,12 @@ def _normalize_block_placeholder_wrappers(template: str, *, keys: set[str]) -> s
                 normalized,
                 flags=re.IGNORECASE | re.DOTALL,
             )
+            normalized = re.sub(
+                rf"<{tag}\b[^>]*>\s*(?:<br\s*/?>\s*|&nbsp;\s*)*{key_pattern}(?:\s*(?:<br\s*/?>|&nbsp;))*\s*</{tag}>",
+                "{" + key + "}",
+                normalized,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
     return normalized
 
 
@@ -793,6 +805,39 @@ def _as_html_fragment(content: str) -> str:
     if "<" in normalized and ">" in normalized:
         return normalized
     return "<p>" + "<br/>".join(line for line in normalized.split("\n")) + "</p>"
+
+
+def _cleanup_rendered_block_markup(content: str) -> str:
+    raw = str(content or "")
+    if not raw:
+        return raw
+
+    cleaned = raw
+    patterns = (
+        r"<p\b[^>]*>\s*(?:<br\s*/?>\s*|&nbsp;\s*)*(<div\b.*?</div>)\s*</p>",
+        r"<p\b[^>]*>\s*(?:<br\s*/?>\s*|&nbsp;\s*)*(<table\b.*?</table>)\s*</p>",
+        r"<p\b[^>]*>\s*(?:<br\s*/?>\s*|&nbsp;\s*)*(<section\b.*?</section>)\s*</p>",
+    )
+    for _ in range(3):
+        previous = cleaned
+        for pattern in patterns:
+            cleaned = re.sub(pattern, r"\1", cleaned, flags=re.IGNORECASE | re.DOTALL)
+        if cleaned == previous:
+            break
+
+    cleaned = re.sub(
+        r"<p\b[^>]*>(?:\s|&nbsp;|<br\s*/?>)*</p>",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(
+        r"<h[1-6]\b[^>]*>(?:\s|&nbsp;|<br\s*/?>)*</h[1-6]>",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return cleaned
 
 
 def _normalize_template_source(template: str) -> str:
@@ -1028,14 +1073,14 @@ def _pdf_shell_html(*, content_html: str, header_html: str, footer_html: str) ->
         "h1,h2,h3{color:#101828;margin:0 0 8px 0;}"
         "p{margin:0 0 7px 0;}"
         ".quote-page-break{page-break-before:always;}"
-        ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:avoid;}"
+        ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:auto;}"
         ".quote-content table,.quote-table{width:100%;border-collapse:collapse;border-spacing:0;table-layout:auto;margin:8px 0 12px 0;font-size:10.9px;}"
         ".quote-content th,.quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:middle !important;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;height:auto !important;min-height:30px;}"
         ".quote-content td,.quote-table td{border:1px solid #d3dbe7 !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;vertical-align:middle !important;color:#111827 !important;line-height:1.45 !important;word-break:break-word !important;white-space:normal !important;overflow-wrap:anywhere !important;height:auto !important;min-height:30px;}"
         ".quote-content td>*{margin-top:0 !important;margin-bottom:0 !important;}"
         ".quote-content thead,thead{display:table-header-group !important;}"
         ".quote-content tfoot,tfoot{display:table-footer-group !important;}"
-        ".quote-content tr,tr{page-break-inside:avoid !important;break-inside:avoid-page !important;height:auto !important;}"
+        ".quote-content tr,tr{page-break-inside:auto !important;break-inside:auto !important;height:auto !important;}"
         ".quote-brand-logo-img{display:inline-block;max-width:120px;max-height:34px;object-fit:contain;}"
         ".quote-running-header{width:100%;border-collapse:collapse;font-size:10px;color:#334155;border-bottom:1px solid #d7dee8;}"
         ".quote-running-header td{vertical-align:middle;padding:0 0 4px 0;}"
@@ -1113,7 +1158,7 @@ def _build_template_values(
         if adjustment_type == "debt"
         else ""
     )
-    adjustment_display_title = adjustment_label or adjustment_type_label
+    adjustment_display_title = adjustment_type_label if adjustment_type != "none" else ""
     adjustment_display_line = (
         f"{adjustment_display_title} : {_money(adjustment_amount, currency)}"
         if adjustment_type != "none"
@@ -1291,7 +1336,9 @@ def _build_template_values(
     )
     if not display_flags["showPaymentScheduleDetailed"]:
         compact_notice = str(document_context["payment_schedule_compact_notice"] or "").strip()
-        if compact_notice:
+        if schedule and len(schedule) <= 1:
+            payment_schedule_table_html = ""
+        elif compact_notice:
             payment_schedule_table_html = f"<p>{escape(compact_notice)}</p>"
         elif not schedule:
             payment_schedule_table_html = "<p>Aucun échéancier.</p>"
@@ -1726,6 +1773,7 @@ def _render_quote_body_html(
     )
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered = _apply_template(template, values=values, html_keys=html_keys, html_output=True)
+    rendered = _cleanup_rendered_block_markup(rendered)
     rendered = _dedupe_retained_activities_tables(rendered)
     if "{activities_planning_table_html}" not in template.lower():
         rendered += (
@@ -1764,6 +1812,7 @@ def _render_quote_terms_html(
         },
     )
     rendered_terms = _apply_template(normalized_terms, values=values, html_keys=html_keys, html_output=True)
+    rendered_terms = _cleanup_rendered_block_markup(rendered_terms)
     rendered_terms = _normalize_template_source(rendered_terms)
     rendered_terms = _cleanup_legacy_terms_layout(rendered_terms)
     header_html = values.get("header_standard_html", "")
