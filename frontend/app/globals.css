@@ -4235,19 +4235,51 @@ button.danger:focus-visible {
   font-size: 15px;
 }
 
-.solfege-slot-table th,
-.solfege-slot-table td {
-  vertical-align: middle;
+.solfege-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.solfege-slot-table td select,
-.solfege-slot-table td input {
-  width: 100%;
+.solfege-slot-row {
+  border: 1px solid #eadcc8;
+  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.solfege-slot-row-index {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #6c5535;
+  align-self: center;
+}
+
+.solfege-slot-row label {
+  display: grid;
+  gap: 4px;
   margin: 0;
 }
 
-.solfege-slot-table td:last-child {
-  white-space: nowrap;
+.solfege-slot-row-end {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+}
+
+@media (max-width: 1200px) {
+  .solfege-slot-grid {
+    grid-template-columns: 1fr;
+  }
+  .solfege-slot-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
 }
 
 .quote-template-editor-shell {
@@ -9893,6 +9925,36 @@ button.danger:focus-visible {
 .quote-workstream-card-pricing {
   border-color: #d8ccb0;
   background: linear-gradient(180deg, #fffaf2 0%, #ffffff 100%);
+}
+
+.quote-workstream-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.8rem;
+}
+
+.quote-workstream-switch-link {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: none;
+  color: #2b3a4a;
+  background: #fff;
+}
+
+.quote-workstream-switch-link-planning {
+  border-color: #c7d7f0;
+  background: #eef4ff;
+  color: #1f3f73;
+}
+
+.quote-workstream-switch-link-pricing {
+  border-color: #d8ccb0;
+  background: #fdf3de;
+  color: #5d3a08;
 }
 
 .quote-workstream-head {

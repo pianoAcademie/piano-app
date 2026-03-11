@@ -1005,11 +1005,27 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         </div>
       </section>
 
+      <section className="card">
+        <h3>Lecture rapide des 2 blocs</h3>
+        <nav className="quote-workstream-switch top-gap-sm">
+          <a className="quote-workstream-switch-link quote-workstream-switch-link-planning" href="#planning-editor">
+            Bloc 1 · Activites (pedagogie)
+          </a>
+          <a className="quote-workstream-switch-link quote-workstream-switch-link-pricing" href="#pricing-editor">
+            Bloc 2 · Lignes devis (facturation)
+          </a>
+        </nav>
+        <p className="muted top-gap-sm">
+          Bloc 1 definit <strong>quoi / ou / quand</strong> (planning des cours). Bloc 2 definit <strong>combien</strong> (montants factures).
+        </p>
+      </section>
+
       <section className="card quote-workstream-card quote-workstream-card-planning" id="planning-editor">
         <div className="quote-workstream-head">
           <span className="quote-workstream-badge quote-workstream-badge-planning">Bloc 1 · Construction pedagogique</span>
           <h3>Activites (planning)</h3>
-          <p className="muted">{calendarSessions.length} seances calculees. Configurez les cours, lieux, jours et horaires.</p>
+          <p className="muted">{calendarSessions.length} seances calculees. Configurez les cours, lieux, jours, horaires et frequence.</p>
+          <p className="muted">Ce bloc ne porte pas la facturation.</p>
         </div>
         {planningSummary.length > 0 ? (
           <div className="list top-gap-sm">
@@ -1114,11 +1130,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         <QuoteSessionsViewer quoteNumber={detail.quote.quote_number} sessions={calendarSessionsForViewer} />
       </section>
 
-      <section className="card quote-workstream-card quote-workstream-card-pricing">
+      <section className="card quote-workstream-card quote-workstream-card-pricing" id="pricing-editor">
         <div className="quote-workstream-head">
           <span className="quote-workstream-badge quote-workstream-badge-pricing">Bloc 2 · Construction commerciale</span>
           <h3>Lignes du devis (tarification)</h3>
-          <p className="muted">Construisez le chiffrage: activites, materiel, kits, remises et supplements.</p>
+          <p className="muted">Construisez le chiffrage: activites facturees, materiel, kits, remises et supplements.</p>
+          <p className="muted">Ce bloc impacte les totaux HT/TVA/TTC du devis.</p>
         </div>
         <QuoteLinesEditor
           quoteId={detail.quote.id}

@@ -1662,7 +1662,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       {tab === "solfege" ? (
         <section className="card">
           <h3>Creneaux de solfege par niveau</h3>
-          <p className="muted">Un creneau = un jour de semaine + une heure de debut. La duree est portee par le niveau et l heure de fin est calculee automatiquement.</p>
+          <p className="muted">Un creneau = un jour + une heure de debut + une duree de niveau. L heure de fin est calculee automatiquement.</p>
           <form action={upsertAdminSolfegeLevelRuleConfigAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
             <label>
@@ -1698,37 +1698,27 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             </label>
             <div className="span-4 solfege-slot-editor">
               <h4>Lignes de creneaux</h4>
-              <p className="muted">Renseignez les lignes utiles pour ce niveau. L heure de fin est calculee a l enregistrement.</p>
-              <div className="table-wrap top-gap-sm">
-                <table className="data-table solfege-slot-table">
-                  <thead>
-                    <tr>
-                      <th>Jour de semaine</th>
-                      <th>Heure debut</th>
-                      <th>Heure fin (auto)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Array.from({ length: 6 }).map((_, index) => (
-                      <tr key={`create-solfege-slot-${index}`}>
-                        <td>
-                          <select name="slot_weekday" defaultValue="">
-                            <option value="">Selection a faire</option>
-                            {WEEKDAY_OPTIONS.map((day) => (
-                              <option key={`create-solfege-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <input type="time" name="slot_start_time" defaultValue="" />
-                        </td>
-                        <td>
-                          <span className="muted">Calculee automatiquement</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <p className="muted">Desktop first: renseignez simplement les paires jour + heure de debut. Laissez vide les lignes inutiles.</p>
+              <div className="solfege-slot-grid top-gap-sm">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <article key={`create-solfege-slot-${index}`} className="solfege-slot-row">
+                    <p className="solfege-slot-row-index">Creneau {index + 1}</p>
+                    <label>
+                      Jour
+                      <select name="slot_weekday" defaultValue="">
+                        <option value="">Selection a faire</option>
+                        {WEEKDAY_OPTIONS.map((day) => (
+                          <option key={`create-solfege-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Heure debut
+                      <input type="time" name="slot_start_time" defaultValue="" />
+                    </label>
+                    <p className="muted solfege-slot-row-end">Heure fin: calculee automatiquement</p>
+                  </article>
+                ))}
               </div>
             </div>
             <label className="checkline span-4">
@@ -1807,40 +1797,30 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                               </label>
                               <div className="span-4 solfege-slot-editor">
                                 <h4>Lignes de creneaux</h4>
-                                <p className="muted">Meme logique: jour + heure de debut. L heure de fin est recalculee selon la duree.</p>
-                                <div className="table-wrap top-gap-sm">
-                                  <table className="data-table solfege-slot-table">
-                                    <thead>
-                                      <tr>
-                                        <th>Jour de semaine</th>
-                                        <th>Heure debut</th>
-                                        <th>Heure fin (auto)</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {Array.from({ length: Math.max(6, editSlots.length) }).map((_, index) => {
-                                        const slot = editSlots[index];
-                                        return (
-                                          <tr key={`${row.id}-slot-edit-${index}`}>
-                                            <td>
-                                              <select name="slot_weekday" defaultValue={slot ? String(slot.weekday) : ""}>
-                                                <option value="">Selection a faire</option>
-                                                {WEEKDAY_OPTIONS.map((day) => (
-                                                  <option key={`${row.id}-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
-                                                ))}
-                                              </select>
-                                            </td>
-                                            <td>
-                                              <input type="time" name="slot_start_time" defaultValue={slot?.start || ""} />
-                                            </td>
-                                            <td>
-                                              <span className="muted">{slot?.end || "Calculee automatiquement"}</span>
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
+                                <p className="muted">Meme logique: un creneau = jour + heure de debut. L heure de fin est recalculee selon la duree.</p>
+                                <div className="solfege-slot-grid top-gap-sm">
+                                  {Array.from({ length: Math.max(6, editSlots.length) }).map((_, index) => {
+                                    const slot = editSlots[index];
+                                    return (
+                                      <article key={`${row.id}-slot-edit-${index}`} className="solfege-slot-row">
+                                        <p className="solfege-slot-row-index">Creneau {index + 1}</p>
+                                        <label>
+                                          Jour
+                                          <select name="slot_weekday" defaultValue={slot ? String(slot.weekday) : ""}>
+                                            <option value="">Selection a faire</option>
+                                            {WEEKDAY_OPTIONS.map((day) => (
+                                              <option key={`${row.id}-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
+                                            ))}
+                                          </select>
+                                        </label>
+                                        <label>
+                                          Heure debut
+                                          <input type="time" name="slot_start_time" defaultValue={slot?.start || ""} />
+                                        </label>
+                                        <p className="muted solfege-slot-row-end">Heure fin: {slot?.end || "Calculee automatiquement"}</p>
+                                      </article>
+                                    );
+                                  })}
                                 </div>
                               </div>
                               <label className="checkline span-4">
