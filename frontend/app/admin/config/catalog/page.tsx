@@ -507,7 +507,7 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
 
       {showKitDrawer ? (
         <section className="catalog-admin-drawer-overlay">
-          <article className="catalog-admin-drawer">
+          <article className="catalog-admin-drawer catalog-admin-drawer-kit">
             <header className="catalog-admin-drawer-header">
               <div>
                 <h3>{selectedKit ? "Modifier le kit" : "Ajouter un kit"}</h3>
