@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.ops import AppSetting
+from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplateVersion, TermsTemplateVersion
 from app.models.user import User
 
@@ -84,6 +85,13 @@ def _split_ttc_with_rate(total_ttc: Decimal, vat_rate: Decimal) -> tuple[Decimal
 
 def _money(value: Decimal, currency: str) -> str:
     return f"{_decimal_str(value)} {currency}"
+
+
+def _compact_quantity_label(value: Any) -> str:
+    quantity = _decimal_from_any(value, Decimal("0"))
+    if quantity == quantity.to_integral_value():
+        return str(int(quantity))
+    return _decimal_str(quantity)
 
 
 def _schedule_due_label(item: dict[str, Any]) -> str:
@@ -521,6 +529,84 @@ def _line_groups(
             continue
         products.append(line)
     return services, products, kits, adjustments, other_fees
+
+
+def _small_description_html(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return (
+        "<div style='font-size:10px;line-height:1.35;color:#64748b;margin-top:4px;'>"
+        f"{escape(text).replace(chr(10), '<br/>')}"
+        "</div>"
+    )
+
+
+def _product_long_descriptions_by_id(*, db: Session | None, products: list[QuoteLine]) -> dict[Any, str]:
+    if db is None:
+        return {}
+    product_ids = [line.product_id for line in products if line.product_id is not None]
+    if not product_ids:
+        return {}
+    rows = db.execute(
+        select(CatalogProduct.id, CatalogProduct.long_description).where(CatalogProduct.id.in_(product_ids))
+    ).all()
+    result: dict[Any, str] = {}
+    for product_id, long_description in rows:
+        text = str(long_description or "").strip()
+        if text:
+            result[product_id] = text
+    return result
+
+
+def _kit_long_descriptions_by_id(*, db: Session | None, kits: list[QuoteLine]) -> dict[Any, str]:
+    if db is None:
+        return {}
+    kit_ids = [line.kit_id for line in kits if line.kit_id is not None]
+    if not kit_ids:
+        return {}
+    rows = db.execute(
+        select(CatalogKit.id, CatalogKit.long_description).where(CatalogKit.id.in_(kit_ids))
+    ).all()
+    result: dict[Any, str] = {}
+    for kit_id, long_description in rows:
+        text = str(long_description or "").strip()
+        if text:
+            result[kit_id] = text
+    return result
+
+
+def _kit_composition_by_id(*, db: Session | None, kits: list[QuoteLine]) -> dict[Any, list[str]]:
+    if db is None:
+        return {}
+    kit_ids = [line.kit_id for line in kits if line.kit_id is not None]
+    if not kit_ids:
+        return {}
+    rows = db.execute(
+        select(CatalogKitItem.kit_id, CatalogKitItem.quantity, CatalogProduct.title)
+        .select_from(CatalogKitItem)
+        .outerjoin(CatalogProduct, CatalogProduct.id == CatalogKitItem.product_id)
+        .where(CatalogKitItem.kit_id.in_(kit_ids))
+        .order_by(CatalogKitItem.kit_id.asc(), CatalogKitItem.display_order.asc(), CatalogKitItem.created_at.asc())
+    ).all()
+    result: dict[Any, list[str]] = {}
+    for kit_id, quantity, product_title in rows:
+        label = str(product_title or "Produit").strip() or "Produit"
+        quantity_label = _compact_quantity_label(quantity)
+        result.setdefault(kit_id, []).append(f"{label} x {quantity_label}")
+    return result
+
+
+def _kit_composition_html(items: list[str]) -> str:
+    if not items:
+        return ""
+    rendered_items = "<br/>".join(escape(item) for item in items)
+    return (
+        "<div style='font-size:10px;line-height:1.35;color:#475467;margin-top:4px;'>"
+        "<strong>Composition :</strong><br/>"
+        f"{rendered_items}"
+        "</div>"
+    )
 
 
 def _load_quote_template_snapshot(*, db: Session | None, quote: Quote) -> tuple[str, str]:
@@ -1419,11 +1505,19 @@ def _build_template_values(
         ],
         empty_label="Aucune activite.",
     )
+    product_long_descriptions = _product_long_descriptions_by_id(db=db, products=products)
     products_table_html = _table_html(
         ["Materiel", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
             [
-                line.title or "-",
+                {
+                    "html": (
+                        f"<div>{escape(line.title or '-')}</div>"
+                        + _small_description_html(
+                            product_long_descriptions.get(line.product_id) or line.description
+                        )
+                    )
+                },
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -1433,6 +1527,8 @@ def _build_template_values(
         ],
         empty_label="Aucun materiel.",
     )
+    kit_long_descriptions = _kit_long_descriptions_by_id(db=db, kits=kits)
+    kit_composition = _kit_composition_by_id(db=db, kits=kits)
     kits_table_html = _table_html(
         ["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
         [
@@ -1440,13 +1536,10 @@ def _build_template_values(
                 {
                     "html": (
                         f"<div>{escape(line.title or '-')}</div>"
-                        + (
-                            f"<div style='font-size:10px;line-height:1.35;color:#64748b;margin-top:4px;'>"
-                            f"{escape(str(line.description or '').strip()).replace(chr(10), '<br/>')}"
-                            "</div>"
+                        + _small_description_html(
+                            kit_long_descriptions.get(line.kit_id) or line.description
                         )
-                        if str(line.description or "").strip()
-                        else ""
+                        + _kit_composition_html(kit_composition.get(line.kit_id, []))
                     )
                 },
                 _decimal_str(Decimal(line.quantity or 0)),
