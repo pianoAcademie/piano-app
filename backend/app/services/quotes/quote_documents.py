@@ -2541,6 +2541,9 @@ def _render_quote_pdf_blocks(
     sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
     planning_blocks = [item for item in _json_list(calendar_snapshot.get("blocks")) if isinstance(item, dict)]
     services, products, kits, adjustments, other_fees = _line_groups(lines)
+    product_long_descriptions = _product_long_descriptions_by_id(db=db, products=products)
+    kit_long_descriptions = _kit_long_descriptions_by_id(db=db, kits=kits)
+    kit_composition = _kit_composition_by_id(db=db, kits=kits)
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     terms_lines = _terms_lines_for_pdf(cgv_content, values=values)
     schedule = [item for item in _json_list(context.get("schedule")) if isinstance(item, dict)]
@@ -2691,7 +2694,21 @@ def _render_quote_pdf_blocks(
 
     product_rows = [
         [
-            line.title or "-",
+            {
+                "text": line.title or "-",
+                "subtext": "\n".join(
+                    part
+                    for part in [
+                        str(line.description or "").strip(),
+                        (
+                            str(product_long_descriptions.get(line.product_id) or "").strip()
+                            if line.product_id is not None
+                            else ""
+                        ),
+                    ]
+                    if part
+                ),
+            },
             _decimal_str(Decimal(line.quantity or 0)),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
@@ -2716,7 +2733,23 @@ def _render_quote_pdf_blocks(
         [
             {
                 "text": line.title or "-",
-                "subtext": str(line.description or "").strip(),
+                "subtext": "\n".join(
+                    part
+                    for part in [
+                        str(line.description or "").strip(),
+                        (
+                            str(kit_long_descriptions.get(line.kit_id) or "").strip()
+                            if line.kit_id is not None
+                            else ""
+                        ),
+                        (
+                            "Composition :\n" + "\n".join(kit_composition.get(line.kit_id, []))
+                            if line.kit_id is not None and kit_composition.get(line.kit_id)
+                            else ""
+                        ),
+                    ]
+                    if part
+                ),
             },
             _decimal_str(Decimal(line.quantity or 0)),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
