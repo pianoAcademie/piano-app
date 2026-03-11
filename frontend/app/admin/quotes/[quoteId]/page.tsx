@@ -83,6 +83,7 @@ type QuoteOut = {
   quote_type: string;
   school_year_label: string | null;
   estimated_solfege_level: string | null;
+  selected_solfege_slot: Record<string, unknown>;
   calendar_snapshot: Record<string, unknown>;
   payment_terms_snapshot: Record<string, unknown>;
   cgv_snapshot: Record<string, unknown>;
@@ -121,6 +122,10 @@ type PaymentPlanOut = {
 type QuoteTypeOut = {
   id: string;
   name: string;
+  default_expiry_days: number;
+  formula_id: string | null;
+  formula_name: string | null;
+  school_year_label: string | null;
 };
 
 type PricingCatalogOut = {
@@ -219,6 +224,18 @@ function formatAmount(value: string, currency: string): string {
   } catch {
     return `${amount.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
+}
+
+function paymentMethodLabel(methodCode: string): string {
+  const normalized = String(methodCode || "").trim().toUpperCase();
+  if (normalized === "CARD") return "Carte bancaire";
+  if (normalized === "CARD_MONTHLY") return "Carte bancaire mensuelle";
+  if (normalized === "CHECK") return "Cheque";
+  if (normalized === "BANK_TRANSFER") return "Virement bancaire";
+  if (normalized === "CASH") return "Especes";
+  if (normalized === "CARD_4X_FEES") return "4 fois avec frais";
+  if (!normalized) return "-";
+  return normalized;
 }
 
 function labelForContext(contextType: string): string {
@@ -375,17 +392,6 @@ function readObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function modalityLabel(value: unknown): string {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  if (normalized === "ONLINE") {
-    return "En ligne";
-  }
-  if (normalized === "ONSITE") {
-    return "Presentiel";
-  }
-  return normalized || "-";
-}
-
 function weekdayLabelFromNumber(value: unknown): string {
   const weekday = Number.parseInt(String(value ?? ""), 10);
   if (weekday === -1) return "Selection a faire";
@@ -405,45 +411,6 @@ function getPlanningBlocks(snapshot: Record<string, unknown>): Array<Record<stri
     return [];
   }
   return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
-}
-
-function getProposedSolfegeSlots(meta: Record<string, unknown>, snapshot: Record<string, unknown>): Array<{
-  key: string;
-  label: string;
-  start_time: string;
-  end_time: string;
-}> {
-  const fromMeta = meta.proposed_solfege_slots;
-  const solfege = readObject(snapshot.solfege);
-  const fromSnapshot = solfege?.proposed_slots;
-  const raw = Array.isArray(fromMeta) && fromMeta.length > 0
-    ? fromMeta
-    : Array.isArray(fromSnapshot) ? fromSnapshot : [];
-  return raw
-    .map((item, index) => {
-      const row = readObject(item);
-      if (!row) {
-        return null;
-      }
-      const start = String(row.start_time ?? row.start ?? "").trim();
-      const end = String(row.end_time ?? row.end ?? "").trim();
-      if (!start || !end) {
-        return null;
-      }
-      const weekday = Number.parseInt(String(row.weekday ?? row.day ?? ""), 10);
-      const weekdayText = Number.isFinite(weekday) ? weekdayLabelFromNumber(weekday) : "-";
-      const modalityText = modalityLabel(row.modality);
-      const location = String(row.location_label ?? row.location_name ?? "").trim();
-      const suffix = [modalityText !== "-" ? modalityText : "", location].filter(Boolean).join(" · ");
-      const label = `${weekdayText} ${start}-${end}${suffix ? ` · ${suffix}` : ""}`;
-      return {
-        key: `${weekdayText}|${start}|${end}|${index}`,
-        label,
-        start_time: start,
-        end_time: end,
-      };
-    })
-    .filter((row): row is { key: string; label: string; start_time: string; end_time: string } => row !== null);
 }
 
 type QuoteFinancialAdjustment = {
@@ -568,6 +535,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const activeFollowup = followups[0] ?? null;
   const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
   const quoteTypes = quoteTypesResult.ok ? quoteTypesResult.data : [];
+  const selectedQuoteType = quoteTypes.find((row) => row.id === detail.quote.quote_type_id) ?? null;
   const catalogs = catalogsResult.ok ? catalogsResult.data : [];
   const termsTemplates = termsTemplatesResult.ok ? termsTemplatesResult.data : [];
   const quoteTemplates = quoteTemplatesResult.ok ? quoteTemplatesResult.data : [];
@@ -636,7 +604,39 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   }));
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
   const planningSummary = planningVisualSummary(calendarSessions);
-  const proposedSolfegeSlots = getProposedSolfegeSlots(detail.quote.meta || {}, detail.quote.calendar_snapshot || {});
+  const followupPayload = readObject(activeFollowup?.payload);
+  const followupSelectedSlot = readObject(followupPayload?.selected_solfege_slot)
+    ?? readObject(detail.quote.selected_solfege_slot);
+  const followupPaymentPlanId = String(followupPayload?.payment_plan_id ?? detail.quote.payment_plan_id ?? "").trim();
+  const followupPaymentMethodCode = String(followupPayload?.payment_method_code ?? "").trim().toUpperCase();
+  const followupLevelCode = String(
+    followupSelectedSlot?.level_code
+    ?? detail.quote.estimated_solfege_level
+    ?? "",
+  ).trim();
+  const paymentMethodOptionsByCode = new Map<string, { code: string; label: string; sourcePlans: string[] }>();
+  for (const row of paymentPlans) {
+    const code = String(row.payment_method || "").trim().toUpperCase();
+    if (!code) {
+      continue;
+    }
+    const existing = paymentMethodOptionsByCode.get(code);
+    if (existing) {
+      existing.sourcePlans.push(row.name);
+      continue;
+    }
+    paymentMethodOptionsByCode.set(code, {
+      code,
+      label: paymentMethodLabel(code),
+      sourcePlans: [row.name],
+    });
+  }
+  const followupMethodDefaultCode = followupPaymentMethodCode
+    || (followupPaymentPlanId
+      ? String(
+        paymentPlans.find((row) => row.id === followupPaymentPlanId)?.payment_method ?? "",
+      ).trim().toUpperCase()
+      : "");
   const quoteAdjustment = parseQuoteFinancialAdjustment(detail.quote.meta || {});
   const passRecupModeRaw = String((detail.quote.meta || {}).pass_recup_mode || "").trim().toLowerCase();
   const passRecupMode = passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
@@ -778,6 +778,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                 <option key={row.id} value={row.id}>{row.name}</option>
               ))}
             </select>
+            {selectedQuoteType ? (
+              <small className="muted">
+                Defaut type: expiration {selectedQuoteType.default_expiry_days} jours
+                {selectedQuoteType.school_year_label ? ` · annee scolaire ${selectedQuoteType.school_year_label}` : ""}
+                {selectedQuoteType.formula_name ? ` · formule ${selectedQuoteType.formula_name}` : ""}
+              </small>
+            ) : null}
           </label>
           <label>
             Catalogue prix
@@ -935,7 +942,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               <p className="muted">
                 Hash rendu: <strong>{documentPreview.document_hash}</strong>
               </p>
-              <div className="grid cols-2 top-gap-sm">
+	            <div className="grid cols-2 top-gap-sm">
                 <article className="item">
                   <strong>Blocs visibles</strong>
                   {documentPreview.visible_blocks.length === 0 ? (
@@ -994,6 +1001,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <p><strong>Envoi:</strong> {formatDate(detail.quote.sent_at)}</p>
           <p><strong>Expiration:</strong> {formatDate(detail.quote.expires_at)}</p>
           <p><strong>Options pedagogiques:</strong> Gerees via les activites du planning</p>
+          {selectedQuoteType?.formula_name ? <p><strong>Formule type devis:</strong> {selectedQuoteType.formula_name}</p> : null}
         </div>
       </section>
 
@@ -1157,41 +1165,58 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               <QuoteFollowupSlotForm
                 followupId={activeFollowup.id}
                 returnTo={selfPath}
-                proposedSlots={proposedSolfegeSlots}
+                solfegeRules={solfegeRules}
+                initialLevelCode={followupLevelCode}
+                initialSelectedSlot={followupSelectedSlot}
                 submitAction={selectQuoteFollowupSlotAction}
               />
 
-              <form action={changeQuoteFollowupPaymentMethodAction} className="card quote-followup-form">
-                <h4>Changer le mode de paiement</h4>
-                <input type="hidden" name="followup_id" value={activeFollowup.id} />
-                <input type="hidden" name="return_to" value={selfPath} />
-                <label>
-                  Methode
-                  <select name="payment_method_code" required>
-                    <option value="">Selectionner</option>
-                    {Array.from(new Set(paymentPlans.map((row) => row.payment_method))).map((method) => (
-                      <option key={method} value={method}>{method}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Plan de paiement (optionnel)
-                  <select name="payment_plan_id" defaultValue="">
-                    <option value="">Aucun</option>
-                    {paymentPlans.map((row) => (
-                      <option key={row.id} value={row.id}>{row.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <button type="submit">Mettre a jour paiement</button>
-              </form>
-            </div>
+	              <form id={`followup-payment-form-${activeFollowup.id}`} action={changeQuoteFollowupPaymentMethodAction} className="card quote-followup-form">
+	                <h4>Changer le mode de paiement</h4>
+	                <input type="hidden" name="followup_id" value={activeFollowup.id} />
+	                <input type="hidden" name="return_to" value={selfPath} />
+	                <label>
+	                  Methode
+	                  <select name="payment_method_code" defaultValue={followupMethodDefaultCode} required>
+	                    <option value="">Selectionner</option>
+	                    {Array.from(paymentMethodOptionsByCode.values()).map((item) => (
+	                      <option key={item.code} value={item.code}>
+	                        {item.label}
+	                      </option>
+	                    ))}
+	                  </select>
+	                  <small className="muted">Liste issue des plans de paiement configures.</small>
+	                </label>
+	                <label>
+	                  Plan de paiement (optionnel)
+	                  <select name="payment_plan_id" defaultValue={followupPaymentPlanId}>
+	                    <option value="">Aucun</option>
+	                    {paymentPlans.map((row) => (
+	                      <option key={row.id} value={row.id}>{row.name} ({paymentMethodLabel(row.payment_method)})</option>
+	                    ))}
+	                  </select>
+	                </label>
+	                <ConfirmSubmitButton
+	                  formId={`followup-payment-form-${activeFollowup.id}`}
+	                  label="Mettre a jour paiement"
+	                  title="Confirmer la mise a jour du paiement ?"
+	                  description="Le mode de paiement et le plan selectionne seront appliques au devis."
+	                  confirmLabel="Mettre a jour"
+	                />
+	              </form>
+	            </div>
 
-            <form action={finalizeQuoteFollowupAction} className="row top-gap-sm">
-              <input type="hidden" name="followup_id" value={activeFollowup.id} />
-              <input type="hidden" name="return_to" value={selfPath} />
-              <button type="submit">Finaliser le parcours post-approbation</button>
-            </form>
+	            <form id={`followup-finalize-form-${activeFollowup.id}`} action={finalizeQuoteFollowupAction} className="row top-gap-sm">
+	              <input type="hidden" name="followup_id" value={activeFollowup.id} />
+	              <input type="hidden" name="return_to" value={selfPath} />
+	              <ConfirmSubmitButton
+	                formId={`followup-finalize-form-${activeFollowup.id}`}
+	                label="Finaliser le parcours post-approbation"
+	                title="Confirmer la finalisation du parcours post-approbation ?"
+	                description="Le follow-up passera en statut complete. Le paiement et le creneau seront valides selon leur etat actuel."
+	                confirmLabel="Finaliser"
+	              />
+	            </form>
           </>
         ) : (
           <p className="muted">Aucun follow-up actif pour ce devis. Il sera cree automatiquement apres approbation du devis.</p>

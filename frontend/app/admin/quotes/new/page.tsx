@@ -19,6 +19,10 @@ type ProspectOut = {
 type QuoteTypeOut = {
   id: string;
   name: string;
+  default_expiry_days: number;
+  formula_id: string | null;
+  formula_name: string | null;
+  school_year_label: string | null;
 };
 
 type PricingCatalogOut = {
@@ -177,7 +181,14 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
           label: displayName(row.first_name, row.last_name, row.email),
           email: row.email,
         }))}
-        quoteTypes={quoteTypes.map((row) => ({ id: row.id, name: row.name }))}
+        quoteTypes={quoteTypes.map((row) => ({
+          id: row.id,
+          name: row.name,
+          default_expiry_days: row.default_expiry_days,
+          formula_id: row.formula_id,
+          formula_name: row.formula_name,
+          school_year_label: row.school_year_label,
+        }))}
         catalogs={catalogs.map((row) => ({ id: row.id, name: row.name }))}
         paymentPlans={paymentPlans.map((row) => ({ id: row.id, name: row.name, payment_method: row.payment_method }))}
         termsTemplates={termsTemplates.map((row) => ({ id: row.id, name: row.name, language: row.language }))}

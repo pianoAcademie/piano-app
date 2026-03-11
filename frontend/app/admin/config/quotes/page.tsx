@@ -29,7 +29,7 @@ import {
 import { backendRequest } from "../../../../lib/backend";
 import QuoteTemplateEditor from "../../../../components/quote-template-editor";
 import WysiwygField from "../../../../components/wysiwyg-field";
-import type { AdminActivityOut, LocationOut } from "../../../../lib/types";
+import type { AdminActivityOut, AdminFormulaOut, LocationOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -49,6 +49,9 @@ type QuoteTypeOut = {
   name: string;
   description: string | null;
   default_expiry_days: number;
+  formula_id: string | null;
+  formula_name: string | null;
+  school_year_label: string | null;
   is_active: boolean;
   updated_at: string;
 };
@@ -256,13 +259,8 @@ const MONTH_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 12, label: "Decembre" },
 ];
 
-function weekdaysLabel(days: number[]): string {
-  if (!days.length) {
-    return "Tous";
-  }
-  return days
-    .map((day) => WEEKDAY_OPTIONS.find((option) => option.value === day)?.label ?? String(day))
-    .join(", ");
+function weekdayLabel(day: number): string {
+  return WEEKDAY_OPTIONS.find((option) => option.value === day)?.label ?? String(day);
 }
 
 function paymentScheduleTypeLabel(value: string): string {
@@ -338,7 +336,7 @@ function solfegeSlotsCsv(slots: Array<Record<string, unknown>>): string {
     .map((slot) => {
       const weekdayRaw = Number.parseInt(String(slot.weekday ?? ""), 10);
       const weekdayText = Number.isFinite(weekdayRaw) && weekdayRaw >= 0 && weekdayRaw <= 6
-        ? `${WEEKDAY_OPTIONS.find((item) => item.value === weekdayRaw)?.label ?? weekdayRaw}`
+        ? `${weekdayLabel(weekdayRaw)}`
         : "";
       const start = typeof slot.start_time === "string" ? slot.start_time : typeof slot.start === "string" ? slot.start : "";
       const end = typeof slot.end_time === "string" ? slot.end_time : typeof slot.end === "string" ? slot.end : "";
@@ -353,7 +351,6 @@ function solfegeSlotsCsv(slots: Array<Record<string, unknown>>): string {
 
 function solfegeSlotRows(
   slots: Array<Record<string, unknown>>,
-  weekdays: number[],
 ): Array<{ weekday: number; start: string; end: string }> {
   const out: Array<{ weekday: number; start: string; end: string }> = [];
   for (const slot of slots) {
@@ -365,11 +362,6 @@ function solfegeSlotRows(
     const weekdayRaw = Number.parseInt(String(slot.weekday ?? ""), 10);
     if (Number.isFinite(weekdayRaw) && weekdayRaw >= 0 && weekdayRaw <= 6) {
       out.push({ weekday: weekdayRaw, start, end });
-      continue;
-    }
-    const fallbackWeekday = weekdays.find((day) => Number.isFinite(day) && day >= 0 && day <= 6);
-    if (fallbackWeekday !== undefined) {
-      out.push({ weekday: fallbackWeekday, start, end });
     }
   }
   return out;
@@ -406,6 +398,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
   const [
     quoteTypesResult,
+    formulasResult,
     catalogsResult,
     paymentPlansResult,
     templateVariablesResult,
@@ -417,6 +410,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     quoteDocumentBindingsResult,
   ] = await Promise.all([
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
+    backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas?include_inactive=true", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
     backendRequest<QuoteTemplateVariableOut[]>("/api/v1/quote-template-variables", {}, token),
@@ -434,6 +428,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     : (() => {
         loadErrors.push(`Types de devis: ${quoteTypesResult.message}`);
         return [] as QuoteTypeOut[];
+      })();
+  const formulas = formulasResult.ok
+    ? formulasResult.data
+    : (() => {
+        loadErrors.push(`Formules: ${formulasResult.message}`);
+        return [] as AdminFormulaOut[];
       })();
   const catalogs = catalogsResult.ok
     ? catalogsResult.data
@@ -491,6 +491,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       })();
 
   const locationById = new Map(locations.map((row) => [row.id, row.name]));
+  const formulaById = new Map(formulas.map((row) => [row.id, row.name]));
   const activityFamilies = Array.from(
     new Set(
       activities
@@ -607,6 +608,21 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               Delai expiration (jours)
               <input type="number" name="default_expiry_days" min={1} max={120} defaultValue={10} required />
             </label>
+            <label>
+              Annee scolaire par defaut
+              <input type="text" name="school_year_label" maxLength={40} placeholder="2026-2027" />
+            </label>
+            <label className="span-2">
+              Formule rattachee
+              <select name="formula_id" defaultValue="">
+                <option value="">Aucune</option>
+                {formulas.map((formula) => (
+                  <option key={formula.id} value={formula.id}>
+                    {formula.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="span-3">
               Description
               <input type="text" name="description" maxLength={2000} />
@@ -628,6 +644,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                   <div>
                     <strong>{row.name}</strong>
                     <p className="muted">{row.code} · Expiration {row.default_expiry_days} jours</p>
+                    <p className="muted">
+                      Formule: {row.formula_name || "-"} · Annee scolaire: {row.school_year_label || "-"}
+                    </p>
                     <small className="muted">{row.description || "Sans description"}</small>
                   </div>
                   <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span>
@@ -644,6 +663,21 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     <label>
                       Delai expiration (jours)
                       <input type="number" name="default_expiry_days" min={1} max={120} defaultValue={row.default_expiry_days} required />
+                    </label>
+                    <label>
+                      Annee scolaire par defaut
+                      <input type="text" name="school_year_label" defaultValue={row.school_year_label || ""} maxLength={40} />
+                    </label>
+                    <label className="span-2">
+                      Formule rattachee
+                      <select name="formula_id" defaultValue={row.formula_id || ""}>
+                        <option value="">Aucune</option>
+                        {formulas.map((formula) => (
+                          <option key={formula.id} value={formula.id}>
+                            {formula.name}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                     <label className="span-3">
                       Description
@@ -1628,7 +1662,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       {tab === "solfege" ? (
         <section className="card">
           <h3>Creneaux de solfege par niveau</h3>
-          <p className="muted">Configurez les jours et creneaux en langage metier (ex: mardi 17:05-17:35).</p>
+          <p className="muted">Un creneau = un jour de semaine + une heure de debut. La duree est portee par le niveau et l heure de fin est calculee automatiquement.</p>
           <form action={upsertAdminSolfegeLevelRuleConfigAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
             <label>
@@ -1662,40 +1696,42 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 <option value="ONSITE">Presentiel</option>
               </select>
             </label>
-            <fieldset className="span-2">
-              <legend>Jours autorises</legend>
-              <div className="row wrap gap-sm">
-                {WEEKDAY_OPTIONS.map((day) => (
-                  <label key={`create-day-${day.value}`} className="checkline">
-                    <input type="checkbox" name="allowed_weekday" value={day.value} />
-                    {day.label}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <div className="span-4">
-              <p className="muted">Lignes de creneaux (jour + heure de debut). L heure de fin est calculee automatiquement avec la duree.</p>
-              <div className="grid cols-4 top-gap-sm">
-                {Array.from({ length: 5 }).map((_, index) => (
-                  <div key={`create-solfege-slot-${index}`} className="grid cols-2">
-                    <label>
-                      Jour
-                      <select name="slot_weekday" defaultValue="">
-                        <option value="">-</option>
-                        {WEEKDAY_OPTIONS.map((day) => (
-                          <option key={`create-solfege-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Heure debut
-                      <input type="time" name="slot_start_time" defaultValue="" />
-                    </label>
-                  </div>
-                ))}
+            <div className="span-4 solfege-slot-editor">
+              <h4>Lignes de creneaux</h4>
+              <p className="muted">Renseignez les lignes utiles pour ce niveau. L heure de fin est calculee a l enregistrement.</p>
+              <div className="table-wrap top-gap-sm">
+                <table className="data-table solfege-slot-table">
+                  <thead>
+                    <tr>
+                      <th>Jour de semaine</th>
+                      <th>Heure debut</th>
+                      <th>Heure fin (auto)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      <tr key={`create-solfege-slot-${index}`}>
+                        <td>
+                          <select name="slot_weekday" defaultValue="">
+                            <option value="">Selection a faire</option>
+                            {WEEKDAY_OPTIONS.map((day) => (
+                              <option key={`create-solfege-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <input type="time" name="slot_start_time" defaultValue="" />
+                        </td>
+                        <td>
+                          <span className="muted">Calculee automatiquement</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
-            <label className="checkline">
+            <label className="checkline span-4">
               <input type="checkbox" name="is_active" defaultChecked />
               Active
             </label>
@@ -1710,7 +1746,6 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 <tr>
                   <th>Niveau</th>
                   <th>Duree</th>
-                  <th>Jours</th>
                   <th>Creneaux</th>
                   <th>Local</th>
                   <th>Mode</th>
@@ -1720,105 +1755,112 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               </thead>
               <tbody>
                 {solfegeRules.length === 0 ? (
-                  <tr><td colSpan={8}><p className="muted">Aucune regle solfege.</p></td></tr>
+                  <tr><td colSpan={7}><p className="muted">Aucune regle solfege.</p></td></tr>
                 ) : (
-                  solfegeRules.map((row) => (
-                    <tr key={row.id}>
-                      <td>Niveau {row.level_code}</td>
-                      <td>{row.duration_minutes} min</td>
-                      <td>{weekdaysLabel(row.allowed_weekdays)}</td>
-                      <td>{solfegeSlotsCsv(row.allowed_time_slots) || "-"}</td>
-                      <td>{row.location_id ? (locationById.get(row.location_id) || row.location_id) : "Tous"}</td>
-                      <td>{modalityLabel(row.modality)}</td>
-                      <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Active" : "Inactive"}</span></td>
-                      <td>
-                        <details>
-                          <summary className="mode-link">Modifier</summary>
-                          <form action={upsertAdminSolfegeLevelRuleConfigAction} className="grid config-form-grid top-gap-sm">
-                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
-                            <label>
-                              Niveau
-                              <input type="text" name="level_code" defaultValue={row.level_code} maxLength={10} required />
-                            </label>
-                            <label>
-                              Duree (min)
-                              <input type="number" name="duration_minutes" min={10} max={180} defaultValue={row.duration_minutes} required />
-                            </label>
-                            <label>
-                              Local
-                              <select name="location_id" defaultValue={row.location_id || ""}>
-                                <option value="">Tous</option>
-                                {locations.map((location) => (
-                                  <option key={location.id} value={location.id}>{location.name}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <label>
-                              Modalite
-                              <select name="modality" defaultValue={(row.modality || "ANY").toUpperCase()}>
-                                <option value="ANY">Tous</option>
-                                <option value="ONLINE">En ligne</option>
-                                <option value="ONSITE">Presentiel</option>
-                              </select>
-                            </label>
-                            <fieldset>
-                              <legend>Jours autorises</legend>
-                              <div className="row wrap gap-sm">
-                                {WEEKDAY_OPTIONS.map((day) => (
-                                  <label key={`${row.id}-day-${day.value}`} className="checkline">
-                                    <input
-                                      type="checkbox"
-                                      name="allowed_weekday"
-                                      value={day.value}
-                                      defaultChecked={row.allowed_weekdays.includes(day.value)}
-                                    />
-                                    {day.label}
-                                  </label>
-                                ))}
+                  solfegeRules.map((row) => {
+                    const editSlots = solfegeSlotRows(row.allowed_time_slots);
+                    const levelKnown = ["1", "2", "3", "4", "5"].includes(row.level_code);
+                    return (
+                      <tr key={row.id}>
+                        <td>Niveau {row.level_code}</td>
+                        <td>{row.duration_minutes} min</td>
+                        <td>{solfegeSlotsCsv(row.allowed_time_slots) || "-"}</td>
+                        <td>{row.location_id ? (locationById.get(row.location_id) || row.location_id) : "Tous"}</td>
+                        <td>{modalityLabel(row.modality)}</td>
+                        <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Active" : "Inactive"}</span></td>
+                        <td>
+                          <details>
+                            <summary className="mode-link">Modifier</summary>
+                            <form action={upsertAdminSolfegeLevelRuleConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
+                              <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
+                              <label>
+                                Niveau
+                                <select name="level_code" defaultValue={row.level_code}>
+                                  {!levelKnown ? <option value={row.level_code}>Niveau {row.level_code}</option> : null}
+                                  <option value="1">Niveau 1</option>
+                                  <option value="2">Niveau 2</option>
+                                  <option value="3">Niveau 3</option>
+                                  <option value="4">Niveau 4</option>
+                                  <option value="5">Niveau 5</option>
+                                </select>
+                              </label>
+                              <label>
+                                Duree (min)
+                                <input type="number" name="duration_minutes" min={10} max={180} defaultValue={row.duration_minutes} required />
+                              </label>
+                              <label>
+                                Local
+                                <select name="location_id" defaultValue={row.location_id || ""}>
+                                  <option value="">Tous</option>
+                                  {locations.map((location) => (
+                                    <option key={location.id} value={location.id}>{location.name}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                Modalite
+                                <select name="modality" defaultValue={(row.modality || "ANY").toUpperCase()}>
+                                  <option value="ANY">Tous</option>
+                                  <option value="ONLINE">En ligne</option>
+                                  <option value="ONSITE">Presentiel</option>
+                                </select>
+                              </label>
+                              <div className="span-4 solfege-slot-editor">
+                                <h4>Lignes de creneaux</h4>
+                                <p className="muted">Meme logique: jour + heure de debut. L heure de fin est recalculee selon la duree.</p>
+                                <div className="table-wrap top-gap-sm">
+                                  <table className="data-table solfege-slot-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Jour de semaine</th>
+                                        <th>Heure debut</th>
+                                        <th>Heure fin (auto)</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {Array.from({ length: Math.max(6, editSlots.length) }).map((_, index) => {
+                                        const slot = editSlots[index];
+                                        return (
+                                          <tr key={`${row.id}-slot-edit-${index}`}>
+                                            <td>
+                                              <select name="slot_weekday" defaultValue={slot ? String(slot.weekday) : ""}>
+                                                <option value="">Selection a faire</option>
+                                                {WEEKDAY_OPTIONS.map((day) => (
+                                                  <option key={`${row.id}-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
+                                                ))}
+                                              </select>
+                                            </td>
+                                            <td>
+                                              <input type="time" name="slot_start_time" defaultValue={slot?.start || ""} />
+                                            </td>
+                                            <td>
+                                              <span className="muted">{slot?.end || "Calculee automatiquement"}</span>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
                               </div>
-                            </fieldset>
-                            <div className="span-4">
-                              <p className="muted">Lignes de creneaux (jour + heure de debut). Duree heritee du niveau.</p>
-                              <div className="grid cols-4 top-gap-sm">
-                                {Array.from({ length: Math.max(5, solfegeSlotRows(row.allowed_time_slots, row.allowed_weekdays).length) }).map((_, index) => {
-                                  const slot = solfegeSlotRows(row.allowed_time_slots, row.allowed_weekdays)[index];
-                                  return (
-                                    <div key={`${row.id}-slot-edit-${index}`} className="grid cols-2">
-                                      <label>
-                                        Jour
-                                        <select name="slot_weekday" defaultValue={slot ? String(slot.weekday) : ""}>
-                                          <option value="">-</option>
-                                          {WEEKDAY_OPTIONS.map((day) => (
-                                            <option key={`${row.id}-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
-                                          ))}
-                                        </select>
-                                      </label>
-                                      <label>
-                                        Heure debut
-                                        <input type="time" name="slot_start_time" defaultValue={slot?.start || ""} />
-                                      </label>
-                                    </div>
-                                  );
-                                })}
+                              <label className="checkline span-4">
+                                <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
+                                Active
+                              </label>
+                              <div className="row span-4">
+                                <button type="submit">Enregistrer</button>
                               </div>
-                            </div>
-                            <label className="checkline">
-                              <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                              Active
-                            </label>
-                            <div className="row">
-                              <button type="submit">Enregistrer</button>
-                            </div>
-                          </form>
-                          <form action={deleteAdminSolfegeLevelRuleConfigAction} className="row top-gap-sm">
-                            <input type="hidden" name="rule_id" value={row.id} />
-                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
-                            <button type="submit" className="danger">Supprimer</button>
-                          </form>
-                        </details>
-                      </td>
-                    </tr>
-                  ))
+                            </form>
+                            <form action={deleteAdminSolfegeLevelRuleConfigAction} className="row top-gap-sm">
+                              <input type="hidden" name="rule_id" value={row.id} />
+                              <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
+                              <button type="submit" className="danger">Supprimer</button>
+                            </form>
+                          </details>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

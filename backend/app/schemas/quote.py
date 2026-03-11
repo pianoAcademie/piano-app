@@ -170,7 +170,7 @@ class QuoteCreateRequest(BaseModel):
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     language: str | None = Field(default=None, max_length=8)
     vat_rate: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
-    expiry_days: int = Field(default=10, ge=1, le=120)
+    expiry_days: int | None = Field(default=None, ge=1, le=120)
     quote_date: date | None = None
     estimated_solfege_level: str | None = Field(default=None, max_length=10)
     selected_solfege_slot: dict[str, object] = Field(default_factory=dict)
@@ -279,6 +279,9 @@ class QuoteTypeOut(BaseModel):
     name: str
     description: str | None = None
     default_expiry_days: int
+    formula_id: UUID | None = None
+    formula_name: str | None = None
+    school_year_label: str | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -289,6 +292,8 @@ class QuoteTypeUpsertRequest(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     description: str | None = None
     default_expiry_days: int = Field(default=10, ge=1, le=120)
+    formula_id: UUID | None = None
+    school_year_label: str | None = Field(default=None, max_length=40)
     is_active: bool = True
 
 

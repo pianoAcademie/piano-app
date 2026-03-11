@@ -19,6 +19,7 @@ from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
 from app.models.ops import AppSetting
+from app.models.plan import Plan
 from app.models.product_catalog import CatalogKit, CatalogProduct
 from app.models.quote import (
     PaymentPlan,
@@ -1314,13 +1315,16 @@ def _payment_plan_out(row: PaymentPlan) -> PaymentPlanOut:
     )
 
 
-def _quote_type_out(row: QuoteType) -> QuoteTypeOut:
+def _quote_type_out(row: QuoteType, *, formula_name: str | None = None) -> QuoteTypeOut:
     return QuoteTypeOut(
         id=row.id,
         code=row.code,
         name=row.name,
         description=row.description,
         default_expiry_days=int(row.default_expiry_days or 10),
+        formula_id=row.formula_id,
+        formula_name=formula_name,
+        school_year_label=row.school_year_label,
         is_active=bool(row.is_active),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -2476,9 +2480,24 @@ def create_quote(
                 select(TermsTemplate).where(TermsTemplate.id == selected_terms_template_version.terms_template_id)
             )
 
+    selected_quote_type: QuoteType | None = None
+    if payload.quote_type_id is not None:
+        selected_quote_type = db.scalar(select(QuoteType).where(QuoteType.id == payload.quote_type_id))
+        if selected_quote_type is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote type not found")
+
+    effective_expiry_days = int(payload.expiry_days) if payload.expiry_days is not None else int(
+        selected_quote_type.default_expiry_days if selected_quote_type and selected_quote_type.default_expiry_days else 10
+    )
+    effective_school_year_label = (
+        payload.school_year_label.strip()
+        if payload.school_year_label is not None and payload.school_year_label.strip()
+        else (selected_quote_type.school_year_label if selected_quote_type is not None else None)
+    )
+
     now = _utcnow()
     quote_dt = datetime.combine(payload.quote_date or now.date(), time(0, 0), tzinfo=timezone.utc)
-    expires_at = quote_dt + timedelta(days=int(payload.expiry_days))
+    expires_at = quote_dt + timedelta(days=effective_expiry_days)
     quote_meta = _normalize_quote_meta(payload.meta)
     if payload.language is not None and payload.language.strip():
         quote_meta["language"] = payload.language.strip().lower()
@@ -2546,9 +2565,9 @@ def create_quote(
         version_number=1,
         currency=payload.currency.upper(),
         total_ttc=Decimal("0"),
-        expiry_days=int(payload.expiry_days),
+        expiry_days=effective_expiry_days,
         expires_at=expires_at,
-        school_year_label=payload.school_year_label,
+        school_year_label=effective_school_year_label,
         language=resolved_language or None,
         vat_rate=payload.vat_rate if payload.vat_rate is not None else _extract_vat_rate(quote_meta),
         estimated_solfege_level=payload.estimated_solfege_level,
@@ -4464,7 +4483,15 @@ def list_quote_types(
     if active_only:
         stmt = stmt.where(QuoteType.is_active.is_(True))
     rows = db.scalars(stmt.order_by(QuoteType.name.asc())).all()
-    return [_quote_type_out(row) for row in rows]
+    formula_ids = [row.formula_id for row in rows if row.formula_id is not None]
+    formula_names_by_id: dict[UUID, str] = {}
+    if formula_ids:
+        formulas = db.scalars(select(Plan).where(Plan.id.in_(formula_ids))).all()
+        formula_names_by_id = {row.id: row.name for row in formulas}
+    return [
+        _quote_type_out(row, formula_name=formula_names_by_id.get(row.formula_id) if row.formula_id is not None else None)
+        for row in rows
+    ]
 
 
 @router.post("/quote-types", response_model=QuoteTypeOut, status_code=status.HTTP_201_CREATED)
@@ -4473,6 +4500,12 @@ def create_quote_type(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteTypeOut:
+    formula_name: str | None = None
+    if payload.formula_id is not None:
+        formula_row = db.scalar(select(Plan).where(Plan.id == payload.formula_id))
+        if formula_row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Formula not found")
+        formula_name = formula_row.name
     now = _utcnow()
     requested_code = (payload.code or "").strip().upper()
     base_code = requested_code or _quote_type_code_from_name(payload.name)
@@ -4482,6 +4515,8 @@ def create_quote_type(
         name=payload.name.strip(),
         description=payload.description,
         default_expiry_days=payload.default_expiry_days,
+        formula_id=payload.formula_id,
+        school_year_label=payload.school_year_label,
         is_active=payload.is_active,
         created_at=now,
         updated_at=now,
@@ -4493,7 +4528,7 @@ def create_quote_type(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote type code already exists") from exc
     db.refresh(row)
-    return _quote_type_out(row)
+    return _quote_type_out(row, formula_name=formula_name)
 
 
 @router.patch("/quote-types/{quote_type_id}", response_model=QuoteTypeOut)
@@ -4506,6 +4541,12 @@ def update_quote_type(
     row = db.scalar(select(QuoteType).where(QuoteType.id == quote_type_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote type not found")
+    formula_name: str | None = None
+    if payload.formula_id is not None:
+        formula_row = db.scalar(select(Plan).where(Plan.id == payload.formula_id))
+        if formula_row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Formula not found")
+        formula_name = formula_row.name
     requested_code = (payload.code or "").strip().upper()
     if requested_code:
         row.code = _next_available_quote_type_code(db, base_code=requested_code, exclude_id=row.id)
@@ -4518,6 +4559,8 @@ def update_quote_type(
     row.name = payload.name.strip()
     row.description = payload.description
     row.default_expiry_days = payload.default_expiry_days
+    row.formula_id = payload.formula_id
+    row.school_year_label = payload.school_year_label
     row.is_active = payload.is_active
     row.updated_at = _utcnow()
     db.add(row)
@@ -4527,7 +4570,9 @@ def update_quote_type(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote type code already exists") from exc
     db.refresh(row)
-    return _quote_type_out(row)
+    if formula_name is None and row.formula_id is not None:
+        formula_name = db.scalar(select(Plan.name).where(Plan.id == row.formula_id))
+    return _quote_type_out(row, formula_name=formula_name)
 
 
 @router.delete("/quote-types/{quote_type_id}", status_code=status.HTTP_200_OK)

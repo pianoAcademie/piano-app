@@ -8835,7 +8835,8 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const currencyRaw = String(formData.get("currency") ?? "EUR").trim().toUpperCase();
   const currency = currencyRaw.length === 3 ? currencyRaw : "EUR";
   const tvaRateRaw = String(formData.get("tva_rate") ?? "").trim();
-  const expiryDays = parsePositiveInt(String(formData.get("expiry_days") ?? "10")) ?? 10;
+  const expiryDaysRaw = String(formData.get("expiry_days") ?? "").trim();
+  const expiryDays = expiryDaysRaw ? parsePositiveInt(expiryDaysRaw) : null;
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
   const estimatedSolfegeLevel = String(formData.get("estimated_solfege_level") ?? "").trim() || null;
   const solfegeSlotJsonRaw = String(formData.get("solfege_slot_json") ?? "").trim();
@@ -8881,6 +8882,9 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   }
   if (contextType === "active_client" && !clientId) {
     redirect(appendQueryMessage(returnTo, "error", "Selectionner un client actif pour ce devis"));
+  }
+  if (expiryDaysRaw && expiryDays === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Delai expiration invalide"));
   }
 
   let calendarSnapshot: Record<string, unknown> = {};
@@ -9960,36 +9964,6 @@ function parseWeekdayValues(values: string[]): number[] | null {
   return out.sort((a, b) => a - b);
 }
 
-function parseWeekdaysCsv(raw: string): number[] | null {
-  const value = raw.trim();
-  if (!value) {
-    return [];
-  }
-  return parseWeekdayValues(value.split(/[,\s;]+/));
-}
-
-function parseTimeSlotsCsv(raw: string): Array<{ start_time: string; end_time: string }> | null {
-  const value = raw.trim();
-  if (!value) {
-    return [];
-  }
-  const out: Array<{ start_time: string; end_time: string }> = [];
-  for (const chunk of value.split(/[;,]+/)) {
-    const token = chunk.trim();
-    if (!token) {
-      continue;
-    }
-    const match = token.match(/^([01]\d|2[0-3]):([0-5]\d)\s*-\s*([01]\d|2[0-3]):([0-5]\d)$/);
-    if (!match) {
-      return null;
-    }
-    const start = `${match[1]}:${match[2]}`;
-    const end = `${match[3]}:${match[4]}`;
-    out.push({ start_time: start, end_time: end });
-  }
-  return out;
-}
-
 function parseJsonObject(raw: string): Record<string, unknown> | null {
   const value = raw.trim();
   if (!value) {
@@ -10303,6 +10277,8 @@ export async function createAdminQuoteTypeConfigAction(formData: FormData): Prom
   const name = String(formData.get("name") ?? "").trim();
   const description = optionalField(formData, "description");
   const defaultExpiryDays = parsePositiveInt(String(formData.get("default_expiry_days") ?? "")) ?? null;
+  const formulaId = parseUuid(String(formData.get("formula_id") ?? ""));
+  const schoolYearLabel = optionalField(formData, "school_year_label");
   const isActive = parseCheckboxFlag(formData, "is_active", true);
 
   if (!name || defaultExpiryDays === null) {
@@ -10318,6 +10294,8 @@ export async function createAdminQuoteTypeConfigAction(formData: FormData): Prom
         name,
         description,
         default_expiry_days: defaultExpiryDays,
+        formula_id: formulaId,
+        school_year_label: schoolYearLabel,
         is_active: isActive,
       }),
     },
@@ -10345,6 +10323,8 @@ export async function updateAdminQuoteTypeConfigAction(formData: FormData): Prom
   const name = String(formData.get("name") ?? "").trim();
   const description = optionalField(formData, "description");
   const defaultExpiryDays = parsePositiveInt(String(formData.get("default_expiry_days") ?? "")) ?? null;
+  const formulaId = parseUuid(String(formData.get("formula_id") ?? ""));
+  const schoolYearLabel = optionalField(formData, "school_year_label");
   const isActive = parseCheckboxFlag(formData, "is_active", true);
   if (!quoteTypeId || !name || defaultExpiryDays === null) {
     redirect(appendQueryMessage(returnTo, "error", "Type de devis invalide"));
@@ -10359,6 +10339,8 @@ export async function updateAdminQuoteTypeConfigAction(formData: FormData): Prom
         name,
         description,
         default_expiry_days: defaultExpiryDays,
+        formula_id: formulaId,
+        school_year_label: schoolYearLabel,
         is_active: isActive,
       }),
     },
@@ -10719,27 +10701,11 @@ export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData
   if (structuredSlots === null) {
     redirect(appendQueryMessage(returnTo, "error", "Creneaux invalides (jour + heure de debut)"));
   }
-
-  const weekdayTokens = formData
-    .getAll("allowed_weekday")
-    .map((entry) => String(entry).trim())
-    .filter((entry) => entry.length > 0);
-  const fallbackWeekdays = weekdayTokens.length > 0
-    ? parseWeekdayValues(weekdayTokens)
-    : parseWeekdaysCsv(String(formData.get("allowed_weekdays_csv") ?? ""));
-  const fallbackSlots = parseTimeSlotsCsv(String(formData.get("allowed_time_slots_csv") ?? ""));
-
-  const weekdays = structuredSlots.length > 0
-    ? Array.from(new Set(structuredSlots.map((slot) => slot.weekday))).sort((a, b) => a - b)
-    : fallbackWeekdays;
-  const timeSlots = structuredSlots.length > 0 ? structuredSlots : fallbackSlots;
-
-  if (weekdays === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Jours autorises invalides"));
+  if (structuredSlots.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Ajoutez au moins un creneau (jour + heure de debut)"));
   }
-  if (timeSlots === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Format creneaux invalide (HH:MM-HH:MM)"));
-  }
+  const weekdays = Array.from(new Set(structuredSlots.map((slot) => slot.weekday))).sort((a, b) => a - b);
+  const timeSlots = structuredSlots;
 
   const modality = modalityRaw === "ONLINE" || modalityRaw === "ONSITE" || modalityRaw === "ANY" ? modalityRaw : null;
 
@@ -11798,11 +11764,42 @@ export async function selectQuoteFollowupSlotAction(formData: FormData): Promise
   }
   await ensureAdmin(token);
   const followupId = String(formData.get("followup_id") ?? "").trim();
+  const levelCode = String(formData.get("solfege_level_code") ?? "").trim();
+  const slotJson = String(formData.get("slot_json") ?? "").trim();
   const slotDate = String(formData.get("slot_date") ?? "").trim();
   const slotStart = String(formData.get("slot_start_time") ?? "").trim();
   const slotEnd = String(formData.get("slot_end_time") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
-  if (!followupId || !slotDate || !slotStart || !slotEnd) {
+  if (!followupId) {
+    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege incomplet"));
+  }
+
+  let slotPayload: Record<string, unknown> | null = null;
+  if (slotJson) {
+    try {
+      const parsed = JSON.parse(slotJson) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        slotPayload = { ...(parsed as Record<string, unknown>) };
+      }
+    } catch {
+      slotPayload = null;
+    }
+  }
+
+  if (slotPayload && levelCode && !String(slotPayload.level_code ?? "").trim()) {
+    slotPayload.level_code = levelCode;
+  }
+
+  if (!slotPayload && slotDate && slotStart && slotEnd) {
+    slotPayload = {
+      level_code: levelCode || null,
+      date: slotDate,
+      start_time: slotStart,
+      end_time: slotEnd,
+    };
+  }
+
+  if (!slotPayload) {
     redirect(appendQueryMessage(returnTo, "error", "Creneau solfege incomplet"));
   }
 
@@ -11811,11 +11808,7 @@ export async function selectQuoteFollowupSlotAction(formData: FormData): Promise
     {
       method: "POST",
       body: JSON.stringify({
-        slot: {
-          date: slotDate,
-          start_time: slotStart,
-          end_time: slotEnd,
-        },
+        slot: slotPayload,
       }),
     },
     token,

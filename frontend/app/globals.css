@@ -4221,6 +4221,35 @@ button.danger:focus-visible {
   gap: 6px;
 }
 
+.solfege-slot-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #decfb7;
+  border-radius: 10px;
+  background: #fffdf9;
+}
+
+.solfege-slot-editor h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.solfege-slot-table th,
+.solfege-slot-table td {
+  vertical-align: middle;
+}
+
+.solfege-slot-table td select,
+.solfege-slot-table td input {
+  width: 100%;
+  margin: 0;
+}
+
+.solfege-slot-table td:last-child {
+  white-space: nowrap;
+}
+
 .quote-template-editor-shell {
   border: 1px solid #d7c6a8;
   border-radius: 10px;

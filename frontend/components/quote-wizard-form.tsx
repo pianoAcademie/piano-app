@@ -18,6 +18,10 @@ type ClientOption = {
 type QuoteTypeOption = {
   id: string;
   name: string;
+  default_expiry_days: number;
+  formula_id: string | null;
+  formula_name: string | null;
+  school_year_label: string | null;
 };
 
 type CatalogOption = {
@@ -437,9 +441,14 @@ export default function QuoteWizardForm({
 }: QuoteWizardFormProps): JSX.Element {
   const createDraftFormId = "quote-wizard-create-draft-form";
   const defaultTemplate = quoteTemplates.find((item) => item.is_default) ?? quoteTemplates[0] ?? null;
+  const initialQuoteTypeId = quoteTypes[0]?.id ?? "";
+  const initialQuoteType = quoteTypes.find((item) => item.id === initialQuoteTypeId) ?? null;
   const [contextType, setContextType] = useState<"acquisition" | "active_client">("acquisition");
   const [selectedProspectId, setSelectedProspectId] = useState<string>(defaultProspectId || "");
   const [selectedClientId, setSelectedClientId] = useState<string>("");
+  const [selectedQuoteTypeId, setSelectedQuoteTypeId] = useState<string>(initialQuoteTypeId);
+  const [expiryDaysInput, setExpiryDaysInput] = useState<string>(String(initialQuoteType?.default_expiry_days ?? 10));
+  const [schoolYearLabelInput, setSchoolYearLabelInput] = useState<string>(initialQuoteType?.school_year_label ?? "");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultTemplate?.id ?? "");
   const [language, setLanguage] = useState<string>(normalizeLang(defaultTemplate?.language));
   const [currency, setCurrency] = useState<string>("EUR");
@@ -471,6 +480,10 @@ export default function QuoteWizardForm({
   const selectedSolfegeSlot = useMemo(
     () => solfegeSlotOptions.find((item) => item.key === selectedSolfegeSlotKey) ?? null,
     [solfegeSlotOptions, selectedSolfegeSlotKey],
+  );
+  const selectedQuoteType = useMemo(
+    () => quoteTypes.find((item) => item.id === selectedQuoteTypeId) ?? null,
+    [quoteTypes, selectedQuoteTypeId],
   );
   const languageTemplates = useMemo(
     () => quoteTemplates.filter((item) => normalizeLang(item.language) === normalizeLang(language)),
@@ -705,7 +718,17 @@ export default function QuoteWizardForm({
           <div className="grid cols-2 top-gap-sm">
             <label>
               Type de devis
-              <select name="quote_type_id" defaultValue={quoteTypes[0]?.id ?? ""}>
+              <select
+                name="quote_type_id"
+                value={selectedQuoteTypeId}
+                onChange={(event) => {
+                  const nextQuoteTypeId = event.target.value;
+                  setSelectedQuoteTypeId(nextQuoteTypeId);
+                  const nextQuoteType = quoteTypes.find((item) => item.id === nextQuoteTypeId) ?? null;
+                  setExpiryDaysInput(String(nextQuoteType?.default_expiry_days ?? 10));
+                  setSchoolYearLabelInput(nextQuoteType?.school_year_label ?? "");
+                }}
+              >
                 <option value="">Par defaut</option>
                 {quoteTypes.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -713,6 +736,13 @@ export default function QuoteWizardForm({
                   </option>
                 ))}
               </select>
+              {selectedQuoteType ? (
+                <small className="muted">
+                  Defaut type: expiration {selectedQuoteType.default_expiry_days} jours
+                  {selectedQuoteType.school_year_label ? ` · annee scolaire ${selectedQuoteType.school_year_label}` : ""}
+                  {selectedQuoteType.formula_name ? ` · formule ${selectedQuoteType.formula_name}` : ""}
+                </small>
+              ) : null}
             </label>
             <label>
               Catalogue tarifaire
@@ -767,7 +797,13 @@ export default function QuoteWizardForm({
             </label>
             <label>
               Annee scolaire
-              <input type="text" name="school_year_label" placeholder="2026-2027" />
+              <input
+                type="text"
+                name="school_year_label"
+                placeholder="2026-2027"
+                value={schoolYearLabelInput}
+                onChange={(event) => setSchoolYearLabelInput(event.target.value)}
+              />
             </label>
             <label>
               Devise
@@ -802,7 +838,15 @@ export default function QuoteWizardForm({
             </label>
             <label>
               Delai expiration (jours)
-              <input type="number" name="expiry_days" min={1} max={120} defaultValue={10} required />
+              <input
+                type="number"
+                name="expiry_days"
+                min={1}
+                max={120}
+                value={expiryDaysInput}
+                onChange={(event) => setExpiryDaysInput(event.target.value)}
+                required
+              />
             </label>
             <label>
               Ajustement financier
