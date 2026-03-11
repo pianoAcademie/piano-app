@@ -420,6 +420,11 @@ type QuoteFinancialAdjustment = {
   label: string;
 };
 
+type QuotePreRegistrationDeposit = {
+  enabled: boolean;
+  amountTtc: number;
+};
+
 function parseQuoteFinancialAdjustment(meta: Record<string, unknown>): QuoteFinancialAdjustment {
   const row = readObject(meta.financial_adjustment);
   const rawType = String(row?.type ?? "").trim().toLowerCase();
@@ -457,6 +462,25 @@ function adjustmentTypeLabel(type: QuoteFinancialAdjustment["type"]): string {
     return "Dette";
   }
   return "Aucun";
+}
+
+function parseQuotePreRegistrationDeposit(meta: Record<string, unknown>): QuotePreRegistrationDeposit {
+  const row = readObject(meta.pre_registration_deposit);
+  const enabledRaw = row?.enabled;
+  const enabled =
+    enabledRaw === true ||
+    String(enabledRaw ?? "")
+      .trim()
+      .toLowerCase() === "true" ||
+    String(enabledRaw ?? "")
+      .trim()
+      .toLowerCase() === "yes";
+  const amount = Number(String(row?.amount_ttc ?? "200"));
+  const normalizedAmount = Number.isFinite(amount) && amount > 0 ? amount : 200;
+  if (!enabled) {
+    return { enabled: false, amountTtc: normalizedAmount };
+  }
+  return { enabled: true, amountTtc: normalizedAmount };
 }
 
 export default async function AdminQuoteDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
@@ -638,6 +662,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       ).trim().toUpperCase()
       : "");
   const quoteAdjustment = parseQuoteFinancialAdjustment(detail.quote.meta || {});
+  const quoteDeposit = parseQuotePreRegistrationDeposit(detail.quote.meta || {});
   const passRecupModeRaw = String((detail.quote.meta || {}).pass_recup_mode || "").trim().toLowerCase();
   const passRecupMode = passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
   const defaultVatRate = String(detail.quote.vat_rate ?? readStringMeta(detail.quote.meta || {}, "tva_rate", "0"));
@@ -862,6 +887,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             </select>
           </label>
           <label>
+            Acompte preinscription
+            <select
+              name="pre_registration_deposit_enabled"
+              defaultValue={quoteDeposit.enabled ? "yes" : "no"}
+              disabled={detail.quote.status !== "created"}
+            >
+              <option value="no">Non</option>
+              <option value="yes">Oui</option>
+            </select>
+          </label>
+          <label>
             Montant ajustement TTC
             <input
               type="number"
@@ -872,6 +908,19 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               placeholder="100.00"
               disabled={detail.quote.status !== "created"}
             />
+          </label>
+          <label>
+            Montant acompte TTC
+            <input
+              type="number"
+              name="pre_registration_deposit_amount_ttc"
+              min={0}
+              step="0.01"
+              defaultValue={quoteDeposit.amountTtc.toFixed(2)}
+              placeholder="200.00"
+              disabled={detail.quote.status !== "created"}
+            />
+            <small className="muted">Par defaut: 200,00 EUR.</small>
           </label>
           <label>
             Date ajustement
@@ -905,6 +954,15 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               <strong>{formatAmount(String(quoteAdjustment.amountTtc), detail.quote.currency)}</strong>
               {quoteAdjustment.effectiveDate ? <> · Date: <strong>{quoteAdjustment.effectiveDate}</strong></> : null}
               {quoteAdjustment.label ? <> · Libelle: <strong>{quoteAdjustment.label}</strong></> : null}
+            </>
+          ) : null}
+        </p>
+        <p className="muted">
+          Acompte preinscription: <strong>{quoteDeposit.enabled ? "Oui" : "Non"}</strong>
+          {quoteDeposit.enabled ? (
+            <>
+              {" · "}
+              <strong>{formatAmount(String(quoteDeposit.amountTtc), detail.quote.currency)}</strong>
             </>
           ) : null}
         </p>

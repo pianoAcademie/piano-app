@@ -488,6 +488,11 @@ type QuoteFinancialAdjustmentPayload = {
   label: string | null;
 };
 
+type QuotePreRegistrationDepositPayload = {
+  enabled: boolean;
+  amount_ttc: string;
+};
+
 function parseQuoteFinancialAdjustment(formData: FormData): { value: QuoteFinancialAdjustmentPayload; error: string | null } {
   const rawType = String(formData.get("financial_adjustment_type") ?? "none").trim().toLowerCase();
   let type: QuoteFinancialAdjustmentType = "none";
@@ -536,6 +541,43 @@ function parseQuoteFinancialAdjustment(formData: FormData): { value: QuoteFinanc
       amount_ttc: amount.toFixed(2),
       effective_date: dateRaw || null,
       label: (labelRaw || defaultLabel || "").slice(0, 200) || null,
+    },
+    error: null,
+  };
+}
+
+function parseQuotePreRegistrationDeposit(
+  formData: FormData,
+): { value: QuotePreRegistrationDepositPayload; error: string | null } {
+  const enabledRaw = String(formData.get("pre_registration_deposit_enabled") ?? "").trim().toLowerCase();
+  const enabled = enabledRaw === "yes" || enabledRaw === "true" || enabledRaw === "on" || enabledRaw === "1";
+  if (!enabled) {
+    return {
+      value: {
+        enabled: false,
+        amount_ttc: "0.00",
+      },
+      error: null,
+    };
+  }
+
+  const amountRaw = String(formData.get("pre_registration_deposit_amount_ttc") ?? "").trim().replace(",", ".");
+  const normalizedAmountRaw = amountRaw || "200.00";
+  const parsedAmount = parseNonNegativeDecimal(normalizedAmountRaw);
+  if (parsedAmount === null || parsedAmount <= 0) {
+    return {
+      value: {
+        enabled: false,
+        amount_ttc: "0.00",
+      },
+      error: "Montant d acompte invalide",
+    };
+  }
+
+  return {
+    value: {
+      enabled: true,
+      amount_ttc: parsedAmount.toFixed(2),
     },
     error: null,
   };
@@ -8867,6 +8909,10 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   if (financialAdjustment.error) {
     redirect(appendQueryMessage(returnTo, "error", financialAdjustment.error));
   }
+  const preRegistrationDeposit = parseQuotePreRegistrationDeposit(formData);
+  if (preRegistrationDeposit.error) {
+    redirect(appendQueryMessage(returnTo, "error", preRegistrationDeposit.error));
+  }
 
   let tvaRate: string | null = null;
   if (tvaRateRaw) {
@@ -8929,6 +8975,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const nextMeta: Record<string, unknown> = {
     ...(tvaRate ? { tva_rate: tvaRate } : {}),
     financial_adjustment: financialAdjustment.value,
+    pre_registration_deposit: preRegistrationDeposit.value,
     pass_recup_mode: passRecupMode,
     ...(resolvedSolfegeSlot ? { selected_solfege_slot: resolvedSolfegeSlot } : {}),
   };
@@ -9139,6 +9186,15 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     redirect(appendQueryMessage(returnTo, "error", financialAdjustment.error));
   }
   meta.financial_adjustment = financialAdjustment.value;
+  const hasPreRegistrationDeposit =
+    formData.has("pre_registration_deposit_enabled") || formData.has("pre_registration_deposit_amount_ttc");
+  if (hasPreRegistrationDeposit) {
+    const preRegistrationDeposit = parseQuotePreRegistrationDeposit(formData);
+    if (preRegistrationDeposit.error) {
+      redirect(appendQueryMessage(returnTo, "error", preRegistrationDeposit.error));
+    }
+    meta.pre_registration_deposit = preRegistrationDeposit.value;
+  }
   if (hasPassRecupMode) {
     const normalizedPassRecupMode =
       passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";

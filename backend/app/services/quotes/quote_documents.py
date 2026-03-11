@@ -819,9 +819,31 @@ def _extract_document_context(
     prospect_data = _resolve_prospect_data(db=db, quote=quote)
     client_data = _resolve_client_data(db=db, quote=quote)
 
-    schedule = [item for item in _json_list(_json_object(quote.payment_terms_snapshot).get("schedule")) if isinstance(item, dict)]
+    payment_snapshot = _json_object(quote.payment_terms_snapshot)
+    schedule = [item for item in _json_list(payment_snapshot.get("schedule")) if isinstance(item, dict)]
     has_installment_schedule = len(schedule) > 1
     schedule_visibility = _resolve_schedule_visibility_by_audience(quote=quote)
+    deposit_data = _json_object(payment_snapshot.get("deposit"))
+    meta = _json_object(quote.meta)
+    if not deposit_data:
+        deposit_data = _json_object(meta.get("pre_registration_deposit"))
+    deposit_enabled = _is_true(deposit_data.get("enabled"))
+    deposit_amount_ttc = _decimal_from_any(
+        payment_snapshot.get("deposit_amount_ttc"),
+        _decimal_from_any(deposit_data.get("amount_ttc"), Decimal("0.00")),
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if deposit_amount_ttc <= Decimal("0.00"):
+        deposit_enabled = False
+        deposit_amount_ttc = Decimal("0.00")
+    total_after_adjustment = _decimal_from_any(payment_snapshot.get("total_ttc_after_adjustment"), quote.total_ttc)
+    if deposit_amount_ttc > total_after_adjustment:
+        deposit_amount_ttc = total_after_adjustment
+    remaining_ttc_after_deposit = _decimal_from_any(
+        payment_snapshot.get("remaining_ttc_after_deposit"),
+        total_after_adjustment - deposit_amount_ttc,
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if remaining_ttc_after_deposit < Decimal("0.00"):
+        remaining_ttc_after_deposit = Decimal("0.00")
 
     calendar_snapshot = _json_object(quote.calendar_snapshot)
     calendar_solfege = _json_object(calendar_snapshot.get("solfege"))
@@ -830,7 +852,6 @@ def _extract_document_context(
     if not selected_solfege_slot:
         selected_solfege_slot = solfege_selected_slot
 
-    meta = _json_object(quote.meta)
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
     pass_recup_mode = str(meta.get("pass_recup_mode") or "").strip().lower() or "auto"
@@ -866,6 +887,7 @@ def _extract_document_context(
         "showPaymentMethodBlock": True,
         "showPaymentScheduleDetailed": show_schedule_detailed,
         "showPaymentScheduleCompactNotice": bool(payment_schedule_compact_notice),
+        "showDepositBlock": deposit_enabled and deposit_amount_ttc > Decimal("0.00"),
         "showSolfegeSection": solfege_enabled,
         "showSolfegeCompactNotice": not solfege_enabled,
         "showMasterclassSection": masterclass_enabled,
@@ -881,6 +903,9 @@ def _extract_document_context(
         "payment_method_label": _resolve_payment_method_label(quote=quote),
         "payment_schedule_compact_notice": payment_schedule_compact_notice,
         "payment_instruction": payment_instruction,
+        "deposit_enabled": deposit_enabled and deposit_amount_ttc > Decimal("0.00"),
+        "deposit_amount_ttc": deposit_amount_ttc,
+        "remaining_ttc_after_deposit": remaining_ttc_after_deposit,
         "solfege_enabled": solfege_enabled,
         "solfege_level": str(quote.estimated_solfege_level or "").strip(),
         "solfege_duration_minutes": quote.solfege_duration_minutes,
@@ -1403,6 +1428,21 @@ def _build_template_values(
     )
     total_before_adjustment = (total_ttc - adjustment_signed_amount).quantize(Decimal("0.01"))
     total_after_adjustment = total_ttc
+    has_deposit = bool(document_context.get("deposit_enabled"))
+    deposit_amount_ttc = _decimal_from_any(document_context.get("deposit_amount_ttc"), Decimal("0.00")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    if deposit_amount_ttc <= Decimal("0.00"):
+        has_deposit = False
+        deposit_amount_ttc = Decimal("0.00")
+    if deposit_amount_ttc > total_after_adjustment:
+        deposit_amount_ttc = total_after_adjustment
+    remaining_ttc_after_deposit = _decimal_from_any(
+        document_context.get("remaining_ttc_after_deposit"),
+        total_after_adjustment - deposit_amount_ttc,
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if remaining_ttc_after_deposit < Decimal("0.00"):
+        remaining_ttc_after_deposit = Decimal("0.00")
     adjustment_effective_date = _birth_date_label(str(adjustment_data.get("effective_date") or ""))
     adjustment_label = str(adjustment_data.get("label") or "").strip()
     adjustment_type_label = (
@@ -1427,6 +1467,8 @@ def _build_template_values(
 
     total_ht_before_adjustment, vat_amount_before_adjustment = _split_ttc_with_rate(total_before_adjustment, vat_rate)
     total_ht_after_adjustment, vat_amount_after_adjustment = _split_ttc_with_rate(total_after_adjustment, vat_rate)
+    remaining_ht_after_deposit, remaining_vat_after_deposit = _split_ttc_with_rate(remaining_ttc_after_deposit, vat_rate)
+    deposit_ht_amount, deposit_vat_amount = _split_ttc_with_rate(deposit_amount_ttc, vat_rate)
 
     if adjustment_type == "none":
         financial_adjustment_block_html = ""
@@ -1476,6 +1518,15 @@ def _build_template_values(
                 ("Total TTC facture", f"{_decimal_str(total_after_adjustment)} {currency}"),
             ]
         )
+    if has_deposit:
+        financial_recap_rows.extend(
+            [
+                ("Acompte preinscription", f"{_decimal_str(deposit_amount_ttc)} {currency}"),
+                ("Reste a payer apres acompte", f"{_decimal_str(remaining_ttc_after_deposit)} {currency}"),
+                ("Total HT restant", f"{_decimal_str(remaining_ht_after_deposit)} {currency}"),
+                (f"TVA restante ({_decimal_str(vat_rate)} %)", f"{_decimal_str(remaining_vat_after_deposit)} {currency}"),
+            ]
+        )
 
     financial_recap_lines_html = "".join(
         "<p>"
@@ -1489,6 +1540,17 @@ def _build_template_values(
         f"{financial_recap_lines_html}"
         "</div>"
     )
+    if has_deposit:
+        deposit_block_html = (
+            "<p>Pour confirmer votre inscription et bloquer votre creneau, un acompte est requis des validation du devis. "
+            "Le reglement s effectue en ligne par carte bancaire uniquement. "
+            "Un lien de paiement securise vous sera envoye par email apres approbation du devis.</p>"
+            f"<p><strong>Acompte a payer pour valider l inscription :</strong> {_decimal_str(deposit_amount_ttc)} {escape(currency)}</p>"
+        )
+    else:
+        deposit_block_html = ""
+    deposit_section_html = _section_html("Acompte preinscription", deposit_block_html)
+    deposit_none_html = "" if has_deposit else "<p>Aucun acompte preinscription.</p>"
 
     services_table_html = _table_html(
         ["Activite", "Quantite", "Duree", "TVA", "PU TTC", "Montant TTC"],
@@ -1659,9 +1721,17 @@ def _build_template_values(
     if schedule:
         due_labels = ", ".join(_schedule_due_label(item) for item in schedule)
         unit_label = "échéance" if len(schedule) == 1 else "échéances"
-        payment_schedule_summary = f"{len(schedule)} {unit_label} : {due_labels}"
+        if has_deposit:
+            payment_schedule_summary = (
+                f"Acompte {_decimal_str(deposit_amount_ttc)} {currency}, puis {len(schedule)} {unit_label} : {due_labels}"
+            )
+        else:
+            payment_schedule_summary = f"{len(schedule)} {unit_label} : {due_labels}"
     else:
-        payment_schedule_summary = "Paiement non planifie"
+        if has_deposit and remaining_ttc_after_deposit <= Decimal("0.00"):
+            payment_schedule_summary = f"Acompte {_decimal_str(deposit_amount_ttc)} {currency} (solde regle)."
+        else:
+            payment_schedule_summary = "Paiement non planifie"
 
     activities_planning_section_html = _section_html(
         "Les Activites retenues",
@@ -1885,6 +1955,17 @@ def _build_template_values(
         "total_ttc_before_adjustment_html": total_ttc_before_adjustment_html,
         "total_before_adjustment": _decimal_str(total_before_adjustment),
         "total_after_adjustment": _decimal_str(total_after_adjustment),
+        "has_deposit": "true" if has_deposit else "false",
+        "deposit_enabled": "true" if has_deposit else "false",
+        "deposit_amount_ttc": _decimal_str(deposit_amount_ttc),
+        "deposit_ht_amount": _decimal_str(deposit_ht_amount),
+        "deposit_vat_amount": _decimal_str(deposit_vat_amount),
+        "remaining_ttc_after_deposit": _decimal_str(remaining_ttc_after_deposit),
+        "remaining_ht_after_deposit": _decimal_str(remaining_ht_after_deposit),
+        "remaining_vat_after_deposit": _decimal_str(remaining_vat_after_deposit),
+        "deposit_block_html": deposit_block_html,
+        "deposit_section_html": deposit_section_html,
+        "deposit_none_html": deposit_none_html,
         "payment_method_label": payment_method_label,
         "payment_instruction": payment_instruction,
         "payment_schedule_compact_notice": document_context["payment_schedule_compact_notice"] or "",
@@ -1968,6 +2049,9 @@ def _build_template_values(
         "financial_adjustment_section_html",
         "financial_adjustment_none_html",
         "financial_recap_block_html",
+        "deposit_block_html",
+        "deposit_section_html",
+        "deposit_none_html",
         "total_ttc_before_adjustment_html",
         "services_table_html",
         "activities_planning_table_html",
@@ -2010,6 +2094,7 @@ def _default_quote_body_template() -> str:
         "{products_section_html}"
         "{kits_section_html}"
         "{other_fees_section_html}"
+        "{deposit_section_html}"
         "{payment_method_block_html}"
         "{payment_schedule_section_html}"
         "{financial_adjustment_section_html}"
@@ -2030,6 +2115,11 @@ def _render_quote_body_html(
     _, body_template = _load_quote_template_snapshot(db=db, quote=quote)
     template = _normalize_template_source(body_template or _default_quote_body_template())
     lowered_template = template.lower()
+    if "{deposit_section_html}" not in lowered_template and "{deposit_block_html}" not in lowered_template:
+        if "{payment_method_block_html}" in lowered_template:
+            template = template.replace("{payment_method_block_html}", "{deposit_section_html}{payment_method_block_html}", 1)
+        else:
+            template += "{deposit_section_html}"
     if "{other_fees_section_html}" not in lowered_template and "{other_fees_table_html}" not in lowered_template:
         if "{kits_section_html}" in lowered_template:
             template = template.replace("{kits_section_html}", "{kits_section_html}{other_fees_section_html}", 1)
@@ -2098,6 +2188,9 @@ def _render_quote_body_html(
             "financial_adjustment_section_html",
             "financial_adjustment_none_html",
             "financial_recap_block_html",
+            "deposit_block_html",
+            "deposit_section_html",
+            "deposit_none_html",
         },
     )
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
@@ -2151,6 +2244,9 @@ def _render_quote_terms_html(
             "calendar_table_html",
             "calendar_activity_semesters_html",
             "financial_recap_block_html",
+            "deposit_block_html",
+            "deposit_section_html",
+            "deposit_none_html",
             "other_fees_table_html",
         },
     )

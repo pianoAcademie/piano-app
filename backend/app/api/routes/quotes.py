@@ -120,6 +120,8 @@ QUOTE_FINANCIAL_ADJUSTMENT_META_KEY = "financial_adjustment"
 QUOTE_FINANCIAL_ADJUSTMENT_NONE = "none"
 QUOTE_FINANCIAL_ADJUSTMENT_CREDIT = "credit"
 QUOTE_FINANCIAL_ADJUSTMENT_DEBT = "debt"
+QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY = "pre_registration_deposit"
+QUOTE_PRE_REGISTRATION_DEPOSIT_DEFAULT_AMOUNT = Decimal("200.00")
 
 
 def _utcnow() -> datetime:
@@ -192,6 +194,28 @@ def _quote_adjustment_signature(meta: dict[str, object] | None) -> tuple[str, st
         str(normalized.get("amount_ttc") or "0.00"),
         str(normalized.get("effective_date") or ""),
         str(normalized.get("label") or ""),
+    )
+
+
+def _normalize_quote_deposit(meta: dict[str, object] | None) -> dict[str, object]:
+    payload = meta.get(QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY) if isinstance(meta, dict) else None
+    source = payload if isinstance(payload, dict) else {}
+    enabled = _bool_or_default(source.get("enabled"), False)
+    amount = _decimal_or_none(source.get("amount_ttc"))
+    if amount is None or amount <= Decimal("0"):
+        amount = QUOTE_PRE_REGISTRATION_DEPOSIT_DEFAULT_AMOUNT
+    amount = _q2(abs(amount))
+    return {
+        "enabled": bool(enabled),
+        "amount_ttc": str(amount),
+    }
+
+
+def _quote_deposit_signature(meta: dict[str, object] | None) -> tuple[str, str]:
+    normalized = _normalize_quote_deposit(meta)
+    return (
+        "1" if _bool_or_default(normalized.get("enabled"), False) else "0",
+        str(normalized.get("amount_ttc") or "0.00"),
     )
 
 
@@ -326,20 +350,35 @@ def _build_payment_terms_snapshot_from_plan(
 ) -> dict[str, object]:
     rules = dict(plan.schedule_rules or {})
     normalized_adjustment = _normalize_quote_adjustment(quote.meta or {})
+    normalized_deposit = _normalize_quote_deposit(quote.meta or {})
     adjustment_signed = _quote_adjustment_signed_amount(quote.meta or {})
-    lines_total_ttc = _q2(total_ttc - adjustment_signed)
+    total_ttc_after_adjustment = _q2(total_ttc)
+    lines_total_ttc = _q2(total_ttc_after_adjustment - adjustment_signed)
+    deposit_enabled = _bool_or_default(normalized_deposit.get("enabled"), False)
+    deposit_amount_ttc = _decimal_or_none(normalized_deposit.get("amount_ttc")) or Decimal("0.00")
+    deposit_amount_ttc = _q2(abs(deposit_amount_ttc))
+    if not deposit_enabled:
+        deposit_amount_ttc = Decimal("0.00")
+    if deposit_amount_ttc > total_ttc_after_adjustment:
+        deposit_amount_ttc = total_ttc_after_adjustment
+    remaining_ttc_after_deposit = _q2(total_ttc_after_adjustment - deposit_amount_ttc)
+    if remaining_ttc_after_deposit < Decimal("0.00"):
+        remaining_ttc_after_deposit = Decimal("0.00")
     payment_method_label = _payment_method_label_from_code(plan.payment_method)
-    schedule = build_payment_schedule(
-        PaymentPlanScheduleInput(
-            payment_method_code=plan.payment_method,
-            schedule_type=plan.schedule_type or "single",
-            schedule_rules=rules,
-            payment_method_label=payment_method_label,
-            total_ttc=total_ttc,
-            registration_date=registration_date,
-            currency=(quote.currency or "EUR").upper(),
+    if remaining_ttc_after_deposit <= Decimal("0.00"):
+        schedule: list[dict[str, object]] = []
+    else:
+        schedule = build_payment_schedule(
+            PaymentPlanScheduleInput(
+                payment_method_code=plan.payment_method,
+                schedule_type=plan.schedule_type or "single",
+                schedule_rules=rules,
+                payment_method_label=payment_method_label,
+                total_ttc=remaining_ttc_after_deposit,
+                registration_date=registration_date,
+                currency=(quote.currency or "EUR").upper(),
+            )
         )
-    )
     installment_count = len(schedule)
     visibility_raw = rules.get("schedule_visibility") if isinstance(rules.get("schedule_visibility"), dict) else {}
     show_schedule_to_client_default = installment_count > 1
@@ -377,7 +416,12 @@ def _build_payment_terms_snapshot_from_plan(
             check_submission_instruction = f"{check_submission_instruction} Adresse d envoi: {check_submission_address}"
         else:
             check_submission_instruction = f"Adresse d envoi des cheques: {check_submission_address}"
-    payment_schedule_summary = f"Paiement en {installment_count} fois" if installment_count > 1 else "Paiement en 1 fois"
+    if installment_count <= 0:
+        payment_schedule_summary = "Aucun echeancier complementaire"
+    elif installment_count > 1:
+        payment_schedule_summary = f"Paiement en {installment_count} fois"
+    else:
+        payment_schedule_summary = "Paiement en 1 fois"
     return {
         "schedule": schedule,
         "currency": (quote.currency or "EUR").upper(),
@@ -395,7 +439,11 @@ def _build_payment_terms_snapshot_from_plan(
         "lines_total_ttc": str(lines_total_ttc),
         "adjustment": normalized_adjustment,
         "adjustment_signed_amount_ttc": str(_q2(adjustment_signed)),
-        "total_ttc_after_adjustment": str(_q2(total_ttc)),
+        "total_ttc_after_adjustment": str(total_ttc_after_adjustment),
+        "deposit": normalized_deposit,
+        "deposit_enabled": deposit_enabled,
+        "deposit_amount_ttc": str(deposit_amount_ttc),
+        "remaining_ttc_after_deposit": str(remaining_ttc_after_deposit),
     }
 
 
@@ -1828,16 +1876,38 @@ def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: D
 
 
 def _build_payment_terms_snapshot_for_quote(db: Session, quote: Quote, *, total_ttc: Decimal) -> dict[str, object]:
+    normalized_deposit = _normalize_quote_deposit(quote.meta or {})
+    deposit_enabled = _bool_or_default(normalized_deposit.get("enabled"), False)
+    deposit_amount_ttc = _decimal_or_none(normalized_deposit.get("amount_ttc")) or Decimal("0.00")
+    deposit_amount_ttc = _q2(abs(deposit_amount_ttc))
+    if not deposit_enabled:
+        deposit_amount_ttc = Decimal("0.00")
+    total_ttc_after_adjustment = _q2(total_ttc)
+    if deposit_amount_ttc > total_ttc_after_adjustment:
+        deposit_amount_ttc = total_ttc_after_adjustment
+    remaining_ttc_after_deposit = _q2(total_ttc_after_adjustment - deposit_amount_ttc)
+    if remaining_ttc_after_deposit < Decimal("0.00"):
+        remaining_ttc_after_deposit = Decimal("0.00")
     if quote.payment_plan_id is None:
         return {
             "schedule": [],
             "currency": (quote.currency or "EUR").upper(),
+            "deposit": normalized_deposit,
+            "deposit_enabled": deposit_enabled,
+            "deposit_amount_ttc": str(deposit_amount_ttc),
+            "remaining_ttc_after_deposit": str(remaining_ttc_after_deposit),
+            "total_ttc_after_adjustment": str(total_ttc_after_adjustment),
         }
     plan = db.scalar(select(PaymentPlan).where(PaymentPlan.id == quote.payment_plan_id))
     if plan is None:
         return {
             "schedule": [],
             "currency": (quote.currency or "EUR").upper(),
+            "deposit": normalized_deposit,
+            "deposit_enabled": deposit_enabled,
+            "deposit_amount_ttc": str(deposit_amount_ttc),
+            "remaining_ttc_after_deposit": str(remaining_ttc_after_deposit),
+            "total_ttc_after_adjustment": str(total_ttc_after_adjustment),
         }
     return _build_payment_terms_snapshot_from_plan(
         quote=quote,
@@ -2546,6 +2616,7 @@ def create_quote(
     if selected_terms_template_version is not None:
         quote_meta["terms_template_version_id"] = str(selected_terms_template_version.id)
     quote_meta[QUOTE_FINANCIAL_ADJUSTMENT_META_KEY] = _normalize_quote_adjustment(quote_meta)
+    quote_meta[QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY] = _normalize_quote_deposit(quote_meta)
 
     row = Quote(
         quote_number=_new_quote_number(),
@@ -2649,8 +2720,10 @@ def update_quote(
     document_dirty = False
     payment_plan_changed = False
     adjustment_changed = False
+    deposit_changed = False
     computed_total: Decimal | None = None
     previous_adjustment_signature = _quote_adjustment_signature(row.meta or {})
+    previous_deposit_signature = _quote_deposit_signature(row.meta or {})
 
     if payload.quote_type is not None:
         row.quote_type = payload.quote_type
@@ -2768,7 +2841,9 @@ def update_quote(
     if payload.meta is not None:
         next_meta = _normalize_quote_meta(payload.meta)
         next_meta[QUOTE_FINANCIAL_ADJUSTMENT_META_KEY] = _normalize_quote_adjustment(next_meta)
+        next_meta[QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY] = _normalize_quote_deposit(next_meta)
         adjustment_changed = _quote_adjustment_signature(next_meta) != previous_adjustment_signature
+        deposit_changed = _quote_deposit_signature(next_meta) != previous_deposit_signature
         row.meta = next_meta
         row.vat_rate = _extract_vat_rate(row.meta or {})
         document_dirty = True
@@ -2782,7 +2857,9 @@ def update_quote(
         row.total_ttc = computed_total
         document_dirty = True
 
-    if payload.payment_terms_snapshot is None and (payment_plan_changed or payload.lines is not None or adjustment_changed):
+    if payload.payment_terms_snapshot is None and (
+        payment_plan_changed or payload.lines is not None or adjustment_changed or deposit_changed
+    ):
         total_for_schedule = computed_total if computed_total is not None else _q2(Decimal(row.total_ttc or 0))
         row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total_for_schedule)
 

@@ -452,6 +452,8 @@ export default function QuoteWizardForm({
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultTemplate?.id ?? "");
   const [language, setLanguage] = useState<string>(normalizeLang(defaultTemplate?.language));
   const [currency, setCurrency] = useState<string>("EUR");
+  const [preRegistrationDepositEnabled, setPreRegistrationDepositEnabled] = useState<"no" | "yes">("no");
+  const [preRegistrationDepositAmount, setPreRegistrationDepositAmount] = useState<string>("200.00");
   const [estimatedLevel, setEstimatedLevel] = useState<string>("");
   const [selectedSolfegeSlotKey, setSelectedSolfegeSlotKey] = useState<string>("");
   const [lines, setLines] = useState<WizardLine[]>([]);
@@ -865,6 +867,23 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
+              Acompte preinscription
+              <select
+                name="pre_registration_deposit_enabled"
+                value={preRegistrationDepositEnabled}
+                onChange={(event) => {
+                  const next = event.target.value === "yes" ? "yes" : "no";
+                  setPreRegistrationDepositEnabled(next);
+                  if (next === "yes" && !preRegistrationDepositAmount.trim()) {
+                    setPreRegistrationDepositAmount("200.00");
+                  }
+                }}
+              >
+                <option value="no">Non</option>
+                <option value="yes">Oui</option>
+              </select>
+            </label>
+            <label>
               Montant ajustement TTC
               <input
                 type="number"
@@ -877,6 +896,20 @@ export default function QuoteWizardForm({
             <label>
               Date ajustement
               <input type="date" name="financial_adjustment_effective_date" />
+            </label>
+            <label>
+              Montant acompte TTC
+              <input
+                type="number"
+                name="pre_registration_deposit_amount_ttc"
+                min={0}
+                step="0.01"
+                value={preRegistrationDepositAmount}
+                onChange={(event) => setPreRegistrationDepositAmount(event.target.value)}
+                placeholder="200.00"
+                disabled={preRegistrationDepositEnabled !== "yes"}
+              />
+              <small className="muted">Par defaut: 200,00 EUR.</small>
             </label>
             <label>
               Libelle ajustement (optionnel)
