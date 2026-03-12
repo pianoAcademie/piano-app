@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from html import escape, unescape as html_unescape
 import io
 import re
