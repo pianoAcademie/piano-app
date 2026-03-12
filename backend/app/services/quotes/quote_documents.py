@@ -798,6 +798,63 @@ def _line_matches_pass_recup(line: QuoteLine) -> bool:
     return "pass recup" in haystack or "pass_recup" in haystack or "passrecup" in haystack
 
 
+def _line_matches_masterclass(line: QuoteLine) -> bool:
+    tokens = [
+        str(line.title or ""),
+        str(line.code or ""),
+        str(line.line_type or ""),
+        str(line.line_category or ""),
+        str(line.master_item_type or ""),
+    ]
+    haystack = " ".join(tokens).strip().lower()
+    return "masterclass" in haystack or "master class" in haystack
+
+
+def _masterclass_blocks_from_calendar_snapshot(snapshot: dict[str, Any]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for raw in _json_list(snapshot.get("blocks")):
+        if not isinstance(raw, dict):
+            continue
+        activity_label = str(raw.get("activity_label") or "").strip()
+        activity_code = str(raw.get("activity_code") or raw.get("activity_service_code") or "").strip()
+        haystack = f"{activity_label} {activity_code}".strip().lower()
+        if "masterclass" not in haystack and "master class" not in haystack:
+            continue
+        location_label = str(raw.get("location_label") or "").strip()
+        selection_pending = bool(raw.get("selection_pending"))
+        weekday_label = str(raw.get("weekday_label") or "").strip() or _weekday_label(raw.get("weekday"))
+        start_time = str(raw.get("start_time") or "").strip()
+        end_time = str(raw.get("end_time") or "").strip()
+        session_label = str(raw.get("session_label") or "").strip()
+        if not session_label:
+            if selection_pending:
+                session_label = "Selection a faire"
+            elif weekday_label and start_time and end_time:
+                session_label = f"{weekday_label} {start_time}-{end_time}"
+            elif weekday_label:
+                session_label = weekday_label
+        rows.append(
+            {
+                "session": session_label,
+                "location_label": location_label,
+                "activity_label": activity_label or "Masterclass",
+            }
+        )
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in rows:
+        key = (
+            str(item.get("session") or "").strip().lower(),
+            str(item.get("location_label") or "").strip().lower(),
+            str(item.get("activity_label") or "").strip().lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
 def _resolve_pass_recup_enabled(*, meta: dict[str, Any], lines: list[QuoteLine]) -> bool:
     mode = str(meta.get("pass_recup_mode") or "").strip().lower()
     if mode == "enabled":
@@ -853,7 +910,22 @@ def _extract_document_context(
         selected_solfege_slot = solfege_selected_slot
 
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
-    masterclass_blocks = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
+    masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
+    masterclass_blocks_calendar = _masterclass_blocks_from_calendar_snapshot(calendar_snapshot)
+    masterclass_blocks = [*masterclass_blocks_meta, *masterclass_blocks_calendar]
+    masterclass_blocks_deduped: list[dict[str, Any]] = []
+    seen_masterclass: set[tuple[str, str, str]] = set()
+    for item in masterclass_blocks:
+        key = (
+            str(item.get("session") or "").strip().lower(),
+            str(item.get("location_label") or "").strip().lower(),
+            str(item.get("activity_label") or "").strip().lower(),
+        )
+        if key in seen_masterclass:
+            continue
+        seen_masterclass.add(key)
+        masterclass_blocks_deduped.append(item)
+    masterclass_blocks = masterclass_blocks_deduped
     pass_recup_mode = str(meta.get("pass_recup_mode") or "").strip().lower() or "auto"
     pass_recup_enabled = _resolve_pass_recup_enabled(meta=meta, lines=lines)
 
@@ -863,7 +935,11 @@ def _extract_document_context(
         or selected_solfege_slot
         or activity_solfege
     )
-    masterclass_enabled = bool(masterclass_blocks) or _is_true(meta.get("masterclass_enabled"))
+    masterclass_enabled = (
+        bool(masterclass_blocks)
+        or _is_true(meta.get("masterclass_enabled"))
+        or any(_line_matches_masterclass(line) for line in lines)
+    )
 
     schedule_allowed_for_audience = bool(schedule_visibility.get(audience, False))
     show_schedule_detailed = has_installment_schedule and schedule_allowed_for_audience
@@ -1723,13 +1799,17 @@ def _build_template_values(
         unit_label = "échéance" if len(schedule) == 1 else "échéances"
         if has_deposit:
             payment_schedule_summary = (
-                f"Acompte {_decimal_str(deposit_amount_ttc)} {currency}, puis {len(schedule)} {unit_label} : {due_labels}"
+                f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à régler par carte bancaire, "
+                f"puis {len(schedule)} {unit_label} : {due_labels}"
             )
         else:
             payment_schedule_summary = f"{len(schedule)} {unit_label} : {due_labels}"
     else:
         if has_deposit and remaining_ttc_after_deposit <= Decimal("0.00"):
-            payment_schedule_summary = f"Acompte {_decimal_str(deposit_amount_ttc)} {currency} (solde regle)."
+            payment_schedule_summary = (
+                f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à régler par carte bancaire "
+                "(solde réglé)."
+            )
         else:
             payment_schedule_summary = "Paiement non planifie"
 
@@ -1871,13 +1951,27 @@ def _build_template_values(
         + (child_identity_card_html + responsible_identity_card_html if display_flags["showChildBlock"] else adult_identity_card_html)
         + "</div>"
     )
-    # Solfege et masterclass sont geres comme activites de planning: pas de bloc dedie dans le document.
+    # Solfege et masterclass restent des activites planning, mais on expose un resume optionnel pour le document.
     solfege_block_html = ""
-    masterclass_block_html = ""
+    masterclass_block_html = (
+        f"<p>{escape(masterclass_full)}</p>"
+        if display_flags["showMasterclassSection"]
+        else "<p>Masterclass du samedi : non souscrite.</p>"
+    )
+    pass_recup_common_text = (
+        "Le pass Recup' permet de rattraper un cours collectif manque, dans la limite de 4 rattrapages par an. "
+        "Le rattrapage peut se faire : sur un cours collectif en presentiel, si un creneau est disponible, "
+        "ou sur un cours collectif en ligne, sur des creneaux dedies. "
+        "Le pass est utilisable uniquement en cas d absence signalee. "
+        "Il est valable pour l annee scolaire en cours et non remboursable. "
+        "Sans ce pass, aucun rattrapage ne peut etre propose, quelle que soit la raison de l absence."
+    )
     pass_recup_block_html = (
-        "<p>Option Pass Recup souscrite. Les regles d usage sont appliquees selon la formule.</p>"
+        "<p><strong>Option Pass Recup : souscrite.</strong></p>"
+        f"<p>{escape(pass_recup_common_text)}</p>"
         if display_flags["showPassRecupSection"]
-        else "<p>Option Pass Recup : non souscrite. Aucun rattrapage de cours n est inclus dans cette formule.</p>"
+        else "<p><strong>Option Pass Recup : non souscrite.</strong></p>"
+        f"<p>{escape(pass_recup_common_text)}</p>"
     )
     payment_instruction = str(document_context.get("payment_instruction") or "").strip()
     payment_method_block_html = f"<p><strong>Mode de paiement :</strong> {escape(payment_method_label)}</p>"

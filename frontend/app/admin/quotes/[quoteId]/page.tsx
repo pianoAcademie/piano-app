@@ -380,6 +380,44 @@ function readStringMeta(meta: Record<string, unknown>, key: string, fallback = "
   return fallback;
 }
 
+function parseVatRateValue(value: unknown): number | null {
+  const normalized = String(value ?? "").trim().replace(",", ".");
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function formatVatRateValue(value: number): string {
+  return value.toFixed(2);
+}
+
+function resolveDefaultVatRate(detail: QuoteDetailOut): string {
+  const meta = detail.quote.meta || {};
+  const directCandidates: unknown[] = [
+    detail.quote.vat_rate,
+    readStringMeta(meta, "tva_rate", ""),
+    readStringMeta(meta, "default_vat_rate", ""),
+  ];
+  for (const candidate of directCandidates) {
+    const parsed = parseVatRateValue(candidate);
+    if (parsed !== null) {
+      return formatVatRateValue(parsed);
+    }
+  }
+  for (const line of detail.lines) {
+    const parsed = parseVatRateValue(line.vat_rate);
+    if (parsed !== null) {
+      return formatVatRateValue(parsed);
+    }
+  }
+  return "20.00";
+}
+
 function normalizeLang(value: string | null | undefined): string {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized || "fr";
@@ -665,7 +703,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteDeposit = parseQuotePreRegistrationDeposit(detail.quote.meta || {});
   const passRecupModeRaw = String((detail.quote.meta || {}).pass_recup_mode || "").trim().toLowerCase();
   const passRecupMode = passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
-  const defaultVatRate = String(detail.quote.vat_rate ?? readStringMeta(detail.quote.meta || {}, "tva_rate", "0"));
+  const defaultVatRate = resolveDefaultVatRate(detail);
   const signedAdjustment = adjustmentSignedAmount(quoteAdjustment);
   const totalTtcNumber = Number(detail.quote.total_ttc);
   const totalBeforeAdjustment = Number.isFinite(totalTtcNumber) ? totalTtcNumber - signedAdjustment : null;
