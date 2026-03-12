@@ -31,6 +31,8 @@ type PlanningBlock = {
   calendar_name: string;
   holiday_dates: string[];
   closure_dates: string[];
+  saved: boolean;
+  dirty: boolean;
 };
 
 type SolfegeRule = {
@@ -442,6 +444,8 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
           calendar_name: calendarName,
           holiday_dates: holidayDates,
           closure_dates: closureDates,
+          saved: true,
+          dirty: false,
         };
       })
       .filter((item): item is PlanningBlock => item !== null);
@@ -476,6 +480,8 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         calendar_name: "",
         holiday_dates: [],
         closure_dates: [],
+        saved: true,
+        dirty: false,
       },
     ];
   }
@@ -495,6 +501,8 @@ export default function QuotePlanningEditor({
   saveAction,
 }: QuotePlanningEditorProps): JSX.Element {
   const [blocks, setBlocks] = useState<PlanningBlock[]>(parseInitialBlocks(initialSnapshot));
+  const [activeUid, setActiveUid] = useState<string>(parseInitialBlocks(initialSnapshot)[0]?.uid ?? "");
+  const [expandedUid, setExpandedUid] = useState<string | null>(null);
   const snapshotSessions = useMemo(() => parseSnapshotSessions(initialSnapshot), [initialSnapshot]);
 
   const blocksJson = useMemo(
@@ -554,10 +562,11 @@ export default function QuotePlanningEditor({
     const defaultDuration = activities[0]?.duration_minutes ?? 60;
     const startTime = "17:00";
     const endTime = addMinutesToTime(startTime, defaultDuration);
+    const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setBlocks((prev) => [
       ...prev,
       {
-        uid: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        uid,
         activity_id: defaultActivityId,
         location_id: locations[0]?.id ?? "",
         weekday: 0,
@@ -570,16 +579,38 @@ export default function QuotePlanningEditor({
         calendar_name: "",
         holiday_dates: [],
         closure_dates: [],
+        saved: false,
+        dirty: true,
       },
     ]);
+    setActiveUid(uid);
   }
 
   function removeBlock(uid: string): void {
-    setBlocks((prev) => prev.filter((row) => row.uid !== uid));
+    setBlocks((prev) => {
+      const next = prev.filter((row) => row.uid !== uid);
+      if (activeUid === uid) {
+        setActiveUid(next[0]?.uid ?? "");
+      }
+      if (expandedUid === uid) {
+        setExpandedUid(null);
+      }
+      return next;
+    });
   }
 
   function updateBlock(uid: string, patch: Partial<PlanningBlock>): void {
-    setBlocks((prev) => prev.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
+    setBlocks((prev) =>
+      prev.map((row) =>
+        row.uid === uid
+          ? {
+              ...row,
+              ...patch,
+              dirty: row.saved ? true : row.dirty || true,
+            }
+          : row,
+      ),
+    );
   }
 
   function syncEndTimeWithActivity(uid: string, activityId: string, startTime: string): void {
@@ -592,6 +623,28 @@ export default function QuotePlanningEditor({
     });
   }
 
+  const activeBlock = blocks.find((row) => row.uid === activeUid) ?? null;
+  const savedCount = blocks.filter((row) => row.saved && !row.dirty).length;
+  const modifiedCount = blocks.filter((row) => row.saved && row.dirty).length;
+  const newCount = blocks.filter((row) => !row.saved).length;
+  const pendingSaveCount = blocks.filter((row) => !row.saved || row.dirty).length;
+
+  function blockStatusLabel(block: PlanningBlock): string {
+    if (!block.saved) {
+      return "Nouveau non enregistre";
+    }
+    if (block.dirty) {
+      return "Modification en cours";
+    }
+    return "Enregistre";
+  }
+
+  function blockStatusClass(block: PlanningBlock): string {
+    if (!block.saved) return "quote-status-chip-new";
+    if (block.dirty) return "quote-status-chip-editing";
+    return "quote-status-chip-saved";
+  }
+
   return (
     <form action={saveAction}>
       <input type="hidden" name="quote_id" value={quoteId} />
@@ -600,220 +653,280 @@ export default function QuotePlanningEditor({
       <input type="hidden" name="planning_blocks_json" value={blocksJson} />
       <input type="hidden" name="current_meta_json" value={JSON.stringify(initialMeta || {})} />
 
-      <div className="row wrap gap-sm">
-        <button type="button" className="ghost" onClick={addBlock} disabled={!editable}>
-          + Ajouter une activite planning
-        </button>
+      <div className="quote-editor-toolbar row spread wrap gap-sm">
+        <div className="row wrap gap-sm">
+          <button type="button" className="ghost" onClick={addBlock} disabled={!editable}>
+            + Ajouter une activite planning
+          </button>
+        </div>
+        <div className="row wrap gap-sm">
+          <span className="quote-editor-count">
+            Activites planifiees — {savedCount} enregistree(s), {modifiedCount + newCount} brouillon(s)
+          </span>
+          <span className={`quote-status-chip ${pendingSaveCount > 0 ? "quote-status-chip-pending" : "quote-status-chip-saved"}`}>
+            {pendingSaveCount > 0 ? "A enregistrer" : "Enregistre"}
+          </span>
+        </div>
       </div>
 
-      {blocks.length === 0 ? <p className="muted top-gap-sm">Aucun bloc planning configure.</p> : null}
-      <div className="list top-gap-sm">
-        {blocks.map((block, index) => {
-          const activity = activities.find((item) => item.id === block.activity_id);
-          const locationLabel = locations.find((item) => item.id === block.location_id)?.name || null;
-          const selectionPending = block.weekday === WEEKDAY_UNSET;
-          const blockSolfegeLevel = isSolfegeActivity(activity) ? solfegeLevelFromActivity(activity) : null;
-          const blockSolfegeRule = blockSolfegeLevel
-            ? solfegeRules.find((rule) => String(rule.level_code) === String(blockSolfegeLevel)) || null
-            : null;
-          const pendingSlotOptions =
-            selectionPending && blockSolfegeLevel ? slotOptionsFromRule(blockSolfegeRule, locationLabel) : [];
-          const calculatedDates = datesFromSnapshotSessions(block, snapshotSessions);
-          const estimatedDates = calculatedDates.length > 0 ? calculatedDates : estimateSessionDates(block);
-          const semester1 = summarizeBySemester(estimatedDates, 1);
-          const semester2 = summarizeBySemester(estimatedDates, 2);
-          return (
-            <article key={block.uid} className="item">
-              <div className="row spread wrap gap-sm">
-                <strong>{activity?.name || `Activite #${index + 1}`}</strong>
-                <span className="badge">{estimatedDates.length} cours</span>
+      <div className="quote-editor-split quote-editor-split-planning top-gap-sm">
+        <section className="quote-editor-pane quote-editor-pane-saved">
+          <h4>Activites enregistrees</h4>
+          {blocks.length === 0 ? (
+            <p className="quote-editor-empty">Aucune activite enregistree pour ce devis.</p>
+          ) : (
+            <div className="quote-saved-list top-gap-sm">
+              {blocks.map((block, index) => {
+                const activity = activities.find((item) => item.id === block.activity_id);
+                const locationLabel = locations.find((item) => item.id === block.location_id)?.name || "Lieu non defini";
+                const selectionPending = block.weekday === WEEKDAY_UNSET;
+                const calculatedDates = datesFromSnapshotSessions(block, snapshotSessions);
+                const estimatedDates = calculatedDates.length > 0 ? calculatedDates : estimateSessionDates(block);
+                const semester1 = summarizeBySemester(estimatedDates, 1);
+                const semester2 = summarizeBySemester(estimatedDates, 2);
+                const isExpanded = expandedUid === block.uid;
+                return (
+                  <article key={block.uid} className={`quote-saved-card ${activeUid === block.uid ? "active" : ""}`.trim()}>
+                    <header className="row spread wrap gap-sm">
+                      <strong>{activity?.name || `Activite #${index + 1}`}</strong>
+                      <span className={`quote-status-chip ${blockStatusClass(block)}`}>{blockStatusLabel(block)}</span>
+                    </header>
+                    <p className="muted">
+                      {selectionPending
+                        ? "Selection a faire"
+                        : `${weekdayLabel(block.weekday)} · ${block.start_time || "--:--"} - ${block.end_time || "--:--"}`}
+                    </p>
+                    <p className="muted">
+                      {block.start_date || "-"} → {block.end_date || "-"} · {locationLabel}
+                    </p>
+                    <p className="muted">Frequence: {RECURRENCE_OPTIONS.find((item) => item.value === block.recurrence_frequency)?.label || "Hebdomadaire"}</p>
+                    <p className="muted">Seances estimees: {estimatedDates.length}</p>
+                    <div className="row wrap gap-sm top-gap-sm">
+                      <button type="button" className="ghost small-btn" onClick={() => setActiveUid(block.uid)}>
+                        Modifier
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost small-btn"
+                        onClick={() => setExpandedUid((prev) => (prev === block.uid ? null : block.uid))}
+                      >
+                        {isExpanded ? "Masquer les seances" : "Voir les seances"}
+                      </button>
+                      <button type="button" className="ghost small-btn" onClick={() => removeBlock(block.uid)} disabled={!editable}>
+                        Supprimer
+                      </button>
+                    </div>
+                    {isExpanded ? (
+                      <div className="quote-saved-card-detail top-gap-sm">
+                        <div className="grid cols-2">
+                          <div>
+                            <strong>1er semestre</strong>
+                            {semester1.length === 0 ? <p className="muted">Aucune seance</p> : null}
+                            {semester1.map((item) => (
+                              <p key={`${block.uid}-left-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
+                            ))}
+                          </div>
+                          <div>
+                            <strong>2e semestre</strong>
+                            {semester2.length === 0 ? <p className="muted">Aucune seance</p> : null}
+                            {semester2.map((item) => (
+                              <p key={`${block.uid}-right-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="quote-editor-pane quote-editor-pane-draft">
+          <h4>Ajout / modification en cours</h4>
+          {!activeBlock ? (
+            <div className="quote-editor-empty top-gap-sm">
+              Selectionnez une activite enregistree (gauche) ou cliquez sur “+ Ajouter une activite planning”.
+            </div>
+          ) : (
+            <>
+              <div className={`quote-draft-banner top-gap-sm ${activeBlock.saved ? "editing" : "new"}`}>
+                {activeBlock.saved ? "Modification en cours non enregistree" : "Nouvelle activite non enregistree"}
               </div>
-              {estimatedDates.length > 0 ? (
-                <div className="grid cols-2 top-gap-sm">
-                  <div>
-                    <p><strong>1er semestre</strong></p>
-                    {semester1.length === 0 ? <p className="muted">Aucune seance</p> : null}
-                    {semester1.map((item) => (
-                      <p key={`${block.uid}-s1-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
-                    ))}
+              {(() => {
+                const activity = activities.find((item) => item.id === activeBlock.activity_id);
+                const selectionPending = activeBlock.weekday === WEEKDAY_UNSET;
+                const blockSolfegeLevel = isSolfegeActivity(activity) ? solfegeLevelFromActivity(activity) : null;
+                const locationLabel = locations.find((item) => item.id === activeBlock.location_id)?.name || null;
+                const blockSolfegeRule = blockSolfegeLevel
+                  ? solfegeRules.find((rule) => String(rule.level_code) === String(blockSolfegeLevel)) || null
+                  : null;
+                const pendingSlotOptions =
+                  selectionPending && blockSolfegeLevel ? slotOptionsFromRule(blockSolfegeRule, locationLabel) : [];
+                return (
+                  <div className="grid cols-4 top-gap-sm">
+                    <label>
+                      Activite
+                      <select
+                        value={activeBlock.activity_id}
+                        onChange={(event) => syncEndTimeWithActivity(activeBlock.uid, event.target.value, activeBlock.start_time)}
+                        disabled={!editable}
+                      >
+                        <option value="">Selectionner</option>
+                        {activities.map((row) => (
+                          <option key={row.id} value={row.id}>
+                            {row.name} ({row.duration_minutes} min)
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Lieu
+                      <select
+                        value={activeBlock.location_id}
+                        onChange={(event) => updateBlock(activeBlock.uid, { location_id: event.target.value })}
+                        disabled={!editable}
+                      >
+                        <option value="">Aucun</option>
+                        {locations.map((row) => (
+                          <option key={row.id} value={row.id}>
+                            {row.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Jour
+                      <select
+                        value={String(activeBlock.weekday)}
+                        onChange={(event) => {
+                          const parsed = Number.parseInt(event.target.value, 10);
+                          if (!Number.isFinite(parsed)) {
+                            return;
+                          }
+                          if (parsed === WEEKDAY_UNSET) {
+                            updateBlock(activeBlock.uid, {
+                              weekday: WEEKDAY_UNSET,
+                              start_time: "",
+                              end_time: "",
+                            });
+                            return;
+                          }
+                          const duration = activity?.duration_minutes ?? 60;
+                          const nextStart = activeBlock.start_time || "17:00";
+                          updateBlock(activeBlock.uid, {
+                            weekday: parsed,
+                            start_time: nextStart,
+                            end_time: addMinutesToTime(nextStart, duration),
+                          });
+                        }}
+                        disabled={!editable}
+                      >
+                        {WEEKDAY_OPTIONS.map((row) => (
+                          <option key={row.value} value={row.value}>
+                            {row.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Modalite
+                      <select
+                        value={activeBlock.modality}
+                        onChange={(event) => updateBlock(activeBlock.uid, { modality: event.target.value })}
+                        disabled={!editable}
+                      >
+                        <option value="">Auto</option>
+                        <option value="ONLINE">En ligne</option>
+                        <option value="ONSITE">Presentiel</option>
+                      </select>
+                    </label>
+                    <label>
+                      Frequence
+                      <select
+                        value={activeBlock.recurrence_frequency}
+                        onChange={(event) => {
+                          const next = event.target.value === "biweekly" || event.target.value === "monthly"
+                            ? event.target.value
+                            : "weekly";
+                          updateBlock(activeBlock.uid, { recurrence_frequency: next });
+                        }}
+                        disabled={!editable}
+                      >
+                        {RECURRENCE_OPTIONS.map((entry) => (
+                          <option key={`${activeBlock.uid}-freq-${entry.value}`} value={entry.value}>
+                            {entry.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Date debut
+                      <input
+                        type="date"
+                        value={activeBlock.start_date}
+                        onChange={(event) => updateBlock(activeBlock.uid, { start_date: event.target.value })}
+                        disabled={!editable}
+                      />
+                    </label>
+                    <label>
+                      Date fin
+                      <input
+                        type="date"
+                        value={activeBlock.end_date}
+                        onChange={(event) => updateBlock(activeBlock.uid, { end_date: event.target.value })}
+                        disabled={!editable}
+                      />
+                    </label>
+                    <label>
+                      Heure debut
+                      <input
+                        type="time"
+                        value={activeBlock.start_time}
+                        onChange={(event) => {
+                          const nextStart = event.target.value;
+                          const currentActivity = activities.find((item) => item.id === activeBlock.activity_id);
+                          const duration = currentActivity?.duration_minutes ?? 60;
+                          updateBlock(activeBlock.uid, {
+                            start_time: nextStart,
+                            end_time: addMinutesToTime(nextStart, duration),
+                          });
+                        }}
+                        disabled={!editable || selectionPending}
+                      />
+                    </label>
+                    <label>
+                      Heure fin (auto)
+                      <input type="time" value={activeBlock.end_time} readOnly />
+                    </label>
+
+                    <p className="muted span-4">
+                      Solfege et Masterclass sont des activites distinctes: ajoutez-les comme blocs planning separes.
+                    </p>
+                    {selectionPending && blockSolfegeLevel ? (
+                      <div className="span-4">
+                        <p className="muted">Niveau solfege {blockSolfegeLevel}: creneau a confirmer.</p>
+                        {pendingSlotOptions.length > 0 ? (
+                          <ul className="muted top-gap-sm">
+                            {pendingSlotOptions.map((slot) => (
+                              <li key={`${activeBlock.uid}-${slot.key}`}>{slot.label}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="muted top-gap-sm">Aucun creneau configure pour ce niveau.</p>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
-                  <div>
-                    <p><strong>2e semestre</strong></p>
-                    {semester2.length === 0 ? <p className="muted">Aucune seance</p> : null}
-                    {semester2.map((item) => (
-                      <p key={`${block.uid}-s2-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p className="muted top-gap-sm">
-                  {selectionPending
-                    ? "Selection du jour en attente: le calendrier sera calcule apres choix du creneau."
-                    : "Dates manquantes pour calculer la synthese."}
-                </p>
-              )}
-              <p className="muted top-gap-sm">
-                Calendrier: {block.calendar_name || "Par defaut"}.
-              </p>
-              {selectionPending && blockSolfegeLevel ? (
-                <div className="top-gap-sm">
-                  <p className="muted">
-                    Niveau solfege {blockSolfegeLevel}: creneau a confirmer.
-                  </p>
-                  {pendingSlotOptions.length > 0 ? (
-                    <ul className="muted top-gap-sm">
-                      {pendingSlotOptions.map((slot) => (
-                        <li key={`${block.uid}-${slot.key}`}>{slot.label}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="muted top-gap-sm">Aucun creneau configure pour ce niveau.</p>
-                  )}
-                </div>
-              ) : null}
-
-              <div className="row spread wrap gap-sm">
-                <button type="button" className="ghost small-btn" onClick={() => removeBlock(block.uid)} disabled={!editable}>
-                  Supprimer
-                </button>
-              </div>
-
-              <div className="grid cols-4 top-gap-sm">
-                <label>
-                  Activite
-                  <select
-                    value={block.activity_id}
-                    onChange={(event) => syncEndTimeWithActivity(block.uid, event.target.value, block.start_time)}
-                    disabled={!editable}
-                  >
-                    <option value="">Selectionner</option>
-                    {activities.map((row) => (
-                      <option key={row.id} value={row.id}>
-                        {row.name} ({row.duration_minutes} min)
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Lieu
-                  <select
-                    value={block.location_id}
-                    onChange={(event) => updateBlock(block.uid, { location_id: event.target.value })}
-                    disabled={!editable}
-                  >
-                    <option value="">Aucun</option>
-                    {locations.map((row) => (
-                      <option key={row.id} value={row.id}>
-                        {row.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Jour
-                  <select
-                    value={String(block.weekday)}
-                    onChange={(event) => {
-                      const parsed = Number.parseInt(event.target.value, 10);
-                      if (!Number.isFinite(parsed)) {
-                        return;
-                      }
-                      if (parsed === WEEKDAY_UNSET) {
-                        updateBlock(block.uid, {
-                          weekday: WEEKDAY_UNSET,
-                          start_time: "",
-                          end_time: "",
-                        });
-                        return;
-                      }
-                      const duration = activity?.duration_minutes ?? 60;
-                      const nextStart = block.start_time || "17:00";
-                      updateBlock(block.uid, {
-                        weekday: parsed,
-                        start_time: nextStart,
-                        end_time: addMinutesToTime(nextStart, duration),
-                      });
-                    }}
-                    disabled={!editable}
-                  >
-                    {WEEKDAY_OPTIONS.map((row) => (
-                      <option key={row.value} value={row.value}>
-                        {row.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Modalite
-                  <select
-                    value={block.modality}
-                    onChange={(event) => updateBlock(block.uid, { modality: event.target.value })}
-                    disabled={!editable}
-                  >
-                    <option value="">Auto</option>
-                    <option value="ONLINE">En ligne</option>
-                    <option value="ONSITE">Presentiel</option>
-                  </select>
-                </label>
-                <label>
-                  Frequence
-                  <select
-                    value={block.recurrence_frequency}
-                    onChange={(event) => {
-                      const next = event.target.value === "biweekly" || event.target.value === "monthly"
-                        ? event.target.value
-                        : "weekly";
-                      updateBlock(block.uid, { recurrence_frequency: next });
-                    }}
-                    disabled={!editable}
-                  >
-                    {RECURRENCE_OPTIONS.map((entry) => (
-                      <option key={`${block.uid}-freq-${entry.value}`} value={entry.value}>
-                        {entry.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Date debut
-                  <input type="date" value={block.start_date} onChange={(event) => updateBlock(block.uid, { start_date: event.target.value })} disabled={!editable} />
-                </label>
-                <label>
-                  Date fin
-                  <input type="date" value={block.end_date} onChange={(event) => updateBlock(block.uid, { end_date: event.target.value })} disabled={!editable} />
-                </label>
-                <label>
-                  Heure debut
-                  <input
-                    type="time"
-                    value={block.start_time}
-                    onChange={(event) => {
-                      const nextStart = event.target.value;
-                      const currentActivity = activities.find((item) => item.id === block.activity_id);
-                      const duration = currentActivity?.duration_minutes ?? 60;
-                      updateBlock(block.uid, {
-                        start_time: nextStart,
-                        end_time: addMinutesToTime(nextStart, duration),
-                      });
-                    }}
-                    disabled={!editable || selectionPending}
-                  />
-                </label>
-                <label>
-                  Heure fin (auto)
-                  <input type="time" value={block.end_time} readOnly />
-                </label>
-
-                <p className="muted span-4">
-                  Solfege et Masterclass sont des activites distinctes: ajoutez-les comme blocs planning separes.
-                </p>
-              </div>
-            </article>
-          );
-        })}
+                );
+              })()}
+            </>
+          )}
+        </section>
       </div>
 
-      <div className="row top-gap-sm">
+      <div className="row end top-gap-sm">
         <button type="submit" disabled={!editable}>Enregistrer le planning</button>
       </div>
       {!editable ? <p className="muted top-gap-sm">Le devis est immuable apres envoi.</p> : null}

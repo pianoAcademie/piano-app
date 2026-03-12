@@ -9937,6 +9937,156 @@ button.danger:focus-visible {
   gap: 0.2rem;
 }
 
+.quote-editor-toolbar {
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  padding: 0.7rem 0.8rem;
+  background: #fff;
+}
+
+.quote-editor-count {
+  font-size: 0.9rem;
+  color: #45556a;
+}
+
+.quote-status-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.quote-status-chip-saved {
+  background: #dff5e6;
+  color: #1e6b3b;
+}
+
+.quote-status-chip-pending {
+  background: #fdf0d7;
+  color: #7a4e06;
+}
+
+.quote-status-chip-new {
+  background: #e7efff;
+  color: #244b96;
+}
+
+.quote-status-chip-editing {
+  background: #fde7d9;
+  color: #8b4200;
+}
+
+.quote-editor-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 0.95rem;
+  align-items: start;
+}
+
+.quote-editor-pane {
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: 0.8rem;
+  background: #fff;
+  min-height: 200px;
+}
+
+.quote-editor-pane h4 {
+  margin: 0;
+}
+
+.quote-editor-pane-saved {
+  background: #fefefe;
+}
+
+.quote-editor-pane-draft {
+  background: #fffdf8;
+}
+
+.quote-editor-empty {
+  border: 1px dashed var(--line);
+  border-radius: 0.6rem;
+  background: #fafafa;
+  padding: 0.7rem;
+  color: #5c6774;
+}
+
+.quote-saved-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.quote-saved-card {
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: #fff;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.quote-saved-card.active {
+  border-color: #c6a86a;
+  box-shadow: 0 0 0 2px rgba(198, 168, 106, 0.16);
+}
+
+.quote-saved-card-detail {
+  border-top: 1px dashed var(--line);
+  padding-top: 0.55rem;
+}
+
+.quote-draft-banner {
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.quote-draft-banner.new {
+  background: #e8f0ff;
+  color: #204a9e;
+}
+
+.quote-draft-banner.editing {
+  background: #fff0dd;
+  color: #7b4b03;
+}
+
+.quote-saved-table-wrap {
+  overflow-x: auto;
+}
+
+.quote-saved-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.quote-saved-table th,
+.quote-saved-table td {
+  border: 1px solid var(--line);
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.88rem;
+}
+
+.quote-saved-table th {
+  background: #f2f6fc;
+  color: #1f2f45;
+}
+
+.quote-saved-table tbody tr.active td {
+  background: #fff9ec;
+}
+
+.quote-saved-table .small-btn {
+  padding: 0.2rem 0.45rem;
+}
+
 .quote-workstream-card {
   border-width: 1px;
   border-style: solid;
@@ -10009,6 +10159,12 @@ button.danger:focus-visible {
 .quote-workstream-badge-pricing {
   background: #f2e5c9;
   color: #5d3a08;
+}
+
+@media (max-width: 1200px) {
+  .quote-editor-split {
+    grid-template-columns: 1fr;
+  }
 }
 
 .quote-preview-details {

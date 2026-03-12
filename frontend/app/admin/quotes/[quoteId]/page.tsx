@@ -18,7 +18,6 @@ import QuoteWorkspaceSidebar from "../../../../components/quotes/quote-workspace
 import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
-import QuoteSessionsViewer from "../../../../components/quote-sessions-viewer";
 import {
   changeQuoteFollowupPaymentMethodAction,
   duplicateQuoteAction,
@@ -34,6 +33,7 @@ import { backendRequest } from "../../../../lib/backend";
 import type { AdminActivityOut, AdminCatalogKitOut, AdminCatalogProductOut, AdminClientOut, LocationOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+type QuoteWorkspaceSection = "overview" | "cadre" | "planning" | "pricing" | "document" | "integration";
 
 type RouteParams = {
   params: {
@@ -212,6 +212,21 @@ function readParam(params: SearchParams, key: string): string {
     return raw[0] ?? "";
   }
   return raw ?? "";
+}
+
+function parseWorkspaceSection(value: string): QuoteWorkspaceSection {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (
+    normalized === "overview"
+    || normalized === "cadre"
+    || normalized === "planning"
+    || normalized === "pricing"
+    || normalized === "document"
+    || normalized === "integration"
+  ) {
+    return normalized;
+  }
+  return "overview";
 }
 
 function formatDate(value: string | null): string {
@@ -441,19 +456,6 @@ function readObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function weekdayLabelFromNumber(value: unknown): string {
-  const weekday = Number.parseInt(String(value ?? ""), 10);
-  if (weekday === -1) return "Selection a faire";
-  if (weekday === 0) return "Lundi";
-  if (weekday === 1) return "Mardi";
-  if (weekday === 2) return "Mercredi";
-  if (weekday === 3) return "Jeudi";
-  if (weekday === 4) return "Vendredi";
-  if (weekday === 5) return "Samedi";
-  if (weekday === 6) return "Dimanche";
-  return "-";
-}
-
 function getPlanningBlocks(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
   const raw = snapshot.blocks;
   if (!Array.isArray(raw)) {
@@ -618,6 +620,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   }
 
   const backPath = safeBackPath(readParam(searchParams, "back"));
+  const activeSection = parseWorkspaceSection(readParam(searchParams, "section"));
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
@@ -727,9 +730,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
-  const activityById = new Map(activities.map((row) => [row.id, row.name]));
-  const locationById = new Map(locations.map((row) => [row.id, row.name]));
-
   const owner = detail.quote.context_type === "acquisition"
     ? prospectById.get(detail.quote.prospect_id || "")
     : clientById.get(detail.quote.client_id || "");
@@ -741,14 +741,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
-  const calendarSessionsForViewer = calendarSessions.map((session) => ({
-    date: String(session.date ?? ""),
-    start_time: String(session.start_time ?? ""),
-    end_time: String(session.end_time ?? ""),
-    activity_label: String(session.activity_label ?? activityById.get(String(session.activity_id ?? "")) ?? "Activite"),
-    location_label: String(session.location_label ?? locationById.get(String(session.location_id ?? "")) ?? "Lieu non defini"),
-    modality: String(session.modality ?? ""),
-  }));
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
   const planningSummary = planningVisualSummary(calendarSessions);
   const followupPayload = readObject(activeFollowup?.payload);
@@ -821,7 +813,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     : null;
   const regenerateFormId = `quote-regenerate-form-${detail.quote.id}`;
 
-  const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
+  const quoteBasePath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}`;
+  const sectionHref = (section: QuoteWorkspaceSection): string =>
+    `${quoteBasePath}?back=${encodeURIComponent(backPath)}&section=${section}`;
+  const selfPath = sectionHref(activeSection);
   const commercialState = commercialStateFromQuote(detail.quote);
   const integrationState = integrationStateFromQuote(detail.quote, commercialState, activeFollowup);
   const validationChannel = readStringMeta(detail.quote.meta || {}, "validation_channel", detail.quote.approved_at ? "Portail public" : "-");
@@ -873,12 +868,29 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     { label: "Lien fiche centrale", value: readStringMeta(detail.quote.meta || {}, "integration_client_link", "A venir") },
   ];
   const sidebarItems = [
-    { id: "overview", label: "Vue d'ensemble", href: "#quote-overview", active: true },
-    { id: "cadre", label: "Cadre du devis", href: "#quote-cadre" },
-    { id: "planning", label: "Activites planifiees", href: "#quote-planning", badge: `${calendarSessions.length}` },
-    { id: "pricing", label: "Lignes facturees", href: "#quote-pricing", badge: `${detail.lines.length}` },
-    { id: "document", label: "Document et envoi", href: "#quote-document" },
-    { id: "integration", label: "Validation et integration", href: "#quote-validation-integration" },
+    { id: "overview", label: "Vue d'ensemble", href: sectionHref("overview"), active: activeSection === "overview" },
+    { id: "cadre", label: "Cadre du devis", href: sectionHref("cadre"), active: activeSection === "cadre" },
+    {
+      id: "planning",
+      label: "Activites planifiees",
+      href: sectionHref("planning"),
+      badge: `${calendarSessions.length}`,
+      active: activeSection === "planning",
+    },
+    {
+      id: "pricing",
+      label: "Lignes facturees",
+      href: sectionHref("pricing"),
+      badge: `${detail.lines.length}`,
+      active: activeSection === "pricing",
+    },
+    { id: "document", label: "Document et envoi", href: sectionHref("document"), active: activeSection === "document" },
+    {
+      id: "integration",
+      label: "Validation et integration",
+      href: sectionHref("integration"),
+      active: activeSection === "integration",
+    },
   ];
 
   return (
@@ -922,7 +934,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         {ok ? <section className="flash-ok">{ok}</section> : null}
         {error ? <section className="flash-err">{error}</section> : null}
 
-        <div id="quote-overview">
+        {activeSection === "overview" ? (
           <QuoteOverviewSection
             cards={[
               { label: "Statut devis", value: commercialStateLabel(commercialState) },
@@ -935,86 +947,153 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             alerts={integrationAlerts.map((message) => ({ level: message.toLowerCase().includes("erreur") ? "error" : "warn", message }))}
             quickActions={(
               <>
-                <a className="ghost" href="#quote-document">Document et envoi</a>
-                <a className="ghost" href="#quote-planning">Activites planifiees</a>
-                <a className="ghost" href="#quote-pricing">Lignes facturees</a>
-                <a className="ghost" href="#quote-validation-integration">Validation et integration</a>
+                <Link className="ghost" href={sectionHref("document")}>Document et envoi</Link>
+                <Link className="ghost" href={sectionHref("planning")}>Activites planifiees</Link>
+                <Link className="ghost" href={sectionHref("pricing")}>Lignes facturees</Link>
+                <Link className="ghost" href={sectionHref("integration")}>Validation et integration</Link>
               </>
             )}
           />
-        </div>
+        ) : null}
 
-        <section className="card" id="quote-document">
-        <h3>Actions</h3>
-        <div className="row wrap gap-sm top-gap-sm">
-          {detail.quote.status === "created" ? (
-            <form action={sendQuoteAction} className="row wrap gap-sm">
-              <input type="hidden" name="quote_id" value={detail.quote.id} />
-              <input type="hidden" name="return_to" value={selfPath} />
-              <input type="email" name="recipient_email" placeholder="Email destinataire (optionnel)" />
-              <button type="submit">Envoyer le devis</button>
-            </form>
-          ) : null}
+        {activeSection === "document" ? (
+          <>
+            <section className="card" id="quote-document">
+              <h3>Actions</h3>
+              <div className="row wrap gap-sm top-gap-sm">
+                {detail.quote.status === "created" ? (
+                  <form action={sendQuoteAction} className="row wrap gap-sm">
+                    <input type="hidden" name="quote_id" value={detail.quote.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <input type="email" name="recipient_email" placeholder="Email destinataire (optionnel)" />
+                    <button type="submit">Envoyer le devis</button>
+                  </form>
+                ) : null}
 
-          <form action={duplicateQuoteAction}>
-            <input type="hidden" name="quote_id" value={detail.quote.id} />
-            <input type="hidden" name="return_to" value={selfPath} />
-            <button type="submit" className="ghost">Dupliquer en nouvelle version</button>
-          </form>
+                <form action={duplicateQuoteAction}>
+                  <input type="hidden" name="quote_id" value={detail.quote.id} />
+                  <input type="hidden" name="return_to" value={selfPath} />
+                  <button type="submit" className="ghost">Dupliquer en nouvelle version</button>
+                </form>
 
-          {detail.quote.public_token ? (
-            <>
-              <Link
-                className="ghost"
-                href={`/q/${detail.quote.id}?t=${encodeURIComponent(detail.quote.public_token)}`}
-                target="_blank"
-              >
-                Ouvrir page publique
-              </Link>
-              <CopyLinkButton
-                value={`${process.env.NEXT_PUBLIC_FRONTEND_URL ?? "http://localhost:3000"}/q/${detail.quote.id}?t=${detail.quote.public_token}`}
-                label="Copier lien public"
-              />
-            </>
-          ) : (
-            <small className="muted">Le lien public sera disponible apres envoi.</small>
-          )}
+                {detail.quote.public_token ? (
+                  <>
+                    <Link
+                      className="ghost"
+                      href={`/q/${detail.quote.id}?t=${encodeURIComponent(detail.quote.public_token)}`}
+                      target="_blank"
+                    >
+                      Ouvrir page publique
+                    </Link>
+                    <CopyLinkButton
+                      value={`${process.env.NEXT_PUBLIC_FRONTEND_URL ?? "http://localhost:3000"}/q/${detail.quote.id}?t=${detail.quote.public_token}`}
+                      label="Copier lien public"
+                    />
+                  </>
+                ) : (
+                  <small className="muted">Le lien public sera disponible apres envoi.</small>
+                )}
 
-          {detail.quote.pdf_token ? (
-            <Link
-              className="ghost"
-              href={publicPdfHref || "#"}
-              target="_blank"
-            >
-              PDF public
-            </Link>
-          ) : null}
-          <Link className="ghost" href={adminPdfHref} target="_blank">
-            PDF admin
-          </Link>
-          <form id={regenerateFormId} action={regenerateQuoteDocumentAction}>
-            <input type="hidden" name="quote_id" value={detail.quote.id} />
-            <input type="hidden" name="return_to" value={selfPath} />
-            <ConfirmSubmitButton
-              formId={regenerateFormId}
-              label="Regenerer document"
-              title="Confirmer la regeneration du devis ?"
-              description="Le document devis sera regenere avec les parametres et templates actuellement selectionnes."
-              confirmLabel="Regenerer"
-              className="ghost"
-              disabled={detail.quote.status !== "created"}
-            />
-          </form>
-          {detail.quote.status !== "created" ? (
-            <small className="muted">Regeneration reservee au brouillon.</small>
-          ) : null}
-        </div>
-      </section>
+                {detail.quote.pdf_token ? (
+                  <Link
+                    className="ghost"
+                    href={publicPdfHref || "#"}
+                    target="_blank"
+                  >
+                    PDF public
+                  </Link>
+                ) : null}
+                <Link className="ghost" href={adminPdfHref} target="_blank">
+                  PDF admin
+                </Link>
+                <form id={regenerateFormId} action={regenerateQuoteDocumentAction}>
+                  <input type="hidden" name="quote_id" value={detail.quote.id} />
+                  <input type="hidden" name="return_to" value={selfPath} />
+                  <ConfirmSubmitButton
+                    formId={regenerateFormId}
+                    label="Regenerer document"
+                    title="Confirmer la regeneration du devis ?"
+                    description="Le document devis sera regenere avec les parametres et templates actuellement selectionnes."
+                    confirmLabel="Regenerer"
+                    className="ghost"
+                    disabled={detail.quote.status !== "created"}
+                  />
+                </form>
+                {detail.quote.status !== "created" ? (
+                  <small className="muted">Regeneration reservee au brouillon.</small>
+                ) : null}
+              </div>
+            </section>
 
-      <section className="card" id="quote-cadre">
-        <h3>Parametres du devis</h3>
-        <p className="muted">Devise, langue, templates, CGV et referentiels metier du devis.</p>
-        <form action={updateQuoteSettingsAction} className="grid cols-3 config-form-grid top-gap-sm">
+            <section className="card">
+              <details className="modal-details quote-preview-details">
+                <summary className="quote-preview-summary">
+                  <span>Apercu documentaire (admin)</span>
+                  <small className="muted">Audience: admin_preview</small>
+                </summary>
+                {documentPreview ? (
+                  <div className="top-gap-sm">
+                    <p className="muted">
+                      Hash rendu: <strong>{documentPreview.document_hash}</strong>
+                    </p>
+                    <div className="grid cols-2 top-gap-sm">
+                      <article className="item">
+                        <strong>Blocs visibles</strong>
+                        {documentPreview.visible_blocks.length === 0 ? (
+                          <p className="muted top-gap-sm">Aucun bloc visible.</p>
+                        ) : (
+                          <ul className="top-gap-sm">
+                            {documentPreview.visible_blocks.map((name) => (
+                              <li key={`visible-${name}`}>{name}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </article>
+                      <article className="item">
+                        <strong>Blocs masques</strong>
+                        {documentPreview.hidden_blocks.length === 0 ? (
+                          <p className="muted top-gap-sm">Aucun bloc masque.</p>
+                        ) : (
+                          <ul className="top-gap-sm">
+                            {documentPreview.hidden_blocks.map((name) => (
+                              <li key={`hidden-${name}`}>{name}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </article>
+                    </div>
+                    <article className="item top-gap-sm">
+                      <h4>Apercu devis</h4>
+                      <div
+                        className="top-gap-sm"
+                        dangerouslySetInnerHTML={{ __html: documentPreview.quote_body_html || documentPreview.combined_html }}
+                      />
+                    </article>
+                    <details className="modal-details top-gap-sm">
+                      <summary>Conditions generales (CGV)</summary>
+                      <article className="item">
+                        {documentPreview.terms_html ? (
+                          <div dangerouslySetInnerHTML={{ __html: documentPreview.terms_html }} />
+                        ) : (
+                          <p className="muted">Aucune CGV disponible pour ce devis.</p>
+                        )}
+                      </article>
+                    </details>
+                  </div>
+                ) : (
+                  <p className="muted top-gap-sm">Apercu documentaire indisponible.</p>
+                )}
+              </details>
+            </section>
+          </>
+        ) : null}
+
+        {activeSection === "cadre" ? (
+          <>
+            <section className="card" id="quote-cadre">
+              <h3>Parametres du devis</h3>
+              <p className="muted">Devise, langue, templates, CGV et referentiels metier du devis.</p>
+              <form action={updateQuoteSettingsAction} className="grid cols-3 config-form-grid top-gap-sm">
           <input type="hidden" name="quote_id" value={detail.quote.id} />
           <input type="hidden" name="return_to" value={selfPath} />
           <input type="hidden" name="current_meta_json" value={JSON.stringify(detail.quote.meta || {})} />
@@ -1164,178 +1243,76 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               disabled={detail.quote.status !== "created"}
             />
           </label>
-          <div className="row span-3 top-gap-sm">
-            <button type="submit" disabled={detail.quote.status !== "created"}>Enregistrer parametres</button>
-            {detail.quote.status !== "created" ? <small className="muted">Le devis est immuable apres envoi.</small> : null}
-          </div>
-        </form>
-        <p className="muted top-gap-sm">
-          Ajustement courant: <strong>{adjustmentTypeLabel(quoteAdjustment.type)}</strong>
-          {quoteAdjustment.type !== "none" ? (
-            <>
-              {" · "}
-              <strong>{formatAmount(String(quoteAdjustment.amountTtc), detail.quote.currency)}</strong>
-              {quoteAdjustment.effectiveDate ? <> · Date: <strong>{quoteAdjustment.effectiveDate}</strong></> : null}
-              {quoteAdjustment.label ? <> · Libelle: <strong>{quoteAdjustment.label}</strong></> : null}
-            </>
-          ) : null}
-        </p>
-        <p className="muted">
-          Acompte preinscription: <strong>{quoteDeposit.enabled ? "Oui" : "Non"}</strong>
-          {quoteDeposit.enabled ? (
-            <>
-              {" · "}
-              <strong>{formatAmount(String(quoteDeposit.amountTtc), detail.quote.currency)}</strong>
-            </>
-          ) : null}
-        </p>
-        {totalBeforeAdjustment !== null ? (
-          <p className="muted">
-            Total lignes avant ajustement: <strong>{formatAmount(String(totalBeforeAdjustment), detail.quote.currency)}</strong>
-            {" · "}
-            Total facture apres ajustement: <strong>{formatAmount(detail.quote.total_ttc, detail.quote.currency)}</strong>
-          </p>
-        ) : null}
-        <p className="muted top-gap-sm">
-          CGV snapshot active: <strong>{String(detail.quote.cgv_snapshot?.version_label || "-")}</strong>
-        </p>
-        <p className="muted">
-          Templates affiches pour la langue: <strong>{quoteLanguage.toUpperCase()}</strong>
-        </p>
-        <p className="muted">
-          Statut document: <strong>{detail.quote.document_status || "stale"}</strong>
-          {" · "}
-          Genere le: <strong>{formatDate(detail.quote.document_generated_at)}</strong>
-        </p>
-        <p className="muted">
-          Hash document: <strong>{detail.quote.document_hash || "-"}</strong>
-        </p>
-      </section>
-
-      <section className="card">
-        <details className="modal-details quote-preview-details">
-          <summary className="quote-preview-summary">
-            <span>Apercu documentaire (admin)</span>
-            <small className="muted">Audience: admin_preview</small>
-          </summary>
-          {documentPreview ? (
-            <div className="top-gap-sm">
-              <p className="muted">
-                Hash rendu: <strong>{documentPreview.document_hash}</strong>
+                <div className="row span-3 top-gap-sm">
+                  <button type="submit" disabled={detail.quote.status !== "created"}>Enregistrer parametres</button>
+                  {detail.quote.status !== "created" ? <small className="muted">Le devis est immuable apres envoi.</small> : null}
+                </div>
+              </form>
+              <p className="muted top-gap-sm">
+                Ajustement courant: <strong>{adjustmentTypeLabel(quoteAdjustment.type)}</strong>
+                {quoteAdjustment.type !== "none" ? (
+                  <>
+                    {" · "}
+                    <strong>{formatAmount(String(quoteAdjustment.amountTtc), detail.quote.currency)}</strong>
+                    {quoteAdjustment.effectiveDate ? <> · Date: <strong>{quoteAdjustment.effectiveDate}</strong></> : null}
+                    {quoteAdjustment.label ? <> · Libelle: <strong>{quoteAdjustment.label}</strong></> : null}
+                  </>
+                ) : null}
               </p>
-	            <div className="grid cols-2 top-gap-sm">
-                <article className="item">
-                  <strong>Blocs visibles</strong>
-                  {documentPreview.visible_blocks.length === 0 ? (
-                    <p className="muted top-gap-sm">Aucun bloc visible.</p>
-                  ) : (
-                    <ul className="top-gap-sm">
-                      {documentPreview.visible_blocks.map((name) => (
-                        <li key={`visible-${name}`}>{name}</li>
-                      ))}
-                    </ul>
-                  )}
-                </article>
-                <article className="item">
-                  <strong>Blocs masques</strong>
-                  {documentPreview.hidden_blocks.length === 0 ? (
-                    <p className="muted top-gap-sm">Aucun bloc masque.</p>
-                  ) : (
-                    <ul className="top-gap-sm">
-                      {documentPreview.hidden_blocks.map((name) => (
-                        <li key={`hidden-${name}`}>{name}</li>
-                      ))}
-                    </ul>
-                  )}
-                </article>
+              <p className="muted">
+                Acompte preinscription: <strong>{quoteDeposit.enabled ? "Oui" : "Non"}</strong>
+                {quoteDeposit.enabled ? (
+                  <>
+                    {" · "}
+                    <strong>{formatAmount(String(quoteDeposit.amountTtc), detail.quote.currency)}</strong>
+                  </>
+                ) : null}
+              </p>
+              {totalBeforeAdjustment !== null ? (
+                <p className="muted">
+                  Total lignes avant ajustement: <strong>{formatAmount(String(totalBeforeAdjustment), detail.quote.currency)}</strong>
+                  {" · "}
+                  Total facture apres ajustement: <strong>{formatAmount(detail.quote.total_ttc, detail.quote.currency)}</strong>
+                </p>
+              ) : null}
+              <p className="muted top-gap-sm">
+                CGV snapshot active: <strong>{String(detail.quote.cgv_snapshot?.version_label || "-")}</strong>
+              </p>
+              <p className="muted">
+                Templates affiches pour la langue: <strong>{quoteLanguage.toUpperCase()}</strong>
+              </p>
+              <p className="muted">
+                Statut document: <strong>{detail.quote.document_status || "stale"}</strong>
+                {" · "}
+                Genere le: <strong>{formatDate(detail.quote.document_generated_at)}</strong>
+              </p>
+              <p className="muted">
+                Hash document: <strong>{detail.quote.document_hash || "-"}</strong>
+              </p>
+            </section>
+
+            <section className="card">
+              <h3>Infos devis</h3>
+              <div className="grid cols-3 top-gap-sm">
+                <p><strong>Type:</strong> {detail.quote.quote_type}</p>
+                <p><strong>Annee scolaire:</strong> {detail.quote.school_year_label ?? "-"}</p>
+                <p><strong>Creation:</strong> {formatDate(detail.quote.created_at)}</p>
+                <p><strong>Envoi:</strong> {formatDate(detail.quote.sent_at)}</p>
+                <p><strong>Expiration:</strong> {formatDate(detail.quote.expires_at)}</p>
+                <p><strong>Options pedagogiques:</strong> Gerees via les activites du planning</p>
+                {selectedQuoteType?.formula_name ? <p><strong>Formule type devis:</strong> {selectedQuoteType.formula_name}</p> : null}
               </div>
-              <article className="item top-gap-sm">
-                <h4>Apercu devis</h4>
-                <div
-                  className="top-gap-sm"
-                  dangerouslySetInnerHTML={{ __html: documentPreview.quote_body_html || documentPreview.combined_html }}
-                />
-              </article>
-              <details className="modal-details top-gap-sm">
-                <summary>Conditions generales (CGV)</summary>
-                <article className="item">
-                  {documentPreview.terms_html ? (
-                    <div dangerouslySetInnerHTML={{ __html: documentPreview.terms_html }} />
-                  ) : (
-                    <p className="muted">Aucune CGV disponible pour ce devis.</p>
-                  )}
-                </article>
-              </details>
-            </div>
-          ) : (
-            <p className="muted top-gap-sm">Apercu documentaire indisponible.</p>
-          )}
-        </details>
-      </section>
+            </section>
+          </>
+        ) : null}
 
-      <section className="card">
-        <h3>Infos devis</h3>
-        <div className="grid cols-3 top-gap-sm">
-          <p><strong>Type:</strong> {detail.quote.quote_type}</p>
-          <p><strong>Annee scolaire:</strong> {detail.quote.school_year_label ?? "-"}</p>
-          <p><strong>Creation:</strong> {formatDate(detail.quote.created_at)}</p>
-          <p><strong>Envoi:</strong> {formatDate(detail.quote.sent_at)}</p>
-          <p><strong>Expiration:</strong> {formatDate(detail.quote.expires_at)}</p>
-          <p><strong>Options pedagogiques:</strong> Gerees via les activites du planning</p>
-          {selectedQuoteType?.formula_name ? <p><strong>Formule type devis:</strong> {selectedQuoteType.formula_name}</p> : null}
-        </div>
-      </section>
-
-      <section className="card">
-        <h3>Lecture rapide des 2 blocs</h3>
-        <nav className="quote-workstream-switch top-gap-sm">
-          <a className="quote-workstream-switch-link quote-workstream-switch-link-planning" href="#planning-editor">
-            Bloc 1 · Activites (pedagogie)
-          </a>
-          <a className="quote-workstream-switch-link quote-workstream-switch-link-pricing" href="#pricing-editor">
-            Bloc 2 · Lignes devis (facturation)
-          </a>
-        </nav>
-        <p className="muted top-gap-sm">
-          Bloc 1 definit <strong>quoi / ou / quand</strong> (planning des cours). Bloc 2 definit <strong>combien</strong> (montants factures).
-        </p>
-      </section>
-
-      <section className="card quote-workstream-card quote-workstream-card-planning" id="quote-planning">
+        {activeSection === "planning" ? (
+          <section className="card quote-workstream-card quote-workstream-card-planning" id="quote-planning">
         <div className="quote-workstream-head">
           <span className="quote-workstream-badge quote-workstream-badge-planning">Bloc 1 · Construction pedagogique</span>
-          <h3>Activites (planning)</h3>
-          <p className="muted">{calendarSessions.length} seances calculees. Configurez les cours, lieux, jours, horaires et frequence.</p>
-          <p className="muted">Ce bloc ne porte pas la facturation.</p>
+          <h3>Planning des cours</h3>
+          <p className="muted">Quoi, ou, quand. {planningBlocks.length} activite(s) configuree(s) et {calendarSessions.length} seance(s) calculee(s).</p>
         </div>
-        {planningSummary.length > 0 ? (
-          <div className="list top-gap-sm">
-            {planningSummary.map((block) => (
-              <article key={block.key} className="item">
-                <div className="row spread wrap gap-sm">
-                  <strong>{block.title}</strong>
-                  <span className="badge">{block.count} cours</span>
-                </div>
-                <div className="grid cols-2 top-gap-sm">
-                  <div>
-                    <p><strong>1er semestre</strong></p>
-                    {block.semester1.length === 0 ? <p className="muted">Aucune seance</p> : null}
-                    {block.semester1.map((item) => (
-                      <p key={`${block.key}-s1-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
-                    ))}
-                  </div>
-                  <div>
-                    <p><strong>2e semestre</strong></p>
-                    {block.semester2.length === 0 ? <p className="muted">Aucune seance</p> : null}
-                    {block.semester2.map((item) => (
-                      <p key={`${block.key}-s2-${item.monthLabel}`} className="muted">{item.monthLabel}: {item.days}</p>
-                    ))}
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : null}
         <div className="top-gap-sm">
           <QuotePlanningEditor
             quoteId={detail.quote.id}
@@ -1369,54 +1346,15 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             saveAction={updateQuotePlanningAction}
           />
         </div>
-        {planningBlocks.length > 0 ? (
-          <div className="quote-public-lines top-gap-sm">
-            {planningBlocks.map((block, index) => (
-              <article key={`block-${index}`} className="quote-public-line-item">
-                {(() => {
-                  const selectionPending = Number.parseInt(String(block.weekday ?? ""), 10) === -1 || Boolean(block.selection_pending);
-                  const startTime = String(block.start_time ?? "--:--");
-                  const endTime = String(block.end_time ?? "--:--");
-                  const pendingSlotsRaw = Array.isArray(block.pending_slot_options) ? block.pending_slot_options : [];
-                  const pendingSlots = pendingSlotsRaw
-                    .map((slot) => (slot && typeof slot === "object" ? String((slot as Record<string, unknown>).label ?? "").trim() : ""))
-                    .filter((label) => label.length > 0);
-                  return (
-                    <>
-                <strong>{String(block.activity_label ?? activityById.get(String(block.activity_id ?? "")) ?? "Activite")}</strong>
-                <span>
-                  {selectionPending
-                    ? "Selection a faire"
-                    : `${weekdayLabelFromNumber(block.weekday)} · ${startTime} - ${endTime}`}
-                </span>
-                {selectionPending && pendingSlots.length > 0 ? (
-                  <small className="muted">
-                    Creneaux disponibles: {pendingSlots.join(" ; ")}
-                  </small>
-                ) : null}
-                <small className="muted">
-                  {String(block.start_date ?? "-")} → {String(block.end_date ?? "-")}
-                  {" · "}
-                  {String(block.location_label ?? locationById.get(String(block.location_id ?? "")) ?? "Lieu non defini")}
-                  {" · "}
-                  Calendrier: {String(block.calendar_name ?? "Par defaut")}
-                </small>
-                    </>
-                  );
-                })()}
-              </article>
-            ))}
-          </div>
+          </section>
         ) : null}
-        <QuoteSessionsViewer quoteNumber={detail.quote.quote_number} sessions={calendarSessionsForViewer} />
-      </section>
 
-      <section className="card quote-workstream-card quote-workstream-card-pricing" id="quote-pricing">
+        {activeSection === "pricing" ? (
+          <section className="card quote-workstream-card quote-workstream-card-pricing" id="quote-pricing">
         <div className="quote-workstream-head">
           <span className="quote-workstream-badge quote-workstream-badge-pricing">Bloc 2 · Construction commerciale</span>
-          <h3>Lignes du devis (tarification)</h3>
-          <p className="muted">Construisez le chiffrage: activites facturees, materiel, kits, remises et supplements.</p>
-          <p className="muted">Ce bloc impacte les totaux HT/TVA/TTC du devis.</p>
+          <h3>Lignes facturees</h3>
+          <p className="muted">Ce qui sera facture. {detail.lines.length} ligne(s) actuellement enregistree(s).</p>
         </div>
         <QuoteLinesEditor
           quoteId={detail.quote.id}
@@ -1449,117 +1387,122 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           defaultVatRate={defaultVatRate}
           saveAction={updateQuoteLinesAction}
         />
-      </section>
+          </section>
+        ) : null}
 
-      <section id="quote-validation-integration">
-        <QuoteValidationIntegrationSection
-          validationRows={validationRows}
-          projectionCard={<QuoteIntegrationProjectionCard rows={projectionRows} />}
-          clientMatchCard={(
-            <QuoteClientMatchCard
-              status={clientMatchStatus}
-              detail={
-                clientMatchStatus === "deja_lie"
-                  ? "Le devis est deja relie a un client."
-                  : clientMatchStatus === "multiple"
-                  ? "Plusieurs correspondances detectees, verification manuelle necessaire."
-                  : clientMatchStatus === "probable"
-                  ? "Une correspondance probable a ete detectee."
-                  : "Aucune correspondance client detectee pour le moment."
-              }
-            />
-          )}
-          integrationResultCard={<QuoteIntegrationResultCard rows={integrationResultRows} />}
-          note="Placeholder UI active: l'integration reelle vers l'application centrale sera branchee dans une etape ulterieure."
-        />
-      </section>
-
-      <section className="card">
-        <h3>Parcours post-approbation</h3>
-        {activeFollowup ? (
+        {activeSection === "integration" ? (
           <>
-            <p className="muted">
-              Statut follow-up: <strong>{activeFollowup.status}</strong> · Paiement: <strong>{activeFollowup.payment_method_status}</strong> · Solfege: <strong>{activeFollowup.solfege_slot_status}</strong>
-            </p>
-
-            <div className="grid cols-2 top-gap-sm">
-              <QuoteFollowupSlotForm
-                followupId={activeFollowup.id}
-                returnTo={selfPath}
-                solfegeRules={solfegeRules}
-                initialLevelCode={followupLevelCode}
-                initialSelectedSlot={followupSelectedSlot}
-                submitAction={selectQuoteFollowupSlotAction}
+            <section id="quote-validation-integration">
+              <QuoteValidationIntegrationSection
+                validationRows={validationRows}
+                projectionCard={<QuoteIntegrationProjectionCard rows={projectionRows} />}
+                clientMatchCard={(
+                  <QuoteClientMatchCard
+                    status={clientMatchStatus}
+                    detail={
+                      clientMatchStatus === "deja_lie"
+                        ? "Le devis est deja relie a un client."
+                        : clientMatchStatus === "multiple"
+                        ? "Plusieurs correspondances detectees, verification manuelle necessaire."
+                        : clientMatchStatus === "probable"
+                        ? "Une correspondance probable a ete detectee."
+                        : "Aucune correspondance client detectee pour le moment."
+                    }
+                  />
+                )}
+                integrationResultCard={<QuoteIntegrationResultCard rows={integrationResultRows} />}
+                note="Placeholder UI active: l'integration reelle vers l'application centrale sera branchee dans une etape ulterieure."
               />
+            </section>
 
-	              <form id={`followup-payment-form-${activeFollowup.id}`} action={changeQuoteFollowupPaymentMethodAction} className="card quote-followup-form">
-	                <h4>Changer le mode de paiement</h4>
-	                <input type="hidden" name="followup_id" value={activeFollowup.id} />
-	                <input type="hidden" name="return_to" value={selfPath} />
-	                <label>
-	                  Methode
-	                  <select name="payment_method_code" defaultValue={followupMethodDefaultCode} required>
-	                    <option value="">Selectionner</option>
-	                    {Array.from(paymentMethodOptionsByCode.values()).map((item) => (
-	                      <option key={item.code} value={item.code}>
-	                        {item.label}
-	                      </option>
-	                    ))}
-	                  </select>
-	                  <small className="muted">Liste issue des plans de paiement configures.</small>
-	                </label>
-	                <label>
-	                  Plan de paiement (optionnel)
-	                  <select name="payment_plan_id" defaultValue={followupPaymentPlanId}>
-	                    <option value="">Aucun</option>
-	                    {paymentPlans.map((row) => (
-	                      <option key={row.id} value={row.id}>{row.name} ({paymentMethodLabel(row.payment_method)})</option>
-	                    ))}
-	                  </select>
-	                </label>
-	                <ConfirmSubmitButton
-	                  formId={`followup-payment-form-${activeFollowup.id}`}
-	                  label="Mettre a jour paiement"
-	                  title="Confirmer la mise a jour du paiement ?"
-	                  description="Le mode de paiement et le plan selectionne seront appliques au devis."
-	                  confirmLabel="Mettre a jour"
-	                />
-	              </form>
-	            </div>
+            <section className="card">
+              <h3>Parcours post-approbation</h3>
+              {activeFollowup ? (
+                <>
+                  <p className="muted">
+                    Statut follow-up: <strong>{activeFollowup.status}</strong> · Paiement: <strong>{activeFollowup.payment_method_status}</strong> · Solfege: <strong>{activeFollowup.solfege_slot_status}</strong>
+                  </p>
 
-	            <form id={`followup-finalize-form-${activeFollowup.id}`} action={finalizeQuoteFollowupAction} className="row top-gap-sm">
-	              <input type="hidden" name="followup_id" value={activeFollowup.id} />
-	              <input type="hidden" name="return_to" value={selfPath} />
-	              <ConfirmSubmitButton
-	                formId={`followup-finalize-form-${activeFollowup.id}`}
-	                label="Finaliser le parcours post-approbation"
-	                title="Confirmer la finalisation du parcours post-approbation ?"
-	                description="Le follow-up passera en statut complete. Le paiement et le creneau seront valides selon leur etat actuel."
-	                confirmLabel="Finaliser"
-	              />
-	            </form>
+                  <div className="grid cols-2 top-gap-sm">
+                    <QuoteFollowupSlotForm
+                      followupId={activeFollowup.id}
+                      returnTo={selfPath}
+                      solfegeRules={solfegeRules}
+                      initialLevelCode={followupLevelCode}
+                      initialSelectedSlot={followupSelectedSlot}
+                      submitAction={selectQuoteFollowupSlotAction}
+                    />
+
+                    <form id={`followup-payment-form-${activeFollowup.id}`} action={changeQuoteFollowupPaymentMethodAction} className="card quote-followup-form">
+                      <h4>Changer le mode de paiement</h4>
+                      <input type="hidden" name="followup_id" value={activeFollowup.id} />
+                      <input type="hidden" name="return_to" value={selfPath} />
+                      <label>
+                        Methode
+                        <select name="payment_method_code" defaultValue={followupMethodDefaultCode} required>
+                          <option value="">Selectionner</option>
+                          {Array.from(paymentMethodOptionsByCode.values()).map((item) => (
+                            <option key={item.code} value={item.code}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                        <small className="muted">Liste issue des plans de paiement configures.</small>
+                      </label>
+                      <label>
+                        Plan de paiement (optionnel)
+                        <select name="payment_plan_id" defaultValue={followupPaymentPlanId}>
+                          <option value="">Aucun</option>
+                          {paymentPlans.map((row) => (
+                            <option key={row.id} value={row.id}>{row.name} ({paymentMethodLabel(row.payment_method)})</option>
+                          ))}
+                        </select>
+                      </label>
+                      <ConfirmSubmitButton
+                        formId={`followup-payment-form-${activeFollowup.id}`}
+                        label="Mettre a jour paiement"
+                        title="Confirmer la mise a jour du paiement ?"
+                        description="Le mode de paiement et le plan selectionne seront appliques au devis."
+                        confirmLabel="Mettre a jour"
+                      />
+                    </form>
+                  </div>
+
+                  <form id={`followup-finalize-form-${activeFollowup.id}`} action={finalizeQuoteFollowupAction} className="row top-gap-sm">
+                    <input type="hidden" name="followup_id" value={activeFollowup.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <ConfirmSubmitButton
+                      formId={`followup-finalize-form-${activeFollowup.id}`}
+                      label="Finaliser le parcours post-approbation"
+                      title="Confirmer la finalisation du parcours post-approbation ?"
+                      description="Le follow-up passera en statut complete. Le paiement et le creneau seront valides selon leur etat actuel."
+                      confirmLabel="Finaliser"
+                    />
+                  </form>
+                </>
+              ) : (
+                <p className="muted">Aucun follow-up actif pour ce devis. Il sera cree automatiquement apres approbation du devis.</p>
+              )}
+            </section>
+
+            <section className="card">
+              <h3>Echeancier snapshot</h3>
+              <div className="quote-public-lines top-gap-sm">
+                {getScheduleItems(detail.quote.payment_terms_snapshot).length === 0 ? (
+                  <p className="muted">Aucun echeancier.</p>
+                ) : (
+                  getScheduleItems(detail.quote.payment_terms_snapshot).map((item, index) => (
+                    <article key={`schedule-${index}`} className="quote-public-line-item">
+                      <strong>{String(item.label ?? `Echeance ${index + 1}`)}</strong>
+                      <span>{formatScheduleDueLabel(item)}</span>
+                      <small>{String(item.amount_ttc ?? "0")} {detail.quote.currency}</small>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
           </>
-        ) : (
-          <p className="muted">Aucun follow-up actif pour ce devis. Il sera cree automatiquement apres approbation du devis.</p>
-        )}
-      </section>
-
-      <section className="card">
-        <h3>Echeancier snapshot</h3>
-        <div className="quote-public-lines top-gap-sm">
-          {getScheduleItems(detail.quote.payment_terms_snapshot).length === 0 ? (
-            <p className="muted">Aucun echeancier.</p>
-          ) : (
-            getScheduleItems(detail.quote.payment_terms_snapshot).map((item, index) => (
-              <article key={`schedule-${index}`} className="quote-public-line-item">
-                <strong>{String(item.label ?? `Echeance ${index + 1}`)}</strong>
-                <span>{formatScheduleDueLabel(item)}</span>
-                <small>{String(item.amount_ttc ?? "0")} {detail.quote.currency}</small>
-              </article>
-            ))
-          )}
-        </div>
-      </section>
+        ) : null}
       </QuoteWorkspaceShell>
     </section>
   );

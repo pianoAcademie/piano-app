@@ -48,6 +48,8 @@ type EditableLine = {
   quantity: string;
   vatRate: string;
   unitPrice: string;
+  saved: boolean;
+  dirty: boolean;
 };
 
 type QuoteLinesEditorProps = {
@@ -277,11 +279,20 @@ export default function QuoteLinesEditor({
       quantity: row.quantity || "1",
       vatRate: row.vat_rate || "0",
       unitPrice: row.unit_price_ttc || "0",
+      saved: true,
+      dirty: false,
     })),
   );
+  const [activeUid, setActiveUid] = useState<string | null>(initialLines[0]?.id ?? null);
 
   const linesJson = useMemo(() => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index))), [lines]);
   const total = useMemo(() => lines.reduce((sum, line) => sum + lineAmount(line), 0), [lines]);
+  const totalHt = useMemo(() => lines.reduce((sum, line) => sum + lineAmountHt(line), 0), [lines]);
+  const totalVat = useMemo(() => lines.reduce((sum, line) => sum + lineAmountVat(line), 0), [lines]);
+  const savedCount = lines.filter((line) => line.saved && !line.dirty).length;
+  const modifiedCount = lines.filter((line) => line.saved && line.dirty).length;
+  const newCount = lines.filter((line) => !line.saved).length;
+  const pendingSaveCount = lines.filter((line) => !line.saved || line.dirty).length;
 
   function addLine(kind: LineKind): void {
     const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -295,16 +306,43 @@ export default function QuoteLinesEditor({
         quantity: "1",
         vatRate: "0",
         unitPrice: "0",
+        saved: false,
+        dirty: true,
       },
     ]);
+    setActiveUid(uid);
   }
 
   function removeLine(uid: string): void {
-    setLines((prev) => prev.filter((line) => line.uid !== uid));
+    setLines((prev) => {
+      const next = prev.filter((line) => line.uid !== uid);
+      if (activeUid === uid) {
+        setActiveUid(next[0]?.uid ?? null);
+      }
+      return next;
+    });
   }
 
   function updateLine(uid: string, patch: Partial<EditableLine>): void {
-    setLines((prev) => prev.map((line) => (line.uid === uid ? { ...line, ...patch } : line)));
+    setLines((prev) =>
+      prev.map((line) => {
+        if (line.uid !== uid) {
+          return line;
+        }
+        const next = { ...line, ...patch };
+        const changed = Object.entries(patch).some(([key, value]) => {
+          const current = line[key as keyof EditableLine];
+          return String(current ?? "") !== String(value ?? "");
+        });
+        if (!changed) {
+          return line;
+        }
+        return {
+          ...next,
+          dirty: line.saved ? true : next.dirty,
+        };
+      }),
+    );
   }
 
   function applyRefToLine(uid: string, kind: LineKind, refId: string): void {
@@ -330,6 +368,7 @@ export default function QuoteLinesEditor({
             title: activity?.name ?? "Activite",
             vatRate: shouldPrefillVat ? (defaultVatRate || "0") : line.vatRate,
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+            dirty: line.saved ? true : line.dirty,
           };
         }
         if (kind === "product") {
@@ -343,6 +382,7 @@ export default function QuoteLinesEditor({
             title: product?.title ?? "Produit",
             vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+            dirty: line.saved ? true : line.dirty,
           };
         }
         const kit = kits.find((item) => item.id === refId);
@@ -355,10 +395,37 @@ export default function QuoteLinesEditor({
           title: kit?.title ?? "Kit",
           vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
           unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+          dirty: line.saved ? true : line.dirty,
         };
       }),
     );
   }
+
+  function lineStatusLabel(line: EditableLine): string {
+    if (!line.saved) {
+      return "Nouveau non enregistre";
+    }
+    if (line.dirty) {
+      return "Modification en cours";
+    }
+    return "Enregistre";
+  }
+
+  function lineStatusClass(line: EditableLine): string {
+    if (!line.saved) return "quote-status-chip-new";
+    if (line.dirty) return "quote-status-chip-editing";
+    return "quote-status-chip-saved";
+  }
+
+  function lineTypeLabel(kind: LineKind): string {
+    if (kind === "activity") return "Activite";
+    if (kind === "product") return "Produit";
+    if (kind === "kit") return "Kit";
+    if (kind === "discount") return "Remise";
+    return "Supplement";
+  }
+
+  const activeLine = lines.find((line) => line.uid === activeUid) ?? null;
 
   return (
     <form action={saveAction}>
@@ -366,99 +433,181 @@ export default function QuoteLinesEditor({
       <input type="hidden" name="return_to" value={returnTo} />
       <input type="hidden" name="lines_json" value={linesJson} />
 
-      <div className="row wrap gap-sm">
-        <button type="button" className="ghost" onClick={() => addLine("activity")} disabled={!editable}>+ Activite</button>
-        <button type="button" className="ghost" onClick={() => addLine("product")} disabled={!editable}>+ Produit</button>
-        <button type="button" className="ghost" onClick={() => addLine("kit")} disabled={!editable}>+ Kit</button>
-        <button type="button" className="ghost" onClick={() => addLine("discount")} disabled={!editable}>+ Remise</button>
-        <button type="button" className="ghost" onClick={() => addLine("surcharge")} disabled={!editable}>+ Supplement</button>
+      <div className="quote-editor-toolbar row spread wrap gap-sm">
+        <div className="row wrap gap-sm">
+          <button type="button" className="ghost" onClick={() => addLine("activity")} disabled={!editable}>+ Activite</button>
+          <button type="button" className="ghost" onClick={() => addLine("product")} disabled={!editable}>+ Produit</button>
+          <button type="button" className="ghost" onClick={() => addLine("kit")} disabled={!editable}>+ Kit</button>
+          <button type="button" className="ghost" onClick={() => addLine("discount")} disabled={!editable}>+ Remise</button>
+          <button type="button" className="ghost" onClick={() => addLine("surcharge")} disabled={!editable}>+ Supplement</button>
+        </div>
+        <div className="row wrap gap-sm">
+          <span className="quote-editor-count">Lignes facturees — {savedCount} enregistree(s), {modifiedCount + newCount} brouillon(s)</span>
+          <span className={`quote-status-chip ${pendingSaveCount > 0 ? "quote-status-chip-pending" : "quote-status-chip-saved"}`}>
+            {pendingSaveCount > 0 ? "A enregistrer" : "Enregistre"}
+          </span>
+        </div>
       </div>
 
-      {lines.length === 0 ? <p className="muted top-gap-sm">Aucune ligne.</p> : null}
-      <div className="quote-lines-list top-gap-sm">
-        {lines.map((line) => (
-          <article key={line.uid} className="quote-line-card">
-            <div className="row spread wrap gap-sm">
-              <strong>{line.kind.toUpperCase()}</strong>
-              <button type="button" className="ghost small-btn" onClick={() => removeLine(line.uid)} disabled={!editable}>
-                Supprimer
-              </button>
-            </div>
-            {(line.kind === "activity" || line.kind === "product" || line.kind === "kit") ? (
-              <label className="top-gap-sm">
-                Element
-                <select
-                  value={line.refId}
-                  onChange={(event) => applyRefToLine(line.uid, line.kind, event.target.value)}
-                  disabled={!editable}
-                >
-                  <option value="">Selectionner</option>
-                  {selectableOptions(line.kind, activities, products, kits).map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label}
-                    </option>
+      <div className="quote-editor-split quote-editor-split-pricing top-gap-sm">
+        <section className="quote-editor-pane quote-editor-pane-saved">
+          <h4>Lignes enregistrees</h4>
+          {lines.length === 0 ? (
+            <p className="quote-editor-empty">Aucune ligne enregistree pour ce devis.</p>
+          ) : (
+            <div className="quote-saved-table-wrap top-gap-sm">
+              <table className="quote-saved-table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Intitule</th>
+                    <th>Quantite</th>
+                    <th>TVA</th>
+                    <th>Prix TTC</th>
+                    <th>Total TTC</th>
+                    <th>Statut</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line) => (
+                    <tr key={line.uid} className={activeUid === line.uid ? "active" : ""}>
+                      <td>{lineTypeLabel(line.kind)}</td>
+                      <td>{line.title || "-"}</td>
+                      <td>{line.quantity || "0"}</td>
+                      <td>{line.vatRate || "0"}%</td>
+                      <td>{toMoney(Number(line.unitPrice || "0"), currency)}</td>
+                      <td>{toMoney(lineAmount(line), currency)}</td>
+                      <td>
+                        <span className={`quote-status-chip ${lineStatusClass(line)}`}>{lineStatusLabel(line)}</span>
+                      </td>
+                      <td>
+                        <div className="row wrap gap-xs">
+                          <button type="button" className="ghost small-btn" onClick={() => setActiveUid(line.uid)}>
+                            Modifier
+                          </button>
+                          <button type="button" className="ghost small-btn" onClick={() => removeLine(line.uid)} disabled={!editable}>
+                            Supprimer
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
                   ))}
-                </select>
-              </label>
-            ) : null}
-            <div className="grid cols-4 top-gap-sm">
-              <label className="span-4">
-                Intitule
-                <input type="text" value={line.title} onChange={(event) => updateLine(line.uid, { title: event.target.value })} required disabled={!editable} />
-              </label>
-              <label>
-                Quantite
-                <input type="number" min={0.01} step="0.01" value={line.quantity} onChange={(event) => updateLine(line.uid, { quantity: event.target.value })} required disabled={!editable} />
-              </label>
-              <label>
-                TVA (%)
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step="0.01"
-                  value={line.vatRate}
-                  onChange={(event) => updateLine(line.uid, { vatRate: event.target.value })}
-                  required
-                  disabled={!editable}
-                />
-              </label>
-              <label>
-                Prix TTC
-                <input
-                  type="number"
-                  step="0.01"
-                  value={line.unitPrice}
-                  onChange={(event) => updateLine(line.uid, { unitPrice: event.target.value })}
-                  required
-                  disabled={!editable}
-                />
-              </label>
-              <div className="quote-line-amount">
-                <span>Montant TTC</span>
-                <strong>{toMoney(lineAmount(line), currency)}</strong>
-              </div>
-              <div className="quote-line-amount">
-                <span>Montant HT</span>
-                <strong>{toMoney(lineAmountHt(line), currency)}</strong>
-              </div>
-              <div className="quote-line-amount">
-                <span>Montant TVA</span>
-                <strong>{toMoney(lineAmountVat(line), currency)}</strong>
-              </div>
+                </tbody>
+              </table>
             </div>
-            {isCatalogKind(line.kind) ? (
-              <small className="muted">
-                Prix pre-rempli depuis le catalogue/la base. Vous pouvez l ajuster si necessaire.
-              </small>
-            ) : null}
-          </article>
-        ))}
+          )}
+        </section>
+
+        <section className="quote-editor-pane quote-editor-pane-draft">
+          <h4>Ajout / modification en cours</h4>
+          {!activeLine ? (
+            <div className="quote-editor-empty top-gap-sm">
+              Selectionnez une ligne enregistree (gauche) ou cliquez sur un bouton “+”.
+            </div>
+          ) : (
+            <>
+              <div className={`quote-draft-banner top-gap-sm ${activeLine.saved ? "editing" : "new"}`}>
+                {activeLine.saved ? "Modification en cours non enregistree" : "Nouvelle ligne non enregistree"}
+              </div>
+              <article className="quote-line-card top-gap-sm">
+                <div className="row spread wrap gap-sm">
+                  <strong>{lineTypeLabel(activeLine.kind)}</strong>
+                  <button type="button" className="ghost small-btn" onClick={() => removeLine(activeLine.uid)} disabled={!editable}>
+                    Supprimer
+                  </button>
+                </div>
+                {(activeLine.kind === "activity" || activeLine.kind === "product" || activeLine.kind === "kit") ? (
+                  <label className="top-gap-sm">
+                    Element
+                    <select
+                      value={activeLine.refId}
+                      onChange={(event) => applyRefToLine(activeLine.uid, activeLine.kind, event.target.value)}
+                      disabled={!editable}
+                    >
+                      <option value="">Selectionner</option>
+                      {selectableOptions(activeLine.kind, activities, products, kits).map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <div className="grid cols-4 top-gap-sm">
+                  <label className="span-4">
+                    Intitule
+                    <input
+                      type="text"
+                      value={activeLine.title}
+                      onChange={(event) => updateLine(activeLine.uid, { title: event.target.value })}
+                      required
+                      disabled={!editable}
+                    />
+                  </label>
+                  <label>
+                    Quantite
+                    <input
+                      type="number"
+                      min={0.01}
+                      step="0.01"
+                      value={activeLine.quantity}
+                      onChange={(event) => updateLine(activeLine.uid, { quantity: event.target.value })}
+                      required
+                      disabled={!editable}
+                    />
+                  </label>
+                  <label>
+                    TVA (%)
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.01"
+                      value={activeLine.vatRate}
+                      onChange={(event) => updateLine(activeLine.uid, { vatRate: event.target.value })}
+                      required
+                      disabled={!editable}
+                    />
+                  </label>
+                  <label>
+                    Prix TTC
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={activeLine.unitPrice}
+                      onChange={(event) => updateLine(activeLine.uid, { unitPrice: event.target.value })}
+                      required
+                      disabled={!editable}
+                    />
+                  </label>
+                  <div className="quote-line-amount">
+                    <span>Montant TTC</span>
+                    <strong>{toMoney(lineAmount(activeLine), currency)}</strong>
+                  </div>
+                  <div className="quote-line-amount">
+                    <span>Montant HT</span>
+                    <strong>{toMoney(lineAmountHt(activeLine), currency)}</strong>
+                  </div>
+                  <div className="quote-line-amount">
+                    <span>Montant TVA</span>
+                    <strong>{toMoney(lineAmountVat(activeLine), currency)}</strong>
+                  </div>
+                </div>
+                {isCatalogKind(activeLine.kind) ? (
+                  <small className="muted">
+                    Prix pre-rempli depuis le catalogue/la base. Vous pouvez l ajuster si necessaire.
+                  </small>
+                ) : null}
+              </article>
+            </>
+          )}
+        </section>
       </div>
 
       <div className="row spread wrap top-gap-sm">
         <p className="quote-total">
-          Total estime TTC: {toMoney(total, currency)} · HT: {toMoney(lines.reduce((sum, line) => sum + lineAmountHt(line), 0), currency)} · TVA: {toMoney(lines.reduce((sum, line) => sum + lineAmountVat(line), 0), currency)}
+          Total estime TTC: {toMoney(total, currency)} · HT: {toMoney(totalHt, currency)} · TVA: {toMoney(totalVat, currency)}
         </p>
         <button type="submit" disabled={!editable}>Enregistrer les lignes</button>
       </div>
