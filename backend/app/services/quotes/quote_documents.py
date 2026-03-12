@@ -1954,8 +1954,8 @@ def _build_template_values(
     # Solfege et masterclass restent des activites planning, mais on expose un resume optionnel pour le document.
     solfege_block_html = ""
     masterclass_common_text = (
-        "La Masterclass du samedi complète le parcours collectif avec une session longue dédiée à la pratique "
-        "instrumentale et musicale. Les horaires et le lieu sont confirmés selon le créneau retenu."
+        "Masterclass du samedi (complément aux 2 cours collectifs hebdomadaires) : une session de 3h dédiée à la "
+        "pratique au piano, avec un focus approfondi sur la musicalité et l’interprétation."
     )
     masterclass_detail_text = escape(masterclass_full) if masterclass_full else ""
     masterclass_block_html = (
