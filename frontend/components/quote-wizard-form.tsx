@@ -767,6 +767,15 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
+              Formule liee (depuis le type de devis)
+              <input
+                type="text"
+                value={selectedQuoteType?.formula_name ?? "-"}
+                readOnly
+                disabled
+              />
+            </label>
+            <label>
               Modele de devis
               <select name="quote_template_uuid" value={selectedTemplateId} onChange={(event) => {
                 const nextId = event.target.value;

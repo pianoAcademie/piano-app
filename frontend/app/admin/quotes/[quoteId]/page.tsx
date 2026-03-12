@@ -1142,6 +1142,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             </select>
           </label>
           <label>
+            Formule liee (depuis le type de devis)
+            <input type="text" value={selectedQuoteType?.formula_name || "-"} readOnly disabled />
+          </label>
+          <label>
             Entite legale
             <select
               name="legal_entity_id"
