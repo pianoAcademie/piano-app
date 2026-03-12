@@ -1953,25 +1953,33 @@ def _build_template_values(
     )
     # Solfege et masterclass restent des activites planning, mais on expose un resume optionnel pour le document.
     solfege_block_html = ""
+    masterclass_common_text = (
+        "La Masterclass du samedi complète le parcours collectif avec une session longue dédiée à la pratique "
+        "instrumentale et musicale. Les horaires et le lieu sont confirmés selon le créneau retenu."
+    )
+    masterclass_detail_text = escape(masterclass_full) if masterclass_full else ""
     masterclass_block_html = (
-        f"<p>{escape(masterclass_full)}</p>"
+        "<p><strong>Option Masterclass du samedi : souscrite.</strong><br/>"
+        f"<i>{masterclass_detail_text}</i><br/>"
+        f"<i>{escape(masterclass_common_text)}</i></p>"
         if display_flags["showMasterclassSection"]
-        else "<p>Masterclass du samedi : non souscrite.</p>"
+        else "<p><strong>Option Masterclass du samedi : non souscrite.</strong><br/>"
+        "<i>Aucune participation à la Masterclass du samedi n’est incluse dans cette formule.</i></p>"
     )
     pass_recup_common_text = (
-        "Le pass Recup' permet de rattraper un cours collectif manque, dans la limite de 4 rattrapages par an. "
-        "Le rattrapage peut se faire : sur un cours collectif en presentiel, si un creneau est disponible, "
-        "ou sur un cours collectif en ligne, sur des creneaux dedies. "
-        "Le pass est utilisable uniquement en cas d absence signalee. "
-        "Il est valable pour l annee scolaire en cours et non remboursable. "
-        "Sans ce pass, aucun rattrapage ne peut etre propose, quelle que soit la raison de l absence."
+        "Le Pass Récup’ permet de rattraper un cours collectif manqué, dans la limite de 4 rattrapages par année "
+        "scolaire. Le rattrapage peut s’effectuer soit sur un cours collectif en présentiel, sous réserve de "
+        "disponibilité d’un créneau, soit sur un cours collectif en ligne, sur des créneaux dédiés. Le pass est "
+        "utilisable uniquement en cas d’absence signalée. Il est valable pour l’année scolaire en cours et n’est "
+        "pas remboursable. Sans souscription à ce pass, aucun rattrapage ne pourra être proposé, quelle que soit la "
+        "raison de l’absence."
     )
     pass_recup_block_html = (
-        "<p><strong>Option Pass Recup : souscrite.</strong></p>"
-        f"<p>{escape(pass_recup_common_text)}</p>"
+        "<p><strong>Option Pass Récup : souscrite.</strong><br/>"
+        f"<i>{escape(pass_recup_common_text)}</i></p>"
         if display_flags["showPassRecupSection"]
-        else "<p><strong>Option Pass Recup : non souscrite.</strong></p>"
-        f"<p>{escape(pass_recup_common_text)}</p>"
+        else "<p><strong>Option Pass Récup : non souscrite.</strong><br/>"
+        f"<i>{escape(pass_recup_common_text)}</i></p>"
     )
     payment_instruction = str(document_context.get("payment_instruction") or "").strip()
     payment_method_block_html = f"<p><strong>Mode de paiement :</strong> {escape(payment_method_label)}</p>"
