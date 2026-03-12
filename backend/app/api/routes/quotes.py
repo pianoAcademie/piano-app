@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
-from app.models.ops import AppSetting
+from app.models.ops import AppSetting, LegalEntity
 from app.models.plan import Plan
 from app.models.product_catalog import CatalogKit, CatalogProduct
 from app.models.quote import (
@@ -1308,6 +1308,7 @@ def _quote_out(row: Quote) -> QuoteOut:
         prospect_id=row.prospect_id,
         client_id=row.client_id,
         location_id=row.location_id,
+        legal_entity_id=row.legal_entity_id,
         payment_plan_id=row.payment_plan_id,
         quote_template_id=row.quote_template_id,
         quote_template_version_id=row.quote_template_version_id,
@@ -2511,6 +2512,14 @@ def create_quote(
         client = db.scalar(select(User).where(User.id == payload.client_id))
         if client is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+    if payload.legal_entity_id is not None:
+        if db.scalar(
+            select(LegalEntity).where(
+                LegalEntity.id == payload.legal_entity_id,
+                LegalEntity.is_active.is_(True),
+            )
+        ) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Legal entity not found")
 
     selected_quote_template = None
     if payload.quote_template_uuid is not None:
@@ -2627,6 +2636,7 @@ def create_quote(
         prospect_id=payload.prospect_id,
         client_id=payload.client_id,
         location_id=payload.location_id,
+        legal_entity_id=payload.legal_entity_id,
         payment_plan_id=payload.payment_plan_id,
         quote_template_id=selected_quote_template.id if selected_quote_template is not None else None,
         quote_template_version_id=selected_quote_template_version.id if selected_quote_template_version is not None else None,
@@ -2736,6 +2746,16 @@ def update_quote(
         document_dirty = True
     if payload.location_id is not None:
         row.location_id = payload.location_id
+        document_dirty = True
+    if payload.legal_entity_id is not None:
+        if db.scalar(
+            select(LegalEntity).where(
+                LegalEntity.id == payload.legal_entity_id,
+                LegalEntity.is_active.is_(True),
+            )
+        ) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Legal entity not found")
+        row.legal_entity_id = payload.legal_entity_id
         document_dirty = True
     if payload.payment_plan_id is not None:
         if row.payment_plan_id != payload.payment_plan_id:
@@ -2998,6 +3018,7 @@ def duplicate_quote(
         prospect_id=source.prospect_id,
         client_id=source.client_id,
         location_id=source.location_id,
+        legal_entity_id=source.legal_entity_id,
         payment_plan_id=source.payment_plan_id,
         status="created",
         version_number=int(source.version_number or 1) + 1,

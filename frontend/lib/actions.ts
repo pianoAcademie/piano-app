@@ -8868,6 +8868,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const clientId = parseUuid(String(formData.get("client_id") ?? ""));
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
   const pricingCatalogId = parseUuid(String(formData.get("pricing_catalog_id") ?? ""));
+  const legalEntityId = parseUuid(String(formData.get("legal_entity_id") ?? ""));
   const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
   const termsTemplateId = parseUuid(String(formData.get("terms_template_id") ?? ""));
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
@@ -8990,6 +8991,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     quote_type: "forfait",
     quote_type_id: quoteTypeId,
     pricing_catalog_id: pricingCatalogId,
+    legal_entity_id: legalEntityId,
     prospect_id: contextType === "acquisition" ? prospectId : null,
     client_id: contextType === "active_client" ? clientId : null,
     location_id: locationId,
@@ -9137,6 +9139,7 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
 
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
   const pricingCatalogId = parseUuid(String(formData.get("pricing_catalog_id") ?? ""));
+  const legalEntityId = parseUuid(String(formData.get("legal_entity_id") ?? ""));
   const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
   const quoteTemplateUuid = parseUuid(String(formData.get("quote_template_uuid") ?? ""));
   const termsTemplateId = parseUuid(String(formData.get("terms_template_id") ?? ""));
@@ -9211,6 +9214,7 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   const payload: Record<string, unknown> = {
     quote_type_id: quoteTypeId,
     pricing_catalog_id: pricingCatalogId,
+    legal_entity_id: legalEntityId,
     payment_plan_id: paymentPlanId,
     school_year_label: schoolYearLabel || null,
     currency,

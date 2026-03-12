@@ -108,6 +108,7 @@ class QuoteOut(BaseModel):
     prospect_id: UUID | None = None
     client_id: UUID | None = None
     location_id: UUID | None = None
+    legal_entity_id: UUID | None = None
     payment_plan_id: UUID | None = None
     quote_template_id: UUID | None = None
     quote_template_version_id: UUID | None = None
@@ -161,6 +162,7 @@ class QuoteCreateRequest(BaseModel):
     prospect_id: UUID | None = None
     client_id: UUID | None = None
     location_id: UUID | None = None
+    legal_entity_id: UUID | None = None
     payment_plan_id: UUID | None = None
     quote_template_uuid: UUID | None = None
     quote_template_version_id: UUID | None = None
@@ -187,6 +189,7 @@ class QuoteUpdateRequest(BaseModel):
     quote_type_id: UUID | None = None
     pricing_catalog_id: UUID | None = None
     location_id: UUID | None = None
+    legal_entity_id: UUID | None = None
     payment_plan_id: UUID | None = None
     quote_template_uuid: UUID | None = None
     quote_template_version_id: UUID | None = None

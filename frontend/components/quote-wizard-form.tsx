@@ -41,6 +41,11 @@ type TermsTemplateOption = {
   language: string;
 };
 
+type LegalEntityOption = {
+  id: string;
+  name: string;
+};
+
 type QuoteTemplateOption = {
   id: string;
   name: string;
@@ -121,6 +126,7 @@ type QuoteWizardFormProps = {
   catalogs: CatalogOption[];
   paymentPlans: PaymentPlanOption[];
   termsTemplates: TermsTemplateOption[];
+  legalEntities: LegalEntityOption[];
   quoteTemplates: QuoteTemplateOption[];
   locations: LocationOption[];
   activities: ActivityOption[];
@@ -430,6 +436,7 @@ export default function QuoteWizardForm({
   catalogs,
   paymentPlans,
   termsTemplates,
+  legalEntities,
   quoteTemplates,
   locations,
   activities,
@@ -441,6 +448,8 @@ export default function QuoteWizardForm({
 }: QuoteWizardFormProps): JSX.Element {
   const createDraftFormId = "quote-wizard-create-draft-form";
   const defaultTemplate = quoteTemplates.find((item) => item.is_default) ?? quoteTemplates[0] ?? null;
+  const defaultLegalEntity =
+    legalEntities.find((item) => item.name.toUpperCase().includes("PIANO ACADEMIE")) ?? legalEntities[0] ?? null;
   const initialQuoteTypeId = quoteTypes[0]?.id ?? "";
   const initialQuoteType = quoteTypes.find((item) => item.id === initialQuoteTypeId) ?? null;
   const [contextType, setContextType] = useState<"acquisition" | "active_client">("acquisition");
@@ -782,6 +791,17 @@ export default function QuoteWizardForm({
                 {paymentPlans.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name} ({item.payment_method})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Entite legale de rattachement
+              <select name="legal_entity_id" defaultValue={defaultLegalEntity?.id ?? ""}>
+                <option value="">Aucune</option>
+                {legalEntities.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
                   </option>
                 ))}
               </select>

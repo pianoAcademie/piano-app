@@ -30,7 +30,14 @@ import {
   updateQuoteSettingsAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
-import type { AdminActivityOut, AdminCatalogKitOut, AdminCatalogProductOut, AdminClientOut, LocationOut } from "../../../../lib/types";
+import type {
+  AdminActivityOut,
+  AdminCatalogKitOut,
+  AdminCatalogProductOut,
+  AdminClientOut,
+  AdminLegalEntityOut,
+  LocationOut,
+} from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type QuoteWorkspaceSection = "overview" | "cadre" | "planning" | "pricing" | "document" | "integration";
@@ -73,6 +80,7 @@ type QuoteOut = {
   quote_number: string;
   status: string;
   context_type: string;
+  legal_entity_id: string | null;
   quote_type_id: string | null;
   pricing_catalog_id: string | null;
   payment_plan_id: string | null;
@@ -624,11 +632,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, catalogsResult, termsTemplatesResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, solfegeRulesResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, legalEntitiesResult, catalogsResult, termsTemplatesResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, solfegeRulesResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
+    backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
     backendRequest<TermsTemplateOut[]>("/api/v1/terms-templates?active_only=true", {}, token),
     backendRequest<QuoteTemplateV2Out[]>("/api/v1/quote-templates-v2?active_only=true", {}, token),
@@ -685,6 +694,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const activeFollowup = followups[0] ?? null;
   const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
   const quoteTypes = quoteTypesResult.ok ? quoteTypesResult.data : [];
+  const legalEntities = legalEntitiesResult.ok ? legalEntitiesResult.data : [];
   const selectedQuoteType = quoteTypes.find((row) => row.id === detail.quote.quote_type_id) ?? null;
   const catalogs = catalogsResult.ok ? catalogsResult.data : [];
   const termsTemplates = termsTemplatesResult.ok ? termsTemplatesResult.data : [];
@@ -1127,6 +1137,19 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             <select name="payment_plan_id" defaultValue={detail.quote.payment_plan_id || ""} disabled={detail.quote.status !== "created"}>
               <option value="">Aucun</option>
               {paymentPlans.map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Entite legale
+            <select
+              name="legal_entity_id"
+              defaultValue={detail.quote.legal_entity_id || legalEntities[0]?.id || ""}
+              disabled={detail.quote.status !== "created"}
+            >
+              <option value="">Aucune</option>
+              {legalEntities.map((row) => (
                 <option key={row.id} value={row.id}>{row.name}</option>
               ))}
             </select>

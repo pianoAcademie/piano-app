@@ -5,7 +5,14 @@ import { redirect } from "next/navigation";
 import QuoteWizardForm from "../../../../components/quote-wizard-form";
 import { createQuoteDraftAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
-import type { AdminActivityOut, AdminCatalogKitOut, AdminCatalogProductOut, AdminClientOut, LocationOut } from "../../../../lib/types";
+import type {
+  AdminActivityOut,
+  AdminCatalogKitOut,
+  AdminCatalogProductOut,
+  AdminClientOut,
+  AdminLegalEntityOut,
+  LocationOut,
+} from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -95,6 +102,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
     productsResult,
     kitsResult,
     solfegeRulesResult,
+    legalEntitiesResult,
   ] = await Promise.all([
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
@@ -108,6 +116,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
     backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
     backendRequest<SolfegeLevelRuleOut[]>("/api/v1/solfege-level-rules", {}, token),
+    backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token),
   ]);
 
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
@@ -122,6 +131,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
   const products = productsResult.ok ? productsResult.data : [];
   const kits = kitsResult.ok ? kitsResult.data : [];
   const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
+  const legalEntities = legalEntitiesResult.ok ? legalEntitiesResult.data : [];
 
   const loadErrors: string[] = [];
   if (!prospectsResult.ok) loadErrors.push(`Prospects: ${prospectsResult.message}`);
@@ -136,6 +146,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
   if (!productsResult.ok) loadErrors.push(`Produits: ${productsResult.message}`);
   if (!kitsResult.ok) loadErrors.push(`Kits: ${kitsResult.message}`);
   if (!solfegeRulesResult.ok) loadErrors.push(`Solfege: ${solfegeRulesResult.message}`);
+  if (!legalEntitiesResult.ok) loadErrors.push(`Entites legales: ${legalEntitiesResult.message}`);
 
   return (
     <section className="admin-page-grid">
@@ -192,6 +203,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
         catalogs={catalogs.map((row) => ({ id: row.id, name: row.name }))}
         paymentPlans={paymentPlans.map((row) => ({ id: row.id, name: row.name, payment_method: row.payment_method }))}
         termsTemplates={termsTemplates.map((row) => ({ id: row.id, name: row.name, language: row.language }))}
+        legalEntities={legalEntities.map((row) => ({ id: row.id, name: row.name }))}
         quoteTemplates={quoteTemplates.map((row) => ({
           id: row.id,
           name: row.name,
