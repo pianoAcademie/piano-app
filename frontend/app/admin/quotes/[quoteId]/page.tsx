@@ -4,6 +4,17 @@ import { redirect } from "next/navigation";
 
 import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 import CopyLinkButton from "../../../../components/copy-link-button";
+import QuoteClientMatchCard from "../../../../components/quotes/quote-client-match-card";
+import QuoteIntegrationProjectionCard from "../../../../components/quotes/quote-integration-projection-card";
+import QuoteIntegrationResultCard from "../../../../components/quotes/quote-integration-result-card";
+import QuoteOverviewSection from "../../../../components/quotes/quote-overview-section";
+import QuoteRightSummaryRail from "../../../../components/quotes/quote-right-summary-rail";
+import type { QuoteIntegrationUiState } from "../../../../components/quotes/quote-row-integration-state";
+import type { QuoteValidationUiState } from "../../../../components/quotes/quote-row-validation-state";
+import QuoteValidationIntegrationSection from "../../../../components/quotes/quote-validation-integration-section";
+import QuoteWorkspaceHeader from "../../../../components/quotes/quote-workspace-header";
+import QuoteWorkspaceShell from "../../../../components/quotes/quote-workspace-shell";
+import QuoteWorkspaceSidebar from "../../../../components/quotes/quote-workspace-sidebar";
 import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
@@ -521,6 +532,80 @@ function parseQuotePreRegistrationDeposit(meta: Record<string, unknown>): QuoteP
   return { enabled: true, amountTtc: normalizedAmount };
 }
 
+function commercialStateFromQuote(quote: QuoteOut): QuoteValidationUiState {
+  const status = String(quote.status || "").trim().toLowerCase();
+  if (status === "approved") return "valide";
+  if (status === "rejected" || status === "cancelled") return "refuse";
+  if (status === "expired") return "expire";
+  if (status === "sent") {
+    const meta = quote.meta || {};
+    const viewed = ["public_viewed_at", "viewed_at", "consulted_at", "last_viewed_at"].some((key) => {
+      const value = meta[key];
+      return typeof value === "string" && value.trim().length > 0;
+    });
+    return viewed ? "consulte" : "envoye";
+  }
+  if (status === "change_requested") return "incomplet";
+  if (status === "created") {
+    const hasTemplate = Boolean(quote.quote_template_id);
+    const hasRecipient = Boolean(quote.prospect_id || quote.client_id);
+    const total = Number(quote.total_ttc);
+    const hasTotal = Number.isFinite(total) ? Math.abs(total) > 0 : String(quote.total_ttc || "").trim().length > 0;
+    if (hasTemplate && hasRecipient && hasTotal) return "pret_a_envoyer";
+    if (!hasTemplate || !hasRecipient) return "incomplet";
+    return "brouillon";
+  }
+  return "incomplet";
+}
+
+function commercialStateLabel(state: QuoteValidationUiState): string {
+  if (state === "brouillon") return "Brouillon";
+  if (state === "incomplet") return "Incomplet";
+  if (state === "pret_a_envoyer") return "Pret a envoyer";
+  if (state === "envoye") return "Envoye";
+  if (state === "consulte") return "Consulte";
+  if (state === "valide") return "Valide";
+  if (state === "refuse") return "Refuse";
+  return "Expire";
+}
+
+function integrationStateFromQuote(
+  quote: QuoteOut,
+  commercialState: QuoteValidationUiState,
+  followup: QuoteFollowupOut | null,
+): QuoteIntegrationUiState {
+  if (commercialState === "refuse" || commercialState === "expire") return "non_concerne";
+  if (commercialState !== "valide") return "en_attente_validation_client";
+  const meta = quote.meta || {};
+  const raw = String(meta.integration_status ?? meta.central_integration_status ?? "").trim().toLowerCase();
+  if (raw === "a_preparer" || raw === "to_prepare") return "a_preparer";
+  if (raw === "a_verifier" || raw === "to_check") return "a_verifier";
+  if (raw === "pret_a_integrer" || raw === "ready_to_integrate") return "pret_a_integrer";
+  if (raw === "integre" || raw === "integrated") return "integre";
+  if (raw === "erreur_integration" || raw === "integration_error") return "erreur_integration";
+
+  const hasError = Boolean(meta.integration_error) || String(meta.integration_error_message ?? "").trim().length > 0;
+  if (hasError) return "erreur_integration";
+  const integratedAt = String(meta.integration_completed_at ?? "").trim();
+  if (integratedAt) return "integre";
+
+  const clientMatchStatus = String(meta.client_match_status ?? "").trim().toLowerCase();
+  if (clientMatchStatus === "multiple" || clientMatchStatus === "ambiguous") return "a_verifier";
+
+  if (followup?.status === "completed") return "pret_a_integrer";
+  return "a_preparer";
+}
+
+function integrationStateLabel(state: QuoteIntegrationUiState): string {
+  if (state === "non_concerne") return "Non concerne";
+  if (state === "en_attente_validation_client") return "En attente validation client";
+  if (state === "a_preparer") return "A preparer";
+  if (state === "a_verifier") return "A verifier";
+  if (state === "pret_a_integrer") return "Pret a integrer";
+  if (state === "integre") return "Integre";
+  return "Erreur integration";
+}
+
 export default async function AdminQuoteDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -737,29 +822,129 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const regenerateFormId = `quote-regenerate-form-${detail.quote.id}`;
 
   const selfPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}?back=${encodeURIComponent(backPath)}`;
+  const commercialState = commercialStateFromQuote(detail.quote);
+  const integrationState = integrationStateFromQuote(detail.quote, commercialState, activeFollowup);
+  const validationChannel = readStringMeta(detail.quote.meta || {}, "validation_channel", detail.quote.approved_at ? "Portail public" : "-");
+  const integrationTargetMode = readStringMeta(detail.quote.meta || {}, "integration_target_mode", "Creation / mise a jour a verifier");
+  const clientMatchRaw = readStringMeta(detail.quote.meta || {}, "client_match_status", detail.quote.client_id ? "deja_lie" : "aucun").toLowerCase();
+  const clientMatchStatus = clientMatchRaw === "probable" || clientMatchRaw === "multiple" || clientMatchRaw === "deja_lie" ? clientMatchRaw : "aucun";
+  const integrationAlerts: string[] = [];
+  if (detail.quote.status === "approved" && integrationState === "a_preparer") {
+    integrationAlerts.push("Devis valide a preparer pour integration.");
+  }
+  if (integrationState === "a_verifier") {
+    integrationAlerts.push("Correspondance client a verifier.");
+  }
+  if (integrationState === "erreur_integration") {
+    integrationAlerts.push("Erreur d'integration detectee.");
+  }
+  if (detail.quote.document_status === "stale") {
+    integrationAlerts.push("Document modifie apres validation.");
+  }
+  const validationRows = [
+    { label: "Date validation", value: formatDate(detail.quote.approved_at) },
+    { label: "Canal validation", value: validationChannel },
+    { label: "Version validee (hash)", value: detail.quote.document_hash || "-" },
+    {
+      label: "Version utilisee pour integration",
+      value: readStringMeta(detail.quote.meta || {}, "integration_document_hash", detail.quote.document_hash || "-"),
+    },
+    { label: "Derniere modification admin", value: formatDate(detail.quote.created_at) },
+  ];
+  const projectionRows = [
+    { label: "Mode cible", value: integrationTargetMode },
+    { label: "Contact payeur", value: ownerName },
+    { label: "Eleve(s)", value: readStringMeta(detail.quote.meta || {}, "integration_students_label", ownerName) },
+    { label: "Activites acceptees", value: String(getPlanningBlocks(detail.quote.calendar_snapshot || {}).length || 0) },
+    { label: "Creneaux a creer / maj", value: String(calendarSessions.length) },
+    { label: "Annee scolaire", value: detail.quote.school_year_label || "-" },
+    {
+      label: "Plan de paiement",
+      value: paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id)?.name || "Aucun",
+    },
+    { label: "Options a reprendre", value: readStringMeta(detail.quote.meta || {}, "integration_options_label", "Selon devis valide") },
+  ];
+  const integrationResultRows = [
+    { label: "Statut integration", value: integrationStateLabel(integrationState) },
+    { label: "Client central", value: readStringMeta(detail.quote.meta || {}, "integration_client_result", "-") },
+    { label: "Creneaux", value: readStringMeta(detail.quote.meta || {}, "integration_slots_result", "-") },
+    { label: "Date integration", value: readStringMeta(detail.quote.meta || {}, "integration_completed_at", "-") },
+    { label: "Utilisateur", value: readStringMeta(detail.quote.meta || {}, "integration_by", "-") },
+    { label: "Lien fiche centrale", value: readStringMeta(detail.quote.meta || {}, "integration_client_link", "A venir") },
+  ];
+  const sidebarItems = [
+    { id: "overview", label: "Vue d'ensemble", href: "#quote-overview", active: true },
+    { id: "cadre", label: "Cadre du devis", href: "#quote-cadre" },
+    { id: "planning", label: "Activites planifiees", href: "#quote-planning", badge: `${calendarSessions.length}` },
+    { id: "pricing", label: "Lignes facturees", href: "#quote-pricing", badge: `${detail.lines.length}` },
+    { id: "document", label: "Document et envoi", href: "#quote-document" },
+    { id: "integration", label: "Validation et integration", href: "#quote-validation-integration" },
+  ];
 
   return (
     <section className="admin-page-grid">
-      <section className="card">
-        <div className="row spread wrap gap-sm">
-          <div>
-            <h2>Devis {detail.quote.quote_number}</h2>
-            <p className="muted">
-              {labelForContext(detail.quote.context_type)} · {detail.quote.status} · {formatAmount(detail.quote.total_ttc, detail.quote.currency)}
-            </p>
-            <p className="muted">Destinataire: {ownerName}</p>
-          </div>
-          <div className="row wrap gap-sm">
-            <Link className="ghost" href={backPath}>Retour liste devis</Link>
-            <Link className="ghost" href="/admin/quotes/new">Nouveau devis</Link>
-          </div>
+      <QuoteWorkspaceShell
+        header={(
+          <QuoteWorkspaceHeader
+            title={`Devis ${detail.quote.quote_number}`}
+            subtitle={`${labelForContext(detail.quote.context_type)} · ${formatAmount(detail.quote.total_ttc, detail.quote.currency)} · Destinataire ${ownerName}`}
+            backLink={(
+              <>
+                <Link className="ghost" href={backPath}>Retour liste devis</Link>
+                <Link className="ghost" href="/admin/quotes/new">Nouveau devis</Link>
+              </>
+            )}
+            statuses={[
+              { label: "Commercial", value: commercialStateLabel(commercialState) },
+              { label: "Document", value: detail.quote.document_status || "stale" },
+              { label: "Validation client", value: detail.quote.approved_at ? "Valide" : "En attente" },
+              { label: "Integration", value: integrationStateLabel(integrationState) },
+            ]}
+          />
+        )}
+        sidebar={<QuoteWorkspaceSidebar items={sidebarItems} />}
+        rightRail={(
+          <QuoteRightSummaryRail
+            top={[
+              { label: "Total TTC", value: formatAmount(detail.quote.total_ttc, detail.quote.currency) },
+              { label: "Expiration", value: formatDate(detail.quote.expires_at) },
+            ]}
+            statuses={[
+              { label: "Validation client", value: detail.quote.approved_at ? formatDate(detail.quote.approved_at) : "En attente" },
+              { label: "Integration centrale", value: integrationStateLabel(integrationState) },
+              { label: "Mode cible", value: integrationTargetMode },
+              { label: "Creneaux prevus", value: String(calendarSessions.length) },
+            ]}
+            alerts={integrationAlerts}
+          />
+        )}
+      >
+        {ok ? <section className="flash-ok">{ok}</section> : null}
+        {error ? <section className="flash-err">{error}</section> : null}
+
+        <div id="quote-overview">
+          <QuoteOverviewSection
+            cards={[
+              { label: "Statut devis", value: commercialStateLabel(commercialState) },
+              { label: "Statut document", value: detail.quote.document_status || "stale" },
+              { label: "Validation client", value: detail.quote.approved_at ? formatDate(detail.quote.approved_at) : "En attente" },
+              { label: "Integration centrale", value: integrationStateLabel(integrationState) },
+              { label: "Total TTC", value: formatAmount(detail.quote.total_ttc, detail.quote.currency) },
+              { label: "Expiration", value: formatDate(detail.quote.expires_at) },
+            ]}
+            alerts={integrationAlerts.map((message) => ({ level: message.toLowerCase().includes("erreur") ? "error" : "warn", message }))}
+            quickActions={(
+              <>
+                <a className="ghost" href="#quote-document">Document et envoi</a>
+                <a className="ghost" href="#quote-planning">Activites planifiees</a>
+                <a className="ghost" href="#quote-pricing">Lignes facturees</a>
+                <a className="ghost" href="#quote-validation-integration">Validation et integration</a>
+              </>
+            )}
+          />
         </div>
-      </section>
 
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
-
-      <section className="card">
+        <section className="card" id="quote-document">
         <h3>Actions</h3>
         <div className="row wrap gap-sm top-gap-sm">
           {detail.quote.status === "created" ? (
@@ -826,7 +1011,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         </div>
       </section>
 
-      <section className="card">
+      <section className="card" id="quote-cadre">
         <h3>Parametres du devis</h3>
         <p className="muted">Devise, langue, templates, CGV et referentiels metier du devis.</p>
         <form action={updateQuoteSettingsAction} className="grid cols-3 config-form-grid top-gap-sm">
@@ -1116,7 +1301,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         </p>
       </section>
 
-      <section className="card quote-workstream-card quote-workstream-card-planning" id="planning-editor">
+      <section className="card quote-workstream-card quote-workstream-card-planning" id="quote-planning">
         <div className="quote-workstream-head">
           <span className="quote-workstream-badge quote-workstream-badge-planning">Bloc 1 · Construction pedagogique</span>
           <h3>Activites (planning)</h3>
@@ -1226,7 +1411,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         <QuoteSessionsViewer quoteNumber={detail.quote.quote_number} sessions={calendarSessionsForViewer} />
       </section>
 
-      <section className="card quote-workstream-card quote-workstream-card-pricing" id="pricing-editor">
+      <section className="card quote-workstream-card quote-workstream-card-pricing" id="quote-pricing">
         <div className="quote-workstream-head">
           <span className="quote-workstream-badge quote-workstream-badge-pricing">Bloc 2 · Construction commerciale</span>
           <h3>Lignes du devis (tarification)</h3>
@@ -1263,6 +1448,29 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           kitCatalogPriceByKitId={kitCatalogPriceByKitId}
           defaultVatRate={defaultVatRate}
           saveAction={updateQuoteLinesAction}
+        />
+      </section>
+
+      <section id="quote-validation-integration">
+        <QuoteValidationIntegrationSection
+          validationRows={validationRows}
+          projectionCard={<QuoteIntegrationProjectionCard rows={projectionRows} />}
+          clientMatchCard={(
+            <QuoteClientMatchCard
+              status={clientMatchStatus}
+              detail={
+                clientMatchStatus === "deja_lie"
+                  ? "Le devis est deja relie a un client."
+                  : clientMatchStatus === "multiple"
+                  ? "Plusieurs correspondances detectees, verification manuelle necessaire."
+                  : clientMatchStatus === "probable"
+                  ? "Une correspondance probable a ete detectee."
+                  : "Aucune correspondance client detectee pour le moment."
+              }
+            />
+          )}
+          integrationResultCard={<QuoteIntegrationResultCard rows={integrationResultRows} />}
+          note="Placeholder UI active: l'integration reelle vers l'application centrale sera branchee dans une etape ulterieure."
         />
       </section>
 
@@ -1352,6 +1560,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           )}
         </div>
       </section>
+      </QuoteWorkspaceShell>
     </section>
   );
 }
