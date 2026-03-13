@@ -2491,11 +2491,11 @@ def preview_quote_payment_schedule(
     return {"schedule": schedule}
 
 
-@router.post("/quotes", response_model=QuoteDetailOut, status_code=status.HTTP_201_CREATED)
-def create_quote(
+def create_quote_from_payload(
+    db: Session,
+    *,
     payload: QuoteCreateRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User,
 ) -> QuoteDetailOut:
     if payload.context_type == "acquisition" and payload.prospect_id is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="prospect_id is required for acquisition quote")
@@ -2706,6 +2706,15 @@ def create_quote(
     db.commit()
     db.refresh(row)
     return _quote_detail_out(db, row)
+
+
+@router.post("/quotes", response_model=QuoteDetailOut, status_code=status.HTTP_201_CREATED)
+def create_quote(
+    payload: QuoteCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    return create_quote_from_payload(db, payload=payload, current_user=current_user)
 
 
 @router.get("/quotes/{quote_id}", response_model=QuoteDetailOut)

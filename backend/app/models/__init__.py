@@ -125,6 +125,7 @@ from app.models.quote import (
     TermsTemplate,
     TermsTemplateVersion,
 )
+from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 
 __all__ = [
@@ -203,6 +204,8 @@ __all__ = [
     "QuoteTemplateVersion",
     "TermsTemplate",
     "TermsTemplateVersion",
+    "TypeformFormConfig",
+    "TypeformIntake",
     "QuoteDocumentBinding",
     "QuoteDocumentSnapshot",
     "QuoteLine",

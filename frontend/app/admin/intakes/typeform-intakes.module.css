@@ -1,0 +1,85 @@
+.emptyState {
+  border: 1px dashed #d6dfeb;
+  border-radius: 14px;
+  padding: 20px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f4f8fc 100%);
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+
+.panelGrid {
+  align-items: start;
+}
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.kvGrid p {
+  margin: 4px 0 0;
+}
+
+.messageList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.messageList li {
+  color: #6c5330;
+}
+
+.messageListBlocked li {
+  color: #8c2d2d;
+}
+
+.candidateStack {
+  display: grid;
+  gap: 10px;
+}
+
+.candidateItem {
+  border: 1px solid #dbe3ed;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fbfdff;
+  display: grid;
+  gap: 6px;
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.totalRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.totalRow > div {
+  border: 1px solid #dbe3ed;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fbfdff;
+}
+
+.totalRow p {
+  margin: 6px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #22354c;
+}
+
+@media (max-width: 1080px) {
+  .kvGrid,
+  .totalRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

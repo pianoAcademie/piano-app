@@ -8837,6 +8837,151 @@ function safeAdminProspectsPath(path: string, fallback = "/admin/prospects"): st
   return fallback;
 }
 
+function safeAdminIntakesPath(path: string, fallback = "/admin/intakes"): string {
+  const value = path.trim();
+  if (value.startsWith("/admin/intakes") || value.startsWith("/admin/quotes")) {
+    return value;
+  }
+  return fallback;
+}
+
+function collectTypeformSelectedSessionIds(formData: FormData): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (!key.startsWith("selected_session_for_")) {
+      continue;
+    }
+    const activityId = key.slice("selected_session_for_".length).trim();
+    const sessionId = String(value ?? "").trim();
+    if (!activityId || !sessionId) {
+      continue;
+    }
+    out[activityId] = sessionId;
+  }
+  return out;
+}
+
+export async function saveTypeformIntakeResolutionAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  if (!intakeId) {
+    redirect(appendQueryMessage(returnTo, "error", "Intake introuvable"));
+  }
+
+  const clientModeRaw = String(formData.get("client_mode") ?? "").trim();
+  const clientMode =
+    clientModeRaw === "existing_client"
+    || clientModeRaw === "existing_family"
+    || clientModeRaw === "new_parent_child_prospect"
+    || clientModeRaw === "new_adult_prospect"
+      ? clientModeRaw
+      : "new_adult_prospect";
+
+  const selectedClientId = parseUuid(String(formData.get("selected_client_id") ?? ""));
+  const selectedFamilyAdultClientId = parseUuid(String(formData.get("selected_family_adult_client_id") ?? ""));
+  const selectedFamilyChildClientId = parseUuid(String(formData.get("selected_family_child_client_id") ?? ""));
+  const selectedFamilyBillingClientId = parseUuid(String(formData.get("selected_family_billing_client_id") ?? ""));
+  const notes = optionalField(formData, "resolution_notes");
+  const selectedSessionIds = collectTypeformSelectedSessionIds(formData);
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/resolution`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        resolution: {
+          client_resolution: {
+            mode: clientMode,
+            selected_client_id: selectedClientId,
+            selected_family_adult_client_id: selectedFamilyAdultClientId,
+            selected_family_child_client_id: selectedFamilyChildClientId,
+            selected_family_billing_client_id: selectedFamilyBillingClientId,
+          },
+          slot_resolution: {
+            selected_session_ids: selectedSessionIds,
+          },
+          notes,
+        },
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Arbitrage enregistre"));
+}
+
+export async function generateTypeformDraftQuoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  if (!intakeId) {
+    redirect(appendQueryMessage(returnTo, "error", "Intake introuvable"));
+  }
+
+  const result = await backendRequest<{ quote_id: string }>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/draft-quote`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath("/admin/quotes");
+  redirect(`/admin/quotes/${encodeURIComponent(result.data.quote_id)}?back=${encodeURIComponent("/admin/intakes")}&ok=${encodeURIComponent("Devis brouillon cree depuis intake")}`);
+}
+
+export async function seedTypeformDemoAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  const result = await backendRequest<{ created_intakes: number; created_form_configs: number }>(
+    "/api/v1/typeform/demo/seed",
+    {
+      method: "POST",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      `Demo Typeform chargee (${result.data.created_form_configs} configs, ${result.data.created_intakes} intakes)`,
+    ),
+  );
+}
+
 function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
   const value = raw.trim();
   if (!value) {
