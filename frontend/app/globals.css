@@ -1617,6 +1617,10 @@ button.danger:focus-visible {
   grid-column: span 2;
 }
 
+.span-4 {
+  grid-column: span 4;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -4032,6 +4036,7 @@ button.danger:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .span-4,
   .span-3 {
     grid-column: auto;
   }
