@@ -1629,6 +1629,7 @@ class AdminProfessorContractGridOut(BaseModel):
 
 class AdminSessionRecurrenceRequest(BaseModel):
     frequency: Literal["DAILY", "WEEKLY", "MONTHLY"] = "WEEKLY"
+    interval: int = Field(default=1, ge=1, le=52)
     until_date: date
 
 

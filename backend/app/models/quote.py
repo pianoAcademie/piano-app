@@ -449,6 +449,11 @@ class Quote(Base):
         ForeignKey("locations.id", ondelete="SET NULL"),
         nullable=True,
     )
+    legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     payment_plan_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("payment_plans.id", ondelete="SET NULL"),

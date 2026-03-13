@@ -120,6 +120,37 @@ function toMoney(value: number, currency = "EUR"): string {
   }
 }
 
+function formatPercentDisplay(value: string | null | undefined): string {
+  const parsed = Number(String(value ?? "").trim());
+  if (!Number.isFinite(parsed)) {
+    return "0,00%";
+  }
+  return `${new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(parsed)}%`;
+}
+
+function formatQuantityDisplay(value: string | null | undefined): string {
+  return normalizeQuantityInput(value);
+}
+
+function normalizeQuantityInput(value: string | null | undefined): string {
+  const parsed = Number(String(value ?? "").trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return "1";
+  }
+  return String(Math.max(1, Math.round(parsed)));
+}
+
+function normalizePercentInput(value: string | null | undefined): string {
+  const parsed = Number(String(value ?? "").trim());
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return "0.00";
+  }
+  return parsed.toFixed(2);
+}
+
 function buildLinePayload(line: EditableLine, index: number): Record<string, unknown> {
   if (line.kind === "discount") {
     return {
@@ -127,7 +158,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       line_type: "discount",
       master_item_type: "discount_rule",
       title: line.title || "Remise",
-      quantity: line.quantity || "1",
+      quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
       sort_order: index,
@@ -139,7 +170,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       line_type: "surcharge",
       master_item_type: "surcharge_rule",
       title: line.title || "Supplement",
-      quantity: line.quantity || "1",
+      quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
       sort_order: index,
@@ -152,7 +183,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       master_item_type: "activity",
       activity_id: line.refId || null,
       title: line.title || "Activite",
-      quantity: line.quantity || "1",
+      quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: line.unitPrice || "0",
       sort_order: index,
@@ -165,7 +196,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       master_item_type: "kit",
       kit_id: line.refId || null,
       title: line.title || "Kit",
-      quantity: line.quantity || "1",
+      quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: line.unitPrice || "0",
       sort_order: index,
@@ -177,7 +208,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
     master_item_type: "product",
     product_id: line.refId || null,
     title: line.title || "Produit",
-    quantity: line.quantity || "1",
+    quantity: normalizeQuantityInput(line.quantity),
     vat_rate: line.vatRate || "0",
     unit_price_ttc: line.unitPrice || "0",
     sort_order: index,
@@ -231,6 +262,28 @@ function isCatalogKind(kind: LineKind): boolean {
   return kind === "activity" || kind === "product" || kind === "kit";
 }
 
+function selectedOptionLabel(
+  kind: LineKind,
+  refId: string,
+  activities: ActivityOption[],
+  products: ProductOption[],
+  kits: KitOption[],
+): string | null {
+  if (!refId) {
+    return null;
+  }
+  if (kind === "activity") {
+    return activities.find((item) => item.id === refId)?.name ?? null;
+  }
+  if (kind === "product") {
+    return products.find((item) => item.id === refId)?.title ?? null;
+  }
+  if (kind === "kit") {
+    return kits.find((item) => item.id === refId)?.title ?? null;
+  }
+  return null;
+}
+
 function parsePositive(value: string | null | undefined): number | null {
   const parsed = Number(String(value ?? "").trim());
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -276,8 +329,8 @@ export default function QuoteLinesEditor({
       kind: inferKind(row),
       refId: inferRefId(row),
       title: row.title || "",
-      quantity: row.quantity || "1",
-      vatRate: row.vat_rate || "0",
+      quantity: normalizeQuantityInput(row.quantity),
+      vatRate: normalizePercentInput(row.vat_rate),
       unitPrice: row.unit_price_ttc || "0",
       saved: true,
       dirty: false,
@@ -426,6 +479,9 @@ export default function QuoteLinesEditor({
   }
 
   const activeLine = lines.find((line) => line.uid === activeUid) ?? null;
+  const activeLineSelectedLabel = activeLine
+    ? selectedOptionLabel(activeLine.kind, activeLine.refId, activities, products, kits)
+    : null;
 
   return (
     <form action={saveAction}>
@@ -459,29 +515,33 @@ export default function QuoteLinesEditor({
               <table className="quote-saved-table">
                 <thead>
                   <tr>
-                    <th>Type</th>
-                    <th>Intitule</th>
-                    <th>Quantite</th>
-                    <th>TVA</th>
-                    <th>Prix TTC</th>
-                    <th>Total TTC</th>
-                    <th>Statut</th>
-                    <th>Actions</th>
+                    <th className="quote-col-type">Type</th>
+                    <th className="quote-col-title">Intitule</th>
+                    <th className="quote-col-qty">Quantite</th>
+                    <th className="quote-col-vat">TVA</th>
+                    <th className="quote-col-price">Prix TTC</th>
+                    <th className="quote-col-total">Total TTC</th>
+                    <th className="quote-col-status">Statut</th>
+                    <th className="quote-col-actions">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {lines.map((line) => (
                     <tr key={line.uid} className={activeUid === line.uid ? "active" : ""}>
-                      <td>{lineTypeLabel(line.kind)}</td>
-                      <td>{line.title || "-"}</td>
-                      <td>{line.quantity || "0"}</td>
-                      <td>{line.vatRate || "0"}%</td>
-                      <td>{toMoney(Number(line.unitPrice || "0"), currency)}</td>
-                      <td>{toMoney(lineAmount(line), currency)}</td>
-                      <td>
+                      <td className="quote-col-type">{lineTypeLabel(line.kind)}</td>
+                      <td className="quote-col-title-cell">
+                        <span className="quote-line-title-text" title={line.title || "-"}>
+                          {line.title || "-"}
+                        </span>
+                      </td>
+                      <td className="quote-col-qty">{formatQuantityDisplay(line.quantity)}</td>
+                      <td className="quote-col-vat">{formatPercentDisplay(line.vatRate)}</td>
+                      <td className="quote-col-price">{toMoney(Number(line.unitPrice || "0"), currency)}</td>
+                      <td className="quote-col-total">{toMoney(lineAmount(line), currency)}</td>
+                      <td className="quote-col-status">
                         <span className={`quote-status-chip ${lineStatusClass(line)}`}>{lineStatusLabel(line)}</span>
                       </td>
-                      <td>
+                      <td className="quote-col-actions">
                         <div className="row wrap gap-xs">
                           <button type="button" className="ghost small-btn" onClick={() => setActiveUid(line.uid)}>
                             Modifier
@@ -518,29 +578,37 @@ export default function QuoteLinesEditor({
                   </button>
                 </div>
                 {(activeLine.kind === "activity" || activeLine.kind === "product" || activeLine.kind === "kit") ? (
-                  <label className="top-gap-sm">
-                    Element
-                    <select
-                      value={activeLine.refId}
-                      onChange={(event) => applyRefToLine(activeLine.uid, activeLine.kind, event.target.value)}
-                      disabled={!editable}
-                    >
-                      <option value="">Selectionner</option>
-                      {selectableOptions(activeLine.kind, activities, products, kits).map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <>
+                    <label className="top-gap-sm">
+                      Element
+                      <select
+                        value={activeLine.refId}
+                        onChange={(event) => applyRefToLine(activeLine.uid, activeLine.kind, event.target.value)}
+                        disabled={!editable}
+                      >
+                        <option value="">Selectionner</option>
+                        {selectableOptions(activeLine.kind, activities, products, kits).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {activeLineSelectedLabel ? (
+                      <small className="muted quote-selected-item-label" title={activeLineSelectedLabel}>
+                        {activeLineSelectedLabel}
+                      </small>
+                    ) : null}
+                  </>
                 ) : null}
                 <div className="grid cols-4 top-gap-sm">
-                  <label className="span-4">
+                  <label className="cols-span-4">
                     Intitule
                     <input
                       type="text"
                       value={activeLine.title}
                       onChange={(event) => updateLine(activeLine.uid, { title: event.target.value })}
+                      title={activeLine.title || ""}
                       required
                       disabled={!editable}
                     />
@@ -549,10 +617,10 @@ export default function QuoteLinesEditor({
                     Quantite
                     <input
                       type="number"
-                      min={0.01}
-                      step="0.01"
+                      min={1}
+                      step={1}
                       value={activeLine.quantity}
-                      onChange={(event) => updateLine(activeLine.uid, { quantity: event.target.value })}
+                      onChange={(event) => updateLine(activeLine.uid, { quantity: normalizeQuantityInput(event.target.value) })}
                       required
                       disabled={!editable}
                     />
@@ -570,7 +638,7 @@ export default function QuoteLinesEditor({
                       disabled={!editable}
                     />
                   </label>
-                  <label>
+                  <label className="quote-price-field">
                     Prix TTC
                     <input
                       type="number"
@@ -581,17 +649,19 @@ export default function QuoteLinesEditor({
                       disabled={!editable}
                     />
                   </label>
-                  <div className="quote-line-amount">
-                    <span>Montant TTC</span>
-                    <strong>{toMoney(lineAmount(activeLine), currency)}</strong>
-                  </div>
-                  <div className="quote-line-amount">
-                    <span>Montant HT</span>
-                    <strong>{toMoney(lineAmountHt(activeLine), currency)}</strong>
-                  </div>
-                  <div className="quote-line-amount">
-                    <span>Montant TVA</span>
-                    <strong>{toMoney(lineAmountVat(activeLine), currency)}</strong>
+                  <div className="quote-line-amounts-row">
+                    <div className="quote-line-amount">
+                      <span>Montant TTC</span>
+                      <strong>{toMoney(lineAmount(activeLine), currency)}</strong>
+                    </div>
+                    <div className="quote-line-amount">
+                      <span>Montant HT</span>
+                      <strong>{toMoney(lineAmountHt(activeLine), currency)}</strong>
+                    </div>
+                    <div className="quote-line-amount">
+                      <span>Montant TVA</span>
+                      <strong>{toMoney(lineAmountVat(activeLine), currency)}</strong>
+                    </div>
                   </div>
                 </div>
                 {isCatalogKind(activeLine.kind) ? (

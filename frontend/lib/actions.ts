@@ -18,8 +18,20 @@ import {
   setPortalToken,
 } from "./auth-cookies";
 import { backendRequest, backendUrl } from "./backend";
+import {
+  analyzeQuoteQuickTransformStatus,
+  type QuoteQuickTransformAnalysis,
+  type QuoteTransformActivityCatalog,
+  type QuoteTransformClient,
+  type QuoteTransformLine,
+  type QuoteTransformPlan,
+  type QuoteTransformProspect,
+  type QuoteTransformQuote,
+  type QuoteTransformSession,
+} from "./quote-transformation";
 import type {
   AdminActivityOut,
+  AdminClientOut,
   AdminLegalEntityOut,
   AdminInvoiceNumberingOut,
   AdminInvoiceTemplateOut,
@@ -68,6 +80,9 @@ import type {
   TeacherInvoiceOut,
   TeacherStatementOut,
   UserOut,
+  PlanOut,
+  LocationOut,
+  AdminSessionOut,
 } from "./types";
 
 type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
@@ -359,6 +374,57 @@ function safePublicBuyPath(raw: string, fallback: string): string {
 function appendQueryMessage(path: string, key: string, message: string): string {
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}${key}=${encodeURIComponent(message)}`;
+}
+
+type CreateSessionDraftPayload = {
+  title: string;
+  course_type_id: string;
+  professor_id: string;
+  location_id: string;
+  session_timezone: string;
+  start_date: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: string;
+  capacity_max: string;
+  is_all_day: "1" | "0";
+  zoom_link: string;
+  recurrence_mode: string;
+  recurrence_frequency: string;
+  recurrence_interval: string;
+  recurrence_until_date: string;
+  session_visibility: "PRIVATE" | "PUBLIC";
+  allow_online_booking: "1" | "0";
+  public_description: string;
+  private_description: string;
+  professor_reminder_note: string;
+};
+
+function encodeCreateSessionDraft(draft: CreateSessionDraftPayload): string {
+  try {
+    return Buffer.from(JSON.stringify(draft), "utf-8").toString("base64url");
+  } catch {
+    return "";
+  }
+}
+
+function withCreateSessionDraft(path: string, draft: CreateSessionDraftPayload): string {
+  const encoded = encodeCreateSessionDraft(draft);
+  if (!encoded) {
+    return path;
+  }
+  return setQueryParam(path, "create_draft", encoded);
+}
+
+function createSessionErrorPath(path: string, draft: CreateSessionDraftPayload, message: string): string {
+  return appendQueryMessage(withCreateSessionDraft(path, draft), "error", message);
+}
+
+function clampDraftValue(value: string, maxLength = 600): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return value.slice(0, maxLength);
 }
 
 function removeQueryParam(path: string, key: string): string {
@@ -1819,51 +1885,72 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const parsed_capacity_max = parseNonNegativeInt(capacity_raw);
   const capacity_max = parsed_capacity_max ?? 1;
 
+  const createDraftPayload: CreateSessionDraftPayload = {
+    title: clampDraftValue(title, 255),
+    course_type_id,
+    professor_id,
+    location_id,
+    session_timezone,
+    start_date: String(start_date || "").trim(),
+    start_time: String(start_time || "").trim(),
+    end_time: String(end_time || "").trim(),
+    duration_minutes: duration_minutes_raw,
+    capacity_max: String(capacity_raw || "").trim(),
+    is_all_day: is_all_day ? "1" : "0",
+    zoom_link: clampDraftValue(zoom_link ?? "", 1200),
+    recurrence_mode: recurrence_mode || "NONE",
+    recurrence_frequency: recurrence_frequency || "WEEKLY",
+    recurrence_interval: recurrence_interval_raw || "1",
+    recurrence_until_date: recurrence_until_date || "",
+    session_visibility: is_private ? "PRIVATE" : "PUBLIC",
+    allow_online_booking: allow_online_booking ? "1" : "0",
+    public_description: clampDraftValue(public_description ?? "", 1200),
+    private_description: clampDraftValue(private_description ?? "", 1200),
+    professor_reminder_note: clampDraftValue(professor_reminder_note ?? "", 1200),
+  };
+
   if (!course_type_id || !location_id || !title || !start_at_utc) {
-    redirect(appendQueryMessage(returnTo, "error", "Champs obligatoires manquants"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Champs obligatoires manquants"));
   }
 
   if (!is_all_day && !start_time.trim()) {
-    redirect(appendQueryMessage(returnTo, "error", "Heure de debut obligatoire"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Heure de debut obligatoire"));
   }
 
   if (!is_all_day && end_time.trim() && !parsed_end_at_utc) {
-    redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Heure de fin invalide"));
   }
 
   if (!is_all_day && duration_minutes_raw && duration_minutes === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Duree invalide"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Duree invalide"));
   }
 
   if (!is_all_day && !parsed_end_at_utc && duration_minutes === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Heure de fin ou duree obligatoire"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Heure de fin ou duree obligatoire"));
   }
 
   if (!is_all_day && start_at_utc && end_at_utc) {
     const startMs = Date.parse(start_at_utc);
     const endMs = Date.parse(end_at_utc);
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-      redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+      redirect(createSessionErrorPath(returnTo, createDraftPayload, "Heure de fin invalide"));
     }
   }
 
   if (!capacity_raw.trim() || parsed_capacity_max === null || capacity_max < 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Capacite max obligatoire (>= 0; vacances = 0)"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Capacite max obligatoire (>= 0; vacances = 0)"));
   }
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
   if (recurrenceEnabled) {
     if (!(recurrence_frequency === "DAILY" || recurrence_frequency === "WEEKLY" || recurrence_frequency === "MONTHLY")) {
-      redirect(appendQueryMessage(returnTo, "error", "Frequence de recurrence invalide"));
+      redirect(createSessionErrorPath(returnTo, createDraftPayload, "Frequence de recurrence invalide"));
     }
     if (recurrence_interval === null || recurrence_interval < 1) {
-      redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence invalide"));
-    }
-    if (recurrence_interval !== 1) {
-      redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence > 1 pas encore supporte"));
+      redirect(createSessionErrorPath(returnTo, createDraftPayload, "Intervalle de recurrence invalide"));
     }
     if (!recurrence_until_date) {
-      redirect(appendQueryMessage(returnTo, "error", "Choisir une date de fin de recurrence"));
+      redirect(createSessionErrorPath(returnTo, createDraftPayload, "Choisir une date de fin de recurrence"));
     }
   }
 
@@ -1896,7 +1983,10 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     payload.end_at_utc = end_at_utc;
   }
   if (recurrenceEnabled) {
-    const recurrence: Record<string, unknown> = { frequency: recurrence_frequency };
+    const recurrence: Record<string, unknown> = {
+      frequency: recurrence_frequency,
+      interval: recurrence_interval ?? 1,
+    };
     recurrence.until_date = recurrence_until_date;
     payload.recurrence = recurrence;
   }
@@ -1911,11 +2001,11 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, result.message));
   }
 
   revalidatePath("/admin");
-  const successPath = removeQueryParam(returnTo, "create");
+  const successPath = removeQueryParam(returnTo, "create_draft");
   redirect(appendQueryMessage(successPath, "ok", "Creneau cree"));
 }
 
@@ -1946,6 +2036,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
+  const has_recurrence_group = String(formData.get("has_recurrence_group") ?? "").trim() === "1";
   const recurrence_mode = String(formData.get("recurrence_mode") ?? "NONE").trim().toUpperCase();
   const recurrence_frequency = String(formData.get("recurrence_frequency") ?? "WEEKLY").trim().toUpperCase();
   const recurrence_interval_raw = String(formData.get("recurrence_interval") ?? "1").trim();
@@ -2002,7 +2093,10 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
   if (recurrenceEnabled) {
-    if (apply_scope !== "ONE") {
+    if (has_recurrence_group && apply_scope === "ONE") {
+      redirect(appendQueryMessage(returnTo, "error", "Modification recurrence: choisir Serie future ou Toute la serie"));
+    }
+    if (!has_recurrence_group && apply_scope !== "ONE") {
       redirect(appendQueryMessage(returnTo, "error", "Conversion en recurrence: portee 'Ce creneau' requise"));
     }
     if (!(recurrence_frequency === "DAILY" || recurrence_frequency === "WEEKLY" || recurrence_frequency === "MONTHLY")) {
@@ -2010,9 +2104,6 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     }
     if (recurrence_interval === null || recurrence_interval < 1) {
       redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence invalide"));
-    }
-    if (recurrence_interval !== 1) {
-      redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence > 1 pas encore supporte"));
     }
     if (!recurrence_until_date) {
       redirect(appendQueryMessage(returnTo, "error", "Choisir une date de fin de recurrence"));
@@ -2058,6 +2149,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   if (recurrenceEnabled) {
     payload.recurrence = {
       frequency: recurrence_frequency,
+      interval: recurrence_interval ?? 1,
       until_date: recurrence_until_date,
     };
   }
@@ -11934,4 +12026,506 @@ export async function finalizeQuoteFollowupAction(formData: FormData): Promise<v
   }
   revalidatePath("/admin/quotes");
   redirect(appendQueryMessage(returnTo, "ok", "Follow-up finalise"));
+}
+
+function ensureRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+type QuoteFollowupForTransformation = {
+  id: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+  payload: Record<string, unknown>;
+};
+
+type QuoteTransformLineOut = {
+  id: string;
+  line_type: string;
+  line_category: string;
+  master_item_type: string | null;
+  activity_id: string | null;
+  title: string;
+  quantity: string;
+  vat_rate: string;
+  amount_ht: string;
+  amount_ttc: string;
+};
+
+type QuoteTransformQuoteOut = {
+  id: string;
+  quote_number: string;
+  status: string;
+  context_type: string;
+  currency: string;
+  total_ttc: string;
+  school_year_label: string | null;
+  legal_entity_id: string | null;
+  payment_plan_id: string | null;
+  quote_type: string;
+  quote_type_id: string | null;
+  location_id: string | null;
+  client_id: string | null;
+  prospect_id: string | null;
+  calendar_snapshot: Record<string, unknown>;
+  payment_terms_snapshot: Record<string, unknown>;
+};
+
+type QuoteTransformDetailOut = {
+  quote: QuoteTransformQuoteOut;
+  lines: QuoteTransformLineOut[];
+};
+
+type QuoteTransformProspectOut = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+  phone: string | null;
+  parent_prospect_id: string | null;
+  meta: Record<string, unknown>;
+};
+
+type QuoteTransformQuoteTypeOut = {
+  id: string;
+  formula_name: string | null;
+};
+
+type QuoteTransformPaymentPlanOut = {
+  id: string;
+  name: string;
+};
+
+function transformToNumber(raw: string | number | null | undefined, fallback = 0): number {
+  const parsed = Number(String(raw ?? "").replace(",", "."));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function transformLocationNameById(locations: Array<{ id: string; name: string }>, locationId: string | null): string {
+  if (!locationId) {
+    return "Lieu non defini";
+  }
+  return locations.find((location) => location.id === locationId)?.name || "Lieu non defini";
+}
+
+async function loadQuoteQuickTransformAnalysis(
+  quoteId: string,
+  token: string,
+): Promise<{
+  analysis: QuoteQuickTransformAnalysis;
+  followupId: string | null;
+}> {
+  const [detailResult, followupsResult, clientsResult, activitiesResult, plansResult, locationsResult, quoteTypesResult, paymentPlansResult] = await Promise.all([
+    backendRequest<QuoteTransformDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
+    backendRequest<QuoteFollowupForTransformation[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
+    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=false", {}, token),
+    backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
+    backendRequest<PlanOut[]>("/api/v1/plans?active=true", {}, token),
+    backendRequest<LocationOut[]>("/api/v1/locations?active=false", {}, token),
+    backendRequest<QuoteTransformQuoteTypeOut[]>("/api/v1/quote-types", {}, token),
+    backendRequest<QuoteTransformPaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
+  ]);
+
+  if (!detailResult.ok) {
+    throw new Error(detailResult.message);
+  }
+
+  const detail = detailResult.data;
+  const clientsRaw = clientsResult.ok ? clientsResult.data : [];
+  const activitiesRaw = activitiesResult.ok ? activitiesResult.data : [];
+  const plansRaw = plansResult.ok ? plansResult.data : [];
+  const locationsRaw = locationsResult.ok ? locationsResult.data : [];
+  const quoteTypes = quoteTypesResult.ok ? quoteTypesResult.data : [];
+  const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
+  const followups = followupsResult.ok ? followupsResult.data.slice() : [];
+  followups.sort((left, right) => {
+    const leftTime = Date.parse(String(left.updated_at ?? ""));
+    const rightTime = Date.parse(String(right.updated_at ?? ""));
+    return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+  });
+  const activeFollowup = followups[0] || null;
+
+  const activityIds = Array.from(new Set(
+    detail.lines
+      .map((line) => line.activity_id)
+      .filter((activityId): activityId is string => Boolean(activityId)),
+  ));
+  const sessionsPerActivity = await Promise.all(
+    activityIds.map(async (activityId) => {
+      const query = new URLSearchParams();
+      query.set("course_type_id", activityId);
+      if (detail.quote.location_id) {
+        query.set("location_id", detail.quote.location_id);
+      }
+      const result = await backendRequest<AdminSessionOut[]>(`/api/v1/admin/sessions?${query.toString()}`, {}, token);
+      return {
+        activityId,
+        sessions: result.ok ? result.data : [],
+      };
+    }),
+  );
+
+  const prospectResult = detail.quote.prospect_id
+    ? await backendRequest<QuoteTransformProspectOut>(`/api/v1/prospects/${encodeURIComponent(detail.quote.prospect_id)}`, {}, token)
+    : null;
+  const prospectRaw = prospectResult && prospectResult.ok ? prospectResult.data : null;
+  const sourceClientRaw = detail.quote.client_id
+    ? clientsRaw.find((client) => client.id === detail.quote.client_id) || null
+    : null;
+
+  const prospectTypeRaw = String((prospectRaw?.meta || {}).prospect_type || "adult").trim().toLowerCase();
+  const fallbackProspectTypeRaw = String(sourceClientRaw?.client_kind || "").trim().toUpperCase();
+  const prospect: QuoteTransformProspect | null = prospectRaw
+    ? {
+      id: prospectRaw.id,
+      firstName: prospectRaw.first_name,
+      lastName: prospectRaw.last_name,
+      email: prospectRaw.email,
+      phone: prospectRaw.phone,
+      parentProspectId: prospectRaw.parent_prospect_id,
+      prospectType: prospectTypeRaw === "child" ? "child" : "adult",
+      meta: prospectRaw.meta || {},
+    }
+    : sourceClientRaw
+      ? {
+        id: `client:${sourceClientRaw.id}`,
+        firstName: sourceClientRaw.first_name,
+        lastName: sourceClientRaw.last_name,
+        email: sourceClientRaw.email,
+        phone: sourceClientRaw.mobile_phone_1 || sourceClientRaw.phone || sourceClientRaw.home_phone,
+        parentProspectId: null,
+        prospectType: fallbackProspectTypeRaw === "CHILD" ? "child" : "adult",
+        meta: {
+          source: "linked_client_fallback",
+          linked_client_id: sourceClientRaw.id,
+        },
+      }
+      : null;
+
+  const clients: QuoteTransformClient[] = clientsRaw.map((client) => ({
+    id: client.id,
+    firstName: client.first_name,
+    lastName: client.last_name,
+    email: client.email,
+    phone: client.phone,
+    mobilePhone1: client.mobile_phone_1,
+    mobilePhone2: client.mobile_phone_2,
+    homePhone: client.home_phone,
+    familyName: client.family_name,
+    clientKind: client.client_kind,
+    clientStatus: client.client_status,
+  }));
+
+  const activities: QuoteTransformActivityCatalog[] = activitiesRaw.map((activity) => ({
+    id: activity.id,
+    name: activity.name,
+    serviceCode: activity.service_code,
+    durationMinutes: activity.duration_minutes,
+    defaultCourseRateTtc: activity.default_course_rate_ttc ? transformToNumber(activity.default_course_rate_ttc) : null,
+    mode: activity.mode,
+    active: activity.active,
+  }));
+
+  const sessionsByActivityId: Record<string, QuoteTransformSession[]> = {};
+  for (const item of sessionsPerActivity) {
+    sessionsByActivityId[item.activityId] = item.sessions.map((session) => {
+      const seatsRemaining = Math.max(0, Number(session.capacity_max || 0) - Number(session.booked_count || 0));
+      return {
+        id: session.id,
+        courseTypeId: session.course_type_id,
+        locationId: session.location_id,
+        title: session.title,
+        startAtUtc: session.start_at_utc,
+        endAtUtc: session.end_at_utc,
+        timezone: session.timezone,
+        teacherDisplayName: session.effective_teacher_display_name,
+        status: session.status,
+        statusLabel: session.status_label,
+        capacityMax: session.capacity_max,
+        bookedCount: session.booked_count,
+        seatsRemaining,
+      };
+    });
+  }
+
+  const plans: QuoteTransformPlan[] = plansRaw.map((plan) => ({
+    id: plan.id,
+    name: plan.name,
+    kind: plan.kind,
+    active: plan.active,
+  }));
+
+  const quoteType = quoteTypes.find((row) => row.id === detail.quote.quote_type_id) || null;
+  const paymentPlan = paymentPlans.find((row) => row.id === detail.quote.payment_plan_id) || null;
+
+  const lines: QuoteTransformLine[] = detail.lines.map((line) => ({
+    id: line.id,
+    lineType: line.line_type,
+    lineCategory: line.line_category,
+    masterItemType: line.master_item_type,
+    activityId: line.activity_id,
+    title: line.title,
+    quantity: transformToNumber(line.quantity, 1),
+    durationMinutes: null,
+    pricingUnit: line.line_category === "service" ? "session" : "item",
+    amountHt: transformToNumber(line.amount_ht),
+    amountTtc: transformToNumber(line.amount_ttc),
+    vatRate: transformToNumber(line.vat_rate),
+    meta: {},
+  }));
+
+  const quote: QuoteTransformQuote = {
+    id: detail.quote.id,
+    quoteNumber: detail.quote.quote_number,
+    status: detail.quote.status,
+    clientId: detail.quote.client_id,
+    currency: detail.quote.currency || "EUR",
+    totalTtc: transformToNumber(detail.quote.total_ttc),
+    totalHt: Number(lines.reduce((sum, line) => sum + line.amountHt, 0).toFixed(2)),
+    schoolYearLabel: detail.quote.school_year_label,
+    legalEntityId: detail.quote.legal_entity_id,
+    legalEntityName: "A definir",
+    paymentPlanName: paymentPlan?.name || String((detail.quote.payment_terms_snapshot || {}).payment_plan_name || "-"),
+    quoteType: detail.quote.quote_type,
+    quoteTypeFormulaName: quoteType?.formula_name || null,
+    locationId: detail.quote.location_id,
+    locationName: transformLocationNameById(locationsRaw, detail.quote.location_id),
+  };
+
+  const analysis = analyzeQuoteQuickTransformStatus({
+    quote,
+    prospect,
+    lines,
+    clients,
+    activities,
+    sessionsByActivityId,
+    plans,
+    calendarSnapshot: detail.quote.calendar_snapshot || {},
+    followupId: activeFollowup?.id || null,
+    followupStatus: activeFollowup?.status || null,
+    scenario: "live",
+  });
+
+  return {
+    analysis,
+    followupId: activeFollowup?.id || null,
+  };
+}
+
+export async function saveQuoteTransformationDraftAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const followupId = String(formData.get("followup_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${quoteId}/transform`));
+  const transformationRaw = parseJsonObject(String(formData.get("transformation_json") ?? ""));
+
+  if (!quoteId || !followupId) {
+    redirect(appendQueryMessage(returnTo, "error", "Follow-up requis pour sauvegarder le brouillon"));
+  }
+  if (!transformationRaw) {
+    redirect(appendQueryMessage(returnTo, "error", "Payload de transformation invalide"));
+  }
+
+  const followupResult = await backendRequest<QuoteFollowupForTransformation>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}`,
+    {},
+    token,
+  );
+  if (!followupResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", followupResult.message));
+  }
+
+  const currentPayload = ensureRecord(followupResult.data.payload);
+  const nextPayload = {
+    ...currentPayload,
+    quote_to_enrollment: transformationRaw,
+  };
+
+  const patchResult = await backendRequest<QuoteFollowupForTransformation>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: followupResult.data.status === "completed" ? "completed" : "partially_configured",
+        payload: nextPayload,
+      }),
+    },
+    token,
+  );
+  if (!patchResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", patchResult.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  revalidatePath(`/admin/quotes/${quoteId}/transform`);
+  redirect(appendQueryMessage(returnTo, "ok", "Brouillon de transformation enregistre"));
+}
+
+export async function finalizeQuoteTransformationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const followupId = String(formData.get("followup_id") ?? "").trim();
+  const allowForceFinalize = String(formData.get("allow_force_finalize") ?? "0").trim() === "1";
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${quoteId}/transform`));
+  const transformationRaw = parseJsonObject(String(formData.get("transformation_json") ?? ""));
+
+  if (!quoteId || !followupId) {
+    redirect(appendQueryMessage(returnTo, "error", "Follow-up requis pour finaliser la transformation"));
+  }
+  if (!transformationRaw) {
+    redirect(appendQueryMessage(returnTo, "error", "Payload de transformation invalide"));
+  }
+  if (!allowForceFinalize) {
+    redirect(appendQueryMessage(returnTo, "error", "Des blocages critiques restent a resoudre"));
+  }
+
+  const followupResult = await backendRequest<QuoteFollowupForTransformation>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}`,
+    {},
+    token,
+  );
+  if (!followupResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", followupResult.message));
+  }
+
+  const currentPayload = ensureRecord(followupResult.data.payload);
+  const existingTransformation = ensureRecord(currentPayload.quote_to_enrollment);
+  const incomingIdempotencyKey = String(transformationRaw.idempotencyKey ?? "").trim();
+  const existingIdempotencyKey = String(existingTransformation.idempotencyKey ?? "").trim();
+  const existingFinalizedAt = String(existingTransformation.finalizedAt ?? "").trim();
+
+  if (
+    followupResult.data.status === "completed"
+    && existingFinalizedAt
+    && incomingIdempotencyKey
+    && incomingIdempotencyKey === existingIdempotencyKey
+  ) {
+    redirect(appendQueryMessage(returnTo, "ok", "Transformation deja finalisee (idempotence)"));
+  }
+
+  const finalizedAt = new Date().toISOString();
+  const nextTransformation = {
+    ...transformationRaw,
+    finalizedAt,
+  };
+  const nextPayload = {
+    ...currentPayload,
+    quote_to_enrollment: nextTransformation,
+  };
+
+  const patchResult = await backendRequest<QuoteFollowupForTransformation>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: followupResult.data.status === "completed" ? "completed" : "partially_configured",
+        payload: nextPayload,
+      }),
+    },
+    token,
+  );
+  if (!patchResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", patchResult.message));
+  }
+
+  if (followupResult.data.status !== "completed") {
+    const finalizeResult = await backendRequest<QuoteFollowupForTransformation>(
+      `/api/v1/quote-followups/${encodeURIComponent(followupId)}/finalize`,
+      { method: "POST" },
+      token,
+    );
+    if (!finalizeResult.ok) {
+      redirect(appendQueryMessage(returnTo, "error", finalizeResult.message));
+    }
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  revalidatePath(`/admin/quotes/${quoteId}/transform`);
+  redirect(appendQueryMessage(returnTo, "ok", "Transformation validee et journalisee"));
+}
+
+export async function quickTransformQuoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${quoteId}?section=integration`));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  let runtime: { analysis: QuoteQuickTransformAnalysis; followupId: string | null };
+  try {
+    runtime = await loadQuoteQuickTransformAnalysis(quoteId, token);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Analyse rapide impossible";
+    redirect(appendQueryMessage(returnTo, "error", message));
+  }
+
+  const { analysis, followupId } = runtime;
+  if (!analysis.canQuickTransform || !analysis.suggestedDraft) {
+    redirect(appendQueryMessage(returnTo, "error", "Ce devis n'est plus auto-validable. Ouvrez le wizard."));
+  }
+  if (!followupId) {
+    redirect(appendQueryMessage(returnTo, "error", "Follow-up absent: verification manuelle requise via wizard."));
+  }
+
+  const followupResult = await backendRequest<QuoteFollowupForTransformation>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}`,
+    {},
+    token,
+  );
+  if (!followupResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", followupResult.message));
+  }
+
+  const currentPayload = ensureRecord(followupResult.data.payload);
+  const existingTransformation = ensureRecord(currentPayload.quote_to_enrollment);
+  const existingFinalizedAt = String(existingTransformation.finalizedAt ?? "").trim();
+  if (followupResult.data.status === "completed" && existingFinalizedAt) {
+    redirect(appendQueryMessage(returnTo, "ok", "Transformation deja finalisee"));
+  }
+
+  const quickDraft = {
+    ...analysis.suggestedDraft,
+    logs: [
+      ...(analysis.suggestedDraft.logs || []),
+      {
+        at: new Date().toISOString(),
+        action: "quote_quick_transform_execute",
+        detail: "validation rapide executee via panneau devis",
+      },
+    ],
+  };
+
+  const delegated = new FormData();
+  delegated.set("quote_id", quoteId);
+  delegated.set("followup_id", followupId);
+  delegated.set("allow_force_finalize", "1");
+  delegated.set("return_to", returnTo);
+  delegated.set("transformation_json", JSON.stringify(quickDraft));
+
+  await finalizeQuoteTransformationAction(delegated);
 }

@@ -70,6 +70,76 @@ function preview(value: string): string {
   return `${cleaned.slice(0, 117)}...`;
 }
 
+type ParsedMessageBody = {
+  heading: string | null;
+  details: Array<{ label: string; value: string }>;
+  teacherComment: string | null;
+  trailingText: string[];
+};
+
+function parseMessageBody(value: string): ParsedMessageBody {
+  const lines = value.replaceAll("\r\n", "\n").split("\n").map((line) => line.trimEnd());
+  let cursor = 0;
+  while (cursor < lines.length && !lines[cursor]?.trim()) {
+    cursor += 1;
+  }
+
+  let heading: string | null = null;
+  if (cursor < lines.length && !lines[cursor]?.includes(":")) {
+    heading = lines[cursor]?.trim() || null;
+    cursor += 1;
+  }
+
+  const details: Array<{ label: string; value: string }> = [];
+  const trailingText: string[] = [];
+  let teacherComment: string | null = null;
+
+  let currentLabel: string | null = null;
+  let currentValue = "";
+
+  const flushCurrent = (): void => {
+    if (!currentLabel) {
+      return;
+    }
+    const normalizedValue = currentValue.trim() || "-";
+    if (currentLabel.toLowerCase().includes("commentaire")) {
+      teacherComment = normalizedValue;
+    } else {
+      details.push({ label: currentLabel, value: normalizedValue });
+    }
+    currentLabel = null;
+    currentValue = "";
+  };
+
+  for (; cursor < lines.length; cursor += 1) {
+    const rawLine = lines[cursor] ?? "";
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    const kvMatch = line.match(/^([^:]{2,80}):\s*(.*)$/);
+    if (kvMatch) {
+      flushCurrent();
+      currentLabel = kvMatch[1]?.trim() || null;
+      currentValue = kvMatch[2]?.trim() || "";
+      continue;
+    }
+    if (currentLabel) {
+      currentValue = currentValue ? `${currentValue}\n${line}` : line;
+      continue;
+    }
+    trailingText.push(line);
+  }
+
+  flushCurrent();
+  return {
+    heading,
+    details,
+    teacherComment,
+    trailingText,
+  };
+}
+
 async function updateMessageStatusAction(formData: FormData): Promise<void> {
   "use server";
 
@@ -154,6 +224,7 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
       )
     : null;
   const selected = detailResult && detailResult.ok ? detailResult.data : null;
+  const parsedMessage = selected ? parseMessageBody(selected.message_body || "") : null;
 
   return (
     <section className="admin-page-grid">
@@ -263,41 +334,79 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
 
       {selected ? (
         <section className="modal-overlay">
-          <article className="modal-panel modal-compact">
+          <article className="modal-panel modal-compact message-detail-modal">
             <a className="modal-close-x" href={baseHref} aria-label="Fermer">
               ×
             </a>
-            <h3 className="modal-title">Detail message</h3>
-            <p className="muted">{formatDate(selected.created_at)}</p>
-            <div className="stack-sm top-gap-sm">
-              <p>
-                <strong>Source :</strong> {sourceLabel(selected.source)}
-              </p>
-              <p>
-                <strong>Type :</strong> {typeLabel(selected.message_type)}
-              </p>
-              <p>
-                <strong>Statut :</strong>{" "}
-                <span className={`status-pill ${statusClass(selected.status)}`}>{statusLabel(selected.status)}</span>
-              </p>
-              <p>
-                <strong>Professeur :</strong> {selected.teacher_name || "-"}
-              </p>
+            <div className="message-detail-shell">
+              <header className="message-detail-header">
+                <div className="row spread message-detail-header-row">
+                  <h3 className="modal-title message-detail-title">Detail message</h3>
+                  <span className={`status-pill ${statusClass(selected.status)}`}>{statusLabel(selected.status)}</span>
+                </div>
+                <p className="muted message-detail-date">{formatDate(selected.created_at)}</p>
+              </header>
+
+              <section className="message-detail-meta-grid">
+                <article className="message-detail-meta-item">
+                  <span className="message-detail-meta-label">Source</span>
+                  <strong>{sourceLabel(selected.source)}</strong>
+                </article>
+                <article className="message-detail-meta-item">
+                  <span className="message-detail-meta-label">Type</span>
+                  <strong>{typeLabel(selected.message_type)}</strong>
+                </article>
+                <article className="message-detail-meta-item">
+                  <span className="message-detail-meta-label">Professeur</span>
+                  <strong>{selected.teacher_name || "-"}</strong>
+                </article>
+                <article className="message-detail-meta-item">
+                  <span className="message-detail-meta-label">Message id</span>
+                  <strong className="message-detail-meta-mono">{selected.id}</strong>
+                </article>
+              </section>
+
               {selected.related_entity_type || selected.related_entity_id ? (
-                <p>
-                  <strong>Contexte :</strong> {selected.related_entity_type || "-"} {selected.related_entity_id ? `(${selected.related_entity_id})` : ""}
-                </p>
+                <section className="message-detail-context">
+                  <p className="message-detail-context-title">Contexte</p>
+                  <p className="message-detail-context-value">
+                    {selected.related_entity_type || "-"}
+                    {selected.related_entity_id ? ` · ${selected.related_entity_id}` : ""}
+                  </p>
+                </section>
               ) : null}
-              <div className="item">
-                <strong>Message</strong>
-                <pre className="message-full-text">{selected.message_body || "-"}</pre>
-              </div>
+
+              <section className="message-detail-content">
+                <h4 className="message-detail-content-title">{parsedMessage?.heading || "Message"}</h4>
+                {parsedMessage && parsedMessage.details.length > 0 ? (
+                  <dl className="message-detail-kv">
+                    {parsedMessage.details.map((detail, detailIndex) => (
+                      <div key={`${detailIndex}-${detail.label}`} className="message-detail-kv-row">
+                        <dt>{detail.label}</dt>
+                        <dd>{detail.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : null}
+                {parsedMessage?.teacherComment ? (
+                  <article className="message-detail-comment">
+                    <p className="message-detail-comment-title">Commentaire professeur</p>
+                    <p>{parsedMessage.teacherComment}</p>
+                  </article>
+                ) : null}
+                {parsedMessage && parsedMessage.trailingText.length > 0 ? (
+                  <pre className="message-full-text message-detail-raw">{parsedMessage.trailingText.join("\n")}</pre>
+                ) : null}
+                {parsedMessage && parsedMessage.details.length === 0 && !parsedMessage.teacherComment && parsedMessage.trailingText.length === 0 ? (
+                  <pre className="message-full-text message-detail-raw">{selected.message_body || "-"}</pre>
+                ) : null}
+              </section>
             </div>
 
-            <form action={updateMessageStatusAction} className="grid top-gap-sm">
+            <form action={updateMessageStatusAction} className="message-detail-status-form">
               <input type="hidden" name="message_id" value={selected.id} />
               <input type="hidden" name="return_to" value={baseHref} />
-              <label>
+              <label className="message-detail-status-label">
                 Changer le statut
                 <select name="status" defaultValue={selected.status}>
                   <option value="a_traiter">A traiter</option>
@@ -306,7 +415,7 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
                 </select>
               </label>
               <div className="row modal-actions-end">
-                <button type="submit">Enregistrer</button>
+                <button type="submit">Mettre a jour</button>
                 <a className="reset-link" href={baseHref}>
                   Fermer
                 </a>

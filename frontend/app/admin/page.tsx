@@ -26,6 +26,7 @@ import ModalA11yFrame from "../../components/modal-a11y-frame";
 import PresenceButtonsGroup from "../../components/presence-buttons-group";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
+import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
 import type {
   AdminClientOut,
   AdminMessagingTemplateOut,
@@ -42,6 +43,30 @@ type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
 type SlotEditTab = "general" | "schedule" | "visibility" | "notes";
 type AttendanceFilter = "all" | "missing";
 type ComposerTab = "content" | "recipients" | "send";
+
+type CreateSessionDraft = {
+  title: string;
+  course_type_id: string;
+  professor_id: string;
+  location_id: string;
+  session_timezone: string;
+  start_date: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: string;
+  capacity_max: string;
+  is_all_day: "1" | "0";
+  zoom_link: string;
+  recurrence_mode: string;
+  recurrence_frequency: string;
+  recurrence_interval: string;
+  recurrence_until_date: string;
+  session_visibility: "PRIVATE" | "PUBLIC";
+  allow_online_booking: "1" | "0";
+  public_description: string;
+  private_description: string;
+  professor_reminder_note: string;
+};
 
 type AgendaRange = {
   from: Date;
@@ -338,10 +363,30 @@ function toTimeInputInTimezone(value: string, timezone: string): string {
   });
 }
 
-function formatDate(value: string): string {
+function formatDateKeyFr(value: string): string {
+  if (!isDateKey(value)) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(keyToUtcDate(value));
+}
+
+function formatDate(value: string, timezone?: string): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "-";
+  }
+  const resolvedTimezone = timezone ? resolveTimezone(timezone) : "";
+  if (resolvedTimezone) {
+    const dateKey = toDateInputInTimezone(value, resolvedTimezone);
+    const timeKey = toTimeInputInTimezone(value, resolvedTimezone);
+    if (dateKey && timeKey) {
+      return `${formatDateKeyFr(dateKey)}, ${timeKey}`;
+    }
   }
   return parsed.toLocaleString("fr-FR", {
     dateStyle: "medium",
@@ -349,10 +394,17 @@ function formatDate(value: string): string {
   });
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string, timezone?: string): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "--:--";
+  }
+  const resolvedTimezone = timezone ? resolveTimezone(timezone) : "";
+  if (resolvedTimezone) {
+    const timeKey = toTimeInputInTimezone(value, resolvedTimezone);
+    if (timeKey) {
+      return timeKey;
+    }
   }
   return parsed.toLocaleTimeString("fr-FR", {
     hour: "2-digit",
@@ -375,7 +427,7 @@ function sessionTimeRangeLabel(session: AdminSessionOut): string {
   if (session.is_all_day) {
     return "Toute la journee";
   }
-  return `${formatTime(session.start_at_utc)} - ${formatTime(session.end_at_utc)}`;
+  return `${formatTime(session.start_at_utc, session.timezone)} - ${formatTime(session.end_at_utc, session.timezone)}`;
 }
 
 function sessionDurationMinutes(session: AdminSessionOut): number | null {
@@ -590,16 +642,21 @@ function recurrenceLabel(session: AdminSessionOut): string {
   if (!session.recurrence_rule) {
     return "Ponctuel";
   }
-  if (session.recurrence_rule === "DAILY") {
-    return "Quotidien";
+  const raw = String(session.recurrence_rule || "").trim().toUpperCase();
+  const [frequencyRaw, intervalRaw] = raw.includes(":") ? raw.split(":", 2) : [raw, "1"];
+  const interval = Number.parseInt(intervalRaw || "1", 10);
+  const safeInterval = Number.isFinite(interval) && interval > 0 ? interval : 1;
+
+  if (frequencyRaw === "DAILY") {
+    return safeInterval > 1 ? `Tous les ${safeInterval} jours` : "Quotidien";
   }
-  if (session.recurrence_rule === "WEEKLY") {
-    return "Hebdo";
+  if (frequencyRaw === "WEEKLY") {
+    return safeInterval > 1 ? `Toutes les ${safeInterval} semaines` : "Hebdo";
   }
-  if (session.recurrence_rule === "MONTHLY") {
-    return "Mensuel";
+  if (frequencyRaw === "MONTHLY") {
+    return safeInterval > 1 ? `Tous les ${safeInterval} mois` : "Mensuel";
   }
-  return session.recurrence_rule;
+  return raw;
 }
 
 function defaultApplyScope(session: AdminSessionOut): ApplyScope {
@@ -625,6 +682,71 @@ function parseComposerTab(value: string): ComposerTab {
     return value;
   }
   return "content";
+}
+
+function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
+  const token = String(raw || "").trim();
+  if (!token) {
+    return null;
+  }
+  try {
+    const decoded = Buffer.from(token, "base64url").toString("utf-8");
+    const parsed = JSON.parse(decoded) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const visibilityRaw = String(parsed.session_visibility ?? "").trim().toUpperCase();
+    const visibility = visibilityRaw === "PUBLIC" ? "PUBLIC" : "PRIVATE";
+    return {
+      title: String(parsed.title ?? ""),
+      course_type_id: String(parsed.course_type_id ?? ""),
+      professor_id: String(parsed.professor_id ?? ""),
+      location_id: String(parsed.location_id ?? ""),
+      session_timezone: String(parsed.session_timezone ?? ""),
+      start_date: String(parsed.start_date ?? ""),
+      start_time: String(parsed.start_time ?? ""),
+      end_time: String(parsed.end_time ?? ""),
+      duration_minutes: String(parsed.duration_minutes ?? ""),
+      capacity_max: String(parsed.capacity_max ?? ""),
+      is_all_day: String(parsed.is_all_day ?? "") === "1" ? "1" : "0",
+      zoom_link: String(parsed.zoom_link ?? ""),
+      recurrence_mode: String(parsed.recurrence_mode ?? "NONE"),
+      recurrence_frequency: String(parsed.recurrence_frequency ?? "WEEKLY"),
+      recurrence_interval: String(parsed.recurrence_interval ?? "1"),
+      recurrence_until_date: String(parsed.recurrence_until_date ?? ""),
+      session_visibility: visibility,
+      allow_online_booking: String(parsed.allow_online_booking ?? "") === "1" ? "1" : "0",
+      public_description: String(parsed.public_description ?? ""),
+      private_description: String(parsed.private_description ?? ""),
+      professor_reminder_note: String(parsed.professor_reminder_note ?? ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function draftPositiveInteger(raw: string): number | null {
+  const value = String(raw || "").trim();
+  if (!value) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseRecurrenceRuleDefaults(rawRule: string | null | undefined): { frequency: "DAILY" | "WEEKLY" | "MONTHLY"; interval: number } {
+  const raw = String(rawRule || "").trim().toUpperCase();
+  if (!raw) {
+    return { frequency: "WEEKLY", interval: 1 };
+  }
+  const [frequencyRaw, intervalRaw] = raw.includes(":") ? raw.split(":", 2) : [raw, "1"];
+  const frequency = frequencyRaw === "DAILY" || frequencyRaw === "MONTHLY" ? frequencyRaw : "WEEKLY";
+  const intervalParsed = Number.parseInt(intervalRaw || "1", 10);
+  const interval = Number.isFinite(intervalParsed) && intervalParsed > 0 ? intervalParsed : 1;
+  return { frequency, interval };
 }
 
 function clientDisplayName(client: AdminClientOut): string {
@@ -663,6 +785,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const agendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
   const inputAgendaDate = readParam(searchParams, "agenda_date");
   const agendaDate = isDateKey(inputAgendaDate) ? inputAgendaDate : todayKeyInTimezone(timezone);
+  const createDraftRaw = readParam(searchParams, "create_draft");
+  const createDraft = parseCreateSessionDraft(createDraftRaw);
   const filtersOpen = readParam(searchParams, "filters") === "1";
   const createOpen = readParam(searchParams, "create") === "1";
   const dayDetailsRaw = readParam(searchParams, "day_details");
@@ -811,8 +935,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   };
 
   const lectureHref = buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: "" });
-  const createHref = buildPlanningHref({ ...queryForLinks, createOpen: true, showFilters: false, dayDetails: "" });
+  const createHrefBase = buildPlanningHref({ ...queryForLinks, createOpen: true, showFilters: false, dayDetails: "" });
+  const createHref = createDraftRaw ? withQueryParam(createHrefBase, "create_draft", createDraftRaw) : createHrefBase;
   const createCloseHref = buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: "" });
+  const createFeedbackDismissHref = removeQueryParam(removeQueryParam(createHref, "ok"), "error");
   const baseHref = buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: "" });
   const sessionModalBaseHref = buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: "" });
   const dayDetailsCloseHref = buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: "" });
@@ -1089,7 +1215,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedSessionTypeName = selectedSession ? sessionTypeLabel(selectedSession, selectedLocationName) : "";
   const selectedSessionHeaderTitle = selectedSession ? `${selectedCourseTypeName} - ${selectedLocationName}` : "";
   const selectedSessionSubtitle = selectedSession
-    ? `${formatDate(selectedSession.start_at_utc)} · ${sessionTimeRangeLabel(selectedSession)} · ${selectedSession.timezone} · Prof: ${selectedEffectiveProfessorName}${selectedSessionIsSubstituted ? " (remplacant)" : ""}`
+    ? `${formatDate(selectedSession.start_at_utc, selectedSession.timezone)} · ${sessionTimeRangeLabel(selectedSession)} · ${selectedSession.timezone} · Prof: ${selectedEffectiveProfessorName}${selectedSessionIsSubstituted ? " (remplacant)" : ""}`
     : "";
   const timezoneOptionValues = new Set(PLANNING_TIMEZONES.map((option) => option.value));
   const timezoneOptions = timezoneOptionValues.has(timezone)
@@ -1107,6 +1233,23 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       const known = PLANNING_TIMEZONES.find((option) => option.value === value);
       return { value, label: known?.label ?? value };
     });
+  const createInitialIsPrivate = createDraft ? createDraft.session_visibility !== "PUBLIC" : true;
+  const createInitialAllowOnlineBooking = createDraft
+    ? createDraft.allow_online_booking === "1"
+    : false;
+  const createDraftDuration = createDraft ? draftPositiveInteger(createDraft.duration_minutes) : null;
+  const createDraftCapacity = createDraft ? draftPositiveInteger(createDraft.capacity_max) : null;
+  const createRecurrenceMode = createDraft?.recurrence_mode?.trim().toUpperCase() === "RECURRING" ? "RECURRING" : "NONE";
+  const createRecurrenceFrequencyRaw = createDraft?.recurrence_frequency?.trim().toUpperCase() ?? "WEEKLY";
+  const createRecurrenceFrequency =
+    createRecurrenceFrequencyRaw === "DAILY" || createRecurrenceFrequencyRaw === "MONTHLY"
+      ? createRecurrenceFrequencyRaw
+      : "WEEKLY";
+  const createRecurrenceInterval = createDraft ? draftPositiveInteger(createDraft.recurrence_interval) ?? 1 : 1;
+  const editRecurrenceDefaults = parseRecurrenceRuleDefaults(selectedSession?.recurrence_rule);
+  const editRecurrenceUntilDate = selectedSession
+    ? toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
+    : agendaDate;
 
   return (
     <section className="admin-page-grid">
@@ -1332,6 +1475,28 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             </a>
             <h2 className="modal-title">Ajouter un creneau</h2>
             <p className="muted">Un creneau est sur un seul jour local. Capacite requise (defaut: 1).</p>
+            {(okMessage || errorMessage) ? (
+              <section className="modal-overlay modal-overlay-front">
+                <article className="modal-panel modal-compact">
+                  <a className="modal-close-x" href={errorMessage ? createFeedbackDismissHref : createCloseHref} aria-label="Fermer">
+                    ×
+                  </a>
+                  <h3 className="modal-title">{errorMessage ? "Creation impossible" : "Creation terminee"}</h3>
+                  {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
+                  {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
+                  <div className="row modal-actions-end">
+                    {errorMessage ? (
+                      <a className="ghost" href={createFeedbackDismissHref}>
+                        Corriger la saisie
+                      </a>
+                    ) : null}
+                    <a className="mode-link" href={createCloseHref}>
+                      Fermer
+                    </a>
+                  </div>
+                </article>
+              </section>
+            ) : null}
             <form action={createAdminSessionAction} className="create-session-form">
               <input type="hidden" name="return_to" value={createHref} />
               <section className="create-session-section">
@@ -1339,97 +1504,58 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <h3 className="create-session-section-title">Informations principales</h3>
                   <span className="badge">Obligatoire</span>
                 </div>
-                <div className="grid cols-4 create-session-grid">
-                  <label className="span-2">
-                    Titre
-                    <input type="text" name="title" required maxLength={255} autoFocus />
-                  </label>
-
-                  <label>
-                    Type de cours
-                    <select name="course_type_id" required>
-                      <option value="">Selectionner</option>
-                      {courseTypes.map((row) => (
-                        <option key={row.id} value={row.id}>
-                          {row.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Coach
-                    <select name="professor_id">
-                      <option value="">Sans professeur</option>
-                      {professors.map((row) => (
-                        <option key={row.id} value={row.id}>
-                          {row.first_name} {row.last_name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Lieu
-                    <select name="location_id" defaultValue={focusedLocationId || (locations[0]?.id ?? "")} required>
-                      {locations.map((row) => (
-                        <option key={row.id} value={row.id}>
-                          {row.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Fuseau horaire du creneau
-                    <select name="session_timezone" defaultValue={timezone} required>
-                      {sessionTimezoneOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Jour debut
-                    <input type="date" name="start_date" defaultValue={agendaDate} required />
-                  </label>
-
-                  <label className="checkline create-session-toggle">
-                    <input type="checkbox" name="is_all_day" />
-                    Creneau sur toute la journee
-                  </label>
-
-                  <SessionTimeFields
-                    labelClassName="create-time-field session-time-field"
-                    defaultStartTime="12:00"
-                    defaultEndTime="13:00"
-                    defaultDurationMinutes={60}
-                    requiredStart
-                  />
-
-                  <label>
-                    Capacite max
-                    <input type="number" name="capacity_max" min={0} defaultValue={1} required />
-                  </label>
-
-                  <label className="span-2">
-                    Lien Zoom (optionnel)
-                    <input type="url" name="zoom_link" placeholder="https://..." />
-                  </label>
-                </div>
+                <SessionCreateMainFields
+                  courseTypes={courseTypes.map((row) => ({
+                    id: row.id,
+                    name: row.name,
+                    durationMinutes: row.duration_minutes,
+                    defaultCapacity: row.default_capacity,
+                    requiresProfessor: row.requires_professor,
+                  }))}
+                  professors={professors.map((row) => ({
+                    id: row.id,
+                    firstName: row.first_name,
+                    lastName: row.last_name,
+                  }))}
+                  locations={locations.map((row) => ({
+                    id: row.id,
+                    name: row.name,
+                  }))}
+                  sessionTimezoneOptions={sessionTimezoneOptions}
+                  defaultCourseTypeId={selectedCourseType}
+                  defaultLocationId={focusedLocationId || (locations[0]?.id ?? "")}
+                  defaultSessionTimezone={timezone}
+                  defaultStartDate={agendaDate}
+                  draft={
+                    createDraft
+                      ? {
+                        title: createDraft.title,
+                        courseTypeId: createDraft.course_type_id,
+                        professorId: createDraft.professor_id,
+                        locationId: createDraft.location_id,
+                        sessionTimezone: createDraft.session_timezone,
+                        startDate: createDraft.start_date,
+                        isAllDay: createDraft.is_all_day === "1",
+                        startTime: createDraft.start_time,
+                        endTime: createDraft.end_time,
+                        durationMinutes: createDraftDuration,
+                        capacityMax: createDraftCapacity,
+                        zoomLink: createDraft.zoom_link,
+                      }
+                      : undefined
+                  }
+                />
               </section>
 
               <fieldset className="create-session-section recurrence-panel">
                 <legend>Recurrence</legend>
                 <div className="recurrence-mode-row">
                   <label className="checkline">
-                    <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
+                    <input type="radio" name="recurrence_mode" value="NONE" defaultChecked={createRecurrenceMode === "NONE"} />
                     Evenement unique
                   </label>
                   <label className="checkline">
-                    <input type="radio" name="recurrence_mode" value="RECURRING" />
+                    <input type="radio" name="recurrence_mode" value="RECURRING" defaultChecked={createRecurrenceMode === "RECURRING"} />
                     Evenement recurrent
                   </label>
                 </div>
@@ -1438,7 +1564,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <div className="grid cols-3 recurrence-grid">
                     <label>
                       Frequence
-                      <select name="recurrence_frequency" defaultValue="WEEKLY">
+                      <select name="recurrence_frequency" defaultValue={createRecurrenceFrequency}>
                         <option value="DAILY">Journaliere</option>
                         <option value="WEEKLY">Hebdomadaire</option>
                         <option value="MONTHLY">Mensuelle</option>
@@ -1447,12 +1573,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                     <label>
                       Se repete chaque
-                      <input type="number" name="recurrence_interval" min={1} defaultValue={1} />
+                      <input type="number" name="recurrence_interval" min={1} defaultValue={createRecurrenceInterval} />
+                      <small className="muted">Ex: 2 pour toutes les 2 semaines.</small>
                     </label>
 
                     <label>
                       Repeter jusqu au
-                      <input type="date" name="recurrence_until_date" />
+                      <input type="date" name="recurrence_until_date" defaultValue={createDraft?.recurrence_until_date || ""} />
                     </label>
                   </div>
                   <p className="muted">La recurrence est creee jusqu a la date de fin incluse.</p>
@@ -1462,16 +1589,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <section className="create-session-section">
                 <h3 className="create-session-section-title">Visibilite et descriptions</h3>
                 <div className="grid cols-2 create-session-visibility-grid">
-                  <SessionVisibilityFields initialIsPrivate={false} initialAllowOnlineBooking />
+                  <SessionVisibilityFields
+                    initialIsPrivate={createInitialIsPrivate}
+                    initialAllowOnlineBooking={createInitialAllowOnlineBooking}
+                  />
 
                   <label>
                     Description publique (vue client)
-                    <textarea name="public_description" rows={4} />
+                    <textarea name="public_description" rows={4} defaultValue={createDraft?.public_description || ""} />
                   </label>
 
                   <label>
                     Description privee (interne)
-                    <textarea name="private_description" rows={4} />
+                    <textarea name="private_description" rows={4} defaultValue={createDraft?.private_description || ""} />
                   </label>
 
                   <label className="span-2">
@@ -1482,6 +1612,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       rows={6}
                       maxLength={12000}
                       defaultFormat="HTML"
+                      defaultValue={createDraft?.professor_reminder_note || ""}
                       placeholder="Saisir la note a joindre au rappel professeur..."
                     />
                   </label>
@@ -1823,7 +1954,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <div>
                 <h2 className="modal-title">Modifier le creneau</h2>
                 <p className="muted">
-                  {formatDate(selectedSession.start_at_utc)} · {sessionTimeRangeLabel(selectedSession)} · {selectedLocationName}
+                  {formatDate(selectedSession.start_at_utc, selectedSession.timezone)} · {selectedLocationName} · Horaire enregistre: {sessionTimeRangeLabel(selectedSession)}
                 </p>
               </div>
               <div className="session-edit-shell-header-actions">
@@ -1855,6 +1986,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             <form action={updateAdminSessionAction} className="session-edit-shell-form" noValidate>
               <input type="hidden" name="session_id" value={selectedSession.id} />
               <input type="hidden" name="return_to" value={activeEditTabHref} />
+              <input type="hidden" name="has_recurrence_group" value={selectedSession.recurrence_group_id ? "1" : "0"} />
 
               <nav className="session-edit-tabs" aria-label="Sections modification creneau">
                 <a className={`session-edit-tab ${editTab === "general" ? "active" : ""}`} href={editTabHref("general")}>
@@ -1863,7 +1995,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </a>
                 <a className={`session-edit-tab ${editTab === "schedule" ? "active" : ""}`} href={editTabHref("schedule")}>
                   <span>Horaire & recurrence</span>
-                  <small>{sessionTimeRangeLabel(selectedSession)}</small>
+                  <small>Enregistre: {sessionTimeRangeLabel(selectedSession)}</small>
                 </a>
                 <a className={`session-edit-tab ${editTab === "visibility" ? "active" : ""}`} href={editTabHref("visibility")}>
                   <span>Visibilite</span>
@@ -2002,47 +2134,52 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       defaultDurationMinutes={sessionDurationMinutes(selectedSession)}
                       requiredStart
                     />
+                    <p className="muted session-edit-span">
+                      L'entete affiche l'horaire enregistre. Les champs ci-dessus montrent vos modifications en cours avant enregistrement.
+                    </p>
                   </div>
 
-                  {!selectedSession.recurrence_group_id ? (
-                    <fieldset className="session-edit-span recurrence-panel">
-                      <legend>Recurrence</legend>
-                      <div className="recurrence-mode-row">
-                        <label className="checkline">
-                          <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
-                          Garder ponctuel
-                        </label>
-                        <label className="checkline">
-                          <input type="radio" name="recurrence_mode" value="RECURRING" />
-                          Transformer en recurrent
-                        </label>
-                      </div>
-                      <div className="recurrence-settings">
-                        <div className="grid cols-3 recurrence-grid">
-                          <label>
-                            Frequence
-                            <select name="recurrence_frequency" defaultValue="WEEKLY">
-                              <option value="DAILY">Journaliere</option>
-                              <option value="WEEKLY">Hebdomadaire</option>
-                              <option value="MONTHLY">Mensuelle</option>
-                            </select>
-                          </label>
-                          <label>
-                            Se repete chaque
-                            <input type="number" name="recurrence_interval" min={1} defaultValue={1} />
-                          </label>
-                          <label>
-                            Repeter jusqu au
-                            <input type="date" name="recurrence_until_date" />
-                          </label>
-                        </div>
-                      </div>
-                    </fieldset>
-                  ) : (
-                    <div className="session-edit-alert">
-                      Ce creneau appartient a une serie recurrente. La portee permet d appliquer le changement a la serie future.
+                  <fieldset className="session-edit-span recurrence-panel">
+                    <legend>Recurrence</legend>
+                    <div className="recurrence-mode-row">
+                      <label className="checkline">
+                        <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
+                        Ne pas modifier la recurrence
+                      </label>
+                      <label className="checkline">
+                        <input type="radio" name="recurrence_mode" value="RECURRING" />
+                        Modifier la recurrence
+                      </label>
                     </div>
-                  )}
+                    <div className="recurrence-settings">
+                      <div className="grid cols-3 recurrence-grid">
+                        <label>
+                          Frequence
+                          <select name="recurrence_frequency" defaultValue={editRecurrenceDefaults.frequency}>
+                            <option value="DAILY">Journaliere</option>
+                            <option value="WEEKLY">Hebdomadaire</option>
+                            <option value="MONTHLY">Mensuelle</option>
+                          </select>
+                        </label>
+                        <label>
+                          Se repete chaque
+                          <input type="number" name="recurrence_interval" min={1} defaultValue={editRecurrenceDefaults.interval} />
+                          <small className="muted">Ex: 2 pour toutes les 2 semaines.</small>
+                        </label>
+                        <label>
+                          Repeter jusqu au
+                          <input type="date" name="recurrence_until_date" defaultValue={editRecurrenceUntilDate} />
+                        </label>
+                      </div>
+                      {selectedSession.recurrence_group_id ? (
+                        <p className="muted">
+                          Serie existante: pour changer la recurrence, choisir la portee <strong>Serie future</strong> ou <strong>Toute la serie</strong>.
+                        </p>
+                      ) : (
+                        <p className="muted">Activez la modification recurrence pour convertir ce creneau ponctuel.</p>
+                      )}
+                    </div>
+                  </fieldset>
                 </section>
 
                 <section className={`session-edit-panel ${editTab === "visibility" ? "active" : ""}`}>
@@ -2155,7 +2292,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <div className="note-modal-header-main">
                 <h2 className="modal-title">Presences</h2>
                 <p className="muted">
-                  {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc)} · {sessionTimeRangeLabel(selectedSession)} · {selectedLocationName}
+                  {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc, selectedSession.timezone)} · {sessionTimeRangeLabel(selectedSession)} · {selectedLocationName}
                 </p>
               </div>
               <div className="note-modal-header-meta">
@@ -2306,7 +2443,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <div className="note-modal-header-main">
                 <h2 className="modal-title">Note de groupe</h2>
                 <p className="muted">
-                  {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc)} · {sessionTimeRangeLabel(selectedSession)}
+                  {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc, selectedSession.timezone)} · {sessionTimeRangeLabel(selectedSession)}
                 </p>
               </div>
               <div className="note-modal-header-meta">
@@ -2497,7 +2634,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <div className="note-modal-header-main">
                 <h2 className="modal-title">Envoyer un email</h2>
                 <p className="muted">
-                  Creneau: {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc)} · {formatTime(selectedSession.start_at_utc)}
+                  Creneau: {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc, selectedSession.timezone)} · {formatTime(selectedSession.start_at_utc, selectedSession.timezone)}
                 </p>
               </div>
               <div className="note-modal-header-meta">
@@ -2578,7 +2715,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       formatName="body_format"
                       rows={10}
                       maxLength={12000}
-                      defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.\n`}
+                      defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone)}.\n`}
                       placeholder="Saisir votre message..."
                     />
                   ) : (
@@ -2588,7 +2725,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       <textarea
                         name="body"
                         rows={8}
-                        defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.\n`}
+                        defaultValue={`Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone)}.\n`}
                         placeholder="Saisir votre message..."
                       />
                     </label>
@@ -2683,7 +2820,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   defaultFormat="TEXT"
                   rows={8}
                   maxLength={12000}
-                  defaultValue={`Bonjour,\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc)}.`}
+                  defaultValue={`Bonjour,\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone)}.`}
                   placeholder="Saisir votre message SMS..."
                 />
               </label>
@@ -2829,8 +2966,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   maxLength={12000}
                   defaultValue={
                     confirmAction === "delete"
-                      ? `Bonjour,\n\nLe creneau \"${selectedSession.title}\" du ${formatDate(selectedSession.start_at_utc)} a ete supprime.\n\nPiano Academie`
-                      : `Bonjour,\n\nLe creneau \"${selectedSession.title}\" du ${formatDate(selectedSession.start_at_utc)} a ete annule.\n\nPiano Academie`
+                      ? `Bonjour,\n\nLe creneau \"${selectedSession.title}\" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone)} a ete supprime.\n\nPiano Academie`
+                      : `Bonjour,\n\nLe creneau \"${selectedSession.title}\" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone)} a ete annule.\n\nPiano Academie`
                   }
                   placeholder="Message eleves"
                 />

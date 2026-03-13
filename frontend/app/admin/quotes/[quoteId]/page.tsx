@@ -8,6 +8,7 @@ import QuoteClientMatchCard from "../../../../components/quotes/quote-client-mat
 import QuoteIntegrationProjectionCard from "../../../../components/quotes/quote-integration-projection-card";
 import QuoteIntegrationResultCard from "../../../../components/quotes/quote-integration-result-card";
 import QuoteOverviewSection from "../../../../components/quotes/quote-overview-section";
+import QuoteQuickTransformPanel from "../../../../components/quotes/quote-quick-transform-panel";
 import QuoteRightSummaryRail from "../../../../components/quotes/quote-right-summary-rail";
 import type { QuoteIntegrationUiState } from "../../../../components/quotes/quote-row-integration-state";
 import type { QuoteValidationUiState } from "../../../../components/quotes/quote-row-validation-state";
@@ -22,6 +23,7 @@ import {
   changeQuoteFollowupPaymentMethodAction,
   duplicateQuoteAction,
   finalizeQuoteFollowupAction,
+  quickTransformQuoteAction,
   regenerateQuoteDocumentAction,
   selectQuoteFollowupSlotAction,
   sendQuoteAction,
@@ -30,13 +32,27 @@ import {
   updateQuoteSettingsAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import {
+  analyzeQuoteQuickTransformStatus,
+  type QuoteQuickTransformAnalysis,
+  type QuoteTransformActivityCatalog,
+  type QuoteTransformClient,
+  type QuoteTransformLine,
+  type QuoteTransformPlan,
+  type QuoteTransformProspect,
+  type QuoteTransformQuote,
+  type QuoteTransformSession,
+} from "../../../../lib/quote-transformation";
 import type {
   AdminActivityOut,
   AdminCatalogKitOut,
   AdminCatalogProductOut,
   AdminClientOut,
+  AdminClientFamilyOut,
   AdminLegalEntityOut,
+  AdminSessionOut,
   LocationOut,
+  PlanOut,
 } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -54,6 +70,9 @@ type ProspectOut = {
   first_name: string | null;
   last_name: string | null;
   email: string;
+  phone?: string | null;
+  parent_prospect_id?: string | null;
+  meta?: Record<string, unknown>;
 };
 
 type QuoteLineOut = {
@@ -99,6 +118,7 @@ type QuoteOut = {
   approved_at: string | null;
   prospect_id: string | null;
   client_id: string | null;
+  location_id: string | null;
   quote_type: string;
   school_year_label: string | null;
   estimated_solfege_level: string | null;
@@ -237,6 +257,22 @@ function parseWorkspaceSection(value: string): QuoteWorkspaceSection {
   return "overview";
 }
 
+function parseQuickScenario(raw: string): "live" | "A" | "B" | "C" {
+  const normalized = String(raw || "").trim().toUpperCase();
+  if (normalized === "A" || normalized === "B" || normalized === "C") {
+    return normalized;
+  }
+  return "live";
+}
+
+function appendQuickScenario(path: string, quickScenario: "live" | "A" | "B" | "C"): string {
+  if (quickScenario === "live") {
+    return path;
+  }
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}quick_scenario=${encodeURIComponent(quickScenario)}`;
+}
+
 function formatDate(value: string | null): string {
   if (!value) {
     return "-";
@@ -260,6 +296,14 @@ function formatAmount(value: string, currency: string): string {
   }
 }
 
+function toNumber(value: string | number | null | undefined, fallback = 0): number {
+  const parsed = Number(String(value ?? "").replace(",", "."));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function paymentMethodLabel(methodCode: string): string {
   const normalized = String(methodCode || "").trim().toUpperCase();
   if (normalized === "CARD") return "Carte bancaire";
@@ -276,9 +320,30 @@ function labelForContext(contextType: string): string {
   return contextType === "active_client" ? "Client actif" : "Acquisition";
 }
 
+function labelForProspectType(value: string): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "child") return "Enfant";
+  if (normalized === "adult") return "Adulte";
+  return "-";
+}
+
+function labelForClientKind(value: string | null | undefined): string {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "CHILD") return "Enfant";
+  if (normalized === "ADULT") return "Adulte";
+  return "-";
+}
+
 function displayName(firstName: string | null, lastName: string | null, fallback: string): string {
   const value = [firstName, lastName].filter(Boolean).join(" ").trim();
   return value || fallback;
+}
+
+function locationNameById(locations: LocationOut[], locationId: string | null): string {
+  if (!locationId) {
+    return "Lieu non defini";
+  }
+  return locations.find((row) => row.id === locationId)?.name || "Lieu non defini";
 }
 
 function getScheduleItems(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -629,14 +694,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
   const backPath = safeBackPath(readParam(searchParams, "back"));
   const activeSection = parseWorkspaceSection(readParam(searchParams, "section"));
+  const quickScenario = parseQuickScenario(readParam(searchParams, "quick_scenario"));
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, legalEntitiesResult, catalogsResult, termsTemplatesResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, solfegeRulesResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
+  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, plansResult, legalEntitiesResult, catalogsResult, termsTemplatesResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, solfegeRulesResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
+    backendRequest<PlanOut[]>("/api/v1/plans?active=true", {}, token),
     backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
     backendRequest<TermsTemplateOut[]>("/api/v1/terms-templates?active_only=true", {}, token),
@@ -694,6 +761,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const activeFollowup = followups[0] ?? null;
   const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
   const quoteTypes = quoteTypesResult.ok ? quoteTypesResult.data : [];
+  const plans = plansResult.ok ? plansResult.data : [];
   const legalEntities = legalEntitiesResult.ok ? legalEntitiesResult.data : [];
   const selectedQuoteType = quoteTypes.find((row) => row.id === detail.quote.quote_type_id) ?? null;
   const catalogs = catalogsResult.ok ? catalogsResult.data : [];
@@ -710,6 +778,28 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const activityPrices = activityPricesResult?.ok ? activityPricesResult.data : [];
   const productPrices = productPricesResult?.ok ? productPricesResult.data : [];
   const kitPrices = kitPricesResult?.ok ? kitPricesResult.data : [];
+
+  const activityIds = Array.from(new Set(
+    detail.lines
+      .map((line) => line.activity_id)
+      .filter((activityId): activityId is string => Boolean(activityId)),
+  ));
+
+  const sessionsPerActivity = await Promise.all(
+    activityIds.map(async (activityId) => {
+      const query = new URLSearchParams();
+      query.set("course_type_id", activityId);
+      if (detail.quote.location_id) {
+        query.set("location_id", detail.quote.location_id);
+      }
+      const result = await backendRequest<AdminSessionOut[]>(
+        `/api/v1/admin/sessions?${query.toString()}`,
+        {},
+        token,
+      );
+      return { activityId, sessions: result.ok ? result.data : [] };
+    }),
+  );
 
   const activityCatalogPriceByActivityId: Record<string, string> = {};
   const activityCatalogPriceSpecificity: Record<string, number> = {};
@@ -740,13 +830,95 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
-  const owner = detail.quote.context_type === "acquisition"
+  const selectedProspectFromList = detail.quote.prospect_id
     ? prospectById.get(detail.quote.prospect_id || "")
-    : clientById.get(detail.quote.client_id || "");
+    : null;
+  const selectedClient = detail.quote.client_id
+    ? clientById.get(detail.quote.client_id || "")
+    : null;
+
+  const [prospectDetailResult, clientFamilyResult] = await Promise.all([
+    detail.quote.prospect_id
+      ? backendRequest<ProspectOut>(`/api/v1/prospects/${encodeURIComponent(detail.quote.prospect_id)}`, {}, token)
+      : Promise.resolve(null),
+    detail.quote.client_id
+      ? backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${encodeURIComponent(detail.quote.client_id)}/family`, {}, token)
+      : Promise.resolve(null),
+  ]);
+
+  const selectedProspect = prospectDetailResult && prospectDetailResult.ok
+    ? prospectDetailResult.data
+    : selectedProspectFromList || null;
+  const clientFamily = clientFamilyResult && clientFamilyResult.ok ? clientFamilyResult.data : null;
+
+  const owner = detail.quote.context_type === "acquisition"
+    ? selectedProspect
+    : selectedClient;
 
   const ownerName = owner
     ? displayName(owner.first_name, owner.last_name, owner.email)
     : "-";
+  const ownerPhone = selectedProspect?.phone
+    || selectedClient?.mobile_phone_1
+    || selectedClient?.phone
+    || selectedClient?.home_phone
+    || "-";
+  const prospectMeta = readObject(selectedProspect?.meta) || {};
+  const prospectType = String(prospectMeta.prospect_type ?? "").trim().toLowerCase();
+  const prospectTypeLabel = labelForProspectType(prospectType);
+  const clientKindLabel = labelForClientKind(selectedClient?.client_kind);
+  const sourceTypeLabel = prospectTypeLabel !== "-" ? prospectTypeLabel : clientKindLabel;
+  const sourceTypeOrigin = prospectTypeLabel !== "-" ? "prospect" : clientKindLabel !== "-" ? "client" : "inconnu";
+  const parentReferent = readObject(prospectMeta.parent_referent);
+  const parentReferentName = parentReferent
+    ? displayName(
+      typeof parentReferent.first_name === "string" ? parentReferent.first_name : null,
+      typeof parentReferent.last_name === "string" ? parentReferent.last_name : null,
+      typeof parentReferent.email === "string" ? parentReferent.email : "Parent referent",
+    )
+    : "-";
+  const parentReferentEmail = parentReferent && typeof parentReferent.email === "string" ? parentReferent.email : "-";
+  const parentReferentPhone = parentReferent && typeof parentReferent.phone === "string" ? parentReferent.phone : "-";
+
+  const familyLinks = clientFamily
+    ? [
+      ...clientFamily.links_as_adult.map((link) => ({
+        key: `adult-${link.id}`,
+        role: "Enfant rattache",
+        personName: displayName(link.child.first_name, link.child.last_name, link.child.email),
+        personEmail: link.child.email,
+        billing: link.is_billing_recipient,
+      })),
+      ...clientFamily.links_as_child.map((link) => ({
+        key: `child-${link.id}`,
+        role: "Adulte rattache",
+        personName: displayName(link.adult.first_name, link.adult.last_name, link.adult.email),
+        personEmail: link.adult.email,
+        billing: link.is_billing_recipient,
+      })),
+    ]
+    : [];
+  const inferredParentFromFamily = clientFamily
+    ? (clientFamily.links_as_child.find((link) => link.is_billing_recipient) ?? clientFamily.links_as_child[0] ?? null)
+    : null;
+  const resolvedParentReferentName = parentReferentName !== "-"
+    ? parentReferentName
+    : inferredParentFromFamily
+      ? displayName(
+        inferredParentFromFamily.adult.first_name,
+        inferredParentFromFamily.adult.last_name,
+        inferredParentFromFamily.adult.email,
+      )
+      : "-";
+  const resolvedParentReferentEmail = parentReferentEmail !== "-"
+    ? parentReferentEmail
+    : inferredParentFromFamily?.adult.email ?? "-";
+  const resolvedParentReferentPhone = parentReferentPhone !== "-"
+    ? parentReferentPhone
+    : inferredParentFromFamily?.adult.mobile_phone_1
+      || inferredParentFromFamily?.adult.phone
+      || inferredParentFromFamily?.adult.home_phone
+      || "-";
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
@@ -826,7 +998,34 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteBasePath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}`;
   const sectionHref = (section: QuoteWorkspaceSection): string =>
     `${quoteBasePath}?back=${encodeURIComponent(backPath)}&section=${section}`;
-  const selfPath = sectionHref(activeSection);
+  const selfPath = appendQuickScenario(sectionHref(activeSection), quickScenario);
+  const transformBasePath = `${quoteBasePath}/transform?back=${encodeURIComponent(selfPath)}${quickScenario === "live" ? "" : `&scenario=${quickScenario}`}`;
+  const quickScenarioLinks = [
+    {
+      key: "live" as const,
+      label: "Live",
+      href: sectionHref("integration"),
+      active: quickScenario === "live",
+    },
+    {
+      key: "A" as const,
+      label: "Scenario 1 (auto-validable)",
+      href: appendQuickScenario(sectionHref("integration"), "A"),
+      active: quickScenario === "A",
+    },
+    {
+      key: "B" as const,
+      label: "Scenario 2 (a verifier)",
+      href: appendQuickScenario(sectionHref("integration"), "B"),
+      active: quickScenario === "B",
+    },
+    {
+      key: "C" as const,
+      label: "Scenario 3 (bloque)",
+      href: appendQuickScenario(sectionHref("integration"), "C"),
+      active: quickScenario === "C",
+    },
+  ];
   const commercialState = commercialStateFromQuote(detail.quote);
   const integrationState = integrationStateFromQuote(detail.quote, commercialState, activeFollowup);
   const validationChannel = readStringMeta(detail.quote.meta || {}, "validation_channel", detail.quote.approved_at ? "Portail public" : "-");
@@ -877,6 +1076,136 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     { label: "Utilisateur", value: readStringMeta(detail.quote.meta || {}, "integration_by", "-") },
     { label: "Lien fiche centrale", value: readStringMeta(detail.quote.meta || {}, "integration_client_link", "A venir") },
   ];
+
+  const quickProspectTypeRaw = String((selectedProspect?.meta || {}).prospect_type || "").trim().toLowerCase();
+  const quickProspect: QuoteTransformProspect | null = selectedProspect
+    ? {
+      id: selectedProspect.id,
+      firstName: selectedProspect.first_name,
+      lastName: selectedProspect.last_name,
+      email: selectedProspect.email,
+      phone: selectedProspect.phone || null,
+      parentProspectId: selectedProspect.parent_prospect_id || null,
+      prospectType: quickProspectTypeRaw === "child" ? "child" : "adult",
+      meta: selectedProspect.meta || {},
+    }
+    : selectedClient
+      ? {
+        id: `client:${selectedClient.id}`,
+        firstName: selectedClient.first_name,
+        lastName: selectedClient.last_name,
+        email: selectedClient.email,
+        phone: selectedClient.mobile_phone_1 || selectedClient.phone || selectedClient.home_phone || null,
+        parentProspectId: null,
+        prospectType: String(selectedClient.client_kind || "").trim().toUpperCase() === "CHILD" ? "child" : "adult",
+        meta: {
+          source: "linked_client_fallback",
+          linked_client_id: selectedClient.id,
+        },
+      }
+      : null;
+
+  const quickQuote: QuoteTransformQuote = {
+    id: detail.quote.id,
+    quoteNumber: detail.quote.quote_number,
+    status: detail.quote.status,
+    clientId: detail.quote.client_id,
+    currency: detail.quote.currency || "EUR",
+    totalTtc: toNumber(detail.quote.total_ttc),
+    totalHt: Number(detail.lines.reduce((sum, line) => sum + toNumber(line.amount_ht), 0).toFixed(2)),
+    schoolYearLabel: detail.quote.school_year_label,
+    legalEntityId: detail.quote.legal_entity_id,
+    legalEntityName: legalEntities.find((entity) => entity.id === detail.quote.legal_entity_id)?.name || "A definir",
+    paymentPlanName: paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id)?.name || "-",
+    quoteType: detail.quote.quote_type,
+    quoteTypeFormulaName: selectedQuoteType?.formula_name || null,
+    locationId: detail.quote.location_id,
+    locationName: locationNameById(locations, detail.quote.location_id),
+  };
+
+  const quickLines: QuoteTransformLine[] = detail.lines.map((line) => ({
+    id: line.id,
+    lineType: line.line_type,
+    lineCategory: line.line_category,
+    masterItemType: line.master_item_type,
+    activityId: line.activity_id,
+    title: line.title,
+    quantity: toNumber(line.quantity, 1),
+    durationMinutes: null,
+    pricingUnit: line.line_category === "service" ? "session" : "item",
+    amountHt: toNumber(line.amount_ht),
+    amountTtc: toNumber(line.amount_ttc),
+    vatRate: toNumber(line.vat_rate),
+    meta: {},
+  }));
+
+  const quickClients: QuoteTransformClient[] = clients.map((client) => ({
+    id: client.id,
+    firstName: client.first_name,
+    lastName: client.last_name,
+    email: client.email,
+    phone: client.phone,
+    mobilePhone1: client.mobile_phone_1,
+    mobilePhone2: client.mobile_phone_2,
+    homePhone: client.home_phone,
+    familyName: client.family_name,
+    clientKind: client.client_kind,
+    clientStatus: client.client_status,
+  }));
+
+  const quickActivities: QuoteTransformActivityCatalog[] = activities.map((activity) => ({
+    id: activity.id,
+    name: activity.name,
+    serviceCode: activity.service_code,
+    durationMinutes: activity.duration_minutes,
+    defaultCourseRateTtc: activity.default_course_rate_ttc ? toNumber(activity.default_course_rate_ttc) : null,
+    mode: activity.mode,
+    active: activity.active,
+  }));
+
+  const quickPlans: QuoteTransformPlan[] = plans.map((plan) => ({
+    id: plan.id,
+    name: plan.name,
+    kind: plan.kind,
+    active: plan.active,
+  }));
+
+  const quickSessionsByActivityId: Record<string, QuoteTransformSession[]> = {};
+  for (const item of sessionsPerActivity) {
+    quickSessionsByActivityId[item.activityId] = item.sessions.map((session) => {
+      const seatsRemaining = Math.max(0, Number(session.capacity_max || 0) - Number(session.booked_count || 0));
+      return {
+        id: session.id,
+        courseTypeId: session.course_type_id,
+        locationId: session.location_id,
+        title: session.title,
+        startAtUtc: session.start_at_utc,
+        endAtUtc: session.end_at_utc,
+        timezone: session.timezone,
+        teacherDisplayName: session.effective_teacher_display_name,
+        status: session.status,
+        statusLabel: session.status_label,
+        capacityMax: session.capacity_max,
+        bookedCount: session.booked_count,
+        seatsRemaining,
+      };
+    });
+  }
+
+  const quickTransformAnalysis: QuoteQuickTransformAnalysis = analyzeQuoteQuickTransformStatus({
+    quote: quickQuote,
+    prospect: quickProspect,
+    lines: quickLines,
+    clients: quickClients,
+    activities: quickActivities,
+    sessionsByActivityId: quickSessionsByActivityId,
+    plans: quickPlans,
+    calendarSnapshot: detail.quote.calendar_snapshot || {},
+    followupId: activeFollowup?.id || null,
+    followupStatus: activeFollowup?.status || null,
+    scenario: quickScenario,
+  });
+
   const sidebarItems = [
     { id: "overview", label: "Vue d'ensemble", href: sectionHref("overview"), active: activeSection === "overview" },
     { id: "cadre", label: "Cadre du devis", href: sectionHref("cadre"), active: activeSection === "cadre" },
@@ -945,25 +1274,101 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         {error ? <section className="flash-err">{error}</section> : null}
 
         {activeSection === "overview" ? (
-          <QuoteOverviewSection
-            cards={[
-              { label: "Statut devis", value: commercialStateLabel(commercialState) },
-              { label: "Statut document", value: detail.quote.document_status || "stale" },
-              { label: "Validation client", value: detail.quote.approved_at ? formatDate(detail.quote.approved_at) : "En attente" },
-              { label: "Integration centrale", value: integrationStateLabel(integrationState) },
-              { label: "Total TTC", value: formatAmount(detail.quote.total_ttc, detail.quote.currency) },
-              { label: "Expiration", value: formatDate(detail.quote.expires_at) },
-            ]}
-            alerts={integrationAlerts.map((message) => ({ level: message.toLowerCase().includes("erreur") ? "error" : "warn", message }))}
-            quickActions={(
-              <>
-                <Link className="ghost" href={sectionHref("document")}>Document et envoi</Link>
-                <Link className="ghost" href={sectionHref("planning")}>Activites planifiees</Link>
-                <Link className="ghost" href={sectionHref("pricing")}>Lignes facturees</Link>
-                <Link className="ghost" href={sectionHref("integration")}>Validation et integration</Link>
-              </>
-            )}
-          />
+          <>
+            <QuoteOverviewSection
+              cards={[
+                { label: "Statut devis", value: commercialStateLabel(commercialState) },
+                { label: "Statut document", value: detail.quote.document_status || "stale" },
+                { label: "Validation client", value: detail.quote.approved_at ? formatDate(detail.quote.approved_at) : "En attente" },
+                { label: "Integration centrale", value: integrationStateLabel(integrationState) },
+                { label: "Total TTC", value: formatAmount(detail.quote.total_ttc, detail.quote.currency) },
+                { label: "Expiration", value: formatDate(detail.quote.expires_at) },
+              ]}
+              alerts={integrationAlerts.map((message) => ({ level: message.toLowerCase().includes("erreur") ? "error" : "warn", message }))}
+              quickActions={(
+                <>
+                  <Link className="ghost" href={sectionHref("document")}>Document et envoi</Link>
+                  <Link className="ghost" href={sectionHref("planning")}>Activites planifiees</Link>
+                  <Link className="ghost" href={sectionHref("pricing")}>Lignes facturees</Link>
+                  <Link className="ghost" href={sectionHref("integration")}>Validation et integration</Link>
+                </>
+              )}
+            />
+
+            <section className="card" id="quote-contact-family">
+              <div className="row spread wrap gap-sm">
+                <div>
+                  <h3>Prospect et famille</h3>
+                  <p className="muted">Informations source du devis et liens famille disponibles.</p>
+                </div>
+                <div className="row wrap gap-sm">
+                  {selectedProspect ? (
+                    <Link
+                      className="ghost"
+                      href={`/admin/prospects/${encodeURIComponent(selectedProspect.id)}?return_to=${encodeURIComponent(selfPath)}`}
+                    >
+                      Modifier prospect
+                    </Link>
+                  ) : null}
+                  {selectedClient ? (
+                    <Link className="ghost" href={`/admin/clients/${encodeURIComponent(selectedClient.id)}?tab=infos&edit_infos=1`}>
+                      Modifier infos client
+                    </Link>
+                  ) : null}
+                  {selectedClient ? (
+                    <Link className="ghost" href={`/admin/clients/${encodeURIComponent(selectedClient.id)}?tab=famille`}>
+                      Gerer famille
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
+              <div className="grid cols-2 top-gap-sm">
+                <article className="item">
+                  <h4>Contact source</h4>
+                  <p><strong>Contexte:</strong> {detail.quote.context_type === "acquisition" ? "Prospect acquisition" : "Client actif"}</p>
+                  <p><strong>Nom:</strong> {ownerName}</p>
+                  <p><strong>Email:</strong> {owner?.email || "-"}</p>
+                  <p><strong>Telephone:</strong> {ownerPhone}</p>
+                  <div className="row wrap gap-sm top-gap-sm">
+                    {selectedProspect ? (
+                      <Link className="ghost" href={`/admin/prospects/${encodeURIComponent(selectedProspect.id)}`}>
+                        Ouvrir fiche prospect
+                      </Link>
+                    ) : null}
+                    {selectedClient ? (
+                      <Link className="ghost" href={`/admin/clients/${encodeURIComponent(selectedClient.id)}`}>
+                        Ouvrir fiche client
+                      </Link>
+                    ) : null}
+                  </div>
+                </article>
+
+                <article className="item">
+                  <h4>Contexte famille</h4>
+                  <p><strong>Type source:</strong> {sourceTypeLabel} {sourceTypeOrigin !== "inconnu" ? <small className="muted">(base {sourceTypeOrigin})</small> : null}</p>
+                  <p><strong>Parent referent:</strong> {resolvedParentReferentName}</p>
+                  <p><strong>Email parent:</strong> {resolvedParentReferentEmail}</p>
+                  <p><strong>Telephone parent:</strong> {resolvedParentReferentPhone}</p>
+                  {selectedClient ? (
+                    <p className="top-gap-sm">
+                      <strong>Liens famille client:</strong> {familyLinks.length}
+                    </p>
+                  ) : (
+                    <p className="muted top-gap-sm">Aucun client lie au devis pour lire la famille en base.</p>
+                  )}
+                  {familyLinks.length > 0 ? (
+                    <ul className="top-gap-sm">
+                      {familyLinks.slice(0, 6).map((row) => (
+                        <li key={row.key}>
+                          {row.role}: <strong>{row.personName}</strong> ({row.personEmail}){row.billing ? " · destinataire facture" : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </article>
+              </div>
+            </section>
+          </>
         ) : null}
 
         {activeSection === "document" ? (
@@ -1144,12 +1549,15 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <label>
             Formule liee (depuis le type de devis)
             <input type="text" value={selectedQuoteType?.formula_name || "-"} readOnly disabled />
+            <small className="muted">
+              Valeur calculee depuis les parametres deja enregistres. Apres changement du type devis, cliquer sur "Enregistrer parametres".
+            </small>
           </label>
           <label>
             Entite legale
             <select
               name="legal_entity_id"
-              defaultValue={detail.quote.legal_entity_id || legalEntities[0]?.id || ""}
+              defaultValue={detail.quote.legal_entity_id || ""}
               disabled={detail.quote.status !== "created"}
             >
               <option value="">Aucune</option>
@@ -1157,6 +1565,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                 <option key={row.id} value={row.id}>{row.name}</option>
               ))}
             </select>
+            <small className="muted">
+              Valeur enregistree sur le devis. Si vous changez, cliquez sur "Enregistrer parametres".
+            </small>
           </label>
           <label>
             Modele de devis
@@ -1419,6 +1830,27 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
         {activeSection === "integration" ? (
           <>
+            <QuoteQuickTransformPanel
+              quoteId={detail.quote.id}
+              currency={detail.quote.currency}
+              analysis={quickTransformAnalysis}
+              transformBasePath={transformBasePath}
+              returnTo={selfPath}
+              scenarioLinks={quickScenarioLinks}
+              quickTransformAction={quickTransformQuoteAction}
+            />
+
+            <section className="card">
+              <h3>Transformation vers inscription (wizard complet)</h3>
+              <p className="muted">Parcours detaille en 5 etapes avec controles et arbitrages manuels.</p>
+              <div className="row wrap gap-sm top-gap-sm">
+                <Link className="ghost" href={transformBasePath}>Transformer en inscription</Link>
+                <Link className="ghost" href={`${transformBasePath}&scenario=A`}>Scenario A (simple)</Link>
+                <Link className="ghost" href={`${transformBasePath}&scenario=B`}>Scenario B (ambigu)</Link>
+                <Link className="ghost" href={`${transformBasePath}&scenario=C`}>Scenario C (bloquant)</Link>
+              </div>
+            </section>
+
             <section id="quote-validation-integration">
               <QuoteValidationIntegrationSection
                 validationRows={validationRows}
@@ -1438,7 +1870,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   />
                 )}
                 integrationResultCard={<QuoteIntegrationResultCard rows={integrationResultRows} />}
-                note="Placeholder UI active: l'integration reelle vers l'application centrale sera branchee dans une etape ulterieure."
+                note="Le wizard de transformation est actif via le bouton ci-dessus. Ce panneau conserve la synthese des controles d'integration."
               />
             </section>
 

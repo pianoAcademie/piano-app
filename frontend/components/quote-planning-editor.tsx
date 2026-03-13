@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type ActivityOption = {
   id: string;
@@ -500,10 +500,29 @@ export default function QuotePlanningEditor({
   initialMeta,
   saveAction,
 }: QuotePlanningEditorProps): JSX.Element {
-  const [blocks, setBlocks] = useState<PlanningBlock[]>(parseInitialBlocks(initialSnapshot));
-  const [activeUid, setActiveUid] = useState<string>(parseInitialBlocks(initialSnapshot)[0]?.uid ?? "");
+  const initialBlocks = useMemo(() => parseInitialBlocks(initialSnapshot), [initialSnapshot]);
+  const snapshotSyncKey = useMemo(() => {
+    const blocksRaw = Array.isArray(initialSnapshot.blocks) ? initialSnapshot.blocks : [];
+    const sessionsRaw = Array.isArray(initialSnapshot.sessions) ? initialSnapshot.sessions : [];
+    const generatedAt = typeof initialSnapshot.generated_at === "string" ? initialSnapshot.generated_at : "";
+    return JSON.stringify({
+      blocks: blocksRaw,
+      sessions_count: sessionsRaw.length,
+      generated_at: generatedAt,
+    });
+  }, [initialSnapshot]);
+
+  const [blocks, setBlocks] = useState<PlanningBlock[]>(initialBlocks);
+  const [activeUid, setActiveUid] = useState<string>(initialBlocks[0]?.uid ?? "");
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
   const snapshotSessions = useMemo(() => parseSnapshotSessions(initialSnapshot), [initialSnapshot]);
+
+  // Keep client-side editor state aligned with server snapshot after save/redirect.
+  useEffect(() => {
+    setBlocks(initialBlocks);
+    setActiveUid(initialBlocks[0]?.uid ?? "");
+    setExpandedUid(null);
+  }, [snapshotSyncKey, initialBlocks]);
 
   const blocksJson = useMemo(
     () =>
@@ -765,7 +784,7 @@ export default function QuotePlanningEditor({
                 const pendingSlotOptions =
                   selectionPending && blockSolfegeLevel ? slotOptionsFromRule(blockSolfegeRule, locationLabel) : [];
                 return (
-                  <div className="grid cols-4 top-gap-sm">
+                  <div className="grid cols-2 quote-planning-draft-grid top-gap-sm">
                     <label>
                       Activite
                       <select
@@ -901,11 +920,11 @@ export default function QuotePlanningEditor({
                       <input type="time" value={activeBlock.end_time} readOnly />
                     </label>
 
-                    <p className="muted span-4">
+                    <p className="muted span-2">
                       Solfege et Masterclass sont des activites distinctes: ajoutez-les comme blocs planning separes.
                     </p>
                     {selectionPending && blockSolfegeLevel ? (
-                      <div className="span-4">
+                      <div className="span-2">
                         <p className="muted">Niveau solfege {blockSolfegeLevel}: creneau a confirmer.</p>
                         {pendingSlotOptions.length > 0 ? (
                           <ul className="muted top-gap-sm">

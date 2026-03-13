@@ -556,19 +556,69 @@ def _add_months_utc(base: datetime, months: int) -> datetime:
     return base.replace(year=year, month=month, day=day)
 
 
-def _advance_recurrence_datetime(base: datetime, *, frequency: str, offset: int) -> datetime:
+def _normalize_recurrence_frequency(value: str) -> str:
+    normalized = str(value or "").strip().upper()
+    if normalized not in {"DAILY", "WEEKLY", "MONTHLY"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid recurrence frequency",
+        )
+    return normalized
+
+
+def _normalize_recurrence_interval(value: int | None) -> int:
+    interval = int(value or 1)
+    if interval < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid recurrence interval",
+        )
+    return interval
+
+
+def _serialize_recurrence_rule(*, frequency: str, interval: int) -> str:
+    normalized_frequency = _normalize_recurrence_frequency(frequency)
+    normalized_interval = _normalize_recurrence_interval(interval)
+    if normalized_interval == 1:
+        return normalized_frequency
+    return f"{normalized_frequency}:{normalized_interval}"
+
+
+def _parse_recurrence_rule(value: str | None) -> tuple[str, int]:
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return ("WEEKLY", 1)
+
+    if ":" not in raw:
+        return (_normalize_recurrence_frequency(raw), 1)
+
+    frequency_raw, interval_raw = raw.split(":", 1)
+    frequency = _normalize_recurrence_frequency(frequency_raw)
+    try:
+        interval_value = int(interval_raw)
+    except ValueError:
+        interval_value = 1
+    interval = _normalize_recurrence_interval(interval_value)
+    return (frequency, interval)
+
+
+def _advance_recurrence_datetime(base: datetime, *, frequency: str, interval: int, offset: int) -> datetime:
     if offset <= 0:
         return base
-    if frequency == "DAILY":
-        return base + timedelta(days=offset)
-    if frequency == "MONTHLY":
-        return _add_months_utc(base, offset)
-    return base + timedelta(weeks=offset)
+    normalized_frequency = _normalize_recurrence_frequency(frequency)
+    normalized_interval = _normalize_recurrence_interval(interval)
+    steps = offset * normalized_interval
+    if normalized_frequency == "DAILY":
+        return base + timedelta(days=steps)
+    if normalized_frequency == "MONTHLY":
+        return _add_months_utc(base, steps)
+    return base + timedelta(weeks=steps)
 
 
 def _resolve_recurrence_occurrences(
     *,
     recurrence_frequency: str,
+    recurrence_interval: int,
     recurrence_until_date: date | None,
     anchor_start_at_utc: datetime,
 ) -> int:
@@ -589,7 +639,12 @@ def _resolve_recurrence_occurrences(
     count = 1
     probe = anchor_start_at_utc
     while count < limit:
-        probe = _advance_recurrence_datetime(probe, frequency=recurrence_frequency, offset=1)
+        probe = _advance_recurrence_datetime(
+            probe,
+            frequency=recurrence_frequency,
+            interval=recurrence_interval,
+            offset=1,
+        )
         if probe.date() > recurrence_until_date:
             break
         count += 1
@@ -1584,10 +1639,18 @@ def create_session(
 
     recurrence_occurrences = 1
     recurrence_rule = None
+    recurrence_frequency = "WEEKLY"
+    recurrence_interval = 1
     if payload.recurrence is not None:
-        recurrence_rule = payload.recurrence.frequency
+        recurrence_frequency = _normalize_recurrence_frequency(payload.recurrence.frequency)
+        recurrence_interval = _normalize_recurrence_interval(payload.recurrence.interval)
+        recurrence_rule = _serialize_recurrence_rule(
+            frequency=recurrence_frequency,
+            interval=recurrence_interval,
+        )
         recurrence_occurrences = _resolve_recurrence_occurrences(
-            recurrence_frequency=recurrence_rule,
+            recurrence_frequency=recurrence_frequency,
+            recurrence_interval=recurrence_interval,
             recurrence_until_date=payload.recurrence.until_date,
             anchor_start_at_utc=start_at_utc,
         )
@@ -1604,7 +1667,12 @@ def create_session(
         if recurrence_rule is None:
             starts_at = start_at_utc
         else:
-            starts_at = _advance_recurrence_datetime(start_at_utc, frequency=recurrence_rule, offset=index)
+            starts_at = _advance_recurrence_datetime(
+                start_at_utc,
+                frequency=recurrence_frequency,
+                interval=recurrence_interval,
+                offset=index,
+            )
 
         if is_all_day:
             starts_at = _start_of_utc_day(starts_at)
@@ -2466,15 +2534,15 @@ def update_session(
             detail="Substitute teacher can only be changed for this occurrence",
         )
     if recurrence_payload is not None:
-        if apply_scope != "ONE":
+        if session_obj.recurrence_group_id is None and apply_scope != "ONE":
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Recurrence conversion is only supported with apply_scope=ONE",
             )
-        if session_obj.recurrence_group_id is not None:
+        if session_obj.recurrence_group_id is not None and apply_scope == "ONE":
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Session is already recurring",
+                detail="Recurrence update for recurring session requires apply_scope=SERIES_FUTURE or apply_scope=SERIES_ALL",
             )
     if "public_description" not in updates and "description" in updates:
         updates["public_description"] = updates["description"]
@@ -2570,20 +2638,34 @@ def update_session(
     recurrence_rule: str | None = None
     recurrence_group_id: UUID | None = None
     recurrence_occurrences = 1
+    recurrence_frequency = "WEEKLY"
+    recurrence_interval = 1
+    create_future_recurrences = False
     if recurrence_payload is not None:
-        recurrence_rule = str(recurrence_payload.get("frequency") or "").strip().upper()
-        recurrence_until_date = recurrence_payload.get("until_date")
-        recurrence_occurrences = _resolve_recurrence_occurrences(
-            recurrence_frequency=recurrence_rule,
-            recurrence_until_date=recurrence_until_date,
-            anchor_start_at_utc=anchor_start,
+        recurrence_frequency = _normalize_recurrence_frequency(str(recurrence_payload.get("frequency") or ""))
+        recurrence_interval = _normalize_recurrence_interval(recurrence_payload.get("interval"))
+        recurrence_rule = _serialize_recurrence_rule(
+            frequency=recurrence_frequency,
+            interval=recurrence_interval,
         )
-        if recurrence_occurrences <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Recurrence end date must generate at least one future occurrence",
+        if session_obj.recurrence_group_id is not None:
+            recurrence_occurrences = 1
+            recurrence_group_id = session_obj.recurrence_group_id if apply_scope == "SERIES_ALL" else uuid4()
+        else:
+            recurrence_until_date = recurrence_payload.get("until_date")
+            recurrence_occurrences = _resolve_recurrence_occurrences(
+                recurrence_frequency=recurrence_frequency,
+                recurrence_interval=recurrence_interval,
+                recurrence_until_date=recurrence_until_date,
+                anchor_start_at_utc=anchor_start,
             )
-        recurrence_group_id = uuid4()
+            if recurrence_occurrences <= 1:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Recurrence end date must generate at least one future occurrence",
+                )
+            recurrence_group_id = uuid4()
+            create_future_recurrences = True
 
     has_start_update = "start_at_utc" in updates
     has_end_update = "end_at_utc" in updates
@@ -2763,14 +2845,19 @@ def update_session(
     if has_substitute_note_update:
         session_obj.substitute_note = _normalize_message_field(requested_substitute_note)
 
-    if recurrence_group_id is not None and recurrence_rule is not None:
+    if create_future_recurrences and recurrence_group_id is not None and recurrence_rule is not None:
         anchor_duration = session_obj.end_at_utc - session_obj.start_at_utc
         anchor_deadline_delta = session_obj.start_at_utc - session_obj.auto_cancel_deadline_utc
         created_future_count = 0
         calendar_skip_cache: dict[str, object] = {}
 
         for index in range(1, recurrence_occurrences):
-            starts_at = _advance_recurrence_datetime(session_obj.start_at_utc, frequency=recurrence_rule, offset=index)
+            starts_at = _advance_recurrence_datetime(
+                session_obj.start_at_utc,
+                frequency=recurrence_frequency,
+                interval=recurrence_interval,
+                offset=index,
+            )
             if session_obj.is_all_day:
                 starts_at = _start_of_utc_day(starts_at)
                 ends_at = starts_at + timedelta(days=1)

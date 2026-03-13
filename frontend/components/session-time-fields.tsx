@@ -77,19 +77,18 @@ export default function SessionTimeFields({
   const [startTime, setStartTime] = useState(defaultStartTime);
   const [endTime, setEndTime] = useState(defaultEndTime);
   const [durationValue, setDurationValue] = useState(normalizedDuration);
-  const lastEdited = useRef<"start" | "end" | "duration">("end");
+  const lastEdited = useRef<"start" | "end" | "duration">(normalizedDuration ? "duration" : "end");
 
   const handleStartTimeChange = (value: string) => {
+    lastEdited.current = "start";
     setStartTime(value);
-    if (lastEdited.current === "duration") {
-      const parsedDuration = Number.parseInt(durationValue, 10);
-      if (Number.isFinite(parsedDuration) && parsedDuration > 0) {
-        const computedEnd = endFromDuration(value, parsedDuration);
-        if (computedEnd) {
-          setEndTime(computedEnd);
-        }
+    const parsedDuration = Number.parseInt(durationValue, 10);
+    if (Number.isFinite(parsedDuration) && parsedDuration > 0) {
+      const computedEnd = endFromDuration(value, parsedDuration);
+      if (computedEnd) {
+        setEndTime(computedEnd);
+        return;
       }
-      return;
     }
 
     const computedDuration = durationFromTimes(value, endTime);
