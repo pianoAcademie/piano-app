@@ -1696,7 +1696,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 <option value="ONSITE">Presentiel</option>
               </select>
             </label>
-            <div className="span-4 solfege-slot-editor">
+            <div className="cols-span-4 solfege-slot-editor">
               <h4>Lignes de creneaux</h4>
               <p className="muted">Desktop first: renseignez simplement les paires jour + heure de debut. Laissez vide les lignes inutiles.</p>
               <div className="solfege-slot-grid top-gap-sm">
@@ -1721,11 +1721,11 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 ))}
               </div>
             </div>
-            <label className="checkline span-4">
+            <label className="checkline cols-span-4">
               <input type="checkbox" name="is_active" defaultChecked />
               Active
             </label>
-            <div className="row span-4">
+            <div className="row cols-span-4">
               <button type="submit">Ajouter / mettre a jour</button>
             </div>
           </form>
@@ -1795,7 +1795,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                   <option value="ONSITE">Presentiel</option>
                                 </select>
                               </label>
-                              <div className="span-4 solfege-slot-editor">
+                              <div className="cols-span-4 solfege-slot-editor">
                                 <h4>Lignes de creneaux</h4>
                                 <p className="muted">Meme logique: un creneau = jour + heure de debut. L heure de fin est recalculee selon la duree.</p>
                                 <div className="solfege-slot-grid top-gap-sm">
@@ -1823,11 +1823,11 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                   })}
                                 </div>
                               </div>
-                              <label className="checkline span-4">
+                              <label className="checkline cols-span-4">
                                 <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
                                 Active
                               </label>
-                              <div className="row span-4">
+                              <div className="row cols-span-4">
                                 <button type="submit">Enregistrer</button>
                               </div>
                             </form>
