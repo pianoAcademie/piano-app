@@ -11194,6 +11194,144 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
   );
 }
 
+function parseCalendarGroupEntries(formData: FormData): Array<{ calendarId: string; locationId: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ calendarId: string; locationId: string }> = [];
+  for (const entry of formData.getAll("existing_calendar_entries")) {
+    const raw = String(entry ?? "").trim();
+    if (!raw) {
+      continue;
+    }
+    const [calendarIdRaw, locationIdRaw] = raw.split(":", 2);
+    const calendarId = parseUuid(calendarIdRaw ?? "");
+    const locationId = parseUuid(locationIdRaw ?? "");
+    if (!calendarId || !locationId) {
+      continue;
+    }
+    const key = `${calendarId}:${locationId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push({ calendarId, locationId });
+  }
+  return out;
+}
+
+export async function updateAdminQuoteSchoolCalendarGroupAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const name = String(formData.get("name") ?? "").trim();
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
+  const selectedLocationIds = formData
+    .getAll("location_ids")
+    .map((entry) => parseUuid(String(entry)))
+    .filter((value): value is string => Boolean(value));
+  const locationIds = Array.from(new Set(selectedLocationIds));
+  const existingEntries = parseCalendarGroupEntries(formData);
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+  const applyToManagementPlanning = parseCheckboxFlag(formData, "apply_to_management_planning", false);
+  const vacationPeriods = parseCalendarVacationPeriods(formData);
+  const holidayDates = parseCalendarDateList(formData.getAll("holiday_date"), String(formData.get("holiday_dates_text") ?? ""));
+  const closureDates = parseCalendarDateList(formData.getAll("closure_date"), String(formData.get("closure_dates_text") ?? ""));
+
+  if (!name || !schoolYearLabel || locationIds.length === 0 || existingEntries.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Bloc calendrier invalide"));
+  }
+  if (vacationPeriods === null || holidayDates === null || closureDates === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Dates invalides. Format attendu: vacances 'YYYY-MM-DD | YYYY-MM-DD | Libelle', jours feries/fermetures une date par ligne."));
+  }
+
+  const nextLocationIds = new Set(locationIds);
+
+  for (const entry of existingEntries) {
+    if (!nextLocationIds.has(entry.locationId)) {
+      const removeDeploymentResult = await backendRequest<{ message?: string }>(
+        `/api/v1/quote-school-calendars/${encodeURIComponent(entry.calendarId)}/deployment`,
+        { method: "DELETE" },
+        token,
+      );
+      if (!removeDeploymentResult.ok) {
+        redirect(appendQueryMessage(returnTo, "error", removeDeploymentResult.message));
+      }
+      const deleteResult = await backendRequest<Record<string, unknown>>(
+        `/api/v1/quote-school-calendars/${encodeURIComponent(entry.calendarId)}`,
+        { method: "DELETE" },
+        token,
+      );
+      if (!deleteResult.ok) {
+        redirect(appendQueryMessage(returnTo, "error", deleteResult.message));
+      }
+      continue;
+    }
+
+    const updateResult = await backendRequest<Record<string, unknown>>(
+      `/api/v1/quote-school-calendars/${encodeURIComponent(entry.calendarId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          name,
+          school_year_label: schoolYearLabel,
+          location_id: entry.locationId,
+          location_ids: [entry.locationId],
+          vacation_periods: vacationPeriods,
+          holiday_dates: holidayDates,
+          closure_dates: closureDates,
+          is_active: isActive,
+          apply_to_management_planning: applyToManagementPlanning,
+        }),
+      },
+      token,
+    );
+    if (!updateResult.ok) {
+      redirect(appendQueryMessage(returnTo, "error", updateResult.message));
+    }
+    nextLocationIds.delete(entry.locationId);
+  }
+
+  for (const locationId of nextLocationIds) {
+    const createResult = await backendRequest<Record<string, unknown>>(
+      "/api/v1/quote-school-calendars",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          school_year_label: schoolYearLabel,
+          location_id: locationId,
+          location_ids: [locationId],
+          vacation_periods: vacationPeriods,
+          holiday_dates: holidayDates,
+          closure_dates: closureDates,
+          is_active: isActive,
+          apply_to_management_planning: applyToManagementPlanning,
+        }),
+      },
+      token,
+    );
+    if (!createResult.ok) {
+      redirect(appendQueryMessage(returnTo, "error", createResult.message));
+    }
+  }
+
+  revalidatePath("/admin/config/calendars");
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      applyToManagementPlanning
+        ? "Bloc calendrier mis a jour et reapplique au planning"
+        : "Bloc calendrier mis a jour",
+    ),
+  );
+}
+
 export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -11207,6 +11345,14 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
     redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
   }
 
+  const removeDeploymentResult = await backendRequest<{ message?: string }>(
+    `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!removeDeploymentResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", removeDeploymentResult.message));
+  }
   const result = await backendRequest<Record<string, unknown>>(
     `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}`,
     { method: "DELETE" },
@@ -11347,6 +11493,104 @@ function parseCalendarIdsFromFormData(formData: FormData): string[] {
         .filter((value): value is string => Boolean(value)),
     ),
   );
+}
+
+type CalendarBulkAction = "DEPLOY" | "SYNC" | "REMOVE" | "DELETE";
+
+function parseCalendarBulkAction(raw: string): CalendarBulkAction | null {
+  const value = raw.trim().toUpperCase();
+  if (value === "DEPLOY" || value === "SYNC" || value === "REMOVE" || value === "DELETE") {
+    return value;
+  }
+  return null;
+}
+
+export async function bulkAdminQuoteSchoolCalendarsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const calendarIds = parseCalendarIdsFromFormData(formData);
+  const bulkAction = parseCalendarBulkAction(String(formData.get("bulk_action") ?? ""));
+  if (calendarIds.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un calendrier"));
+  }
+  if (bulkAction === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Action de masse invalide"));
+  }
+
+  let processedCount = 0;
+  for (const calendarId of calendarIds) {
+    if (bulkAction === "DEPLOY") {
+      const result = await backendRequest<{ message?: string }>(
+        `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment`,
+        { method: "POST" },
+        token,
+      );
+      if (!result.ok) {
+        redirect(appendQueryMessage(returnTo, "error", result.message));
+      }
+      processedCount += 1;
+      continue;
+    }
+    if (bulkAction === "SYNC") {
+      const result = await backendRequest<{ message?: string }>(
+        `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment/sync`,
+        { method: "POST" },
+        token,
+      );
+      if (!result.ok) {
+        redirect(appendQueryMessage(returnTo, "error", result.message));
+      }
+      processedCount += 1;
+      continue;
+    }
+    if (bulkAction === "REMOVE") {
+      const result = await backendRequest<{ message?: string }>(
+        `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment`,
+        { method: "DELETE" },
+        token,
+      );
+      if (!result.ok) {
+        redirect(appendQueryMessage(returnTo, "error", result.message));
+      }
+      processedCount += 1;
+      continue;
+    }
+    const removeDeploymentResult = await backendRequest<{ message?: string }>(
+      `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment`,
+      { method: "DELETE" },
+      token,
+    );
+    if (!removeDeploymentResult.ok) {
+      redirect(appendQueryMessage(returnTo, "error", removeDeploymentResult.message));
+    }
+    const result = await backendRequest<Record<string, unknown>>(
+      `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}`,
+      { method: "DELETE" },
+      token,
+    );
+    if (!result.ok) {
+      redirect(appendQueryMessage(returnTo, "error", result.message));
+    }
+    processedCount += 1;
+  }
+
+  revalidatePath("/admin/config/calendars");
+  revalidatePath("/admin/config/quotes");
+  if (bulkAction === "DEPLOY") {
+    redirect(appendQueryMessage(returnTo, "ok", `Deploiement lance pour ${processedCount} calendrier(s)`));
+  }
+  if (bulkAction === "SYNC") {
+    redirect(appendQueryMessage(returnTo, "ok", `Deploiement resynchronise pour ${processedCount} calendrier(s)`));
+  }
+  if (bulkAction === "REMOVE") {
+    redirect(appendQueryMessage(returnTo, "ok", `Creneaux retires pour ${processedCount} calendrier(s)`));
+  }
+  redirect(appendQueryMessage(returnTo, "ok", `${processedCount} calendrier(s) supprime(s)`));
 }
 
 export async function previewAdminQuoteSchoolCalendarGroupDeploymentAction(formData: FormData): Promise<void> {
