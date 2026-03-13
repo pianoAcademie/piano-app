@@ -35,6 +35,17 @@ import type {
 type SearchParams = Record<string, string | string[] | undefined>;
 
 type ProductsView = "products" | "reorder" | "entries" | "transfers" | "requests";
+type ProductSortColumn =
+  | "title"
+  | "category"
+  | "location"
+  | "price"
+  | "stock_global"
+  | "stock_reserve"
+  | "reorder"
+  | "active";
+type SortDirection = "asc" | "desc";
+type ProductPerPage = 25 | 50 | 100;
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -59,6 +70,44 @@ function parseView(value: string): ProductsView {
     return "requests";
   }
   return "products";
+}
+
+function parseProductSortColumn(value: string): ProductSortColumn {
+  if (
+    value === "title" ||
+    value === "category" ||
+    value === "location" ||
+    value === "price" ||
+    value === "stock_global" ||
+    value === "stock_reserve" ||
+    value === "reorder" ||
+    value === "active"
+  ) {
+    return value;
+  }
+  return "title";
+}
+
+function parseSortDirection(value: string): SortDirection {
+  return value === "desc" ? "desc" : "asc";
+}
+
+function parseProductPerPage(value: string): ProductPerPage {
+  if (value === "50") {
+    return 50;
+  }
+  if (value === "100") {
+    return 100;
+  }
+  return 25;
+}
+
+function parsePage(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+  return parsed;
 }
 
 function formatMoney(amountRaw: string | null, currency: string | null): string {
@@ -183,6 +232,10 @@ function buildProductsQuery(params: {
   view: ProductsView;
   product: string;
   editProduct: string;
+  sortBy: ProductSortColumn;
+  sortDir: SortDirection;
+  page: number;
+  perPage: ProductPerPage;
   reorderStatus: string;
   transferStatus: string;
   entryProduct: string;
@@ -216,6 +269,18 @@ function buildProductsQuery(params: {
   if (params.editProduct) {
     sp.set("edit_product", params.editProduct);
   }
+  if (params.sortBy !== "title") {
+    sp.set("sort_by", params.sortBy);
+  }
+  if (params.sortDir !== "asc") {
+    sp.set("sort_dir", params.sortDir);
+  }
+  if (params.page > 1) {
+    sp.set("page", String(params.page));
+  }
+  if (params.perPage !== 25) {
+    sp.set("per_page", String(params.perPage));
+  }
   if (params.view !== "products") {
     sp.set("view", params.view);
   }
@@ -242,6 +307,21 @@ function buildProductsQuery(params: {
   }
   const query = sp.toString();
   return query ? `?${query}` : "";
+}
+
+function productSortIndicator(currentSortBy: ProductSortColumn, currentSortDir: SortDirection, targetSortBy: ProductSortColumn): string {
+  if (currentSortBy !== targetSortBy) {
+    return "↕";
+  }
+  return currentSortDir === "asc" ? "↑" : "↓";
+}
+
+function compareText(a: string | null | undefined, b: string | null | undefined): number {
+  return (a ?? "").localeCompare(b ?? "", "fr", { sensitivity: "base" });
+}
+
+function compareNumber(a: number, b: number): number {
+  return a - b;
 }
 
 async function loadLocationsForProducts(token: string): Promise<{ ok: true; data: LocationOut[] } | { ok: false; message: string }> {
@@ -274,6 +354,10 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const selectedProductId = readParam(params, "product").trim();
   const editProductId = readParam(params, "edit_product").trim();
   const currentView = parseView(readParam(params, "view"));
+  const sortBy = parseProductSortColumn(readParam(params, "sort_by"));
+  const sortDir = parseSortDirection(readParam(params, "sort_dir"));
+  const requestedPage = parsePage(readParam(params, "page"));
+  const perPage = parseProductPerPage(readParam(params, "per_page"));
   const reorderStatus = readParam(params, "reorder_status").trim() || "all";
   const transferStatus = readParam(params, "transfer_status").trim() || "all";
   const entryProduct = readParam(params, "entry_product").trim();
@@ -293,6 +377,10 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     online,
     view: currentView,
     product: selectedProductId,
+    sortBy,
+    sortDir,
+    page: requestedPage,
+    perPage,
     reorderStatus,
     transferStatus,
     entryProduct,
@@ -440,7 +528,69 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
       }
       return true;
     })
-    .sort((a, b) => a.title.localeCompare(b.title, "fr"));
+    .sort((a, b) => {
+      let comparison = 0;
+      switch (sortBy) {
+        case "category":
+          comparison = compareText(a.category_name, b.category_name) || compareText(a.title, b.title);
+          break;
+        case "location":
+          comparison = compareText(a.primary_location_name, b.primary_location_name) || compareText(a.title, b.title);
+          break;
+        case "price":
+          comparison = compareNumber(Number(a.price_incl_vat), Number(b.price_incl_vat)) || compareText(a.title, b.title);
+          break;
+        case "stock_global":
+          comparison = compareNumber(a.stock_global_quantity, b.stock_global_quantity) || compareText(a.title, b.title);
+          break;
+        case "stock_reserve":
+          comparison = compareNumber(a.reserve_stock, b.reserve_stock) || compareText(a.title, b.title);
+          break;
+        case "reorder": {
+          const aNeeds = !a.is_virtual && a.stock_global_quantity < a.reserve_stock ? 1 : 0;
+          const bNeeds = !b.is_virtual && b.stock_global_quantity < b.reserve_stock ? 1 : 0;
+          comparison = compareNumber(aNeeds, bNeeds) || compareText(a.title, b.title);
+          break;
+        }
+        case "active":
+          comparison = compareNumber(a.active ? 1 : 0, b.active ? 1 : 0) || compareText(a.title, b.title);
+          break;
+        case "title":
+        default:
+          comparison = compareText(a.title, b.title);
+          break;
+      }
+      return sortDir === "desc" ? comparison * -1 : comparison;
+    });
+
+  const totalProductPages = Math.max(1, Math.ceil(filteredProducts.length / perPage));
+  const productPage = Math.min(requestedPage, totalProductPages);
+  const productPageStart = (productPage - 1) * perPage;
+  const paginatedProducts = filteredProducts.slice(productPageStart, productPageStart + perPage);
+  const productsBaseQuery = { ...baseQuery, page: productPage };
+  const productSortHref = (targetSortBy: ProductSortColumn): string => {
+    const nextDir: SortDirection = sortBy === targetSortBy && sortDir === "asc" ? "desc" : "asc";
+    return `/admin/products${buildProductsQuery({
+      ...productsBaseQuery,
+      add: "",
+      editProduct: "",
+      sortBy: targetSortBy,
+      sortDir: nextDir,
+      page: 1,
+    })}`;
+  };
+  const productPrevLink = `/admin/products${buildProductsQuery({
+    ...productsBaseQuery,
+    add: "",
+    editProduct: "",
+    page: Math.max(1, productPage - 1),
+  })}`;
+  const productNextLink = `/admin/products${buildProductsQuery({
+    ...productsBaseQuery,
+    add: "",
+    editProduct: "",
+    page: Math.min(totalProductPages, productPage + 1),
+  })}`;
 
   const selectedProduct = products.find((row) => row.id === selectedProductId) ?? null;
   const editedProduct = products.find((row) => row.id === editProductId) ?? null;
@@ -558,6 +708,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
             <form method="get" className="grid cols-5 config-form-grid top-gap-sm">
               <input type="hidden" name="view" value="products" />
               <input type="hidden" name="product" value={selectedProductId} />
+              <input type="hidden" name="sort_by" value={sortBy} />
+              <input type="hidden" name="sort_dir" value={sortDir} />
+              <input type="hidden" name="page" value="1" />
               <label className="span-2">
                 Recherche libre
                 <input type="search" name="q" defaultValue={query} placeholder="Titre, code-barres, categorie..." />
@@ -597,12 +750,39 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   <option value="offline">Non</option>
                 </select>
               </label>
+              <label>
+                Produits par page
+                <select name="per_page" defaultValue={String(perPage)}>
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
               <div className="row span-5">
                 <button type="submit">Filtrer</button>
-                <Link className="ghost" href={`/admin/products${buildProductsQuery({ ...baseQuery, q: "", category: "", status: "all", visibility: "all", online: "all", add: "", editProduct: "" })}`}>
+                <Link
+                  className="ghost"
+                  href={`/admin/products${buildProductsQuery({
+                    ...productsBaseQuery,
+                    q: "",
+                    category: "",
+                    status: "all",
+                    visibility: "all",
+                    online: "all",
+                    add: "",
+                    editProduct: "",
+                    product: "",
+                    sortBy: "title",
+                    sortDir: "asc",
+                    page: 1,
+                  })}`}
+                >
                   Reinitialiser
                 </Link>
                 <span className="badge">{filteredProducts.length} produit(s)</span>
+                <span className="badge">
+                  Page {productPage}/{totalProductPages}
+                </span>
               </div>
             </form>
 
@@ -610,14 +790,46 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Produit</th>
-                    <th>Categorie</th>
-                    <th>Local principal</th>
-                    <th>TTC</th>
-                    <th>Stock global</th>
-                    <th>Stock reserve</th>
-                    <th>A commander</th>
-                    <th>Actif</th>
+                    <th>
+                      <Link className="sort-link" href={productSortHref("title")}>
+                        Produit {productSortIndicator(sortBy, sortDir, "title")}
+                      </Link>
+                    </th>
+                    <th>
+                      <Link className="sort-link" href={productSortHref("category")}>
+                        Categorie {productSortIndicator(sortBy, sortDir, "category")}
+                      </Link>
+                    </th>
+                    <th>
+                      <Link className="sort-link" href={productSortHref("location")}>
+                        Local principal {productSortIndicator(sortBy, sortDir, "location")}
+                      </Link>
+                    </th>
+                    <th>
+                      <Link className="sort-link" href={productSortHref("price")}>
+                        TTC {productSortIndicator(sortBy, sortDir, "price")}
+                      </Link>
+                    </th>
+                    <th>
+                      <Link className="sort-link" href={productSortHref("stock_global")}>
+                        Stock global {productSortIndicator(sortBy, sortDir, "stock_global")}
+                      </Link>
+                    </th>
+                    <th>
+                      <Link className="sort-link" href={productSortHref("stock_reserve")}>
+                        Stock reserve {productSortIndicator(sortBy, sortDir, "stock_reserve")}
+                      </Link>
+                    </th>
+                    <th>
+                      <Link className="sort-link" href={productSortHref("reorder")}>
+                        A commander {productSortIndicator(sortBy, sortDir, "reorder")}
+                      </Link>
+                    </th>
+                    <th>
+                      <Link className="sort-link" href={productSortHref("active")}>
+                        Actif {productSortIndicator(sortBy, sortDir, "active")}
+                      </Link>
+                    </th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -629,10 +841,10 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                       </td>
                     </tr>
                   ) : (
-                    filteredProducts.map((product) => {
+                    paginatedProducts.map((product) => {
                       const needsAlert = !product.is_virtual && product.stock_global_quantity < product.reserve_stock;
-                      const selectLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", product: product.id })}`;
-                      const editLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: product.id, product: selectedProductId || product.id })}`;
+                      const selectLink = `/admin/products${buildProductsQuery({ ...productsBaseQuery, add: "", editProduct: "", product: product.id })}`;
+                      const editLink = `/admin/products${buildProductsQuery({ ...productsBaseQuery, add: "", editProduct: product.id, product: selectedProductId || product.id })}`;
                       return (
                         <tr key={product.id} className={selectedProduct?.id === product.id ? "catalog-selected-row" : ""}>
                           <td>
@@ -665,9 +877,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </table>
             </div>
             <div className="catalog-mobile-cards top-gap-sm">
-              {filteredProducts.map((product) => {
-                const selectLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", product: product.id })}`;
-                const editLink = `/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: product.id, product: selectedProductId || product.id })}`;
+              {paginatedProducts.map((product) => {
+                const selectLink = `/admin/products${buildProductsQuery({ ...productsBaseQuery, add: "", editProduct: "", product: product.id })}`;
+                const editLink = `/admin/products${buildProductsQuery({ ...productsBaseQuery, add: "", editProduct: product.id, product: selectedProductId || product.id })}`;
                 return (
                   <article key={`product-mobile-${product.id}`} className="catalog-mobile-card">
                     <p className="catalog-mobile-title">{product.title}</p>
@@ -689,6 +901,32 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 );
               })}
             </div>
+            {filteredProducts.length > 0 ? (
+              <div className="row spread clients-pagination top-gap-sm">
+                <small className="muted">
+                  Affichage {productPageStart + 1}-{Math.min(productPageStart + paginatedProducts.length, filteredProducts.length)} sur {filteredProducts.length} produit(s)
+                </small>
+                <div className="row">
+                  {productPage > 1 ? (
+                    <Link className="mode-link" href={productPrevLink}>
+                      ← Precedent
+                    </Link>
+                  ) : (
+                    <span className="mode-link disabled-link">← Precedent</span>
+                  )}
+                  <span className="badge">
+                    Page {productPage}/{totalProductPages}
+                  </span>
+                  {productPage < totalProductPages ? (
+                    <Link className="mode-link" href={productNextLink}>
+                      Suivant →
+                    </Link>
+                  ) : (
+                    <span className="mode-link disabled-link">Suivant →</span>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </section>
 
           <section className="card">
