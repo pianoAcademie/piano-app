@@ -4417,6 +4417,11 @@ button.danger:focus-visible {
   gap: 6px;
 }
 
+.solfege-config-form {
+  display: grid;
+  gap: 12px;
+}
+
 .solfege-slot-editor {
   display: grid;
   gap: 8px;

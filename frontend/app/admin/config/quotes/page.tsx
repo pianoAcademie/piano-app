@@ -1663,40 +1663,42 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         <section className="card">
           <h3>Creneaux de solfege par niveau</h3>
           <p className="muted">Un creneau = un jour + une heure de debut + une duree de niveau. L heure de fin est calculee automatiquement.</p>
-          <form action={upsertAdminSolfegeLevelRuleConfigAction} className="grid cols-4 config-form-grid solfege-config-form">
+          <form action={upsertAdminSolfegeLevelRuleConfigAction} className="solfege-config-form">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
-            <label>
-              Niveau
-              <select name="level_code" defaultValue="1">
-                <option value="1">Niveau 1</option>
-                <option value="2">Niveau 2</option>
-                <option value="3">Niveau 3</option>
-                <option value="4">Niveau 4</option>
-                <option value="5">Niveau 5</option>
-              </select>
-            </label>
-            <label>
-              Duree (min)
-              <input type="number" name="duration_minutes" min={10} max={180} defaultValue={30} required />
-            </label>
-            <label>
-              Local (optionnel)
-              <select name="location_id" defaultValue="">
-                <option value="">Tous</option>
-                {locations.map((row) => (
-                  <option key={row.id} value={row.id}>{row.name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Modalite
-              <select name="modality" defaultValue="ANY">
-                <option value="ANY">Tous</option>
-                <option value="ONLINE">En ligne</option>
-                <option value="ONSITE">Presentiel</option>
-              </select>
-            </label>
-            <div className="cols-span-4 solfege-slot-editor">
+            <div className="grid cols-4 config-form-grid">
+              <label>
+                Niveau
+                <select name="level_code" defaultValue="1">
+                  <option value="1">Niveau 1</option>
+                  <option value="2">Niveau 2</option>
+                  <option value="3">Niveau 3</option>
+                  <option value="4">Niveau 4</option>
+                  <option value="5">Niveau 5</option>
+                </select>
+              </label>
+              <label>
+                Duree (min)
+                <input type="number" name="duration_minutes" min={10} max={180} defaultValue={30} required />
+              </label>
+              <label>
+                Local (optionnel)
+                <select name="location_id" defaultValue="">
+                  <option value="">Tous</option>
+                  {locations.map((row) => (
+                    <option key={row.id} value={row.id}>{row.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Modalite
+                <select name="modality" defaultValue="ANY">
+                  <option value="ANY">Tous</option>
+                  <option value="ONLINE">En ligne</option>
+                  <option value="ONSITE">Presentiel</option>
+                </select>
+              </label>
+            </div>
+            <div className="solfege-slot-editor">
               <h4>Lignes de creneaux</h4>
               <p className="muted">Desktop first: renseignez simplement les paires jour + heure de debut. Laissez vide les lignes inutiles.</p>
               <div className="solfege-slot-grid top-gap-sm">
@@ -1721,11 +1723,11 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 ))}
               </div>
             </div>
-            <label className="checkline cols-span-4">
+            <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
               Active
             </label>
-            <div className="row cols-span-4">
+            <div className="row">
               <button type="submit">Ajouter / mettre a jour</button>
             </div>
           </form>
@@ -1761,41 +1763,43 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         <td>
                           <details>
                             <summary className="mode-link">Modifier</summary>
-                            <form action={upsertAdminSolfegeLevelRuleConfigAction} className="grid cols-4 config-form-grid solfege-config-form top-gap-sm">
+                            <form action={upsertAdminSolfegeLevelRuleConfigAction} className="solfege-config-form top-gap-sm">
                               <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
-                              <label>
-                                Niveau
-                                <select name="level_code" defaultValue={row.level_code}>
-                                  {!levelKnown ? <option value={row.level_code}>Niveau {row.level_code}</option> : null}
-                                  <option value="1">Niveau 1</option>
-                                  <option value="2">Niveau 2</option>
-                                  <option value="3">Niveau 3</option>
-                                  <option value="4">Niveau 4</option>
-                                  <option value="5">Niveau 5</option>
-                                </select>
-                              </label>
-                              <label>
-                                Duree (min)
-                                <input type="number" name="duration_minutes" min={10} max={180} defaultValue={row.duration_minutes} required />
-                              </label>
-                              <label>
-                                Local
-                                <select name="location_id" defaultValue={row.location_id || ""}>
-                                  <option value="">Tous</option>
-                                  {locations.map((location) => (
-                                    <option key={location.id} value={location.id}>{location.name}</option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                Modalite
-                                <select name="modality" defaultValue={(row.modality || "ANY").toUpperCase()}>
-                                  <option value="ANY">Tous</option>
-                                  <option value="ONLINE">En ligne</option>
-                                  <option value="ONSITE">Presentiel</option>
-                                </select>
-                              </label>
-                              <div className="cols-span-4 solfege-slot-editor">
+                              <div className="grid cols-4 config-form-grid">
+                                <label>
+                                  Niveau
+                                  <select name="level_code" defaultValue={row.level_code}>
+                                    {!levelKnown ? <option value={row.level_code}>Niveau {row.level_code}</option> : null}
+                                    <option value="1">Niveau 1</option>
+                                    <option value="2">Niveau 2</option>
+                                    <option value="3">Niveau 3</option>
+                                    <option value="4">Niveau 4</option>
+                                    <option value="5">Niveau 5</option>
+                                  </select>
+                                </label>
+                                <label>
+                                  Duree (min)
+                                  <input type="number" name="duration_minutes" min={10} max={180} defaultValue={row.duration_minutes} required />
+                                </label>
+                                <label>
+                                  Local
+                                  <select name="location_id" defaultValue={row.location_id || ""}>
+                                    <option value="">Tous</option>
+                                    {locations.map((location) => (
+                                      <option key={location.id} value={location.id}>{location.name}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  Modalite
+                                  <select name="modality" defaultValue={(row.modality || "ANY").toUpperCase()}>
+                                    <option value="ANY">Tous</option>
+                                    <option value="ONLINE">En ligne</option>
+                                    <option value="ONSITE">Presentiel</option>
+                                  </select>
+                                </label>
+                              </div>
+                              <div className="solfege-slot-editor">
                                 <h4>Lignes de creneaux</h4>
                                 <p className="muted">Meme logique: un creneau = jour + heure de debut. L heure de fin est recalculee selon la duree.</p>
                                 <div className="solfege-slot-grid top-gap-sm">
@@ -1823,11 +1827,11 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                   })}
                                 </div>
                               </div>
-                              <label className="checkline cols-span-4">
+                              <label className="checkline">
                                 <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
                                 Active
                               </label>
-                              <div className="row cols-span-4">
+                              <div className="row">
                                 <button type="submit">Enregistrer</button>
                               </div>
                             </form>
