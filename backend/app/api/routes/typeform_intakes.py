@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import re
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -210,6 +211,26 @@ def _weekday_from_label(value: object | None) -> int | None:
     return DAY_ALIASES.get(normalized)
 
 
+_DAY_TOKEN_RE = re.compile(r"\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b", re.IGNORECASE)
+_TIME_TOKEN_RE = re.compile(r"(?<!\d)(\d{1,2})(?:[:h](\d{1,2}))?(?!\d)")
+
+
+def _extract_weekday_label(value: object | None) -> str | None:
+    weekday = _weekday_from_label(value)
+    if weekday is not None:
+        return DAY_LABELS[weekday].lower()
+    raw = _text(value)
+    if not raw:
+        return None
+    match = _DAY_TOKEN_RE.search(raw)
+    if match is None:
+        return None
+    weekday = _weekday_from_label(match.group(1))
+    if weekday is None:
+        return None
+    return DAY_LABELS[weekday].lower()
+
+
 def _normalize_day_values(values: list[object]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -226,13 +247,31 @@ def _normalize_day_values(values: list[object]) -> list[str]:
         else:
             chunks = [_text(item)]
         for chunk in chunks:
-            weekday = _weekday_from_label(chunk)
-            if weekday is None:
+            label = _extract_weekday_label(chunk)
+            if label is None:
                 continue
-            label = DAY_LABELS[weekday].lower()
             if label not in seen:
                 seen.add(label)
                 out.append(label)
+    return out
+
+
+def _extract_time_tokens(value: object | None) -> list[str]:
+    raw = _text(value).lower()
+    if not raw:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    compact = raw.replace(" ", "")
+    for hour_s, minute_s in _TIME_TOKEN_RE.findall(compact):
+        hour = int(hour_s)
+        minute = int(minute_s or "0")
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            continue
+        token = f"{hour:02d}:{minute:02d}"
+        if token not in seen:
+            seen.add(token)
+            out.append(token)
     return out
 
 
@@ -249,6 +288,9 @@ def _normalize_time_token(value: object | None) -> str | None:
             minute = int(minute_s)
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return f"{hour:02d}:{minute:02d}"
+    extracted = _extract_time_tokens(value)
+    if extracted:
+        return extracted[0]
     return None
 
 
@@ -266,9 +308,15 @@ def _normalize_time_values(values: list[object]) -> list[str]:
         chunks = [chunk.strip() for chunk in _text(item).replace("/", ",").replace(";", ",").split(",")]
         for chunk in chunks:
             normalized = _normalize_time_token(chunk)
-            if normalized and normalized not in seen:
-                seen.add(normalized)
-                out.append(normalized)
+            if normalized:
+                if normalized not in seen:
+                    seen.add(normalized)
+                    out.append(normalized)
+                continue
+            for token in _extract_time_tokens(chunk):
+                if token not in seen:
+                    seen.add(token)
+                    out.append(token)
     return out
 
 
@@ -278,6 +326,57 @@ def _minutes_from_hhmm(value: str) -> int | None:
         return None
     hour_s, minute_s = normalized.split(":", 1)
     return int(hour_s) * 60 + int(minute_s)
+
+
+def _normalize_slot_preferences(
+    values: list[object],
+    *,
+    requested_location: str | None,
+    segment: str | None,
+) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    seen: set[tuple[str | None, str | None]] = set()
+    for item in values:
+        if isinstance(item, list):
+            nested = _normalize_slot_preferences(item, requested_location=requested_location, segment=segment)
+            for child in nested:
+                key = (_text(child.get("day")) or None, _text(child.get("time")) or None)
+                if key not in seen:
+                    seen.add(key)
+                    out.append(child)
+            continue
+        day = _extract_weekday_label(item)
+        times = _extract_time_tokens(item)
+        if not day and not times:
+            continue
+        if not times:
+            key = (day, None)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                {
+                    "day": day,
+                    "time": None,
+                    "location": requested_location,
+                    "segment": segment,
+                }
+            )
+            continue
+        for time_value in times:
+            key = (day, time_value)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                {
+                    "day": day,
+                    "time": time_value,
+                    "location": requested_location,
+                    "segment": segment,
+                }
+            )
+    return out
 
 
 def _answer_value(answer: dict[str, object]) -> object:
@@ -321,24 +420,40 @@ def _extract_answers(payload: dict[str, object]) -> list[dict[str, object]]:
     return [item for item in top_level_answers if isinstance(item, dict)]
 
 
-def _answer_key(answer: dict[str, object], *, index: int) -> str:
+def _answer_keys(answer: dict[str, object], *, index: int) -> list[str]:
     field = _json_object(answer.get("field"))
-    return _text(field.get("ref")) or _text(field.get("id")) or f"answer_{index}"
+    out: list[str] = []
+    seen: set[str] = set()
+    for candidate in (
+        _text(field.get("ref")),
+        _text(field.get("id")),
+        _text(field.get("title")),
+    ):
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            out.append(candidate)
+    if not out:
+        out.append(f"answer_{index}")
+    return out
+
+
+def _answer_key(answer: dict[str, object], *, index: int) -> str:
+    return _answer_keys(answer, index=index)[0]
 
 
 def _extract_answer_map(answers: list[dict[str, object]]) -> dict[str, object]:
     out: dict[str, object] = {}
     for index, answer in enumerate(answers):
-        key = _answer_key(answer, index=index)
         value = _answer_value(answer)
-        if key in out:
-            existing = out[key]
-            if isinstance(existing, list):
-                existing.append(value)
+        for key in _answer_keys(answer, index=index):
+            if key in out:
+                existing = out[key]
+                if isinstance(existing, list):
+                    existing.append(value)
+                else:
+                    out[key] = [existing, value]
             else:
-                out[key] = [existing, value]
-        else:
-            out[key] = value
+                out[key] = value
     return out
 
 
@@ -374,6 +489,22 @@ def _mapped_list(answer_map: dict[str, object], field_mapping: dict[str, object]
             out.extend(value)
         elif value is not None:
             out.append(value)
+    return out
+
+
+def _mapped_token_list(answer_map: dict[str, object], field_mapping: dict[str, object], field_name: str) -> list[str]:
+    out: list[str] = []
+    for candidate in _mapping_candidates(field_mapping, field_name):
+        value = answer_map.get(candidate)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, bool):
+                if item:
+                    out.append(candidate)
+                continue
+            text = _text(item)
+            if text:
+                out.append(text)
     return out
 
 
@@ -436,7 +567,7 @@ def _normalize_payload(
     requested_formula_type = _mapped_scalar(answer_map, field_mapping, "requested_formula_type") or _text(config_json.get("default_formula_type")) or None
     requested_products = [
         _text(item)
-        for item in _mapped_list(answer_map, field_mapping, "requested_products")
+        for item in _mapped_token_list(answer_map, field_mapping, "requested_products")
         if _text(item)
     ]
     notes_parts = [
@@ -444,8 +575,8 @@ def _normalize_payload(
         _mapped_scalar(answer_map, field_mapping, "notes_secondary"),
     ]
     notes = "\n".join(part for part in notes_parts if part).strip() or None
-    requested_days = _normalize_day_values(_mapped_list(answer_map, field_mapping, "requested_days"))
-    requested_times = _normalize_time_values(_mapped_list(answer_map, field_mapping, "requested_times"))
+    requested_days = _normalize_day_values(_mapped_token_list(answer_map, field_mapping, "requested_days"))
+    requested_times = _normalize_time_values(_mapped_token_list(answer_map, field_mapping, "requested_times"))
 
     config_segment = _lower(config.audience_segment if config is not None else None)
     customer_type = "child" if child_first_name or child_last_name or config_segment in {"child", "teen", "eveil"} else "adult"
@@ -459,8 +590,27 @@ def _normalize_payload(
         if not parent_phone:
             parent_phone = _mapped_scalar(answer_map, field_mapping, "phone")
 
-    requested_slot_preferences: list[dict[str, object]] = []
-    if requested_days or requested_times:
+    requested_slot_preferences = _normalize_slot_preferences(
+        _mapped_token_list(answer_map, field_mapping, "requested_slot_preferences"),
+        requested_location=requested_location,
+        segment=config_segment or None,
+    )
+    if requested_slot_preferences:
+        requested_days = list(
+            dict.fromkeys(
+                _text(item.get("day"))
+                for item in requested_slot_preferences
+                if _text(item.get("day"))
+            )
+        )
+        requested_times = list(
+            dict.fromkeys(
+                _text(item.get("time"))
+                for item in requested_slot_preferences
+                if _text(item.get("time"))
+            )
+        )
+    elif requested_days or requested_times:
         if requested_days and requested_times:
             for day in requested_days:
                 for requested_time in requested_times:
@@ -1136,6 +1286,20 @@ def _safe_zoneinfo(value: str | None) -> ZoneInfo:
 
 
 def _requested_summary(normalized: dict[str, object]) -> str | None:
+    slot_labels = []
+    for item in _json_list(normalized.get("requested_slot_preferences")):
+        if not isinstance(item, dict):
+            continue
+        day = _text(item.get("day"))
+        time = _text(item.get("time"))
+        if day and time:
+            slot_labels.append(f"{day.capitalize()} {time}")
+        elif day:
+            slot_labels.append(day.capitalize())
+        elif time:
+            slot_labels.append(time)
+    if slot_labels:
+        return ", ".join(slot_labels)
     days = [DAY_LABELS[_weekday_from_label(day)] for day in _json_list(normalized.get("requested_days")) if _weekday_from_label(day) is not None]
     times = [_text(item) for item in _json_list(normalized.get("requested_times")) if _text(item)]
     parts: list[str] = []
@@ -1193,6 +1357,19 @@ def _build_session_recommendations(
     requested_days.discard(None)
     requested_times = [_minutes_from_hhmm(_text(value)) for value in _json_list(normalized.get("requested_times"))]
     requested_times = [value for value in requested_times if value is not None]
+    requested_slot_preferences = [
+        {
+            "day": _weekday_from_label(_json_object(item).get("day")),
+            "time": _minutes_from_hhmm(_text(_json_object(item).get("time"))),
+        }
+        for item in _json_list(normalized.get("requested_slot_preferences"))
+        if isinstance(item, dict)
+    ]
+    requested_slot_preferences = [
+        item
+        for item in requested_slot_preferences
+        if item["day"] is not None or item["time"] is not None
+    ]
     selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
 
     recommendations: list[TypeformSessionRecommendationOut] = []
@@ -1220,25 +1397,56 @@ def _build_session_recommendations(
             if requested_location and requested_location in {_lower(config.location_code if config is not None else None), _lower(location.code), _lower(location.name)}:
                 score += 20
                 reasons.append("lieu prefere")
-            if requested_days:
-                if weekday in requested_days:
-                    score += 30
-                    reasons.append("jour souhaite")
-                else:
+            if requested_slot_preferences:
+                slot_match_found = False
+                best_bonus = -20
+                best_reason = "hors creneaux souhaites"
+                for preference in requested_slot_preferences:
+                    pref_day = preference["day"]
+                    pref_time = preference["time"]
+                    if pref_day is not None and pref_day != weekday:
+                        continue
+                    slot_match_found = True
+                    if pref_time is None:
+                        if best_bonus < 25:
+                            best_bonus = 25
+                            best_reason = "jour souhaite"
+                        continue
+                    delta = abs(start_minutes - pref_time)
+                    if delta == 0 and best_bonus < 40:
+                        best_bonus = 40
+                        best_reason = "creneau exact"
+                    elif delta <= 30 and best_bonus < 32:
+                        best_bonus = 32
+                        best_reason = "creneau proche"
+                    elif delta <= 60 and best_bonus < 22:
+                        best_bonus = 22
+                        best_reason = "horaire acceptable"
+                if not slot_match_found:
                     score -= 20
-            if requested_times:
-                best_delta = min(abs(start_minutes - item) for item in requested_times)
-                if best_delta <= 30:
-                    score += 30
-                    reasons.append("horaire ideal")
-                elif best_delta <= 60:
-                    score += 20
-                    reasons.append("horaire proche")
-                elif best_delta <= 120:
-                    score += 10
-                    reasons.append("horaire acceptable")
                 else:
-                    score -= 15
+                    score += best_bonus
+                    reasons.append(best_reason)
+            else:
+                if requested_days:
+                    if weekday in requested_days:
+                        score += 30
+                        reasons.append("jour souhaite")
+                    else:
+                        score -= 20
+                if requested_times:
+                    best_delta = min(abs(start_minutes - item) for item in requested_times)
+                    if best_delta <= 30:
+                        score += 30
+                        reasons.append("horaire ideal")
+                    elif best_delta <= 60:
+                        score += 20
+                        reasons.append("horaire proche")
+                    elif best_delta <= 120:
+                        score += 10
+                        reasons.append("horaire acceptable")
+                    else:
+                        score -= 15
             seats_remaining = max(int(session_obj.capacity_max or 0) - int(booked_count), 0)
             is_full = seats_remaining <= 0
             if is_full:
