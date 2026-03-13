@@ -113,6 +113,7 @@ jobs:
           ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
             set -euo pipefail
             cd '${VPS_PATH}'
+            export COMPOSE_PROJECT_NAME='piano-app'
             services=\$(docker compose config --services)
 
             if echo \"\$services\" | grep -qx redis; then
@@ -129,6 +130,10 @@ jobs:
                 up_targets=\"\$up_targets \$svc\"
               fi
             done
+
+            docker ps -a --format '{{.ID}} {{.Names}}' | awk '
+              \$2 ~ /^[0-9a-f]{12}_piano-app-(backend|frontend|notifications-immediate-worker|notifications-scheduled-worker|notifications-feedback-worker)-1$/ { print \$1 }
+            ' | xargs -r docker rm -f
 
             docker compose up -d --build \$up_targets
             docker compose ps
