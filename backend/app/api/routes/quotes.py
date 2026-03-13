@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import case, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -2043,6 +2043,7 @@ def _effective_item_price(
     *,
     line: QuoteLineIn,
     pricing_catalog_id: UUID | None,
+    location_id: UUID | None = None,
 ) -> tuple[str | None, str, str | None, int | None, Decimal, dict[str, object]]:
     title = line.title
     code = line.code
@@ -2060,16 +2061,32 @@ def _effective_item_price(
         description = activity.description
         duration = int(activity.duration_minutes)
         if pricing_catalog_id is not None:
-            activity_price = db.scalar(
-                select(PricingActivityPrice)
-                .where(
-                    PricingActivityPrice.catalog_id == pricing_catalog_id,
-                    PricingActivityPrice.activity_id == line.activity_id,
-                    PricingActivityPrice.is_active.is_(True),
-                )
-                .order_by(PricingActivityPrice.location_id.asc().nullsfirst())
-                .limit(1)
+            activity_price_stmt = select(PricingActivityPrice).where(
+                PricingActivityPrice.catalog_id == pricing_catalog_id,
+                PricingActivityPrice.activity_id == line.activity_id,
+                PricingActivityPrice.is_active.is_(True),
             )
+            if location_id is not None:
+                activity_price_stmt = (
+                    activity_price_stmt
+                    .where(
+                        or_(
+                            PricingActivityPrice.location_id == location_id,
+                            PricingActivityPrice.location_id.is_(None),
+                        )
+                    )
+                    .order_by(
+                        case(
+                            (PricingActivityPrice.location_id == location_id, 0),
+                            (PricingActivityPrice.location_id.is_(None), 1),
+                            else_=2,
+                        ),
+                        PricingActivityPrice.location_id.asc().nullslast(),
+                    )
+                )
+            else:
+                activity_price_stmt = activity_price_stmt.order_by(PricingActivityPrice.location_id.asc().nullsfirst())
+            activity_price = db.scalar(activity_price_stmt.limit(1))
             if activity_price is not None:
                 unit_price = _q2(Decimal(activity_price.unit_price_ttc))
                 meta["pricing_source"] = "catalog_activity"
@@ -2152,6 +2169,7 @@ def _materialize_quote_lines(
             db,
             line=item,
             pricing_catalog_id=quote.pricing_catalog_id,
+            location_id=quote.location_id,
         )
 
         quantity = _q2(item.quantity)

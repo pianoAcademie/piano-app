@@ -765,11 +765,242 @@ def _resolve_template_item(
     return kind or None, None, None, None, issues
 
 
+def _location_override_match_values(entry: dict[str, object]) -> list[str]:
+    values: list[str] = []
+    for key in ("match_value", "location_label"):
+        text = _text(entry.get(key))
+        if text:
+            values.append(text)
+    for key in ("match_values", "aliases", "labels"):
+        for item in _json_list(entry.get(key)):
+            text = _text(item)
+            if text:
+                values.append(text)
+    location_code = _text(entry.get("location_code"))
+    if location_code:
+        values.append(location_code)
+    location_name = _text(entry.get("location_name"))
+    if location_name:
+        values.append(location_name)
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = _normalize_token(value)
+        if token and token not in seen:
+            seen.add(token)
+            out.append(token)
+    return out
+
+
+def _find_location_by_request_value(
+    db: Session,
+    requested_location: str | None,
+) -> tuple[Location | None, str | None]:
+    token = _normalize_token(requested_location).replace("_", " ")
+    if not token:
+        return None, None
+
+    rows = db.scalars(select(Location).where(Location.active.is_(True)).order_by(Location.name.asc())).all()
+    exact_matches: list[Location] = []
+    fuzzy_matches: list[Location] = []
+
+    for row in rows:
+        candidates = {
+            _normalize_token(row.code).replace("_", " "),
+            _normalize_token(row.name),
+        }
+        if token in candidates:
+            exact_matches.append(row)
+            continue
+        for candidate in candidates:
+            if candidate and len(candidate) >= 4 and candidate in token:
+                fuzzy_matches.append(row)
+                break
+
+    if len(exact_matches) == 1:
+        return exact_matches[0], None
+    if len(exact_matches) > 1:
+        return None, f"Le lieu '{_text(requested_location)}' correspond a plusieurs sites actifs."
+    if len(fuzzy_matches) == 1:
+        return fuzzy_matches[0], None
+    if len(fuzzy_matches) > 1:
+        return None, f"Le lieu '{_text(requested_location)}' est ambigu entre plusieurs sites."
+    return None, None
+
+
+def _resolve_location_from_override(
+    db: Session,
+    entry: dict[str, object],
+) -> Location | None:
+    location_id = _parse_uuid(entry.get("location_id"))
+    if location_id is not None:
+        row = db.scalar(select(Location).where(Location.id == location_id, Location.active.is_(True)).limit(1))
+        if row is not None:
+            return row
+
+    location_code = _text(entry.get("location_code"))
+    if location_code:
+        row = db.scalar(select(Location).where(Location.code == location_code, Location.active.is_(True)).limit(1))
+        if row is not None:
+            return row
+
+    location_name = _text(entry.get("location_name"))
+    if location_name:
+        row = db.scalar(select(Location).where(Location.name == location_name, Location.active.is_(True)).limit(1))
+        if row is not None:
+            return row
+
+    return None
+
+
+def _apply_runtime_override(runtime_context: dict[str, object], entry: dict[str, object]) -> None:
+    quote_type_id = _parse_uuid(entry.get("quote_type_id"))
+    if quote_type_id is not None:
+        runtime_context["quote_type_id"] = quote_type_id
+    quote_type = _text(entry.get("quote_type"))
+    if quote_type:
+        runtime_context["quote_type"] = quote_type
+
+    pricing_catalog_id = _parse_uuid(entry.get("pricing_catalog_id"))
+    if pricing_catalog_id is not None:
+        runtime_context["pricing_catalog_id"] = pricing_catalog_id
+
+    payment_plan_id = _parse_uuid(entry.get("payment_plan_id"))
+    if payment_plan_id is not None:
+        runtime_context["payment_plan_id"] = payment_plan_id
+
+    legal_entity_id = _parse_uuid(entry.get("legal_entity_id"))
+    if legal_entity_id is not None:
+        runtime_context["legal_entity_id"] = legal_entity_id
+
+
+def _find_override_for_location(
+    location_overrides: list[dict[str, object]],
+    location: Location | None,
+) -> dict[str, object] | None:
+    if location is None:
+        return None
+    location_tokens = {
+        _normalize_token(location.code),
+        _normalize_token(location.name),
+    }
+    for entry in location_overrides:
+        match_values = set(_location_override_match_values(entry))
+        if match_values & location_tokens:
+            return entry
+    return None
+
+
+def _resolve_form_runtime_context(
+    db: Session,
+    *,
+    config: TypeformFormConfig | None,
+    normalized: dict[str, object],
+) -> dict[str, object]:
+    requested_location = _text(normalized.get("requested_location")) or None
+    if config is None:
+        return {
+            "requested_location": requested_location,
+            "location_id": None,
+            "location_code": None,
+            "location_name": None,
+            "quote_type_id": None,
+            "quote_type": None,
+            "pricing_catalog_id": None,
+            "pricing_catalog_name": None,
+            "payment_plan_id": None,
+            "payment_plan_name": None,
+            "legal_entity_id": None,
+            "legal_entity_name": None,
+            "warnings": [],
+            "blockages": [],
+        }
+
+    config_json = _json_object(config.configuration_json)
+    location_overrides = [item for item in _json_list(config_json.get("location_overrides")) if isinstance(item, dict)]
+    warnings: list[str] = []
+    blockages: list[str] = []
+    location = db.scalar(select(Location).where(Location.id == config.default_location_id).limit(1)) if config.default_location_id else None
+
+    runtime_context: dict[str, object] = {
+        "requested_location": requested_location,
+        "location_id": config.default_location_id,
+        "location_code": config.location_code,
+        "location_name": location.name if location is not None else None,
+        "quote_type_id": config.default_quote_type_id,
+        "quote_type": _text(config.default_quote_type) or None,
+        "pricing_catalog_id": config.default_pricing_catalog_id,
+        "payment_plan_id": config.default_payment_plan_id,
+        "legal_entity_id": config.default_legal_entity_id,
+    }
+
+    matched_override: dict[str, object] | None = None
+    if requested_location:
+        requested_token = _normalize_token(requested_location)
+        for entry in location_overrides:
+            if requested_token in set(_location_override_match_values(entry)):
+                matched_override = entry
+                break
+
+        if matched_override is not None:
+            override_location = _resolve_location_from_override(db, matched_override)
+            if any(_text(matched_override.get(key)) for key in ("location_id", "location_code", "location_name")) and override_location is None:
+                blockages.append(
+                    f"Le lieu '{requested_location}' est mappe mais le site cible n existe pas dans l application."
+                )
+            elif override_location is not None:
+                location = override_location
+        else:
+            inferred_location, warning_message = _find_location_by_request_value(db, requested_location)
+            if warning_message:
+                warnings.append(warning_message)
+            if inferred_location is not None:
+                location = inferred_location
+                matched_override = _find_override_for_location(location_overrides, inferred_location)
+
+        if requested_location and location is None and location_overrides:
+            blockages.append(f"Aucun site configure pour le lieu '{requested_location}'.")
+
+    if matched_override is not None:
+        _apply_runtime_override(runtime_context, matched_override)
+
+    if location is not None:
+        runtime_context["location_id"] = location.id
+        runtime_context["location_code"] = location.code
+        runtime_context["location_name"] = location.name
+
+    quote_type = db.scalar(select(QuoteType).where(QuoteType.id == runtime_context["quote_type_id"]).limit(1)) if runtime_context.get("quote_type_id") else None
+    pricing_catalog = (
+        db.scalar(select(PricingCatalog).where(PricingCatalog.id == runtime_context["pricing_catalog_id"]).limit(1))
+        if runtime_context.get("pricing_catalog_id")
+        else None
+    )
+    payment_plan = (
+        db.scalar(select(PaymentPlan).where(PaymentPlan.id == runtime_context["payment_plan_id"]).limit(1))
+        if runtime_context.get("payment_plan_id")
+        else None
+    )
+    legal_entity = (
+        db.scalar(select(LegalEntity).where(LegalEntity.id == runtime_context["legal_entity_id"]).limit(1))
+        if runtime_context.get("legal_entity_id")
+        else None
+    )
+
+    runtime_context["quote_type"] = quote_type.name if quote_type is not None else runtime_context.get("quote_type")
+    runtime_context["pricing_catalog_name"] = pricing_catalog.name if pricing_catalog is not None else None
+    runtime_context["payment_plan_name"] = payment_plan.name if payment_plan is not None else None
+    runtime_context["legal_entity_name"] = legal_entity.name if legal_entity is not None else None
+    runtime_context["warnings"] = list(dict.fromkeys(warnings))
+    runtime_context["blockages"] = list(dict.fromkeys(blockages))
+    return runtime_context
+
+
 def _build_preview_lines(
     db: Session,
     *,
     config: TypeformFormConfig | None,
     normalized: dict[str, object],
+    runtime_context: dict[str, object],
 ) -> tuple[list[TypeformQuotePreviewLineOut], list[QuoteLineIn], list[str], list[str]]:
     config_json = _json_object(config.configuration_json if config is not None else {})
     line_templates = [item for item in _json_list(config_json.get("line_templates")) if isinstance(item, dict)]
@@ -779,7 +1010,8 @@ def _build_preview_lines(
     quote_lines: list[QuoteLineIn] = []
 
     default_vat_rate = _parse_decimal(config_json.get("default_vat_rate"), Decimal("20.00"))
-    pricing_catalog_id = config.default_pricing_catalog_id if config is not None else None
+    pricing_catalog_id = _parse_uuid(runtime_context.get("pricing_catalog_id"))
+    resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
 
     if not line_templates:
         blockages.append("Aucune ligne de pre-devis n est configuree pour ce formulaire.")
@@ -819,18 +1051,19 @@ def _build_preview_lines(
             db,
             line=line_in,
             pricing_catalog_id=pricing_catalog_id,
+            location_id=resolved_location_id,
         )
         meta = dict(meta)
         pricing_source = _text(meta.get("pricing_source"))
         if pricing_source == "activity_default_course_rate":
             warnings.append(f"Tarif catalogue absent pour {title}, tarif par defaut activite utilise.")
-        if pricing_source == "catalog_activity" and activity_id is not None and config is not None:
+        if pricing_source == "catalog_activity" and activity_id is not None and resolved_location_id is not None:
             location_specific_price = db.scalar(
                 select(PricingActivityPrice.id)
                 .where(
                     PricingActivityPrice.catalog_id == pricing_catalog_id,
                     PricingActivityPrice.activity_id == activity_id,
-                    PricingActivityPrice.location_id == config.default_location_id,
+                    PricingActivityPrice.location_id == resolved_location_id,
                     PricingActivityPrice.is_active.is_(True),
                 )
                 .limit(1)
@@ -920,6 +1153,7 @@ def _build_session_recommendations(
     normalized: dict[str, object],
     preview_lines: list[TypeformQuotePreviewLineOut],
     resolution: dict[str, object],
+    runtime_context: dict[str, object],
 ) -> tuple[list[TypeformSessionRecommendationOut], list[str], list[str]]:
     activity_ids = [line.activity_id for line in preview_lines if line.activity_id is not None]
     if not activity_ids:
@@ -954,6 +1188,7 @@ def _build_session_recommendations(
         by_activity.setdefault(activity.id, []).append((session_obj, activity, location, int(booked_count or 0)))
 
     requested_location = _lower(normalized.get("requested_location"))
+    resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
     requested_days = {_weekday_from_label(day) for day in _json_list(normalized.get("requested_days"))}
     requested_days.discard(None)
     requested_times = [_minutes_from_hhmm(_text(value)) for value in _json_list(normalized.get("requested_times"))]
@@ -976,8 +1211,11 @@ def _build_session_recommendations(
             start_minutes = local_start.hour * 60 + local_start.minute
             score = 30
             reasons: list[str] = []
-            if config is not None and config.default_location_id == location.id:
+            if resolved_location_id is not None and resolved_location_id == location.id:
                 score += 20
+                reasons.append("site choisi")
+            elif config is not None and config.default_location_id == location.id:
+                score += 10
                 reasons.append("site par defaut")
             if requested_location and requested_location in {_lower(config.location_code if config is not None else None), _lower(location.code), _lower(location.name)}:
                 score += 20
@@ -1086,15 +1324,10 @@ def _build_preview(
     resolution: dict[str, object],
     preview_lines: list[TypeformQuotePreviewLineOut],
     session_recommendations: list[TypeformSessionRecommendationOut],
+    runtime_context: dict[str, object],
 ) -> TypeformQuotePreviewOut | None:
     if config is None or not preview_lines:
         return None
-
-    quote_type = db.scalar(select(QuoteType).where(QuoteType.id == config.default_quote_type_id)) if config.default_quote_type_id else None
-    pricing_catalog = db.scalar(select(PricingCatalog).where(PricingCatalog.id == config.default_pricing_catalog_id)) if config.default_pricing_catalog_id else None
-    payment_plan = db.scalar(select(PaymentPlan).where(PaymentPlan.id == config.default_payment_plan_id)) if config.default_payment_plan_id else None
-    legal_entity = db.scalar(select(LegalEntity).where(LegalEntity.id == config.default_legal_entity_id)) if config.default_legal_entity_id else None
-    location = db.scalar(select(Location).where(Location.id == config.default_location_id)) if config.default_location_id else None
 
     client_resolution = _json_object(resolution.get("client_resolution"))
     mode = _text(client_resolution.get("mode")) or CLIENT_MODE_NEW_ADULT
@@ -1127,16 +1360,16 @@ def _build_preview(
         context_type=context_type,
         context_label=context_label,
         customer_label=customer_label,
-        location_id=config.default_location_id,
-        location_name=location.name if location is not None else None,
-        payment_plan_id=config.default_payment_plan_id,
-        payment_plan_name=payment_plan.name if payment_plan is not None else None,
-        quote_type_id=config.default_quote_type_id,
-        quote_type_name=quote_type.name if quote_type is not None else config.default_quote_type,
-        pricing_catalog_id=config.default_pricing_catalog_id,
-        pricing_catalog_name=pricing_catalog.name if pricing_catalog is not None else None,
-        legal_entity_id=config.default_legal_entity_id,
-        legal_entity_name=legal_entity.name if legal_entity is not None else None,
+        location_id=_parse_uuid(runtime_context.get("location_id")),
+        location_name=_text(runtime_context.get("location_name")) or None,
+        payment_plan_id=_parse_uuid(runtime_context.get("payment_plan_id")),
+        payment_plan_name=_text(runtime_context.get("payment_plan_name")) or None,
+        quote_type_id=_parse_uuid(runtime_context.get("quote_type_id")),
+        quote_type_name=_text(runtime_context.get("quote_type")) or config.default_quote_type,
+        pricing_catalog_id=_parse_uuid(runtime_context.get("pricing_catalog_id")),
+        pricing_catalog_name=_text(runtime_context.get("pricing_catalog_name")) or None,
+        legal_entity_id=_parse_uuid(runtime_context.get("legal_entity_id")),
+        legal_entity_name=_text(runtime_context.get("legal_entity_name")) or None,
         school_year_label=config.school_year_label,
         language=config.default_language,
         currency="EUR",
@@ -1147,7 +1380,8 @@ def _build_preview(
         total_ttc=total_ttc,
         meta={
             "segment": config.audience_segment,
-            "location_code": config.location_code,
+            "location_code": _text(runtime_context.get("location_code")) or config.location_code,
+            "form_location_code": config.location_code,
             "session_recommendations": [
                 {
                     "activity_id": str(item.activity_id),
@@ -1198,13 +1432,20 @@ def _analysis_for_intake(
         family_candidates=family_candidates,
     )
 
-    preview_lines, quote_lines, line_warnings, line_blockages = _build_preview_lines(db, config=config, normalized=normalized)
+    runtime_context = _resolve_form_runtime_context(db, config=config, normalized=normalized)
+    preview_lines, quote_lines, line_warnings, line_blockages = _build_preview_lines(
+        db,
+        config=config,
+        normalized=normalized,
+        runtime_context=runtime_context,
+    )
     session_recommendations, session_warnings, session_blockages = _build_session_recommendations(
         db,
         config=config,
         normalized=normalized,
         preview_lines=preview_lines,
         resolution=effective_resolution,
+        runtime_context=runtime_context,
     )
     preview_quote = _build_preview(
         db,
@@ -1213,10 +1454,11 @@ def _analysis_for_intake(
         resolution=effective_resolution,
         preview_lines=preview_lines,
         session_recommendations=session_recommendations,
+        runtime_context=runtime_context,
     )
 
-    warnings = list(dict.fromkeys(line_warnings + session_warnings))
-    blockages = list(dict.fromkeys(line_blockages + session_blockages))
+    warnings = list(dict.fromkeys(_json_list(runtime_context.get("warnings")) + line_warnings + session_warnings))
+    blockages = list(dict.fromkeys(_json_list(runtime_context.get("blockages")) + line_blockages + session_blockages))
 
     if config is None:
         blockages.insert(0, "Aucune configuration active ne correspond au formulaire Typeform.")
@@ -1247,6 +1489,7 @@ def _analysis_for_intake(
         "preview_quote": preview_quote,
         "preview_quote_lines_in": quote_lines,
         "session_recommendations": session_recommendations,
+        "runtime_context": runtime_context,
         "warnings": list(dict.fromkeys(warnings)),
         "blockages": list(dict.fromkeys(blockages)),
         "intake_status": intake_status,
@@ -1256,7 +1499,13 @@ def _analysis_for_intake(
 def _refresh_intake_analysis(db: Session, intake: TypeformIntake) -> dict[str, object]:
     analysis = _analysis_for_intake(db, intake)
     intake.intake_status = str(analysis["intake_status"])
-    intake.detected_location = _text(_json_object(analysis["normalized"]).get("requested_location")) or (analysis["config"].location_code if analysis["config"] is not None else None)
+    runtime_context = _json_object(analysis.get("runtime_context"))
+    intake.detected_location = (
+        _text(runtime_context.get("location_name"))
+        or _text(runtime_context.get("location_code"))
+        or _text(_json_object(analysis["normalized"]).get("requested_location"))
+        or (analysis["config"].location_code if analysis["config"] is not None else None)
+    )
     intake.detected_segment = analysis["config"].audience_segment if analysis["config"] is not None else None
     intake.detected_school_year = analysis["config"].school_year_label if analysis["config"] is not None else None
     intake.warnings_json = [{"message": message} for message in analysis["warnings"]]
@@ -1391,7 +1640,7 @@ def _ingest_typeform_payload(db: Session, payload: dict[str, object]) -> Typefor
             normalized_payload_json=normalized,
             simplified_response_json=simplified_answers,
             intake_status=INTAKE_STATUS_NEW,
-            detected_location=config.location_code if config is not None else _text(normalized.get("requested_location")) or None,
+            detected_location=_text(normalized.get("requested_location")) or (config.location_code if config is not None else None),
             detected_segment=config.audience_segment if config is not None else None,
             detected_school_year=config.school_year_label if config is not None else None,
             created_at=_utcnow(),
@@ -1820,6 +2069,7 @@ def _quote_meta_from_analysis(
     normalized: dict[str, object],
     resolution: dict[str, object],
     session_recommendations: list[TypeformSessionRecommendationOut],
+    runtime_context: dict[str, object],
 ) -> dict[str, object]:
     selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
     return {
@@ -1830,7 +2080,9 @@ def _quote_meta_from_analysis(
             "source_form_id": intake.source_form_id,
             "source_response_id": intake.source_response_id,
             "source_code": config.source_code,
-            "location_code": config.location_code,
+            "location_code": _text(runtime_context.get("location_code")) or config.location_code,
+            "form_location_code": config.location_code,
+            "location_id": str(_parse_uuid(runtime_context.get("location_id"))) if _parse_uuid(runtime_context.get("location_id")) else None,
             "audience_segment": config.audience_segment,
             "school_year_label": config.school_year_label,
             "normalized_payload": normalized,
@@ -2042,6 +2294,7 @@ def create_draft_quote_from_typeform_intake(
         normalized=normalized,
         resolution={**resolution, "created_entities": created_entities},
         session_recommendations=analysis["session_recommendations"],
+        runtime_context=_json_object(analysis.get("runtime_context")),
     )
     if mode == CLIENT_MODE_EXISTING_FAMILY:
         quote_meta["typeform_selected_family_adult_client_id"] = client_resolution.get("selected_family_adult_client_id")
@@ -2049,14 +2302,14 @@ def create_draft_quote_from_typeform_intake(
 
     quote_payload = QuoteCreateRequest(
         context_type=context_type,
-        quote_type=_text(config.default_quote_type) or "forfait",
-        quote_type_id=config.default_quote_type_id,
-        pricing_catalog_id=config.default_pricing_catalog_id,
+        quote_type=_text(_json_object(analysis.get("runtime_context")).get("quote_type")) or _text(config.default_quote_type) or "forfait",
+        quote_type_id=_parse_uuid(_json_object(analysis.get("runtime_context")).get("quote_type_id")) or config.default_quote_type_id,
+        pricing_catalog_id=_parse_uuid(_json_object(analysis.get("runtime_context")).get("pricing_catalog_id")) or config.default_pricing_catalog_id,
         prospect_id=prospect_id,
         client_id=client_id,
-        location_id=config.default_location_id,
-        legal_entity_id=config.default_legal_entity_id,
-        payment_plan_id=config.default_payment_plan_id,
+        location_id=_parse_uuid(_json_object(analysis.get("runtime_context")).get("location_id")) or config.default_location_id,
+        legal_entity_id=_parse_uuid(_json_object(analysis.get("runtime_context")).get("legal_entity_id")) or config.default_legal_entity_id,
+        payment_plan_id=_parse_uuid(_json_object(analysis.get("runtime_context")).get("payment_plan_id")) or config.default_payment_plan_id,
         school_year_label=config.school_year_label,
         currency="EUR",
         language=config.default_language,
