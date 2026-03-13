@@ -2641,6 +2641,7 @@ def update_session(
     recurrence_frequency = "WEEKLY"
     recurrence_interval = 1
     create_future_recurrences = False
+    realign_existing_recurrence = False
     if recurrence_payload is not None:
         recurrence_frequency = _normalize_recurrence_frequency(str(recurrence_payload.get("frequency") or ""))
         recurrence_interval = _normalize_recurrence_interval(recurrence_payload.get("interval"))
@@ -2651,6 +2652,7 @@ def update_session(
         if session_obj.recurrence_group_id is not None:
             recurrence_occurrences = 1
             recurrence_group_id = session_obj.recurrence_group_id if apply_scope == "SERIES_ALL" else uuid4()
+            realign_existing_recurrence = True
         else:
             recurrence_until_date = recurrence_payload.get("until_date")
             recurrence_occurrences = _resolve_recurrence_occurrences(
@@ -2679,8 +2681,16 @@ def update_session(
 
     now = _utcnow()
     target_sessions = _target_sessions_for_scope(db, session_obj=session_obj, apply_scope=apply_scope)
+    recurrence_base_start: datetime | None = None
+    if realign_existing_recurrence and target_sessions:
+        if apply_scope == "SERIES_ALL":
+            recurrence_base_start = target_sessions[0].start_at_utc
+            if has_start_update:
+                recurrence_base_start = recurrence_base_start + anchor_start_shift
+        else:
+            recurrence_base_start = anchor_start
 
-    for target in target_sessions:
+    for target_index, target in enumerate(target_sessions):
         target.course_type_id = course_type_id
         target.billing_entity_snapshot = normalize_billing_entity(course_type.billing_entity_code)
         target.snapshot_seller_legal_entity_id = course_type.seller_legal_entity_id
@@ -2751,6 +2761,29 @@ def update_session(
             resolved_start = anchor_start
             resolved_end = anchor_end
             resolved_deadline = anchor_deadline
+        elif recurrence_base_start is not None and recurrence_rule is not None:
+            resolved_start = _advance_recurrence_datetime(
+                recurrence_base_start,
+                frequency=recurrence_frequency,
+                interval=recurrence_interval,
+                offset=target_index,
+            )
+            if resolved_is_all_day:
+                resolved_start = _start_of_utc_day(resolved_start)
+                resolved_end = resolved_start + timedelta(days=1)
+                if "auto_cancel_deadline_utc" in updates:
+                    resolved_deadline = resolved_start - anchor_deadline_delta
+                else:
+                    resolved_deadline = _resolve_auto_cancel_deadline(
+                        db,
+                        start_at_utc=resolved_start,
+                        auto_cancel_deadline_utc=None,
+                        location_id=target.location_id,
+                        course_type_id=target.course_type_id,
+                    )
+            else:
+                resolved_end = resolved_start + anchor_new_duration
+                resolved_deadline = resolved_start - anchor_deadline_delta
         else:
             if has_start_update:
                 resolved_start = original_target_start + anchor_start_shift
