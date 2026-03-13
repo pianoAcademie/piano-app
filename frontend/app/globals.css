@@ -4468,6 +4468,16 @@ button.danger:focus-visible {
   font-size: 12px;
 }
 
+@media (min-width: 981px) and (max-width: 1080px) {
+  .solfege-config-form .cols-span-4 {
+    grid-column: 1 / -1;
+  }
+
+  .solfege-config-form .cols-span-2 {
+    grid-column: span 2;
+  }
+}
+
 @media (max-width: 1200px) {
   .solfege-slot-grid {
     grid-template-columns: 1fr;
