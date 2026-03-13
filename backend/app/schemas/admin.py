@@ -507,6 +507,7 @@ class AdminActivityOut(BaseModel):
     color_hex: str
     mode: DeliveryMode
     requires_professor: bool
+    allows_student_bookings: bool
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None
@@ -533,7 +534,8 @@ class AdminActivityUpsertRequest(BaseModel):
     color_hex: str = Field(default="#94C973", min_length=7, max_length=7)
     mode: DeliveryMode = DeliveryMode.ANY
     requires_professor: bool = True
-    default_capacity: int = Field(default=8, ge=1, le=500)
+    allows_student_bookings: bool = True
+    default_capacity: int = Field(default=8, ge=0, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
     email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
@@ -559,7 +561,8 @@ class AdminActivityUpdateRequest(BaseModel):
     color_hex: str | None = Field(default=None, min_length=7, max_length=7)
     mode: DeliveryMode | None = None
     requires_professor: bool | None = None
-    default_capacity: int | None = Field(default=None, ge=1, le=500)
+    allows_student_bookings: bool | None = None
+    default_capacity: int | None = Field(default=None, ge=0, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
     email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
@@ -1695,6 +1698,8 @@ class AdminSessionOut(BaseModel):
     substitute_teacher_display_name: str | None
     effective_teacher_id: UUID | None
     effective_teacher_display_name: str
+    requires_professor: bool
+    allows_student_bookings: bool
     location_label: str
     type_label: str
     status_label: str

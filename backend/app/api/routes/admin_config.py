@@ -275,9 +275,9 @@ def _validate_activity_duration(*, service_code: str | None, duration_minutes: i
             )
 
 
-def _normalize_activity_capacity(*, service_code: str | None, capacity: int) -> int:
-    if _is_vacation_service_code(service_code):
-        return 1
+def _normalize_activity_capacity(*, allows_student_bookings: bool, capacity: int) -> int:
+    if not allows_student_bookings:
+        return 0
     return capacity
 
 
@@ -311,6 +311,7 @@ def _serialize_activity(
         color_hex=activity.color_hex,
         mode=activity.mode,
         requires_professor=bool(activity.requires_professor),
+        allows_student_bookings=bool(activity.allows_student_bookings),
         default_capacity=activity.default_capacity,
         default_hourly_rate=activity.default_hourly_rate,
         default_course_rate_ttc=activity.default_course_rate_ttc,
@@ -1591,9 +1592,10 @@ def create_admin_activity(
         duration_minutes=int(payload.duration_minutes),
         color_hex=_normalize_color_hex(payload.color_hex),
         mode=DeliveryMode(payload.mode),
-        requires_professor=bool(payload.requires_professor),
+        requires_professor=bool(payload.requires_professor) if payload.allows_student_bookings else False,
+        allows_student_bookings=bool(payload.allows_student_bookings),
         default_capacity=_normalize_activity_capacity(
-            service_code=payload.service_code,
+            allows_student_bookings=bool(payload.allows_student_bookings),
             capacity=int(payload.default_capacity),
         ),
         default_hourly_rate=payload.default_hourly_rate,
@@ -1704,16 +1706,23 @@ def update_admin_activity(
         activity.mode = DeliveryMode(changes["mode"])
 
     if "requires_professor" in changes:
-        activity.requires_professor = bool(changes["requires_professor"])
+        activity.requires_professor = bool(changes["requires_professor"]) if activity.allows_student_bookings else False
+
+    if "allows_student_bookings" in changes:
+        activity.allows_student_bookings = bool(changes["allows_student_bookings"])
+        if not activity.allows_student_bookings:
+            activity.requires_professor = False
+            activity.default_capacity = 0
 
     if "default_capacity" in changes:
         activity.default_capacity = _normalize_activity_capacity(
-            service_code=activity.service_code,
+            allows_student_bookings=bool(activity.allows_student_bookings),
             capacity=int(changes["default_capacity"]),
         )
 
-    if "service_code" in changes and _is_vacation_service_code(activity.service_code):
-        activity.default_capacity = 1
+    if not activity.allows_student_bookings:
+        activity.requires_professor = False
+        activity.default_capacity = 0
 
     _validate_activity_duration(
         service_code=activity.service_code,

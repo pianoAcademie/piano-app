@@ -80,6 +80,7 @@ def list_course_types(
             color_hex=row.color_hex,
             mode=row.mode,
             requires_professor=bool(row.requires_professor),
+            allows_student_bookings=bool(row.allows_student_bookings),
             default_capacity=row.default_capacity,
             default_hourly_rate=row.default_hourly_rate,
             default_course_rate_ttc=row.default_course_rate_ttc,

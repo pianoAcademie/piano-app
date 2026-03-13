@@ -239,6 +239,8 @@ def _to_admin_session_out(
         substitute_teacher_display_name=substitute_teacher_display_name,
         effective_teacher_id=effective_teacher_id,
         effective_teacher_display_name=effective_teacher_display_name,
+        requires_professor=bool(course_type.requires_professor) if course_type is not None else True,
+        allows_student_bookings=bool(course_type.allows_student_bookings) if course_type is not None else True,
         location_label=location_label,
         type_label=type_label,
         status_label=status_label,
@@ -1599,6 +1601,7 @@ def create_session(
     session_timezone = _normalize_session_timezone(payload.timezone or location.timezone)
 
     is_vacation = _is_vacation_course_type(course_type)
+    allows_student_bookings = bool(course_type.allows_student_bookings)
     is_all_day = bool(payload.is_all_day or is_vacation)
 
     if is_all_day:
@@ -1615,14 +1618,14 @@ def create_session(
         location_id=payload.location_id,
         course_type_id=payload.course_type_id,
     )
-    if is_vacation:
+    if is_vacation or not allows_student_bookings:
         capacity_max = 0
     else:
         capacity_max = int(payload.capacity_max)
         if capacity_max <= 0:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Capacite max obligatoire (>= 1, sauf type vacances)",
+                detail="Capacite max obligatoire (>= 1, sauf creneau sans eleve)",
             )
 
     _validate_session_times(
@@ -1734,7 +1737,7 @@ def create_session(
                     professor=professor,
                 ),
                 is_private=payload.is_private,
-                allow_online_booking=(not payload.is_private) and bool(payload.allow_online_booking),
+                allow_online_booking=(not payload.is_private) and allows_student_bookings and bool(payload.allow_online_booking),
                 timezone=session_timezone,
                 recurrence_group_id=recurrence_group_id,
                 recurrence_rule=recurrence_rule,
@@ -2265,6 +2268,7 @@ def add_admin_session_booking(
         skipped_count = 0
         details: list[str] = []
         planning_force_cache: dict[UUID, bool] = {}
+        course_type_cache: dict[UUID, CourseType | None] = {}
 
         def add_detail(message: str) -> None:
             if message not in details:
@@ -2282,6 +2286,19 @@ def add_admin_session_booking(
             if target.status == SessionStatus.CANCELLED:
                 skipped_count += 1
                 add_detail("Creneau non reservable (annule)")
+                continue
+
+            target_course_type = course_type_cache.get(target.course_type_id)
+            if target_course_type is None:
+                target_course_type = db.scalar(select(CourseType).where(CourseType.id == target.course_type_id))
+                course_type_cache[target.course_type_id] = target_course_type
+            if target_course_type is None:
+                skipped_count += 1
+                add_detail("Activite introuvable pour ce creneau")
+                continue
+            if not bool(target_course_type.allows_student_bookings):
+                skipped_count += 1
+                add_detail("Creneau sans eleve: inscription impossible")
                 continue
 
             existing = db.scalar(
@@ -2578,6 +2595,7 @@ def update_session(
     )
     session_zoom_professor = professor
     is_vacation = _is_vacation_course_type(course_type)
+    allows_student_bookings = bool(course_type.allows_student_bookings)
     anchor_timezone = _normalize_session_timezone(updates.get("timezone", session_obj.timezone or location.timezone))
 
     original_anchor_start = session_obj.start_at_utc
@@ -2723,14 +2741,14 @@ def update_session(
                 location=location,
                 professor=session_zoom_professor,
             )
-        if is_vacation:
+        if is_vacation or not allows_student_bookings:
             target.capacity_max = 0
         elif "capacity_max" in updates:
             next_capacity = int(updates["capacity_max"])
             if next_capacity <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Capacite max obligatoire (>= 1, sauf type vacances)",
+                    detail="Capacite max obligatoire (>= 1, sauf creneau sans eleve)",
                 )
             target.capacity_max = next_capacity
         elif target.capacity_max <= 0:
@@ -2744,7 +2762,7 @@ def update_session(
         if "allow_online_booking" in updates or "is_private" in updates:
             next_online_booking = bool(updates.get("allow_online_booking", target.allow_online_booking))
             next_is_private = bool(updates.get("is_private", target.is_private))
-            target.allow_online_booking = False if next_is_private else next_online_booking
+            target.allow_online_booking = False if next_is_private or not allows_student_bookings else next_online_booking
 
         original_target_start = target.start_at_utc
         original_target_end = target.end_at_utc

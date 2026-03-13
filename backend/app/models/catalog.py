@@ -153,7 +153,11 @@ class CourseType(Base):
     __tablename__ = "course_types"
     __table_args__ = (
         CheckConstraint("duration_minutes > 0", name="ck_course_types_duration_positive"),
-        CheckConstraint("default_capacity > 0", name="ck_course_types_capacity_positive"),
+        CheckConstraint("default_capacity >= 0", name="ck_course_types_capacity_positive"),
+        CheckConstraint(
+            "allows_student_bookings OR default_capacity = 0",
+            name="ck_course_types_no_student_requires_zero_capacity",
+        ),
         CheckConstraint("char_length(color_hex) = 7", name="ck_course_types_color_hex_length"),
         CheckConstraint(
             "default_hourly_rate IS NULL OR default_hourly_rate >= 0",
@@ -233,6 +237,7 @@ class CourseType(Base):
         nullable=False,
     )
     requires_professor: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    allows_student_bookings: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     default_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     default_hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     default_course_rate_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)

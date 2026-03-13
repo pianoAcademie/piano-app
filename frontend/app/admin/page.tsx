@@ -737,6 +737,18 @@ function draftPositiveInteger(raw: string): number | null {
   return parsed;
 }
 
+function draftNonNegativeInteger(raw: string): number | null {
+  const value = String(raw || "").trim();
+  if (!value) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
 function parseRecurrenceRuleDefaults(rawRule: string | null | undefined): { frequency: "DAILY" | "WEEKLY" | "MONTHLY"; interval: number } {
   const raw = String(rawRule || "").trim().toUpperCase();
   if (!raw) {
@@ -1192,6 +1204,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedSessionIsOnline = selectedSession
     ? (locationById.get(selectedSession.location_id)?.is_online ?? false) || selectedSession.type_label.toLowerCase().includes("online")
     : false;
+  const selectedSessionRequiresProfessor = selectedSession ? selectedSession.requires_professor !== false : true;
+  const selectedSessionAllowsStudentBookings = selectedSession ? selectedSession.allows_student_bookings !== false : true;
   const selectedHabitualProfessorName = selectedSession
     ? (selectedSession.habitual_teacher_display_name || "").trim() ||
       (selectedHabitualProfessorDetail ? `${selectedHabitualProfessorDetail.first_name} ${selectedHabitualProfessorDetail.last_name}`.trim() : "") ||
@@ -1206,7 +1220,28 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       (selectedEffectiveProfessorDetail ? `${selectedEffectiveProfessorDetail.first_name} ${selectedEffectiveProfessorDetail.last_name}`.trim() : "") ||
       selectedHabitualProfessorName
     : "";
+  const selectedHabitualProfessorLabel = !selectedSession
+    ? ""
+    : !selectedSessionRequiresProfessor
+      ? selectedHabitualProfessorName === "Professeur non defini"
+        ? "Non requis"
+        : `${selectedHabitualProfessorName} (optionnel)`
+      : selectedHabitualProfessorName;
+  const selectedSubstituteProfessorLabel = !selectedSession
+    ? ""
+    : !selectedSessionRequiresProfessor
+      ? selectedSubstituteProfessorName
+        ? `${selectedSubstituteProfessorName} (optionnel)`
+        : "Aucun"
+      : selectedSubstituteProfessorName || "Aucun";
   const selectedSessionIsSubstituted = Boolean(selectedSession?.substitute_teacher_id);
+  const selectedEffectiveProfessorLabel = !selectedSession
+    ? ""
+    : !selectedSessionRequiresProfessor
+      ? selectedEffectiveProfessorName && selectedEffectiveProfessorName !== "Professeur non defini"
+        ? `${selectedEffectiveProfessorName}${selectedSessionIsSubstituted ? " (remplacant optionnel)" : " (optionnel)"}`
+        : "Non requis"
+      : `${selectedEffectiveProfessorName}${selectedSessionIsSubstituted ? " (remplacant)" : ""}`;
   const selectedEffectiveProfessorZoomLink = (selectedEffectiveProfessorDetail?.zoom_link ?? "").trim();
   const selectedSessionZoomLink =
     selectedSession && ((selectedSession.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedEffectiveProfessorZoomLink : ""))
@@ -1215,7 +1250,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedSessionTypeName = selectedSession ? sessionTypeLabel(selectedSession, selectedLocationName) : "";
   const selectedSessionHeaderTitle = selectedSession ? `${selectedCourseTypeName} - ${selectedLocationName}` : "";
   const selectedSessionSubtitle = selectedSession
-    ? `${formatDate(selectedSession.start_at_utc, selectedSession.timezone)} · ${sessionTimeRangeLabel(selectedSession)} · ${selectedSession.timezone} · Prof: ${selectedEffectiveProfessorName}${selectedSessionIsSubstituted ? " (remplacant)" : ""}`
+    ? `${formatDate(selectedSession.start_at_utc, selectedSession.timezone)} · ${sessionTimeRangeLabel(selectedSession)} · ${selectedSession.timezone} · Prof: ${selectedEffectiveProfessorLabel || "Non requis"}`
     : "";
   const timezoneOptionValues = new Set(PLANNING_TIMEZONES.map((option) => option.value));
   const timezoneOptions = timezoneOptionValues.has(timezone)
@@ -1238,7 +1273,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     ? createDraft.allow_online_booking === "1"
     : false;
   const createDraftDuration = createDraft ? draftPositiveInteger(createDraft.duration_minutes) : null;
-  const createDraftCapacity = createDraft ? draftPositiveInteger(createDraft.capacity_max) : null;
+  const createDraftCapacity = createDraft ? draftNonNegativeInteger(createDraft.capacity_max) : null;
   const createRecurrenceMode = createDraft?.recurrence_mode?.trim().toUpperCase() === "RECURRING" ? "RECURRING" : "NONE";
   const createRecurrenceFrequencyRaw = createDraft?.recurrence_frequency?.trim().toUpperCase() ?? "WEEKLY";
   const createRecurrenceFrequency =
@@ -1474,7 +1509,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               ×
             </a>
             <h2 className="modal-title">Ajouter un creneau</h2>
-            <p className="muted">Un creneau est sur un seul jour local. Capacite requise (defaut: 1).</p>
+            <p className="muted">Un creneau est sur un seul jour local. Capacite 0 autorisee pour les creneaux sans eleve.</p>
             {(okMessage || errorMessage) ? (
               <section className="modal-overlay modal-overlay-front">
                 <article className="modal-panel modal-compact">
@@ -1511,6 +1546,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     durationMinutes: row.duration_minutes,
                     defaultCapacity: row.default_capacity,
                     requiresProfessor: row.requires_professor,
+                    allowsStudentBookings: row.allows_student_bookings,
                   }))}
                   professors={professors.map((row) => ({
                     id: row.id,
@@ -1709,10 +1745,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </a>
                     <hr />
                     <p className="muted">Infos</p>
-                    <span className="badge">Professeur: {selectedEffectiveProfessorName}</span>
+                    <span className="badge">Professeur: {selectedEffectiveProfessorLabel || "Non requis"}</span>
                     {selectedSessionIsSubstituted ? <span className="badge">Remplacant</span> : null}
                     <span className="badge">{selectedSession.allow_online_booking ? "Reservation en ligne: oui" : "Reservation en ligne: non"}</span>
                     {selectedSession.is_private ? <span className="badge">Prive</span> : null}
+                    {!selectedSessionAllowsStudentBookings ? <span className="badge">Sans eleve</span> : null}
                   </div>
                 </details>
                 <a className="modal-close-x session-slot-close" href={baseHref} aria-label="Fermer">
@@ -1730,6 +1767,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </span>
               <span className="badge">{selectedSessionTypeName}</span>
               <span className="badge">{recurrenceLabel(selectedSession)}</span>
+              {!selectedSessionAllowsStudentBookings ? <span className="badge">Sans eleve</span> : null}
             </div>
 
             <div className="session-slot-toolbar">
@@ -1853,49 +1891,56 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               <aside className="session-slot-right">
                 <details className="session-slot-section session-slot-section-enroll" open>
-                  <summary>Inscrire un eleve</summary>
+                  <summary>{selectedSessionAllowsStudentBookings ? "Inscrire un eleve" : "Inscriptions eleves"}</summary>
                   <div className="session-slot-section-body">
-                    <form action={adminAddClientToSessionAction} className="session-enroll-form">
-                      <input type="hidden" name="session_id" value={selectedSession.id} />
-                      <input type="hidden" name="return_to" value={modalHref} />
+                    {!selectedSessionAllowsStudentBookings ? (
+                      <p className="muted">
+                        Ce creneau est marque sans eleve. Aucune inscription n est possible depuis le planning ni depuis
+                        l espace client.
+                      </p>
+                    ) : (
+                      <form action={adminAddClientToSessionAction} className="session-enroll-form">
+                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                        <input type="hidden" name="return_to" value={modalHref} />
 
-                      <SearchMultiSelect
-                        className="session-enroll-search"
-                        label="Eleve"
-                        name="client_id"
-                        options={bookingClientOptions}
-                        selectedIds={[]}
-                        placeholder="Rechercher un eleve..."
-                        emptySelectionLabel="Aucun eleve selectionne."
-                        maxSelections={1}
-                        requiredSelection
-                      />
+                        <SearchMultiSelect
+                          className="session-enroll-search"
+                          label="Eleve"
+                          name="client_id"
+                          options={bookingClientOptions}
+                          selectedIds={[]}
+                          placeholder="Rechercher un eleve..."
+                          emptySelectionLabel="Aucun eleve selectionne."
+                          maxSelections={1}
+                          requiredSelection
+                        />
 
-                      <div className="session-enroll-submit">
-                        {selectedSession.recurrence_group_id ? (
-                          <details className="session-slot-add-confirm">
-                            <summary>Ajouter</summary>
-                            <div className="session-slot-inline-confirm-panel session-slot-scope-panel">
-                              <p className="muted">Inscrire l eleve sur cette seance ou sur la serie future ?</p>
-                              <label className="checkline">
-                                <input type="radio" name="scope" value="OCCURRENCE" defaultChecked />
-                                Cette seance uniquement
-                              </label>
-                              <label className="checkline">
-                                <input type="radio" name="scope" value="SERIES_FUTURE" />
-                                Toute la serie (futures)
-                              </label>
-                              <button type="submit">Confirmer</button>
-                            </div>
-                          </details>
-                        ) : (
-                          <>
-                            <input type="hidden" name="scope" value="OCCURRENCE" />
-                            <button type="submit">Ajouter</button>
-                          </>
-                        )}
-                      </div>
-                    </form>
+                        <div className="session-enroll-submit">
+                          {selectedSession.recurrence_group_id ? (
+                            <details className="session-slot-add-confirm">
+                              <summary>Ajouter</summary>
+                              <div className="session-slot-inline-confirm-panel session-slot-scope-panel">
+                                <p className="muted">Inscrire l eleve sur cette seance ou sur la serie future ?</p>
+                                <label className="checkline">
+                                  <input type="radio" name="scope" value="OCCURRENCE" defaultChecked />
+                                  Cette seance uniquement
+                                </label>
+                                <label className="checkline">
+                                  <input type="radio" name="scope" value="SERIES_FUTURE" />
+                                  Toute la serie (futures)
+                                </label>
+                                <button type="submit">Confirmer</button>
+                              </div>
+                            </details>
+                          ) : (
+                            <>
+                              <input type="hidden" name="scope" value="OCCURRENCE" />
+                              <button type="submit">Ajouter</button>
+                            </>
+                          )}
+                        </div>
+                      </form>
+                    )}
                   </div>
                 </details>
 
@@ -1906,13 +1951,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       <strong>Activite:</strong> {selectedCourseTypeName}
                     </p>
                     <p className="muted">
-                      <strong>Professeur habituel:</strong> {selectedHabitualProfessorName}
+                      <strong>Professeur habituel:</strong> {selectedHabitualProfessorLabel}
                     </p>
                     <p className="muted">
-                      <strong>Professeur remplacant:</strong> {selectedSubstituteProfessorName || "Aucun"}
+                      <strong>Professeur remplacant:</strong> {selectedSubstituteProfessorLabel}
                     </p>
                     <p className="muted">
-                      <strong>Professeur effectif:</strong> {selectedEffectiveProfessorName}
+                      <strong>Professeur effectif:</strong> {selectedEffectiveProfessorLabel || "Non requis"}
                     </p>
                     <p className="muted">
                       <strong>Lieu:</strong> {selectedLocationName}
@@ -1991,7 +2036,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <nav className="session-edit-tabs" aria-label="Sections modification creneau">
                 <a className={`session-edit-tab ${editTab === "general" ? "active" : ""}`} href={editTabHref("general")}>
                   <span>General</span>
-                  <small>{selectedEffectiveProfessorName} · {selectedSession.capacity_max} places</small>
+                  <small>{selectedEffectiveProfessorLabel || "Non requis"} · {selectedSession.capacity_max} places</small>
                 </a>
                 <a className={`session-edit-tab ${editTab === "schedule" ? "active" : ""}`} href={editTabHref("schedule")}>
                   <span>Horaire & recurrence</span>
@@ -2047,6 +2092,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           </option>
                         ))}
                       </select>
+                      {!selectedSessionRequiresProfessor ? (
+                        <small className="muted">Le professeur est optionnel pour ce type de creneau.</small>
+                      ) : null}
                     </label>
 
                     <label>
@@ -2064,6 +2112,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <label>
                       Capacite max
                       <input type="number" name="capacity_max" min={0} defaultValue={selectedSession.capacity_max} />
+                      {!selectedSessionAllowsStudentBookings ? (
+                        <small className="muted">Laissez 0 pour un creneau sans eleve.</small>
+                      ) : null}
                     </label>
 
                     <label>
@@ -2939,7 +2990,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               )}
 
               <p className="muted span-3">
-                Professeur cible: <strong>{selectedEffectiveProfessorName}</strong>
+                Professeur cible: <strong>{selectedEffectiveProfessorLabel || "Non requis"}</strong>
               </p>
 
               <label className="checkline span-3">

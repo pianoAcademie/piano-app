@@ -54,6 +54,7 @@ export type CourseTypeOut = {
   color_hex: string;
   mode: string;
   requires_professor: boolean;
+  allows_student_bookings: boolean;
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;
@@ -1090,6 +1091,8 @@ export type AdminSessionOut = {
   substitute_teacher_display_name: string | null;
   effective_teacher_id: string | null;
   effective_teacher_display_name: string;
+  requires_professor: boolean;
+  allows_student_bookings: boolean;
   location_label: string;
   type_label: string;
   status_label: string;
@@ -1647,6 +1650,7 @@ export type AdminActivityOut = {
   color_hex: string;
   mode: "ONLINE" | "ONSITE" | "ANY" | string;
   requires_professor: boolean;
+  allows_student_bookings: boolean;
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;

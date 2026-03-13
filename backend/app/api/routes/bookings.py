@@ -801,6 +801,15 @@ def book_session(
     if session_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
+    course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
+    if course_type is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
+    if not bool(course_type.allows_student_bookings):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This slot does not accept student bookings",
+        )
+
     if session_obj.status != SessionStatus.SCHEDULED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not bookable")
 

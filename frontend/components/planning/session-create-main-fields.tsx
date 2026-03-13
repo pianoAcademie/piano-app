@@ -10,6 +10,7 @@ type CourseTypeOption = {
   durationMinutes: number;
   defaultCapacity: number;
   requiresProfessor: boolean;
+  allowsStudentBookings: boolean;
 };
 
 type ProfessorOption = {
@@ -115,8 +116,8 @@ export default function SessionCreateMainFields({
   const defaultDuration = draftedDuration ?? durationMinutes;
   const capacityDefault = selectedCourseType?.defaultCapacity && selectedCourseType.defaultCapacity > 0
     ? selectedCourseType.defaultCapacity
-    : 1;
-  const draftedCapacity = typeof draft?.capacityMax === "number" && Number.isFinite(draft.capacityMax) && draft.capacityMax > 0
+    : (selectedCourseType?.allowsStudentBookings === false ? 0 : 1);
+  const draftedCapacity = typeof draft?.capacityMax === "number" && Number.isFinite(draft.capacityMax) && draft.capacityMax >= 0
     ? Math.floor(draft.capacityMax)
     : null;
   const startTimeDefault = String(draft?.startTime || "").trim() || "12:00";
@@ -153,7 +154,8 @@ export default function SessionCreateMainFields({
         </select>
         {selectedCourseType ? (
           <small className="muted">
-            Duree type: {selectedCourseType.durationMinutes} min · Capacite type: {selectedCourseType.defaultCapacity}
+            Duree type: {selectedCourseType.durationMinutes} min · Capacite type: {selectedCourseType.defaultCapacity} ·{" "}
+            {selectedCourseType.allowsStudentBookings ? "avec eleves" : "sans eleve"}
           </small>
         ) : null}
       </label>
@@ -211,10 +213,19 @@ export default function SessionCreateMainFields({
         requiredStart
       />
 
-      <label key={`create-capacity-${selectedCourseTypeId || "default"}-${draftedCapacity ?? capacityDefault}`}>
-        Capacite max
-        <input type="number" name="capacity_max" min={0} defaultValue={draftedCapacity ?? capacityDefault} required />
-      </label>
+      {selectedCourseType?.allowsStudentBookings === false ? (
+        <label key={`create-capacity-${selectedCourseTypeId || "default"}-${draftedCapacity ?? capacityDefault}`}>
+          Capacite max
+          <input type="hidden" name="capacity_max" value="0" />
+          <input type="number" value={0} min={0} readOnly disabled />
+          <small className="muted">Capacite forcee a 0 pour les creneaux sans eleve.</small>
+        </label>
+      ) : (
+        <label key={`create-capacity-${selectedCourseTypeId || "default"}-${draftedCapacity ?? capacityDefault}`}>
+          Capacite max
+          <input type="number" name="capacity_max" min={0} defaultValue={draftedCapacity ?? capacityDefault} required />
+        </label>
+      )}
 
       <label className="span-2">
         Lien Zoom (optionnel)

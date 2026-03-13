@@ -559,6 +559,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const selectedActivityId = readParam(params, "activity_id");
   const selectedActivity = activities.find((activity) => activity.id === selectedActivityId) ?? null;
   const selectedActivityIsVacation = isVacationServiceCode(selectedActivity?.service_code);
+  const selectedActivityIsStudentless = selectedActivity ? !selectedActivity.allows_student_bookings : false;
   const createLegalEntityModalOpen = readParam(params, "new_legal_entity") === "1";
   const selectedLegalEntityId = readParam(params, "legal_entity_id");
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === selectedLegalEntityId) ?? null;
@@ -2285,11 +2286,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <div className="activity-row-main">
                           <strong>{activity.name}</strong>
                           <small className="muted">
-                            {activity.code} · {activity.credit_type_name ?? "Type credit non mappe"} · {activityModeLabel(activity.mode)} ·{" "}
-                            {activity.duration_minutes} min
+                            {activity.credit_type_name ?? "Type credit non mappe"} · {activityModeLabel(activity.mode)} · {activity.duration_minutes} min
                           </small>
                           <small className="muted">
-                            Professeur: {activity.requires_professor ? "Requis" : "Optionnel"}
+                            Professeur: {activity.requires_professor ? "Requis" : "Non requis"} ·{" "}
+                            {activity.allows_student_bookings ? "Avec eleves" : "Sans eleve"}
                           </small>
                           <small className="muted">
                             Recurrence: feries {activity.exclude_holidays_in_recurrence ? "exclus" : "inclus"} · vacances{" "}
@@ -2339,17 +2340,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </p>
                       ) : (
                       <form action={createAdminActivityAction} className="grid cols-4 config-form-grid activity-modal-grid">
+                        <input type="hidden" name="service_code" value="ACTIVITY" />
                         <label className="span-2">
                           Nom de l activite
                           <input type="text" name="name" required maxLength={255} />
-                        </label>
-                        <label>
-                          Code (optionnel)
-                          <input type="text" name="code" maxLength={80} placeholder="auto-genere si vide" />
-                        </label>
-                        <label>
-                          Service code
-                          <input type="text" name="service_code" defaultValue="ACTIVITY" maxLength={80} />
                         </label>
                         <label className="span-2">
                           Entite legale vendeuse
@@ -2387,6 +2381,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           </select>
                         </label>
                         <label className="checkline">
+                          <input type="checkbox" name="without_students" />
+                          Creneau sans eleve
+                        </label>
+                        <label className="checkline">
                           <input type="checkbox" name="requires_professor" defaultChecked />
                           Professeur requis
                         </label>
@@ -2415,7 +2413,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </label>
                         <label>
                           Capacite maximum
-                          <input type="number" name="default_capacity" min={1} max={500} defaultValue={8} required />
+                          <input type="number" name="default_capacity" min={0} max={500} defaultValue={8} required />
+                          <small className="muted">Si le creneau est sans eleve, la capacite sera forcee a 0.</small>
                         </label>
                         <label>
                           Rappels par courriel
@@ -2510,6 +2509,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           Description
                           <textarea name="description" rows={3} />
                         </label>
+                        <p className="muted span-3">
+                          Les codes techniques sont geres automatiquement. Cochez "Creneau sans eleve" pour des blocages
+                          calendrier, vacances ou autres occurrences qui ne doivent accepter aucune inscription.
+                        </p>
                         <div className="row">
                           <button type="submit">Ajouter l activite</button>
                         </div>
@@ -2541,18 +2544,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       ) : (
                       <form action={updateAdminActivityAction} className="grid cols-4 config-form-grid activity-modal-grid">
                         <input type="hidden" name="activity_id" value={selectedActivity.id} />
+                        <input type="hidden" name="service_code" value={selectedActivity.service_code} />
 
                         <label className="span-2">
                           Nom de l activite
                           <input type="text" name="name" defaultValue={selectedActivity.name} required maxLength={255} />
-                        </label>
-                        <label>
-                          Code
-                          <input type="text" name="code" defaultValue={selectedActivity.code} maxLength={80} />
-                        </label>
-                        <label>
-                          Service code
-                          <input type="text" name="service_code" defaultValue={selectedActivity.service_code} maxLength={80} />
                         </label>
                         <label className="span-2">
                           Entite legale vendeuse
@@ -2604,6 +2600,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label className="checkline">
                           <input
                             type="checkbox"
+                            name="without_students"
+                            defaultChecked={selectedActivityIsStudentless}
+                          />
+                          Creneau sans eleve
+                        </label>
+                        <label className="checkline">
+                          <input
+                            type="checkbox"
                             name="requires_professor"
                             defaultChecked={selectedActivity.requires_professor}
                           />
@@ -2648,11 +2652,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             required
                           />
                         </label>
-                        {selectedActivityIsVacation ? (
+                        {selectedActivityIsStudentless ? (
                           <label>
                             Capacite maximum
-                            <input type="number" value={1} disabled readOnly />
-                            <small className="muted">Capacite fixee a 1 pour les activites VACATION.</small>
+                            <input type="number" value={0} disabled readOnly />
+                            <small className="muted">Capacite fixee a 0 pour les creneaux sans eleve.</small>
                           </label>
                         ) : (
                           <label>
@@ -2660,11 +2664,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <input
                               type="number"
                               name="default_capacity"
-                              min={1}
+                              min={0}
                               max={500}
                               defaultValue={selectedActivity.default_capacity}
                               required
                             />
+                            <small className="muted">Si le creneau est sans eleve, la capacite sera forcee a 0.</small>
                           </label>
                         )}
                         <label>
@@ -2796,6 +2801,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           Description
                           <textarea name="description" rows={3} defaultValue={selectedActivity.description ?? ""} />
                         </label>
+                        <p className="muted span-3">
+                          Les codes techniques sont geres automatiquement. Quand "Creneau sans eleve" est coche, le
+                          professeur devient optionnel, la capacite passe a 0 et aucune inscription eleve n est possible.
+                        </p>
                         <div className="row">
                           <button type="submit">Enregistrer</button>
                         </div>

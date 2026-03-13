@@ -11,6 +11,7 @@ export type PlanningEventChipData = {
   habitual_teacher_display_name?: string;
   substitute_teacher_display_name?: string | null;
   effective_teacher_display_name?: string;
+  requires_professor?: boolean;
   location_label: string;
   type_label: string;
   status_label: string;
@@ -145,8 +146,13 @@ export default function MonthEventChip({ event, href, expanded = false }: MonthE
   const substituteTeacherName = (event.substitute_teacher_display_name || "").trim();
   const effectiveTeacherName = (event.effective_teacher_display_name || teacherFullName).trim();
   const isSubstituteActive = substituteTeacherName.length > 0 && effectiveTeacherName === substituteTeacherName;
-  const teacherMissing = teacherFullName.length === 0;
-  const teacherCompactBase = teacherMissing ? "(non renseigne)" : compactTeacherName(effectiveTeacherName || teacherFullName);
+  const teacherRequired = event.requires_professor !== false;
+  const teacherMissing = teacherRequired && teacherFullName.length === 0;
+  const teacherCompactBase = !teacherRequired
+    ? "non requis"
+    : teacherMissing
+      ? "(non renseigne)"
+      : compactTeacherName(effectiveTeacherName || teacherFullName);
   const teacherCompact = isSubstituteActive && !teacherMissing ? `${teacherCompactBase} (rempl.)` : teacherCompactBase;
   const locationLabel = (event.location_label || "").trim() || "Lieu";
   const typeLabel = normalizedTypeLabel(event.type_label);
@@ -156,7 +162,7 @@ export default function MonthEventChip({ event, href, expanded = false }: MonthE
   const tooltip = [
     `${startTime}-${endTime}`,
     event.title,
-    `Prof effectif: ${teacherMissing ? "(non renseigne)" : effectiveTeacherName}`,
+    `Prof effectif: ${!teacherRequired ? "non requis" : teacherMissing ? "(non renseigne)" : effectiveTeacherName}`,
     isSubstituteActive && habitualTeacherName ? `Prof habituel: ${habitualTeacherName}` : null,
     isSubstituteActive && substituteTeacherName ? `Remplacant: ${substituteTeacherName}` : null,
     `Lieu: ${locationLabel}`,

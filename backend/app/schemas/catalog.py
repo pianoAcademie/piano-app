@@ -22,6 +22,7 @@ class CourseTypeOut(BaseModel):
     color_hex: str
     mode: DeliveryMode
     requires_professor: bool
+    allows_student_bookings: bool
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None

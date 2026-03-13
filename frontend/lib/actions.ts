@@ -6054,7 +6054,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const payorLegalEntityId = String(formData.get("payor_legal_entity_id") ?? "").trim();
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? ""));
-  const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
+  const defaultCapacity = parseNonNegativeInt(String(formData.get("default_capacity") ?? ""));
   const isVacationActivity = isVacationServiceCode(serviceCode);
   const defaultHourlyRateRaw = String(formData.get("default_hourly_rate") ?? "").trim();
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
@@ -6064,6 +6064,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
   const requiresProfessor = checkboxField(formData, "requires_professor");
+  const allowsStudentBookings = !checkboxField(formData, "without_students");
   const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
   const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
   const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
@@ -6088,7 +6089,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (isVacationActivity && (durationMinutes < 600 || durationMinutes > 1440)) {
     redirect("/admin/config?section=activities&error=Duree%20VACATION%20invalide%20(600-1440)");
   }
-  if (!isVacationActivity && (!defaultCapacity || defaultCapacity < 1)) {
+  if (allowsStudentBookings && (defaultCapacity === null || defaultCapacity < 1)) {
     redirect("/admin/config?section=activities&error=Capacite%20par%20defaut%20invalide");
   }
   if (!sellerLegalEntityId) {
@@ -6129,8 +6130,9 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     duration_minutes: durationMinutes,
     color_hex: colorHex,
     mode,
-    requires_professor: requiresProfessor,
-    default_capacity: isVacationActivity ? 1 : defaultCapacity,
+    requires_professor: allowsStudentBookings ? requiresProfessor : false,
+    allows_student_bookings: allowsStudentBookings,
+    default_capacity: allowsStudentBookings ? defaultCapacity : 0,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     email_reminder_hours_before_start: emailReminderHours,
@@ -6186,7 +6188,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const payorLegalEntityId = String(formData.get("payor_legal_entity_id") ?? "").trim();
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   const durationMinutes = parsePositiveInt(String(formData.get("duration_minutes") ?? ""));
-  const defaultCapacity = parsePositiveInt(String(formData.get("default_capacity") ?? ""));
+  const defaultCapacity = parseNonNegativeInt(String(formData.get("default_capacity") ?? ""));
   const isVacationActivity = isVacationServiceCode(serviceCode);
   const defaultHourlyRateRaw = String(formData.get("default_hourly_rate") ?? "").trim();
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
@@ -6196,6 +6198,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
   const requiresProfessor = checkboxField(formData, "requires_professor");
+  const allowsStudentBookings = !checkboxField(formData, "without_students");
   const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
   const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
   const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
@@ -6220,7 +6223,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (isVacationActivity && (durationMinutes < 600 || durationMinutes > 1440)) {
     redirect("/admin/config?section=activities&error=Duree%20VACATION%20invalide%20(600-1440)");
   }
-  if (!isVacationActivity && (!defaultCapacity || defaultCapacity < 1)) {
+  if (allowsStudentBookings && (defaultCapacity === null || defaultCapacity < 1)) {
     redirect("/admin/config?section=activities&error=Capacite%20par%20defaut%20invalide");
   }
   if (!sellerLegalEntityId) {
@@ -6262,8 +6265,9 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     duration_minutes: durationMinutes,
     color_hex: colorHex,
     mode,
-    requires_professor: requiresProfessor,
-    default_capacity: isVacationActivity ? 1 : defaultCapacity,
+    requires_professor: allowsStudentBookings ? requiresProfessor : false,
+    allows_student_bookings: allowsStudentBookings,
+    default_capacity: allowsStudentBookings ? defaultCapacity : 0,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
     email_reminder_hours_before_start: emailReminderHours,
