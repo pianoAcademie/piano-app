@@ -746,7 +746,13 @@ def delete_admin_catalog_product(
     linked_request = db.scalar(select(ProductRequest.id).where(ProductRequest.product_id == row.id).limit(1))
     linked_kit_item = db.scalar(select(CatalogKitItem.id).where(CatalogKitItem.product_id == row.id).limit(1))
     if linked_request is not None or linked_kit_item is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Product is used in requests or kits")
+        if linked_request is not None and linked_kit_item is not None:
+            detail = "Produit utilise dans des demandes et dans un kit"
+        elif linked_request is not None:
+            detail = "Produit utilise dans une demande"
+        else:
+            detail = "Produit utilise dans un kit"
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
     db.execute(delete(ProductLocationStock).where(ProductLocationStock.product_id == row.id))
     db.delete(row)

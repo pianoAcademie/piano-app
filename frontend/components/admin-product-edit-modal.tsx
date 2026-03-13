@@ -212,13 +212,11 @@ export default function AdminProductEditModal({
               hidden
             />
             <input type="hidden" name="image_url" value={imageUrl} />
-            <details className="span-3">
-              <summary className="mode-link">Options avancees</summary>
-              <label className="top-gap-sm">
-                Visuel (URL)
-                <input type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} />
-              </label>
-            </details>
+            <label className="span-3 product-image-url-field">
+              URL image
+              <input type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://..." />
+              <small className="muted">Champ optionnel pour coller ou corriger directement le visuel sans ouvrir d options avancees.</small>
+            </label>
           </section>
         </section>
       );

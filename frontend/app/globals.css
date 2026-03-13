@@ -6949,6 +6949,11 @@ button.danger:focus-visible {
   gap: 8px;
 }
 
+.product-image-url-field {
+  display: grid;
+  gap: 6px;
+}
+
 .product-edit-modal-footer {
   position: sticky;
   bottom: 0;
