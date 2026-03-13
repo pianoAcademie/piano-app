@@ -2786,13 +2786,13 @@ button.danger:focus-visible {
 
 .session-edit-modal-shell {
   width: min(920px, 96vw);
-  max-height: 86vh;
+  max-height: 92vh;
   padding: 0;
   background: #ffffff;
   border: 1px solid #e6e8ee;
   border-radius: 16px;
   box-shadow: 0 20px 44px rgba(15, 23, 42, 0.22);
-  overflow: hidden;
+  overflow: auto;
   gap: 0;
 }
 
@@ -2819,6 +2819,7 @@ button.danger:focus-visible {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
+  height: 100%;
 }
 
 .session-edit-tabs {
@@ -2859,8 +2860,10 @@ button.danger:focus-visible {
 }
 
 .session-edit-shell-body {
+  min-height: 0;
   overflow: auto;
-  padding: 14px 16px;
+  padding: 14px 16px 18px;
+  scroll-padding-bottom: 18px;
 }
 
 .session-edit-panel {
@@ -2910,9 +2913,7 @@ button.danger:focus-visible {
 }
 
 .session-edit-shell-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 4;
+  position: static;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -2920,6 +2921,7 @@ button.danger:focus-visible {
   padding: 12px 16px;
   border-top: 1px solid #e6e8ee;
   background: #ffffff;
+  box-shadow: none;
 }
 
 .recurrence-panel {
@@ -4343,7 +4345,8 @@ button.danger:focus-visible {
   }
 
   .session-edit-shell-body {
-    padding: 10px 12px;
+    min-height: 0;
+    padding: 10px 12px 14px;
   }
 
   .session-edit-shell-footer {
@@ -4471,6 +4474,10 @@ button.danger:focus-visible {
   grid-column: 1 / -1;
   margin: 0;
   font-size: 12px;
+}
+
+.solfege-config-full-row {
+  grid-column: 1 / -1 !important;
 }
 
 @media (min-width: 981px) and (max-width: 1080px) {
@@ -4693,7 +4700,7 @@ button.danger:focus-visible {
 }
 
 .activity-modal-panel {
-  width: min(980px, 96vw);
+  width: min(1100px, 96vw);
 }
 
 .messaging-template-modal {
@@ -4903,6 +4910,121 @@ button.danger:focus-visible {
   padding-right: 56px;
 }
 
+.activity-modal-form {
+  display: grid;
+  gap: 16px;
+}
+
+.activity-modal-zone-grid {
+  align-items: start;
+}
+
+.activity-modal-section {
+  border: 1px solid #e5d4bd;
+  border-radius: 16px;
+  background: #fffdf8;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.activity-modal-section.is-accent {
+  background: linear-gradient(180deg, #fff8ec 0%, #fffdf8 100%);
+  border-color: #dcc09a;
+}
+
+.activity-modal-section-header {
+  display: grid;
+  gap: 4px;
+}
+
+.activity-modal-section-header h4 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.1;
+  color: #2f2415;
+}
+
+.activity-modal-section-header p {
+  margin: 0;
+  color: #6c5738;
+}
+
+.activity-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.activity-toggle-card {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-height: 100%;
+  padding: 12px;
+  border: 1px solid #e3d4bd;
+  border-radius: 14px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.activity-toggle-card.is-emphasis {
+  border-color: #d8b98a;
+  background: #fff4dd;
+  box-shadow: inset 0 0 0 1px rgba(217, 185, 138, 0.35);
+}
+
+.activity-toggle-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.activity-toggle-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.activity-toggle-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.activity-toggle-copy strong {
+  color: #382913;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.activity-toggle-copy small {
+  color: #6b583a;
+  line-height: 1.45;
+}
+
+.activity-modal-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed #d3b58a;
+  border-radius: 12px;
+  background: #fff8eb;
+  color: #5e4727;
+}
+
+.activity-modal-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.activity-modal-footer p {
+  margin: 0;
+  max-width: 680px;
+}
+
 .top-gap-sm {
   margin-top: 8px;
 }
@@ -4996,6 +5118,18 @@ button.danger:focus-visible {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 14px;
+}
+
+@media (max-width: 980px) {
+  .activity-modal-zone-grid,
+  .activity-toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-modal-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .config-currency-fieldset {
