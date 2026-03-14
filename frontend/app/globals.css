@@ -4628,6 +4628,104 @@ button.danger:focus-visible {
   gap: 8px 12px;
 }
 
+.calendar-feedback-banner {
+  display: grid;
+  gap: 6px;
+  border-width: 1px;
+}
+
+.calendar-feedback-banner strong,
+.calendar-feedback-banner p {
+  margin: 0;
+}
+
+.calendar-feedback-banner.calendar-feedback-banner-ok {
+  border-color: #b9e1c1;
+  background: linear-gradient(180deg, #edf9f0 0%, #f7fdf8 100%);
+}
+
+.calendar-feedback-banner.calendar-feedback-banner-error {
+  border-color: #e5b9b7;
+  background: linear-gradient(180deg, #fff1f0 0%, #fff8f8 100%);
+}
+
+.status-pill.status-info {
+  background: #e9f2ff;
+  color: #254f8f;
+}
+
+.calendar-editor-modal {
+  width: min(1120px, 97vw);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 18px;
+  gap: 16px;
+}
+
+.calendar-editor-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 56px;
+}
+
+.calendar-editor-header p {
+  margin: 4px 0 0;
+}
+
+.calendar-editor-form {
+  display: grid;
+  gap: 18px;
+}
+
+.calendar-editor-section {
+  border: 1px solid #e5d4bd;
+  border-radius: 16px;
+  background: #fffdf8;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.calendar-editor-section-header {
+  display: grid;
+  gap: 4px;
+}
+
+.calendar-editor-section-header h4,
+.calendar-editor-section-header p {
+  margin: 0;
+}
+
+.calendar-editor-text-grid {
+  align-items: start;
+}
+
+.calendar-editor-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.calendar-editor-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 6px;
+}
+
+.calendar-editor-footer-copy {
+  display: grid;
+  gap: 10px;
+  max-width: 680px;
+}
+
+.calendar-editor-footer-copy p {
+  margin: 0;
+}
+
 .wysiwyg-editor {
   width: 100%;
   border: 1px solid var(--border);
@@ -5023,6 +5121,17 @@ button.danger:focus-visible {
 .activity-modal-footer p {
   margin: 0;
   max-width: 680px;
+}
+
+@media (max-width: 980px) {
+  .calendar-editor-header,
+  .calendar-editor-footer {
+    display: grid;
+  }
+
+  .calendar-editor-toggle-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .top-gap-sm {

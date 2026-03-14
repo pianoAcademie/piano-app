@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import ConditionalConfirmSubmitButton from "../../../../components/conditional-confirm-submit-button";
+import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 
 import {
   bulkAdminQuoteSchoolCalendarsAction,
@@ -67,6 +69,7 @@ type CalendarGroupSummary = {
   active_slots: number;
   badge_class: string;
   badge_label: string;
+  is_fully_removed: boolean;
 };
 
 type GeneratedGroupSlotRow = QuoteSchoolCalendarGeneratedSlotOut & {
@@ -154,6 +157,7 @@ function buildCalendarsPath(params: {
   previewGroup?: string;
   editGroup?: string;
   generatedGroup?: string;
+  createModal?: string;
 }): string {
   const search = new URLSearchParams();
   if (params.locationFilter) {
@@ -176,6 +180,9 @@ function buildCalendarsPath(params: {
   }
   if (params.generatedGroup) {
     search.set("generated_group", params.generatedGroup);
+  }
+  if (params.createModal === "1") {
+    search.set("create_modal", "1");
   }
   const query = search.toString();
   return query ? `/admin/config/calendars?${query}` : "/admin/config/calendars";
@@ -202,6 +209,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
   const previewGroupKey = readParam(params, "preview_group");
   const editGroupKey = readParam(params, "edit_group");
   const generatedGroupKey = readParam(params, "generated_group");
+  const createModalOpen = readParam(params, "create_modal") === "1";
   const locationFilter = readParam(params, "location_filter");
   const deploymentFilter = readParam(params, "deployment_filter");
   const statusFilter = readParam(params, "status_filter");
@@ -277,6 +285,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       active_slots: activeSlots,
       badge_class: hasStale ? "status-warn" : allDeployed ? "status-ok" : allRemoved ? "status-off" : "status-warn",
       badge_label: hasStale ? "A resynchroniser" : allDeployed ? "Deploye" : allRemoved ? "Retire" : "Partiel",
+      is_fully_removed: allRemoved,
     };
   });
   const returnPath = buildCalendarsPath({
@@ -287,12 +296,31 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
     previewGroup: previewGroupKey,
     editGroup: editGroupKey,
     generatedGroup: generatedGroupKey,
+    createModal: createModalOpen ? "1" : "",
+  });
+  const basePath = buildCalendarsPath({
+    locationFilter,
+    deploymentFilter,
+    statusFilter,
+    generatedFor,
+    previewGroup: previewGroupKey,
+    generatedGroup: generatedGroupKey,
+  });
+  const createModalPath = buildCalendarsPath({
+    locationFilter,
+    deploymentFilter,
+    statusFilter,
+    generatedFor,
+    previewGroup: previewGroupKey,
+    generatedGroup: generatedGroupKey,
+    createModal: "1",
   });
   const resetFiltersPath = buildCalendarsPath({
     generatedFor,
     previewGroup: previewGroupKey,
     editGroup: editGroupKey,
     generatedGroup: generatedGroupKey,
+    createModal: createModalOpen ? "1" : "",
   });
 
   const previewGroup = groupSummaries.find((group) => group.key === previewGroupKey) ?? null;
@@ -375,6 +403,151 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
         .flat()
         .sort((a, b) => `${a.date}-${a.location_name}-${a.title}`.localeCompare(`${b.date}-${b.location_name}-${b.title}`, "fr"))
     : [];
+  const modalErrorMessage = errorMessage || "";
+
+  const renderCalendarBlockForm = (params: {
+    action: (formData: FormData) => Promise<void>;
+    returnTo: string;
+    successReturnTo: string;
+    submitLabel: string;
+    cancelHref: string;
+    defaults: {
+      name: string;
+      schoolYearLabel: string;
+      selectedLocationIds: string[];
+      vacationPeriodsText: string;
+      holidayDatesText: string;
+      closureDatesText: string;
+      isActive: boolean;
+    };
+    applyPlanningLabel: string;
+    existingEntries?: Array<{ calendarId: string; locationId: string }>;
+    errorText?: string;
+    footerNote?: string;
+    extraActions?: JSX.Element | null;
+  }): JSX.Element => (
+    <form action={params.action} className="calendar-editor-form">
+      <input type="hidden" name="return_to" value={params.returnTo} />
+      <input type="hidden" name="success_return_to" value={params.successReturnTo} />
+      {(params.existingEntries || []).map((entry) => (
+        <input
+          key={`calendar-editor-existing-${entry.calendarId}-${entry.locationId}`}
+          type="hidden"
+          name="existing_calendar_entries"
+          value={`${entry.calendarId}:${entry.locationId}`}
+        />
+      ))}
+      {params.errorText ? (
+        <section className="flash-err modal-flash" role="alert">
+          {params.errorText}
+        </section>
+      ) : null}
+      <div className="grid cols-2 config-form-grid">
+        <label>
+          Nom du bloc
+          <input type="text" name="name" defaultValue={params.defaults.name} required maxLength={180} placeholder="Calendrier Paris 2026-2027" />
+        </label>
+        <label>
+          Annee scolaire
+          <input type="text" name="school_year_label" defaultValue={params.defaults.schoolYearLabel} required maxLength={40} placeholder="2026-2027" />
+        </label>
+      </div>
+
+      <section className="calendar-editor-section">
+        <header className="calendar-editor-section-header">
+          <h4>Locaux cibles</h4>
+          <p className="muted">Le meme bloc sera applique sur tous les locaux coches.</p>
+        </header>
+        <fieldset className="calendar-locations-fieldset">
+          <div className="calendar-location-grid">
+            {locations.map((location) => (
+              <label key={`calendar-modal-location-${location.id}`} className="checkline">
+                <input
+                  type="checkbox"
+                  name="location_ids"
+                  value={location.id}
+                  defaultChecked={params.defaults.selectedLocationIds.includes(location.id)}
+                />
+                {location.name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      </section>
+
+      <section className="calendar-editor-section">
+        <header className="calendar-editor-section-header">
+          <h4>Saisie des dates</h4>
+          <p className="muted">Ajoutez ou corrigez directement une date oubliee, puis enregistrez le bloc.</p>
+        </header>
+        <div className="calendar-inline-help">
+          <strong>Saisie rapide</strong>
+          <p className="muted">
+            Vacances: une ligne = <code>YYYY-MM-DD | YYYY-MM-DD | Libelle</code>. Jours feries et fermetures: une date par ligne.
+          </p>
+        </div>
+        <div className="grid cols-3 config-form-grid calendar-editor-text-grid">
+          <label className="calendar-textarea-field">
+            Vacances scolaires (periodes)
+            <textarea
+              name="vacation_periods_text"
+              rows={8}
+              defaultValue={params.defaults.vacationPeriodsText}
+              placeholder={"2026-10-17 | 2026-11-01 | Vacances Toussaint\n2026-12-19 | 2027-01-03 | Vacances Noel"}
+            />
+          </label>
+          <label className="calendar-textarea-field">
+            Jours feries (une date par ligne)
+            <textarea
+              name="holiday_dates_text"
+              rows={8}
+              defaultValue={params.defaults.holidayDatesText}
+              placeholder={"2026-11-11\n2026-12-25\n2027-01-01"}
+            />
+          </label>
+          <label className="calendar-textarea-field">
+            Fermetures exceptionnelles (une date par ligne)
+            <textarea
+              name="closure_dates_text"
+              rows={8}
+              defaultValue={params.defaults.closureDatesText}
+              placeholder={"2026-09-02\n2027-05-19"}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="calendar-editor-section">
+        <header className="calendar-editor-section-header">
+          <h4>Options</h4>
+          <p className="muted">Choisissez si le bloc reste actif et s il doit etre redeploye tout de suite.</p>
+        </header>
+        <div className="calendar-editor-toggle-grid">
+          <label className="checkline">
+            <input type="checkbox" name="is_active" defaultChecked={params.defaults.isActive} />
+            Actif
+          </label>
+          <label className="checkline">
+            <input type="checkbox" name="apply_to_management_planning" />
+            {params.applyPlanningLabel}
+          </label>
+        </div>
+      </section>
+
+      <footer className="calendar-editor-footer">
+        <div className="calendar-editor-footer-copy">
+          <p className="muted">{params.footerNote || "Les changements sont appliques a tout le bloc, local par local."}</p>
+          {params.extraActions}
+        </div>
+        <div className="row wrap gap-sm">
+          <Link className="ghost" href={params.cancelHref}>
+            Annuler
+          </Link>
+          <button type="submit">{params.submitLabel}</button>
+        </div>
+      </footer>
+    </form>
+  );
 
   return (
     <section className="admin-page-grid">
@@ -393,8 +566,18 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
         </div>
       </section>
 
-      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
-      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
+      {okMessage ? (
+        <section className="card calendar-feedback-banner calendar-feedback-banner-ok" role="status">
+          <strong>Action enregistree</strong>
+          <p>{okMessage}</p>
+        </section>
+      ) : null}
+      {errorMessage ? (
+        <section className="card calendar-feedback-banner calendar-feedback-banner-error" role="alert">
+          <strong>Action non terminee</strong>
+          <p>{errorMessage}</p>
+        </section>
+      ) : null}
       {loadErrors.length > 0 ? (
         <section className="card">
           <h3>Erreurs de chargement</h3>
@@ -407,73 +590,15 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       ) : null}
 
       <section className="card">
-        <h3>Calendriers scolaires par local</h3>
-        <p className="muted">Definissez les vacances, jours feries et fermetures exceptionnelles par annee scolaire et par local.</p>
-        <form action={createAdminQuoteSchoolCalendarConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
-          <input type="hidden" name="return_to" value={returnPath} />
-          <label className="span-2">
-            Nom du calendrier
-            <input type="text" name="name" required maxLength={180} placeholder="Calendrier Paris 2026-2027" />
-          </label>
-          <label>
-            Annee scolaire
-            <input type="text" name="school_year_label" required maxLength={40} placeholder="2026-2027" />
-          </label>
-          <fieldset className="span-4 calendar-locations-fieldset">
-            <legend>Locaux cibles</legend>
-            <p className="muted">Selection multiple possible: le meme calendrier sera deploie sur tous les locaux coches.</p>
-            <div className="calendar-location-grid">
-              {locations.map((row) => (
-                <label key={`calendar-create-location-${row.id}`} className="checkline">
-                  <input type="checkbox" name="location_ids" value={row.id} />
-                  {row.name}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          <div className="span-4 calendar-inline-help">
-            <strong>Saisie rapide</strong>
-            <p className="muted">Vacances: une ligne = <code>YYYY-MM-DD | YYYY-MM-DD | Libelle</code> (libelle optionnel). Jours feries et fermetures: une date par ligne.</p>
+        <div className="row spread wrap gap-sm">
+          <div>
+            <h3>Calendriers scolaires par local</h3>
+            <p className="muted">Travaillez par blocs calendaires, puis ouvrez le detail par local uniquement quand c est necessaire.</p>
           </div>
-          <label className="span-2 calendar-textarea-field">
-            Vacances scolaires (periodes)
-            <textarea
-              name="vacation_periods_text"
-              rows={8}
-              placeholder={"2026-10-17 | 2026-11-01 | Vacances Toussaint\n2026-12-19 | 2027-01-03 | Vacances Noel"}
-            />
-          </label>
-          <label className="calendar-textarea-field">
-            Jours feries (une date par ligne)
-            <textarea
-              name="holiday_dates_text"
-              rows={8}
-              placeholder={"2026-11-11\n2026-12-25\n2027-01-01"}
-            />
-          </label>
-          <label className="calendar-textarea-field">
-            Fermetures exceptionnelles (une date par ligne)
-            <textarea
-              name="closure_dates_text"
-              rows={8}
-              placeholder={"2026-09-02\n2027-05-19"}
-            />
-          </label>
-          <div className="span-4 calendar-inline-help compact">
-            <p className="muted">Astuce: copiez/collez une liste de dates depuis Excel/Sheets, une ligne par date.</p>
-          </div>
-          <label className="checkline">
-            <input type="checkbox" name="is_active" defaultChecked />
-            Actif
-          </label>
-          <label className="checkline span-3">
-            <input type="checkbox" name="apply_to_management_planning" />
-            Deployer immediatement en creneaux bloquants (journee entiere)
-          </label>
-          <div className="row span-4">
-            <button type="submit">Ajouter le calendrier</button>
-          </div>
-        </form>
+          <Link className="ghost" href={createModalPath}>
+            Ajouter un calendrier
+          </Link>
+        </div>
 
         <section className="top-gap-sm">
           <div className="row spread wrap gap-sm">
@@ -564,6 +689,26 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                             <input type="hidden" name="return_to" value={returnPath} />
                             <button type="submit" className="danger">Retirer</button>
                           </form>
+                          {group.is_fully_removed ? (
+                            <>
+                              <form id={`calendar-group-delete-${group.key}`} action={bulkAdminQuoteSchoolCalendarsAction}>
+                                {group.items.map((item) => (
+                                  <input key={`${group.key}-delete-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+                                ))}
+                                <input type="hidden" name="bulk_action" value="DELETE" />
+                                <input type="hidden" name="return_to" value={returnPath} />
+                                <input type="hidden" name="success_return_to" value={basePath} />
+                              </form>
+                              <ConfirmSubmitButton
+                                formId={`calendar-group-delete-${group.key}`}
+                                label="Supprimer"
+                                title="Supprimer ce bloc retire ?"
+                                description={`Le bloc ${group.name} sera supprime pour ${group.items.length} local(aux). Cette action est irreversible.`}
+                                confirmLabel="Supprimer le bloc"
+                                className="danger"
+                              />
+                            </>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -573,181 +718,78 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
             </div>
           )}
         </section>
+      </section>
 
-        {editGroup ? (
-          <section className="card top-gap-sm">
-            <div className="row spread wrap gap-sm">
-              <div>
-                <h4>Modifier le bloc</h4>
-                <p className="muted">
-                  Modifiez ici le libelle, les dates communes et les locaux du bloc en une seule fois. Pour ajouter une date manquante, ajoutez simplement une ligne puis enregistrez.
-                </p>
-              </div>
-              <Link
-                className="ghost"
-                href={buildCalendarsPath({
-                  locationFilter,
-                  deploymentFilter,
-                  statusFilter,
-                  generatedFor,
-                  previewGroup: previewGroupKey,
-                  generatedGroup: generatedGroupKey,
-                })}
-              >
-                Fermer l editeur
-              </Link>
-            </div>
+      <section className="card top-gap-sm">
+        <div className="row spread wrap gap-sm">
+          <div>
+            <h4>Administration fine par local</h4>
             <p className="muted">
-              {editGroup.name} · {editGroup.school_year_label} · {editGroup.location_names.join(", ")}
+              Filtrez puis traitez plusieurs lignes locales a la fois. Retire signifie que les creneaux bloquants generes ont ete supprimes du planning, pas que le calendrier a disparu.
             </p>
-            <form action={updateAdminQuoteSchoolCalendarGroupAction} className="grid cols-4 config-form-grid top-gap-sm">
-              <input type="hidden" name="return_to" value={returnPath} />
-              {editGroup.items.map((item) => (
-                <input key={`existing-calendar-${item.id}`} type="hidden" name="existing_calendar_entries" value={`${item.id}:${item.location_id}`} />
-              ))}
-              <label className="span-2">
-                Nom du bloc
-                <input type="text" name="name" defaultValue={editGroup.representative.name} required maxLength={180} />
-              </label>
-              <label>
-                Annee scolaire
-                <input type="text" name="school_year_label" defaultValue={editGroup.representative.school_year_label} required maxLength={40} />
-              </label>
-              <fieldset className="span-4 calendar-locations-fieldset">
-                <legend>Locaux du bloc</legend>
-                <p className="muted">Cochez les locaux a conserver. Cochez un nouveau local pour l ajouter immediatement au bloc.</p>
-                <div className="calendar-location-grid">
-                  {locations.map((location) => (
-                    <label key={`group-edit-location-${location.id}`} className="checkline">
-                      <input
-                        type="checkbox"
-                        name="location_ids"
-                        value={location.id}
-                        defaultChecked={editGroup.items.some((item) => item.location_id === location.id)}
-                      />
-                      {location.name}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              <div className="span-4 calendar-inline-help">
-                <strong>Ajout rapide d une date</strong>
-                <p className="muted">Ajoutez une ligne dans vacances, jours feries ou fermetures. L enregistrement mettra a jour tout le bloc.</p>
-              </div>
-              <label className="span-2 calendar-textarea-field">
-                Vacances scolaires (periodes)
-                <textarea
-                  name="vacation_periods_text"
-                  rows={8}
-                  defaultValue={calendarVacationPeriodsText(editGroup.representative.vacation_periods)}
-                />
-              </label>
-              <label className="calendar-textarea-field">
-                Jours feries (une date par ligne)
-                <textarea
-                  name="holiday_dates_text"
-                  rows={8}
-                  defaultValue={calendarDatesText(editGroup.representative.holiday_dates)}
-                />
-              </label>
-              <label className="calendar-textarea-field">
-                Fermetures exceptionnelles (une date par ligne)
-                <textarea
-                  name="closure_dates_text"
-                  rows={8}
-                  defaultValue={calendarDatesText(editGroup.representative.closure_dates)}
-                />
-              </label>
-              <label className="checkline">
-                <input type="checkbox" name="is_active" defaultChecked={editGroup.representative.is_active} />
-                Bloc actif
-              </label>
-              <label className="checkline span-3">
-                <input type="checkbox" name="apply_to_management_planning" />
-                Redeployer immediatement les creneaux bloquants apres mise a jour
-              </label>
-              <div className="row span-4 gap-sm">
-                <button type="submit">Enregistrer le bloc</button>
-                <Link
-                  className="ghost"
-                  href={buildCalendarsPath({
-                    locationFilter,
-                    deploymentFilter,
-                    statusFilter,
-                    generatedFor,
-                    previewGroup: previewGroupKey,
-                    generatedGroup: generatedGroupKey,
-                  })}
-                >
-                  Annuler
-                </Link>
-              </div>
-            </form>
-          </section>
-        ) : null}
-
-        <section className="card top-gap-sm">
-          <div className="row spread wrap gap-sm">
-            <div>
-              <h4>Administration fine par local</h4>
-              <p className="muted">
-                Filtrez puis traitez plusieurs lignes locales a la fois. Retire signifie que les creneaux bloquants generes ont ete supprimes du planning, pas que le calendrier a disparu.
-              </p>
-            </div>
-            <span className="status-pill status-info">{filteredCalendars.length} calendrier(s) visible(s)</span>
           </div>
-          <form method="GET" className="grid cols-4 config-form-grid top-gap-sm">
-            {generatedFor ? <input type="hidden" name="generated_for" value={generatedFor} /> : null}
-            {previewGroupKey ? <input type="hidden" name="preview_group" value={previewGroupKey} /> : null}
-            <label>
-              Local
-              <select name="location_filter" defaultValue={locationFilter || ""}>
-                <option value="">Tous</option>
-                {locations.map((row) => (
-                  <option key={`calendar-filter-location-${row.id}`} value={row.id}>{row.name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Deploiement
-              <select name="deployment_filter" defaultValue={deploymentFilter || ""}>
-                <option value="">Tous</option>
-                <option value="not_deployed">Non deploye</option>
-                <option value="deployed">Deploye</option>
-                <option value="stale">A resynchroniser</option>
-                <option value="removed">Retire</option>
-              </select>
-            </label>
-            <label>
-              Statut
-              <select name="status_filter" defaultValue={statusFilter || ""}>
-                <option value="">Tous</option>
-                <option value="active">Actif</option>
-                <option value="inactive">Inactif</option>
-              </select>
-            </label>
-            <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
-              <button type="submit" className="ghost">Filtrer</button>
-              <Link className="ghost" href={resetFiltersPath}>Reinitialiser</Link>
-            </div>
-          </form>
-          <form id="calendar-bulk-form" action={bulkAdminQuoteSchoolCalendarsAction} className="grid cols-4 config-form-grid top-gap-sm">
-            <input type="hidden" name="return_to" value={returnPath} />
-            <label className="span-2">
-              Action de masse
-              <select name="bulk_action" defaultValue="SYNC">
-                <option value="DEPLOY">Deployer les selections</option>
-                <option value="SYNC">Resynchroniser les selections</option>
-                <option value="REMOVE">Retirer les creneaux generes</option>
-                <option value="DELETE">Supprimer les calendriers selectionnes</option>
-              </select>
-            </label>
-            <div className="span-2 row wrap gap-sm" style={{ alignItems: "end" }}>
-              <button type="submit">Appliquer</button>
-              <span className="muted">Cochez les lignes a traiter dans le tableau ci-dessous.</span>
-            </div>
-          </form>
-        </section>
+          <span className="status-pill status-info">{filteredCalendars.length} calendrier(s) visible(s)</span>
+        </div>
+        <form method="GET" className="grid cols-4 config-form-grid top-gap-sm">
+          {generatedFor ? <input type="hidden" name="generated_for" value={generatedFor} /> : null}
+          {previewGroupKey ? <input type="hidden" name="preview_group" value={previewGroupKey} /> : null}
+          <label>
+            Local
+            <select name="location_filter" defaultValue={locationFilter || ""}>
+              <option value="">Tous</option>
+              {locations.map((row) => (
+                <option key={`calendar-filter-location-${row.id}`} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Deploiement
+            <select name="deployment_filter" defaultValue={deploymentFilter || ""}>
+              <option value="">Tous</option>
+              <option value="not_deployed">Non deploye</option>
+              <option value="deployed">Deploye</option>
+              <option value="stale">A resynchroniser</option>
+              <option value="removed">Retire</option>
+            </select>
+          </label>
+          <label>
+            Statut
+            <select name="status_filter" defaultValue={statusFilter || ""}>
+              <option value="">Tous</option>
+              <option value="active">Actif</option>
+              <option value="inactive">Inactif</option>
+            </select>
+          </label>
+          <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
+            <button type="submit" className="ghost">Filtrer</button>
+            <Link className="ghost" href={resetFiltersPath}>Reinitialiser</Link>
+          </div>
+        </form>
+        <form id="calendar-bulk-form" action={bulkAdminQuoteSchoolCalendarsAction} className="grid cols-4 config-form-grid top-gap-sm">
+          <input type="hidden" name="return_to" value={returnPath} />
+          <input type="hidden" name="success_return_to" value={basePath} />
+          <label className="span-2">
+            Action de masse
+            <select name="bulk_action" defaultValue="SYNC">
+              <option value="DEPLOY">Deployer les selections</option>
+              <option value="SYNC">Resynchroniser les selections</option>
+              <option value="REMOVE">Retirer les creneaux generes</option>
+              <option value="DELETE">Supprimer les calendriers selectionnes</option>
+            </select>
+          </label>
+          <div className="span-2 row wrap gap-sm" style={{ alignItems: "end" }}>
+            <ConditionalConfirmSubmitButton
+              formId="calendar-bulk-form"
+              label="Appliquer"
+              confirmFieldName="bulk_action"
+              confirmFieldValue="DELETE"
+              title="Supprimer les calendriers selectionnes ?"
+              description="Les calendriers coches seront supprimes definitivement. Si certains ont encore des creneaux generes, ils seront retires du planning avant suppression."
+              confirmLabel="Supprimer la selection"
+            />
+            <span className="muted">Cochez les lignes a traiter dans le tableau ci-dessous. Les suppressions demandent une confirmation.</span>
+          </div>
+        </form>
 
         <div className="table-wrap top-gap-sm">
           <table className="data-table">
@@ -796,7 +838,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                     <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span></td>
                     <td>
                       <details>
-                        <summary className="mode-link">Modifier</summary>
+                        <summary className="mode-link">Actions locales</summary>
                         <form action={updateAdminQuoteSchoolCalendarConfigAction} className="grid config-form-grid top-gap-sm">
                           <input type="hidden" name="calendar_id" value={row.id} />
                           <input type="hidden" name="return_to" value={returnPath} />
@@ -899,10 +941,17 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                             Voir creneaux generes
                           </Link>
                         </div>
-                        <form action={deleteAdminQuoteSchoolCalendarConfigAction} className="row top-gap-sm">
+                        <form id={`calendar-delete-${row.id}`} action={deleteAdminQuoteSchoolCalendarConfigAction} className="row top-gap-sm">
                           <input type="hidden" name="calendar_id" value={row.id} />
                           <input type="hidden" name="return_to" value={returnPath} />
-                          <button type="submit" className="danger">Supprimer</button>
+                          <ConfirmSubmitButton
+                            formId={`calendar-delete-${row.id}`}
+                            label="Supprimer"
+                            title="Supprimer ce calendrier local ?"
+                            description={`Le calendrier ${row.name} pour ${locationById.get(row.location_id) || row.location_id} sera supprime.`}
+                            confirmLabel="Supprimer"
+                            className="danger"
+                          />
                         </form>
                       </details>
                     </td>
@@ -913,6 +962,120 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
           </table>
         </div>
       </section>
+
+      {createModalOpen ? (
+        <section className="modal-overlay">
+          <article className="modal-panel client-create-modal calendar-editor-modal">
+            <Link className="modal-close-x" href={basePath} aria-label="Fermer">
+              ×
+            </Link>
+            <header className="calendar-editor-header">
+              <div>
+                <h3 className="modal-title">Ajouter un calendrier</h3>
+                <p className="muted">
+                  Creez un bloc calendrier commun, puis appliquez-le sur un ou plusieurs locaux.
+                </p>
+              </div>
+            </header>
+            {renderCalendarBlockForm({
+              action: createAdminQuoteSchoolCalendarConfigAction,
+              returnTo: createModalPath,
+              successReturnTo: basePath,
+              submitLabel: "Ajouter le calendrier",
+              cancelHref: basePath,
+              defaults: {
+                name: "",
+                schoolYearLabel: "",
+                selectedLocationIds: [],
+                vacationPeriodsText: "",
+                holidayDatesText: "",
+                closureDatesText: "",
+                isActive: true,
+              },
+              applyPlanningLabel: "Deployer immediatement en creneaux bloquants (journee entiere)",
+              errorText: modalErrorMessage,
+              footerNote: "Apres validation, le bloc sera cree pour chaque local coche et vous reverrez une confirmation claire sur la page.",
+            })}
+          </article>
+        </section>
+      ) : null}
+
+      {editGroup ? (
+        <section className="modal-overlay">
+          <article className="modal-panel client-create-modal calendar-editor-modal">
+            <Link className="modal-close-x" href={basePath} aria-label="Fermer">
+              ×
+            </Link>
+            <header className="calendar-editor-header">
+              <div>
+                <h3 className="modal-title">Modifier le bloc</h3>
+                <p className="muted">
+                  {editGroup.name} · {editGroup.school_year_label} · {editGroup.location_names.join(", ")}
+                </p>
+              </div>
+              <span className={`status-pill ${editGroup.badge_class}`}>{editGroup.badge_label}</span>
+            </header>
+            {renderCalendarBlockForm({
+              action: updateAdminQuoteSchoolCalendarGroupAction,
+              returnTo: buildCalendarsPath({
+                locationFilter,
+                deploymentFilter,
+                statusFilter,
+                generatedFor,
+                previewGroup: previewGroupKey,
+                editGroup: editGroup.key,
+                generatedGroup: generatedGroupKey,
+              }),
+              successReturnTo: basePath,
+              submitLabel: "Enregistrer le bloc",
+              cancelHref: basePath,
+              defaults: {
+                name: editGroup.representative.name,
+                schoolYearLabel: editGroup.representative.school_year_label,
+                selectedLocationIds: editGroup.items.map((item) => item.location_id),
+                vacationPeriodsText: calendarVacationPeriodsText(editGroup.representative.vacation_periods),
+                holidayDatesText: calendarDatesText(editGroup.representative.holiday_dates),
+                closureDatesText: calendarDatesText(editGroup.representative.closure_dates),
+                isActive: editGroup.representative.is_active,
+              },
+              applyPlanningLabel: "Redeployer immediatement les creneaux bloquants apres mise a jour",
+              existingEntries: editGroup.items.map((item) => ({ calendarId: item.id, locationId: item.location_id })),
+              errorText: modalErrorMessage,
+              footerNote: editGroup.is_fully_removed
+                ? "Ce bloc est retire du planning. Vous pouvez maintenant le supprimer definitivement si vous n en avez plus besoin."
+                : "Pour ajouter un creneau oublie, ajoutez simplement une ligne puis enregistrez le bloc.",
+              extraActions: editGroup.is_fully_removed ? (
+                <>
+                  <form id={`calendar-group-delete-modal-${editGroup.key}`} action={bulkAdminQuoteSchoolCalendarsAction}>
+                    {editGroup.items.map((item) => (
+                      <input key={`calendar-group-delete-modal-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
+                    ))}
+                    <input type="hidden" name="bulk_action" value="DELETE" />
+                    <input type="hidden" name="return_to" value={buildCalendarsPath({
+                      locationFilter,
+                      deploymentFilter,
+                      statusFilter,
+                      generatedFor,
+                      previewGroup: previewGroupKey,
+                      editGroup: editGroup.key,
+                      generatedGroup: generatedGroupKey,
+                    })} />
+                    <input type="hidden" name="success_return_to" value={basePath} />
+                  </form>
+                  <ConfirmSubmitButton
+                    formId={`calendar-group-delete-modal-${editGroup.key}`}
+                    label="Supprimer ce bloc"
+                    title="Supprimer ce bloc retire ?"
+                    description={`Le bloc ${editGroup.name} sera supprime pour ${editGroup.items.length} local(aux). Cette action est irreversible.`}
+                    confirmLabel="Supprimer le bloc"
+                    className="danger"
+                  />
+                </>
+              ) : null,
+            })}
+          </article>
+        </section>
+      ) : null}
 
       {previewGroup ? (
         <section className="card">

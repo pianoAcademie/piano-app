@@ -11069,6 +11069,7 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const name = String(formData.get("name") ?? "").trim();
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
   const selectedLocationIds = formData
@@ -11120,7 +11121,7 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
   revalidatePath("/admin/quotes/new");
   redirect(
     appendQueryMessage(
-      returnTo,
+      successReturnTo,
       "ok",
       applyToManagementPlanning
         ? "Calendrier enregistre et applique au planning de gestion"
@@ -11137,6 +11138,7 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   const name = String(formData.get("name") ?? "").trim();
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
@@ -11189,7 +11191,7 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
   revalidatePath("/admin/quotes/new");
   redirect(
     appendQueryMessage(
-      returnTo,
+      successReturnTo,
       "ok",
       applyToManagementPlanning
         ? "Calendrier mis a jour et applique au planning de gestion"
@@ -11230,6 +11232,7 @@ export async function updateAdminQuoteSchoolCalendarGroupAction(formData: FormDa
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const name = String(formData.get("name") ?? "").trim();
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
   const selectedLocationIds = formData
@@ -11327,7 +11330,7 @@ export async function updateAdminQuoteSchoolCalendarGroupAction(formData: FormDa
   revalidatePath("/admin/quotes/new");
   redirect(
     appendQueryMessage(
-      returnTo,
+      successReturnTo,
       "ok",
       applyToManagementPlanning
         ? "Bloc calendrier mis a jour et reapplique au planning"
@@ -11344,6 +11347,7 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
     redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
@@ -11369,7 +11373,7 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Calendrier supprime"));
+  redirect(appendQueryMessage(successReturnTo, "ok", "Calendrier supprime"));
 }
 
 export async function previewAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
@@ -11421,6 +11425,7 @@ export async function deployAdminQuoteSchoolCalendarAction(formData: FormData): 
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
     redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
@@ -11435,7 +11440,7 @@ export async function deployAdminQuoteSchoolCalendarAction(formData: FormData): 
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", String(result.data.message || "Deploiement effectue")));
+  redirect(appendQueryMessage(successReturnTo, "ok", String(result.data.message || "Deploiement effectue")));
 }
 
 export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
@@ -11446,6 +11451,7 @@ export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: For
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
     redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
@@ -11460,7 +11466,7 @@ export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: For
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", String(result.data.message || "Deploiement mis a jour")));
+  redirect(appendQueryMessage(successReturnTo, "ok", String(result.data.message || "Deploiement mis a jour")));
 }
 
 export async function removeAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
@@ -11471,6 +11477,7 @@ export async function removeAdminQuoteSchoolCalendarDeploymentAction(formData: F
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
     redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
@@ -11485,7 +11492,7 @@ export async function removeAdminQuoteSchoolCalendarDeploymentAction(formData: F
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", String(result.data.message || "Deploiement retire")));
+  redirect(appendQueryMessage(successReturnTo, "ok", String(result.data.message || "Deploiement retire")));
 }
 
 function parseCalendarIdsFromFormData(formData: FormData): string[] {
@@ -11517,6 +11524,7 @@ export async function bulkAdminQuoteSchoolCalendarsAction(formData: FormData): P
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarIds = parseCalendarIdsFromFormData(formData);
   const bulkAction = parseCalendarBulkAction(String(formData.get("bulk_action") ?? ""));
   if (calendarIds.length === 0) {
@@ -11586,15 +11594,15 @@ export async function bulkAdminQuoteSchoolCalendarsAction(formData: FormData): P
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
   if (bulkAction === "DEPLOY") {
-    redirect(appendQueryMessage(returnTo, "ok", `Deploiement lance pour ${processedCount} calendrier(s)`));
+    redirect(appendQueryMessage(successReturnTo, "ok", `Deploiement lance pour ${processedCount} calendrier(s)`));
   }
   if (bulkAction === "SYNC") {
-    redirect(appendQueryMessage(returnTo, "ok", `Deploiement resynchronise pour ${processedCount} calendrier(s)`));
+    redirect(appendQueryMessage(successReturnTo, "ok", `Deploiement resynchronise pour ${processedCount} calendrier(s)`));
   }
   if (bulkAction === "REMOVE") {
-    redirect(appendQueryMessage(returnTo, "ok", `Creneaux retires pour ${processedCount} calendrier(s)`));
+    redirect(appendQueryMessage(successReturnTo, "ok", `Creneaux retires pour ${processedCount} calendrier(s)`));
   }
-  redirect(appendQueryMessage(returnTo, "ok", `${processedCount} calendrier(s) supprime(s)`));
+  redirect(appendQueryMessage(successReturnTo, "ok", `${processedCount} calendrier(s) supprime(s)`));
 }
 
 export async function previewAdminQuoteSchoolCalendarGroupDeploymentAction(formData: FormData): Promise<void> {
@@ -11654,6 +11662,7 @@ export async function deployAdminQuoteSchoolCalendarGroupAction(formData: FormDa
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarIds = parseCalendarIdsFromFormData(formData);
   if (calendarIds.length === 0) {
     redirect(appendQueryMessage(returnTo, "error", "Aucun calendrier local cible"));
@@ -11672,7 +11681,7 @@ export async function deployAdminQuoteSchoolCalendarGroupAction(formData: FormDa
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", `Deploiement groupe termine (${deployedCount} locaux)`));
+  redirect(appendQueryMessage(successReturnTo, "ok", `Deploiement groupe termine (${deployedCount} locaux)`));
 }
 
 export async function syncAdminQuoteSchoolCalendarGroupAction(formData: FormData): Promise<void> {
@@ -11683,6 +11692,7 @@ export async function syncAdminQuoteSchoolCalendarGroupAction(formData: FormData
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarIds = parseCalendarIdsFromFormData(formData);
   if (calendarIds.length === 0) {
     redirect(appendQueryMessage(returnTo, "error", "Aucun calendrier local cible"));
@@ -11701,7 +11711,7 @@ export async function syncAdminQuoteSchoolCalendarGroupAction(formData: FormData
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", `Deploiement groupe synchronise (${syncedCount} locaux)`));
+  redirect(appendQueryMessage(successReturnTo, "ok", `Deploiement groupe synchronise (${syncedCount} locaux)`));
 }
 
 export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formData: FormData): Promise<void> {
@@ -11712,6 +11722,7 @@ export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formDa
   await ensureAdmin(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
+  const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarIds = parseCalendarIdsFromFormData(formData);
   if (calendarIds.length === 0) {
     redirect(appendQueryMessage(returnTo, "error", "Aucun calendrier local cible"));
@@ -11730,7 +11741,7 @@ export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formDa
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", `Creneaux groupes retires (${removedCount} locaux)`));
+  redirect(appendQueryMessage(successReturnTo, "ok", `Creneaux groupes retires (${removedCount} locaux)`));
 }
 
 export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
