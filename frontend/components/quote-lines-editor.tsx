@@ -64,6 +64,7 @@ type QuoteLinesEditorProps = {
   activityCatalogPriceByActivityId?: Record<string, string>;
   productCatalogPriceByProductId?: Record<string, string>;
   kitCatalogPriceByKitId?: Record<string, string>;
+  planningByActivityId?: Record<string, { plannedQuantity: number; pendingSelection: boolean }>;
   defaultVatRate?: string;
   saveAction: (formData: FormData) => Promise<void>;
 };
@@ -308,6 +309,54 @@ function computeActivityFallbackPrice(activity: ActivityOption | undefined): str
   return null;
 }
 
+function planningSummaryForLine(
+  line: EditableLine,
+  planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }>,
+): { plannedQuantity: number; pendingSelection: boolean } | null {
+  if (line.kind !== "activity") {
+    return null;
+  }
+  const activityId = String(line.refId || "").trim();
+  if (!activityId) {
+    return { plannedQuantity: 0, pendingSelection: false };
+  }
+  const summary = planningByActivityId[activityId];
+  if (!summary) {
+    return { plannedQuantity: 0, pendingSelection: false };
+  }
+  const plannedQuantity = Number.isFinite(summary.plannedQuantity) ? Math.max(0, summary.plannedQuantity) : 0;
+  return {
+    plannedQuantity,
+    pendingSelection: summary.pendingSelection === true,
+  };
+}
+
+function formatPlannedQuantityDisplay(
+  summary: { plannedQuantity: number; pendingSelection: boolean } | null,
+): string {
+  if (!summary) {
+    return "-";
+  }
+  if (summary.pendingSelection && summary.plannedQuantity <= 0) {
+    return "0 (a confirmer)";
+  }
+  return String(summary.plannedQuantity);
+}
+
+function hasPlanningMismatch(
+  line: EditableLine,
+  summary: { plannedQuantity: number; pendingSelection: boolean } | null,
+): boolean {
+  if (!summary) {
+    return false;
+  }
+  const billedQuantity = Number(String(line.quantity || "").trim());
+  if (!Number.isFinite(billedQuantity)) {
+    return summary.plannedQuantity > 0 || summary.pendingSelection;
+  }
+  return Math.round(billedQuantity) !== summary.plannedQuantity || summary.pendingSelection;
+}
+
 export default function QuoteLinesEditor({
   quoteId,
   returnTo,
@@ -320,6 +369,7 @@ export default function QuoteLinesEditor({
   activityCatalogPriceByActivityId = {},
   productCatalogPriceByProductId = {},
   kitCatalogPriceByKitId = {},
+  planningByActivityId = {},
   defaultVatRate = "0",
   saveAction,
 }: QuoteLinesEditorProps): JSX.Element {
@@ -482,6 +532,12 @@ export default function QuoteLinesEditor({
   const activeLineSelectedLabel = activeLine
     ? selectedOptionLabel(activeLine.kind, activeLine.refId, activities, products, kits)
     : null;
+  const activeLinePlanningSummary = activeLine
+    ? planningSummaryForLine(activeLine, planningByActivityId)
+    : null;
+  const activeLinePlanningMismatch = activeLine
+    ? hasPlanningMismatch(activeLine, activeLinePlanningSummary)
+    : false;
 
   return (
     <form action={saveAction}>
@@ -517,7 +573,8 @@ export default function QuoteLinesEditor({
                   <tr>
                     <th className="quote-col-type">Type</th>
                     <th className="quote-col-title">Intitule</th>
-                    <th className="quote-col-qty">Quantite</th>
+                    <th className="quote-col-qty">Qt facturee</th>
+                    <th className="quote-col-qty-planned">Qt planifiee</th>
                     <th className="quote-col-vat">TVA</th>
                     <th className="quote-col-price">Prix TTC</th>
                     <th className="quote-col-total">Total TTC</th>
@@ -526,33 +583,40 @@ export default function QuoteLinesEditor({
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.map((line) => (
-                    <tr key={line.uid} className={activeUid === line.uid ? "active" : ""}>
-                      <td className="quote-col-type">{lineTypeLabel(line.kind)}</td>
-                      <td className="quote-col-title-cell">
-                        <span className="quote-line-title-text" title={line.title || "-"}>
-                          {line.title || "-"}
-                        </span>
-                      </td>
-                      <td className="quote-col-qty">{formatQuantityDisplay(line.quantity)}</td>
-                      <td className="quote-col-vat">{formatPercentDisplay(line.vatRate)}</td>
-                      <td className="quote-col-price">{toMoney(Number(line.unitPrice || "0"), currency)}</td>
-                      <td className="quote-col-total">{toMoney(lineAmount(line), currency)}</td>
-                      <td className="quote-col-status">
-                        <span className={`quote-status-chip ${lineStatusClass(line)}`}>{lineStatusLabel(line)}</span>
-                      </td>
-                      <td className="quote-col-actions">
-                        <div className="row wrap gap-xs">
-                          <button type="button" className="ghost small-btn" onClick={() => setActiveUid(line.uid)}>
-                            Modifier
-                          </button>
-                          <button type="button" className="ghost small-btn" onClick={() => removeLine(line.uid)} disabled={!editable}>
-                            Supprimer
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {lines.map((line) => {
+                    const planningSummary = planningSummaryForLine(line, planningByActivityId);
+                    const planningMismatch = hasPlanningMismatch(line, planningSummary);
+                    return (
+                      <tr key={line.uid} className={activeUid === line.uid ? "active" : ""}>
+                        <td className="quote-col-type">{lineTypeLabel(line.kind)}</td>
+                        <td className="quote-col-title-cell">
+                          <span className="quote-line-title-text" title={line.title || "-"}>
+                            {line.title || "-"}
+                          </span>
+                        </td>
+                        <td className="quote-col-qty">{formatQuantityDisplay(line.quantity)}</td>
+                        <td className={`quote-col-qty-planned${planningMismatch ? " quote-col-qty-mismatch" : ""}`}>
+                          {formatPlannedQuantityDisplay(planningSummary)}
+                        </td>
+                        <td className="quote-col-vat">{formatPercentDisplay(line.vatRate)}</td>
+                        <td className="quote-col-price">{toMoney(Number(line.unitPrice || "0"), currency)}</td>
+                        <td className="quote-col-total">{toMoney(lineAmount(line), currency)}</td>
+                        <td className="quote-col-status">
+                          <span className={`quote-status-chip ${lineStatusClass(line)}`}>{lineStatusLabel(line)}</span>
+                        </td>
+                        <td className="quote-col-actions">
+                          <div className="row wrap gap-xs">
+                            <button type="button" className="ghost small-btn" onClick={() => setActiveUid(line.uid)}>
+                              Modifier
+                            </button>
+                            <button type="button" className="ghost small-btn" onClick={() => removeLine(line.uid)} disabled={!editable}>
+                              Supprimer
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -625,6 +689,12 @@ export default function QuoteLinesEditor({
                       disabled={!editable}
                     />
                   </label>
+                  {activeLine.kind === "activity" ? (
+                    <div className={`quote-line-planning-summary cols-span-4${activeLinePlanningMismatch ? " is-warning" : ""}`}>
+                      <span>Quantite facturee : {formatQuantityDisplay(activeLine.quantity)}</span>
+                      <span>Quantite planifiee : {formatPlannedQuantityDisplay(activeLinePlanningSummary)}</span>
+                    </div>
+                  ) : null}
                   <label>
                     TVA (%)
                     <input
@@ -666,7 +736,7 @@ export default function QuoteLinesEditor({
                 </div>
                 {isCatalogKind(activeLine.kind) ? (
                   <small className="muted">
-                    Prix pre-rempli depuis le catalogue/la base. Vous pouvez l ajuster si necessaire.
+                    Prix pre-rempli depuis le devis, le catalogue ou la configuration source. Vous pouvez l ajuster si necessaire.
                   </small>
                 ) : null}
               </article>

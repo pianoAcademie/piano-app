@@ -10599,7 +10599,7 @@ button.danger:focus-visible {
   width: 100%;
   border-collapse: collapse;
   table-layout: auto;
-  min-width: 760px;
+  min-width: 900px;
 }
 
 .quote-saved-table th,
@@ -10629,6 +10629,7 @@ button.danger:focus-visible {
 
 .quote-col-type,
 .quote-col-qty,
+.quote-col-qty-planned,
 .quote-col-vat,
 .quote-col-price,
 .quote-col-total,
@@ -10641,7 +10642,16 @@ button.danger:focus-visible {
 .quote-col-title,
 .quote-col-title-cell {
   min-width: 220px;
-  width: 32%;
+  width: 28%;
+}
+
+.quote-col-qty-planned {
+  min-width: 116px;
+}
+
+.quote-col-qty-mismatch {
+  color: #8b4c00;
+  font-weight: 700;
 }
 
 .quote-line-title-text {
@@ -10656,6 +10666,22 @@ button.danger:focus-visible {
 .quote-selected-item-label {
   display: block;
   line-height: 1.3;
+}
+
+.quote-line-planning-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f7fbff;
+  color: #35506b;
+}
+
+.quote-line-planning-summary.is-warning {
+  background: #fff6e8;
+  color: #8b4c00;
 }
 
 .quote-price-field {

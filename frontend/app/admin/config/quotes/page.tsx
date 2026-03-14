@@ -67,6 +67,19 @@ type PricingCatalogOut = {
   updated_at: string;
 };
 
+type PricingActivityPriceOut = {
+  id: string;
+  catalog_id: string;
+  activity_id: string;
+  location_id: string | null;
+  student_category: string | null;
+  pricing_unit: string;
+  unit_price_ttc: string;
+  currency: string;
+  is_active: boolean;
+  updated_at: string;
+};
+
 type PaymentPlanOut = {
   id: string;
   code: string;
@@ -213,6 +226,62 @@ function dateTimeLabel(value: string | null): string {
     return "-";
   }
   return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function moneyLabel(value: string | number | null | undefined, currency = "EUR"): string {
+  const numeric = typeof value === "number" ? value : Number(String(value ?? "").trim().replace(",", "."));
+  if (!Number.isFinite(numeric)) {
+    return "-";
+  }
+  try {
+    return new Intl.NumberFormat("fr-FR", {
+      style: "currency",
+      currency: (currency || "EUR").toUpperCase(),
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numeric);
+  } catch {
+    return `${numeric.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
+  }
+}
+
+function pricingUnitLabel(value: string | null): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "per_session") {
+    return "Par cours";
+  }
+  if (normalized === "hourly") {
+    return "Horaire";
+  }
+  if (normalized === "fixed") {
+    return "Forfait";
+  }
+  return value || "-";
+}
+
+function computedActivityFallbackPrice(activity: AdminActivityOut): { label: string; amountTtc: number | null; tone: "ok" | "warn" | "off" } {
+  const direct = Number(String(activity.default_course_rate_ttc ?? "").trim());
+  if (Number.isFinite(direct) && direct > 0) {
+    return {
+      label: "Tarif par cours par defaut activite",
+      amountTtc: direct,
+      tone: "warn",
+    };
+  }
+  const hourly = Number(String(activity.default_hourly_rate ?? "").trim());
+  const duration = Number(activity.duration_minutes || 0);
+  if (Number.isFinite(hourly) && hourly > 0 && Number.isFinite(duration) && duration > 0) {
+    return {
+      label: "Tarif horaire par defaut activite",
+      amountTtc: hourly * (duration / 60),
+      tone: "warn",
+    };
+  }
+  return {
+    label: "Aucune source tarifaire de secours",
+    amountTtc: null,
+    tone: "off",
+  };
 }
 
 const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
@@ -400,6 +469,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     quoteTypesResult,
     formulasResult,
     catalogsResult,
+    pricingActivityPricesResult,
     paymentPlansResult,
     templateVariablesResult,
     solfegeRulesResult,
@@ -412,6 +482,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas?include_inactive=true", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
+    backendRequest<PricingActivityPriceOut[]>("/api/v1/pricing-activity-prices", {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
     backendRequest<QuoteTemplateVariableOut[]>("/api/v1/quote-template-variables", {}, token),
     backendRequest<SolfegeLevelRuleOut[]>("/api/v1/solfege-level-rules", {}, token),
@@ -446,6 +517,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     : (() => {
         loadErrors.push(`Plans de paiement: ${paymentPlansResult.message}`);
         return [] as PaymentPlanOut[];
+      })();
+  const pricingActivityPrices = pricingActivityPricesResult.ok
+    ? pricingActivityPricesResult.data
+    : (() => {
+        loadErrors.push(`Tarifs activites: ${pricingActivityPricesResult.message}`);
+        return [] as PricingActivityPriceOut[];
       })();
   const templateVariables = templateVariablesResult.ok
     ? templateVariablesResult.data
@@ -492,6 +569,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
   const locationById = new Map(locations.map((row) => [row.id, row.name]));
   const formulaById = new Map(formulas.map((row) => [row.id, row.name]));
+  const activeActivities = activities
+    .filter((row) => row.active)
+    .sort((a, b) => a.name.localeCompare(b.name, "fr-FR"));
   const activityFamilies = Array.from(
     new Set(
       activities
@@ -744,6 +824,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                   <th>Nom</th>
                   <th>Annee</th>
                   <th>Periode</th>
+                  <th>Sources tarifaires</th>
                   <th>Statut</th>
                   <th>Maj</th>
                   <th>Actions</th>
@@ -751,61 +832,178 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               </thead>
               <tbody>
                 {catalogs.length === 0 ? (
-                  <tr><td colSpan={6}><p className="muted">Aucun catalogue configure.</p></td></tr>
+                  <tr><td colSpan={7}><p className="muted">Aucun catalogue configure.</p></td></tr>
                 ) : (
-                  catalogs.map((row) => (
-                    <tr key={row.id}>
-                      <td><strong>{row.name}</strong></td>
-                      <td>{row.school_year_label || "-"}</td>
-                      <td>{dateInputValue(row.effective_from)} → {dateInputValue(row.effective_to)}</td>
-                      <td>
-                        <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span>
-                        {row.is_default ? <span className="badge">Defaut</span> : null}
-                      </td>
-                      <td>{dateTimeLabel(row.updated_at)}</td>
-                      <td>
-                        <details>
-                          <summary className="mode-link">Modifier</summary>
-                          <form action={updateAdminPricingCatalogConfigAction} className="grid config-form-grid top-gap-sm">
-                            <input type="hidden" name="catalog_id" value={row.id} />
-                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-                            <label>
-                              Nom
-                              <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
-                            </label>
-                            <label>
-                              Annee scolaire
-                              <input type="text" name="school_year_label" defaultValue={row.school_year_label || ""} maxLength={40} />
-                            </label>
-                            <label>
-                              Date debut
-                              <input type="date" name="effective_from" defaultValue={dateInputValue(row.effective_from)} required />
-                            </label>
-                            <label>
-                              Date fin
-                              <input type="date" name="effective_to" defaultValue={dateInputValue(row.effective_to)} />
-                            </label>
-                            <label className="checkline">
-                              <input type="checkbox" name="is_default" defaultChecked={row.is_default} />
-                              Defaut
-                            </label>
-                            <label className="checkline">
-                              <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                              Actif
-                            </label>
-                            <div className="row">
-                              <button type="submit">Enregistrer</button>
+                  catalogs.map((row) => {
+                    const explicitActivityPrices = pricingActivityPrices
+                      .filter((price) => price.catalog_id === row.id && price.is_active)
+                      .sort((left, right) => {
+                        const leftActivity = activities.find((item) => item.id === left.activity_id)?.name ?? "";
+                        const rightActivity = activities.find((item) => item.id === right.activity_id)?.name ?? "";
+                        const byActivity = leftActivity.localeCompare(rightActivity, "fr-FR");
+                        if (byActivity !== 0) {
+                          return byActivity;
+                        }
+                        const leftLocation = left.location_id ? (locationById.get(left.location_id) ?? "") : "";
+                        const rightLocation = right.location_id ? (locationById.get(right.location_id) ?? "") : "";
+                        return leftLocation.localeCompare(rightLocation, "fr-FR");
+                      });
+                    const explicitActivityIds = new Set(explicitActivityPrices.map((price) => price.activity_id));
+                    const fallbackActivities = activeActivities
+                      .filter((activity) => !explicitActivityIds.has(activity.id))
+                      .map((activity) => ({
+                        activity,
+                        fallback: computedActivityFallbackPrice(activity),
+                      }));
+                    const fallbackAvailableCount = fallbackActivities.filter((item) => item.fallback.amountTtc !== null).length;
+                    const fallbackMissingCount = fallbackActivities.length - fallbackAvailableCount;
+
+                    return (
+                      <tr key={row.id}>
+                        <td><strong>{row.name}</strong></td>
+                        <td>{row.school_year_label || "-"}</td>
+                        <td>{dateInputValue(row.effective_from)} → {dateInputValue(row.effective_to)}</td>
+                        <td>
+                          <div><strong>{explicitActivityPrices.length}</strong> tarif(s) explicite(s)</div>
+                          <div className="muted">{fallbackAvailableCount} fallback(s) activite · {fallbackMissingCount} sans source</div>
+                        </td>
+                        <td>
+                          <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span>
+                          {row.is_default ? <span className="badge">Defaut</span> : null}
+                        </td>
+                        <td>{dateTimeLabel(row.updated_at)}</td>
+                        <td>
+                          <details>
+                            <summary className="mode-link">Modifier</summary>
+                            <form action={updateAdminPricingCatalogConfigAction} className="grid config-form-grid top-gap-sm">
+                              <input type="hidden" name="catalog_id" value={row.id} />
+                              <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
+                              <label>
+                                Nom
+                                <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
+                              </label>
+                              <label>
+                                Annee scolaire
+                                <input type="text" name="school_year_label" defaultValue={row.school_year_label || ""} maxLength={40} />
+                              </label>
+                              <label>
+                                Date debut
+                                <input type="date" name="effective_from" defaultValue={dateInputValue(row.effective_from)} required />
+                              </label>
+                              <label>
+                                Date fin
+                                <input type="date" name="effective_to" defaultValue={dateInputValue(row.effective_to)} />
+                              </label>
+                              <label className="checkline">
+                                <input type="checkbox" name="is_default" defaultChecked={row.is_default} />
+                                Defaut
+                              </label>
+                              <label className="checkline">
+                                <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
+                                Actif
+                              </label>
+                              <div className="row">
+                                <button type="submit">Enregistrer</button>
+                              </div>
+                            </form>
+
+                            <div className="top-gap-sm">
+                              <h4>Sources tarifaires activites</h4>
+                              <p className="muted">
+                                Ce diagnostic montre d abord les tarifs explicites du catalogue, puis le fallback activite utilise si aucun tarif catalogue n existe.
+                                Les formulaires Typeform qui imposent un <code>unit_price_ttc</code> explicite restent prioritaires sur ce diagnostic.
+                              </p>
+
+                              <div className="table-wrap top-gap-sm">
+                                <table className="data-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Activite</th>
+                                      <th>Lieu</th>
+                                      <th>Unite</th>
+                                      <th>Source</th>
+                                      <th>Montant TTC</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {explicitActivityPrices.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={5}>
+                                          <p className="muted">Aucun tarif explicite enregistre dans ce catalogue.</p>
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      explicitActivityPrices.map((price) => {
+                                        const activity = activities.find((item) => item.id === price.activity_id);
+                                        const locationName = price.location_id ? (locationById.get(price.location_id) ?? price.location_id) : "Tous sites";
+                                        const sourceLabel = price.location_id ? "Catalogue · site specifique" : "Catalogue · general";
+                                        return (
+                                          <tr key={price.id}>
+                                            <td>
+                                              <strong>{activity?.name || price.activity_id}</strong>
+                                              <div className="muted"><code>{activity?.code || price.activity_id}</code></div>
+                                            </td>
+                                            <td>{locationName}</td>
+                                            <td>{pricingUnitLabel(price.pricing_unit)}</td>
+                                            <td>{sourceLabel}</td>
+                                            <td>{moneyLabel(price.unit_price_ttc, price.currency)}</td>
+                                          </tr>
+                                        );
+                                      })
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+
+                              <div className="table-wrap top-gap-sm">
+                                <table className="data-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Activite sans tarif catalogue explicite</th>
+                                      <th>Mode</th>
+                                      <th>Fallback</th>
+                                      <th>Montant de secours</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {fallbackActivities.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={4}>
+                                          <p className="muted">Toutes les activites actives ont un tarif explicite dans ce catalogue.</p>
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      fallbackActivities.map(({ activity, fallback }) => (
+                                        <tr key={`${row.id}-${activity.id}`}>
+                                          <td>
+                                            <strong>{activity.name}</strong>
+                                            <div className="muted"><code>{activity.code}</code></div>
+                                          </td>
+                                          <td>{modalityLabel(activity.mode)}</td>
+                                          <td>
+                                            <span className={`status-pill ${fallback.tone === "off" ? "status-off" : fallback.tone === "warn" ? "status-warn" : "status-ok"}`}>
+                                              {fallback.label}
+                                            </span>
+                                          </td>
+                                          <td>{fallback.amountTtc === null ? "-" : moneyLabel(fallback.amountTtc)}</td>
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
-                          </form>
-                          <form action={deleteAdminPricingCatalogConfigAction} className="row top-gap-sm">
-                            <input type="hidden" name="catalog_id" value={row.id} />
-                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-                            <button type="submit" className="danger">Supprimer</button>
-                          </form>
-                        </details>
-                      </td>
-                    </tr>
-                  ))
+
+                            <form action={deleteAdminPricingCatalogConfigAction} className="row top-gap-sm">
+                              <input type="hidden" name="catalog_id" value={row.id} />
+                              <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
+                              <button type="submit" className="danger">Supprimer</button>
+                            </form>
+                          </details>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

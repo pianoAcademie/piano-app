@@ -924,6 +924,31 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
+  const planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }> = {};
+  for (const session of calendarSessions) {
+    const activityId = String(session.activity_id ?? "").trim();
+    if (!activityId) {
+      continue;
+    }
+    if (!(activityId in planningByActivityId)) {
+      planningByActivityId[activityId] = { plannedQuantity: 0, pendingSelection: false };
+    }
+    planningByActivityId[activityId].plannedQuantity += 1;
+  }
+  for (const block of planningBlocks) {
+    const activityId = String(block.activity_id ?? "").trim();
+    if (!activityId) {
+      continue;
+    }
+    if (!(activityId in planningByActivityId)) {
+      planningByActivityId[activityId] = { plannedQuantity: 0, pendingSelection: false };
+    }
+    const rawPending = block.selection_pending;
+    const isPending = rawPending === true || String(rawPending ?? "").trim().toLowerCase() === "true";
+    if (isPending) {
+      planningByActivityId[activityId].pendingSelection = true;
+    }
+  }
   const planningSummary = planningVisualSummary(calendarSessions);
   const followupPayload = readObject(activeFollowup?.payload);
   const followupSelectedSlot = readObject(followupPayload?.selected_solfege_slot)
@@ -1822,6 +1847,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           activityCatalogPriceByActivityId={activityCatalogPriceByActivityId}
           productCatalogPriceByProductId={productCatalogPriceByProductId}
           kitCatalogPriceByKitId={kitCatalogPriceByKitId}
+          planningByActivityId={planningByActivityId}
           defaultVatRate={defaultVatRate}
           saveAction={updateQuoteLinesAction}
         />
