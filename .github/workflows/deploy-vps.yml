@@ -124,10 +124,10 @@ jobs:
 
             docker compose run --rm -T --build backend alembic upgrade head
 
-            up_targets='backend frontend'
+            worker_targets=''
             for svc in notifications-immediate-worker notifications-scheduled-worker notifications-feedback-worker; do
               if echo \"\$services\" | grep -qx \"\$svc\"; then
-                up_targets=\"\$up_targets \$svc\"
+                worker_targets=\"\$worker_targets \$svc\"
               fi
             done
 
@@ -135,8 +135,33 @@ jobs:
               \$2 ~ /^[0-9a-f]+_piano-app-(backend|frontend|notifications-immediate-worker|notifications-scheduled-worker|notifications-feedback-worker)-1$/ { print \$1 }
             ' | xargs -r docker rm -f
 
-            docker compose rm -sf \$up_targets || true
-            docker compose up -d --build \$up_targets
+            docker compose rm -sf backend frontend \$worker_targets || true
+            docker compose up -d --build backend \$worker_targets
+
+            backend_id=\$(docker compose ps -q backend)
+            test -n \"\$backend_id\" || { echo 'Backend container introuvable apres demarrage'; exit 1; }
+
+            for i in \$(seq 1 60); do
+              backend_health=\$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \"\$backend_id\" 2>/dev/null || true)
+              if [ \"\$backend_health\" = 'healthy' ]; then
+                break
+              fi
+              if [ \"\$backend_health\" = 'exited' ] || [ \"\$backend_health\" = 'dead' ]; then
+                echo \"Backend failed during startup (status: \$backend_health)\"
+                docker logs --tail=200 \"\$backend_id\" || true
+                exit 1
+              fi
+              sleep 2
+            done
+
+            backend_health=\$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \"\$backend_id\" 2>/dev/null || true)
+            if [ \"\$backend_health\" != 'healthy' ]; then
+              echo \"Backend not healthy after wait window (status: \$backend_health)\"
+              docker logs --tail=200 \"\$backend_id\" || true
+              exit 1
+            fi
+
+            docker compose up -d --build frontend
             docker compose ps
           "
 
