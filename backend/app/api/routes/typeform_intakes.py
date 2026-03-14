@@ -174,6 +174,44 @@ def _json_list(value: object | None) -> list[object]:
     return []
 
 
+def _template_condition_tokens(value: object | None) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        tokens: list[str] = []
+        for nested in value.values():
+            tokens.extend(_template_condition_tokens(nested))
+        return list(dict.fromkeys(token for token in tokens if token))
+    if isinstance(value, list):
+        tokens: list[str] = []
+        for item in value:
+            tokens.extend(_template_condition_tokens(item))
+        return list(dict.fromkeys(token for token in tokens if token))
+    token = _normalize_token(value)
+    return [token] if token else []
+
+
+def _template_matches_when(
+    template: dict[str, object],
+    normalized: dict[str, object],
+) -> bool:
+    when = _json_object(template.get("when"))
+    if not when:
+        return True
+    for field_name, expected in when.items():
+        actual_tokens = _template_condition_tokens(normalized.get(field_name))
+        expected_tokens = _template_condition_tokens(expected)
+        if not expected_tokens:
+            if actual_tokens:
+                return False
+            continue
+        if not actual_tokens:
+            return False
+        if not any(token in actual_tokens for token in expected_tokens):
+            return False
+    return True
+
+
 def _merge_normalized_payload_patch(
     current: dict[str, object],
     patch: dict[str, object | None],
@@ -1231,7 +1269,16 @@ def _build_preview_lines(
         blockages.append("Aucune ligne de pre-devis n est configuree pour ce formulaire.")
         return preview_lines, quote_lines, warnings, blockages
 
-    for index, raw_template in enumerate(line_templates):
+    applicable_templates = [
+        dict(item)
+        for item in line_templates
+        if _template_matches_when(dict(item), normalized)
+    ]
+    if not applicable_templates:
+        blockages.append("Aucune ligne de pre-devis ne correspond aux choix du formulaire.")
+        return preview_lines, quote_lines, warnings, blockages
+
+    for index, raw_template in enumerate(applicable_templates):
         template = dict(raw_template)
         kind, activity_id, product_id, kit_id, issues = _resolve_template_item(db, template)
         if issues:
