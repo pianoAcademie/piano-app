@@ -2693,12 +2693,12 @@ def create_draft_quote_from_typeform_intake(
     )
 
 
-@router.delete("/intakes/{intake_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/intakes/{intake_id}", status_code=status.HTTP_200_OK)
 def delete_typeform_intake(
     intake_id: UUID,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> None:
+) -> dict[str, bool]:
     intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
     if intake is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
@@ -2709,7 +2709,7 @@ def delete_typeform_intake(
         )
     db.delete(intake)
     db.commit()
-    return None
+    return {"ok": True}
 
 
 @router.post("/demo/seed", response_model=TypeformDemoSeedOut, status_code=status.HTTP_201_CREATED)
