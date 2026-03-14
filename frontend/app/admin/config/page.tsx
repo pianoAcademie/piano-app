@@ -43,11 +43,13 @@ import type {
   AdminCatalogProductOut,
   AdminCreditTypeOut,
   AdminLegalEntityOut,
+  AdminPlanningActivitiesOut,
   AdminConfigAccountOut,
   AdminMessagingSettingsOut,
   AdminMessagingTemplateOut,
   AdminInvoiceTemplateOut,
   AdminInvoiceNumberingOut,
+  LocationOut,
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
@@ -170,6 +172,13 @@ type ActivityToggleCardProps = {
   emphasized?: boolean;
 };
 
+type ActivityPlanningLocationOption = {
+  locationId: string;
+  locationName: string;
+  selectedActivityCount: number;
+  selectedForCurrentActivity: boolean;
+};
+
 function ActivityModalSection({ title, description, children, accent = false }: ActivityModalSectionProps) {
   return (
     <section className={`activity-modal-section${accent ? " is-accent" : ""}`}>
@@ -199,6 +208,44 @@ function ActivityToggleCard({
         <small>{description}</small>
       </span>
     </label>
+  );
+}
+
+function ActivityPlanningAssignments({
+  locations,
+  defaultSelectedLocationIds,
+}: {
+  locations: ActivityPlanningLocationOption[];
+  defaultSelectedLocationIds: string[];
+}) {
+  const defaultSelected = new Set(defaultSelectedLocationIds);
+
+  if (locations.length === 0) {
+    return <p className="muted">Aucun planning actif charge pour le moment.</p>;
+  }
+
+  return (
+    <div className="activity-planning-grid">
+      {locations.map((location) => (
+        <label key={location.locationId} className="activity-planning-card">
+          <input type="hidden" name="planning_scope_location_ids" value={location.locationId} />
+          <span className="activity-planning-checkbox">
+            <input
+              type="checkbox"
+              name="planning_location_ids"
+              value={location.locationId}
+              defaultChecked={defaultSelected.has(location.locationId)}
+            />
+          </span>
+          <span className="activity-planning-copy">
+            <strong>{location.locationName}</strong>
+            <small>
+              {location.selectedActivityCount} activite(s) actuellement visibles sur ce planning.
+            </small>
+          </span>
+        </label>
+      ))}
+    </div>
   );
 }
 
@@ -491,6 +538,31 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const loadErrors: string[] = [];
 
+  let planningLocations: LocationOut[] = [];
+  const planningActivitiesByLocationId = new Map<string, AdminPlanningActivitiesOut>();
+
+  if (mainSection === "activities") {
+    const locationsResult = await backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token);
+    if (locationsResult.ok) {
+      planningLocations = [...locationsResult.data].sort((left, right) => left.name.localeCompare(right.name, "fr"));
+      const planningActivityResults = await Promise.all(
+        planningLocations.map((location) =>
+          backendRequest<AdminPlanningActivitiesOut>(`/api/v1/admin/plannings/${location.id}/activities`, {}, token),
+        ),
+      );
+      planningActivityResults.forEach((result, index) => {
+        const location = planningLocations[index];
+        if (result.ok) {
+          planningActivitiesByLocationId.set(location.id, result.data);
+          return;
+        }
+        loadErrors.push(`Activites planning ${location.name}: ${result.message}`);
+      });
+    } else {
+      loadErrors.push(`Locaux: ${locationsResult.message}`);
+    }
+  }
+
   const account = accountResult.ok
     ? accountResult.data
     : (() => {
@@ -608,6 +680,27 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const selectedActivity = activities.find((activity) => activity.id === selectedActivityId) ?? null;
   const selectedActivityIsVacation = isVacationServiceCode(selectedActivity?.service_code);
   const selectedActivityIsStudentless = selectedActivity ? !selectedActivity.allows_student_bookings : false;
+  const activityPlanningCountById = new Map<string, number>();
+  planningActivitiesByLocationId.forEach((planning) => {
+    planning.selected_activity_ids.forEach((activityId) => {
+      activityPlanningCountById.set(activityId, (activityPlanningCountById.get(activityId) ?? 0) + 1);
+    });
+  });
+  const manageablePlanningLocations = planningLocations.filter((location) => planningActivitiesByLocationId.has(location.id));
+  const activityPlanningLocations = manageablePlanningLocations.map((location) => {
+    const planning = planningActivitiesByLocationId.get(location.id);
+    const selectedIds = planning?.selected_activity_ids ?? [];
+    return {
+      locationId: location.id,
+      locationName: location.name,
+      selectedActivityCount: selectedIds.length,
+      selectedForCurrentActivity: selectedActivity ? selectedIds.includes(selectedActivity.id) : false,
+    } satisfies ActivityPlanningLocationOption;
+  });
+  const createActivityDefaultPlanningLocationIds = activityPlanningLocations.map((location) => location.locationId);
+  const selectedActivityPlanningLocationIds = activityPlanningLocations
+    .filter((location) => location.selectedForCurrentActivity)
+    .map((location) => location.locationId);
   const createLegalEntityModalOpen = readParam(params, "new_legal_entity") === "1";
   const selectedLegalEntityId = readParam(params, "legal_entity_id");
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === selectedLegalEntityId) ?? null;
@@ -2347,6 +2440,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <small className="muted">
                             Entite: {activity.seller_legal_entity_name ?? "Non definie"}
                           </small>
+                          {activityPlanningLocations.length > 0 ? (
+                            <small className="muted">
+                              Plannings: {activityPlanningCountById.get(activity.id) ?? 0}/{activityPlanningLocations.length}
+                            </small>
+                          ) : null}
                           <small className="muted">{activity.description || "Sans description"}</small>
                         </div>
                         <div className="activity-row-meta">
@@ -2425,6 +2523,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </select>
                             </label>
                           </div>
+                        </ActivityModalSection>
+
+                        <ActivityModalSection
+                          title="Plannings concernes"
+                          description="Choisissez les plannings sur lesquels cette activite doit pouvoir etre utilisee. Decochez un local pour retirer l activite de son planning."
+                        >
+                          <ActivityPlanningAssignments
+                            locations={activityPlanningLocations}
+                            defaultSelectedLocationIds={createActivityDefaultPlanningLocationIds}
+                          />
                         </ActivityModalSection>
 
                         <div className="grid cols-2 activity-modal-zone-grid">
@@ -2711,6 +2819,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </select>
                             </label>
                           </div>
+                        </ActivityModalSection>
+
+                        <ActivityModalSection
+                          title="Plannings concernes"
+                          description="Associez ou retirez cette activite des plannings locaux. Si un local est decoche, l activite n apparaitra plus dans son planning."
+                        >
+                          <ActivityPlanningAssignments
+                            locations={activityPlanningLocations}
+                            defaultSelectedLocationIds={selectedActivityPlanningLocationIds}
+                          />
                         </ActivityModalSection>
 
                         <div className="grid cols-2 activity-modal-zone-grid">

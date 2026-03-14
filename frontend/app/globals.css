@@ -5102,6 +5102,58 @@ button.danger:focus-visible {
   line-height: 1.45;
 }
 
+.activity-planning-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.activity-planning-card {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid #e3d4bd;
+  border-radius: 14px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.activity-planning-card:hover {
+  border-color: #d8b98a;
+  background: #fff8ec;
+}
+
+.activity-planning-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.activity-planning-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.activity-planning-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.activity-planning-copy strong {
+  color: #382913;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.activity-planning-copy small {
+  color: #6b583a;
+  line-height: 1.45;
+}
+
 .activity-modal-note {
   margin: 0;
   padding: 10px 12px;
@@ -5231,7 +5283,8 @@ button.danger:focus-visible {
 
 @media (max-width: 980px) {
   .activity-modal-zone-grid,
-  .activity-toggle-grid {
+  .activity-toggle-grid,
+  .activity-planning-grid {
     grid-template-columns: 1fr;
   }
 

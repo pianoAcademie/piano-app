@@ -6058,6 +6058,8 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
 
   await ensureAdmin(token);
 
+  const returnTo = "/admin/config?section=activities&new_activity=1";
+
   const name = String(formData.get("name") ?? "").trim();
   const code = String(formData.get("code") ?? "").trim();
   const description = optionalField(formData, "description");
@@ -6091,45 +6093,47 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   );
   const excludeHolidaysInRecurrence = checkboxField(formData, "exclude_holidays_in_recurrence");
   const excludeSchoolVacationsInRecurrence = checkboxField(formData, "exclude_school_vacations_in_recurrence");
+  const planningLocationIds = parseStringList(formData.getAll("planning_location_ids"));
+  const planningScopeLocationIds = parseStringList(formData.getAll("planning_scope_location_ids"));
 
   if (!name) {
-    redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", "Nom activite obligatoire"));
   }
   if (!durationMinutes || durationMinutes < 5) {
-    redirect("/admin/config?section=activities&error=Duree%20activite%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Duree activite invalide"));
   }
   if (isVacationActivity && (durationMinutes < 600 || durationMinutes > 1440)) {
-    redirect("/admin/config?section=activities&error=Duree%20VACATION%20invalide%20(600-1440)");
+    redirect(appendQueryMessage(returnTo, "error", "Duree VACATION invalide (600-1440)"));
   }
   if (allowsStudentBookings && (defaultCapacity === null || defaultCapacity < 1)) {
-    redirect("/admin/config?section=activities&error=Capacite%20par%20defaut%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Capacite par defaut invalide"));
   }
   if (!sellerLegalEntityId) {
-    redirect("/admin/config?section=activities&error=Entite%20legale%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", "Entite legale obligatoire"));
   }
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
-    redirect("/admin/config?section=activities&error=Taux%20horaire%20par%20defaut%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Taux horaire par defaut invalide"));
   }
   if (defaultCourseRateRaw && defaultCourseRate === null) {
-    redirect("/admin/config?section=activities&error=Tarif%20par%20cours%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Tarif par cours invalide"));
   }
   if (emailReminderHours === "INVALID") {
-    redirect("/admin/config?section=activities&error=Rappel%20email%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Rappel email invalide"));
   }
   if (smsReminderHours === "INVALID") {
-    redirect("/admin/config?section=activities&error=Rappel%20SMS%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Rappel SMS invalide"));
   }
   if (minBookingNoticeHoursOverride === "INVALID") {
-    redirect("/admin/config?section=activities&error=Delai%20minimum%20reservation%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Delai minimum reservation invalide"));
   }
   if (cancellationDeadlineHoursOverride === "INVALID") {
-    redirect("/admin/config?section=activities&error=Delai%20annulation%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Delai annulation invalide"));
   }
   if (autoCancelIfBookedLessThanOverride === "INVALID") {
-    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20inscrits%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Regle auto-annulation inscrits invalide"));
   }
   if (autoCancelHoursBeforeStartOverride === "INVALID") {
-    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20heures%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Regle auto-annulation heures invalide"));
   }
 
   const payload: Record<string, unknown> = {
@@ -6171,12 +6175,29 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=activities&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
+
+  const syncResult = await syncActivityPlanningAssignments({
+    token,
+    activityId: result.data.id,
+    selectedLocationIds: planningLocationIds,
+    scopeLocationIds: planningScopeLocationIds,
+  });
 
   revalidatePath("/admin/config");
   revalidatePath("/admin");
-  redirect("/admin/config?section=activities&ok=Activite%20cree");
+  if (!syncResult.ok) {
+    redirect(
+      appendQueryMessage(
+        `/admin/config?section=activities&activity_id=${encodeURIComponent(result.data.id)}`,
+        "error",
+        `Activite creee, mais synchronisation des plannings incomplete: ${syncResult.message}`,
+      ),
+    );
+  }
+
+  redirect(appendQueryMessage("/admin/config?section=activities", "ok", "Activite creee"));
 }
 
 export async function updateAdminActivityAction(formData: FormData): Promise<void> {
@@ -6191,6 +6212,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (!activityId) {
     redirect("/admin/config?section=activities&error=Activite%20invalide");
   }
+  const returnTo = `/admin/config?section=activities&activity_id=${encodeURIComponent(activityId)}`;
 
   const name = String(formData.get("name") ?? "").trim();
   const code = String(formData.get("code") ?? "").trim();
@@ -6225,45 +6247,47 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   );
   const excludeHolidaysInRecurrence = checkboxField(formData, "exclude_holidays_in_recurrence");
   const excludeSchoolVacationsInRecurrence = checkboxField(formData, "exclude_school_vacations_in_recurrence");
+  const planningLocationIds = parseStringList(formData.getAll("planning_location_ids"));
+  const planningScopeLocationIds = parseStringList(formData.getAll("planning_scope_location_ids"));
 
   if (!name) {
-    redirect("/admin/config?section=activities&error=Nom%20activite%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", "Nom activite obligatoire"));
   }
   if (!durationMinutes || durationMinutes < 5) {
-    redirect("/admin/config?section=activities&error=Duree%20activite%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Duree activite invalide"));
   }
   if (isVacationActivity && (durationMinutes < 600 || durationMinutes > 1440)) {
-    redirect("/admin/config?section=activities&error=Duree%20VACATION%20invalide%20(600-1440)");
+    redirect(appendQueryMessage(returnTo, "error", "Duree VACATION invalide (600-1440)"));
   }
   if (allowsStudentBookings && (defaultCapacity === null || defaultCapacity < 1)) {
-    redirect("/admin/config?section=activities&error=Capacite%20par%20defaut%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Capacite par defaut invalide"));
   }
   if (!sellerLegalEntityId) {
-    redirect("/admin/config?section=activities&error=Entite%20legale%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", "Entite legale obligatoire"));
   }
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
-    redirect("/admin/config?section=activities&error=Taux%20horaire%20par%20defaut%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Taux horaire par defaut invalide"));
   }
   if (defaultCourseRateRaw && defaultCourseRate === null) {
-    redirect("/admin/config?section=activities&error=Tarif%20par%20cours%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Tarif par cours invalide"));
   }
   if (emailReminderHours === "INVALID") {
-    redirect("/admin/config?section=activities&error=Rappel%20email%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Rappel email invalide"));
   }
   if (smsReminderHours === "INVALID") {
-    redirect("/admin/config?section=activities&error=Rappel%20SMS%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Rappel SMS invalide"));
   }
   if (minBookingNoticeHoursOverride === "INVALID") {
-    redirect("/admin/config?section=activities&error=Delai%20minimum%20reservation%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Delai minimum reservation invalide"));
   }
   if (cancellationDeadlineHoursOverride === "INVALID") {
-    redirect("/admin/config?section=activities&error=Delai%20annulation%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Delai annulation invalide"));
   }
   if (autoCancelIfBookedLessThanOverride === "INVALID") {
-    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20inscrits%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Regle auto-annulation inscrits invalide"));
   }
   if (autoCancelHoursBeforeStartOverride === "INVALID") {
-    redirect("/admin/config?section=activities&error=Regle%20auto-annulation%20heures%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", "Regle auto-annulation heures invalide"));
   }
 
   const payload: Record<string, unknown> = {
@@ -6303,12 +6327,29 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=activities&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
+
+  const syncResult = await syncActivityPlanningAssignments({
+    token,
+    activityId,
+    selectedLocationIds: planningLocationIds,
+    scopeLocationIds: planningScopeLocationIds,
+  });
 
   revalidatePath("/admin/config");
   revalidatePath("/admin");
-  redirect("/admin/config?section=activities&ok=Activite%20mise%20a%20jour");
+  if (!syncResult.ok) {
+    redirect(
+      appendQueryMessage(
+        returnTo,
+        "error",
+        `Activite enregistree, mais synchronisation des plannings incomplete: ${syncResult.message}`,
+      ),
+    );
+  }
+
+  redirect(appendQueryMessage("/admin/config?section=activities", "ok", "Activite mise a jour"));
 }
 
 export async function createAdminCreditTypeAction(formData: FormData): Promise<void> {
@@ -8821,6 +8862,70 @@ export async function updatePlanningActivitiesAction(formData: FormData): Promis
   revalidatePath("/admin");
   revalidatePath(`/admin/plannings/${locationId}/settings`);
   redirect(`/admin/plannings/${locationId}/settings?ok=Activites%20du%20planning%20mises%20a%20jour`);
+}
+
+async function syncActivityPlanningAssignments(params: {
+  token: string;
+  activityId: string;
+  selectedLocationIds: string[];
+  scopeLocationIds: string[];
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const activityId = params.activityId.trim();
+  const scopeLocationIds = Array.from(new Set(params.scopeLocationIds.map((value) => value.trim()).filter(Boolean)));
+  if (!activityId || scopeLocationIds.length === 0) {
+    return { ok: true };
+  }
+
+  const selectedLocationIds = new Set(
+    params.selectedLocationIds.map((value) => value.trim()).filter((value) => scopeLocationIds.includes(value)),
+  );
+
+  for (const locationId of scopeLocationIds) {
+    const planningResult = await backendRequest<AdminPlanningActivitiesOut>(
+      `/api/v1/admin/plannings/${locationId}/activities`,
+      {},
+      params.token,
+    );
+    if (!planningResult.ok) {
+      return { ok: false, message: `chargement planning ${locationId}: ${planningResult.message}` };
+    }
+
+    const planning = planningResult.data;
+    const currentIds = planning.selected_activity_ids;
+    const isCurrentlySelected = currentIds.includes(activityId);
+    const shouldBeSelected = selectedLocationIds.has(locationId);
+
+    if (isCurrentlySelected === shouldBeSelected) {
+      continue;
+    }
+
+    const nextIds = shouldBeSelected
+      ? [...currentIds, activityId]
+      : currentIds.filter((candidateId) => candidateId !== activityId);
+
+    if (nextIds.length === 0) {
+      return {
+        ok: false,
+        message: `le planning ${planning.location_name} doit conserver au moins une activite`,
+      };
+    }
+
+    const updateResult = await backendRequest<AdminPlanningActivitiesOut>(
+      `/api/v1/admin/plannings/${locationId}/activities`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ activity_ids: nextIds }),
+      },
+      params.token,
+    );
+    if (!updateResult.ok) {
+      return { ok: false, message: `planning ${planning.location_name}: ${updateResult.message}` };
+    }
+
+    revalidatePath(`/admin/plannings/${locationId}/settings`);
+  }
+
+  return { ok: true };
 }
 
 type QuoteWizardLinePayload = {
