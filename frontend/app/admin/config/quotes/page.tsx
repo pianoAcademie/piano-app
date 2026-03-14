@@ -67,6 +67,19 @@ type PricingCatalogOut = {
   updated_at: string;
 };
 
+type TypeformFormConfigOut = {
+  id: string;
+  typeform_form_id: string;
+  source_code: string;
+  location_code: string;
+  school_year_label: string;
+  audience_segment: string;
+  default_pricing_catalog_id: string | null;
+  configuration_json: Record<string, unknown>;
+  is_active: boolean;
+  updated_at: string;
+};
+
 type PricingActivityPriceOut = {
   id: string;
   catalog_id: string;
@@ -172,6 +185,19 @@ type SolfegeLevelRuleOut = {
   modality: string | null;
   is_active: boolean;
   updated_at: string;
+};
+
+type TypeformTemplatePricingRow = {
+  key: string;
+  formId: string;
+  formSourceCode: string;
+  formLabel: string;
+  locationCode: string;
+  itemLabel: string;
+  itemCode: string | null;
+  mode: "override" | "fallback";
+  amountTtc: number;
+  conditionsLabel: string;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -282,6 +308,101 @@ function computedActivityFallbackPrice(activity: AdminActivityOut): { label: str
     amountTtc: null,
     tone: "off",
   };
+}
+
+function boolish(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on" || normalized === "oui";
+}
+
+function moneyNumber(value: unknown): number | null {
+  const normalized = String(value ?? "").trim().replace(",", ".");
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function typeformTemplatePriceMode(template: Record<string, unknown>): "override" | "fallback" | null {
+  const amount = moneyNumber(template.unit_price_ttc);
+  if (amount === null || amount <= 0) {
+    return null;
+  }
+  const rawMode = String(template.price_mode ?? "").trim().toLowerCase();
+  if (boolish(template.allow_price_override) || rawMode === "override" || rawMode === "forced") {
+    return "override";
+  }
+  return "fallback";
+}
+
+function typeformConditionsLabel(rawWhen: unknown): string {
+  if (!rawWhen || typeof rawWhen !== "object" || Array.isArray(rawWhen)) {
+    return "Toujours";
+  }
+  const entries = Object.entries(rawWhen as Record<string, unknown>)
+    .map(([key, rawValue]) => {
+      const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+      const labels = values.map((value) => String(value ?? "").trim()).filter(Boolean);
+      if (labels.length === 0) {
+        return key;
+      }
+      return `${key}: ${labels.join(" / ")}`;
+    })
+    .filter(Boolean);
+  return entries.length > 0 ? entries.join(" · ") : "Toujours";
+}
+
+function collectTypeformTemplatePricingRows(
+  configs: TypeformFormConfigOut[],
+  options: {
+    catalogId: string;
+    activityByCode: ReadonlyMap<string, AdminActivityOut>;
+  },
+): TypeformTemplatePricingRow[] {
+  const { catalogId, activityByCode } = options;
+  const rows: TypeformTemplatePricingRow[] = [];
+  for (const config of configs) {
+    if (config.default_pricing_catalog_id !== catalogId) {
+      continue;
+    }
+    const configJson = config.configuration_json ?? {};
+    const templates = Array.isArray(configJson.line_templates) ? configJson.line_templates : [];
+    const formLabel = String(configJson.label ?? config.source_code).trim() || config.source_code;
+    templates.forEach((rawTemplate, index) => {
+      if (!rawTemplate || typeof rawTemplate !== "object" || Array.isArray(rawTemplate)) {
+        return;
+      }
+      const template = rawTemplate as Record<string, unknown>;
+      const mode = typeformTemplatePriceMode(template);
+      const amountTtc = moneyNumber(template.unit_price_ttc);
+      if (!mode || amountTtc === null || amountTtc <= 0) {
+        return;
+      }
+      const activityCode = String(template.activity_code ?? "").trim();
+      const productCode = String(template.product_code ?? "").trim();
+      const kitCode = String(template.kit_code ?? "").trim();
+      const itemCode = activityCode || productCode || kitCode || null;
+      const activity = activityCode ? activityByCode.get(activityCode) : undefined;
+      const itemLabel = activity?.name || String(template.title ?? "").trim() || itemCode || `Ligne ${index + 1}`;
+      rows.push({
+        key: `${config.id}-${index}-${itemCode ?? "line"}`,
+        formId: config.typeform_form_id,
+        formSourceCode: config.source_code,
+        formLabel,
+        locationCode: config.location_code,
+        itemLabel,
+        itemCode,
+        mode,
+        amountTtc,
+        conditionsLabel: typeformConditionsLabel(template.when),
+      });
+    });
+  }
+  return rows;
 }
 
 const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
@@ -469,6 +590,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     quoteTypesResult,
     formulasResult,
     catalogsResult,
+    typeformFormConfigsResult,
     pricingActivityPricesResult,
     paymentPlansResult,
     templateVariablesResult,
@@ -482,6 +604,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas?include_inactive=true", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
+    backendRequest<TypeformFormConfigOut[]>("/api/v1/typeform/form-configs", {}, token),
     backendRequest<PricingActivityPriceOut[]>("/api/v1/pricing-activity-prices", {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
     backendRequest<QuoteTemplateVariableOut[]>("/api/v1/quote-template-variables", {}, token),
@@ -511,6 +634,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     : (() => {
         loadErrors.push(`Catalogues de prix: ${catalogsResult.message}`);
         return [] as PricingCatalogOut[];
+      })();
+  const typeformFormConfigs = typeformFormConfigsResult.ok
+    ? typeformFormConfigsResult.data
+    : (() => {
+        loadErrors.push(`Configurations Typeform: ${typeformFormConfigsResult.message}`);
+        return [] as TypeformFormConfigOut[];
       })();
   const paymentPlans = paymentPlansResult.ok
     ? paymentPlansResult.data
@@ -569,6 +698,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
   const locationById = new Map(locations.map((row) => [row.id, row.name]));
   const formulaById = new Map(formulas.map((row) => [row.id, row.name]));
+  const activityByCode = new Map(activities.map((row) => [row.code, row]));
   const activeActivities = activities
     .filter((row) => row.active)
     .sort((a, b) => a.name.localeCompare(b.name, "fr-FR"));
@@ -855,8 +985,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         activity,
                         fallback: computedActivityFallbackPrice(activity),
                       }));
+                    const typeformTemplatePricingRows = collectTypeformTemplatePricingRows(typeformFormConfigs, {
+                      catalogId: row.id,
+                      activityByCode,
+                    });
                     const fallbackAvailableCount = fallbackActivities.filter((item) => item.fallback.amountTtc !== null).length;
                     const fallbackMissingCount = fallbackActivities.length - fallbackAvailableCount;
+                    const typeformOverrideCount = typeformTemplatePricingRows.filter((item) => item.mode === "override").length;
+                    const typeformFallbackCount = typeformTemplatePricingRows.length - typeformOverrideCount;
 
                     return (
                       <tr key={row.id}>
@@ -865,7 +1001,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         <td>{dateInputValue(row.effective_from)} → {dateInputValue(row.effective_to)}</td>
                         <td>
                           <div><strong>{explicitActivityPrices.length}</strong> tarif(s) explicite(s)</div>
-                          <div className="muted">{fallbackAvailableCount} fallback(s) activite · {fallbackMissingCount} sans source</div>
+                          <div className="muted">
+                            {fallbackAvailableCount} fallback(s) activite · {typeformOverrideCount} surcharge(s) Typeform · {typeformFallbackCount} secours Typeform · {fallbackMissingCount} sans source
+                          </div>
                         </td>
                         <td>
                           <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span>
@@ -910,9 +1048,52 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                             <div className="top-gap-sm">
                               <h4>Sources tarifaires activites</h4>
                               <p className="muted">
-                                Ce diagnostic montre d abord les tarifs explicites du catalogue, puis le fallback activite utilise si aucun tarif catalogue n existe.
-                                Les formulaires Typeform qui imposent un <code>unit_price_ttc</code> explicite restent prioritaires sur ce diagnostic.
+                                Ce diagnostic montre les tarifs explicites du catalogue, puis le fallback activite reellement applique par le moteur de devis.
+                                Les tarifs portes par Typeform sont affiches a part: par defaut ils ne servent plus qu en secours, et seules les surcharges explicitement marquees restent prioritaires sur le fallback activite.
                               </p>
+
+                              <div className="table-wrap top-gap-sm">
+                                <table className="data-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Tarif Typeform configure</th>
+                                      <th>Formulaire</th>
+                                      <th>Mode</th>
+                                      <th>Montant TTC</th>
+                                      <th>Condition</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {typeformTemplatePricingRows.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={5}>
+                                          <p className="muted">Aucun tarif Typeform explicite rattache a ce catalogue.</p>
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      typeformTemplatePricingRows.map((item) => (
+                                        <tr key={item.key}>
+                                          <td>
+                                            <strong>{item.itemLabel}</strong>
+                                            <div className="muted"><code>{item.itemCode || "-"}</code></div>
+                                          </td>
+                                          <td>
+                                            <strong>{item.formLabel}</strong>
+                                            <div className="muted"><code>{item.formId}</code> · {item.locationCode}</div>
+                                          </td>
+                                          <td>
+                                            <span className={`status-pill ${item.mode === "override" ? "status-warn" : "status-off"}`}>
+                                              {item.mode === "override" ? "Surcharge explicite" : "Secours Typeform"}
+                                            </span>
+                                          </td>
+                                          <td>{moneyLabel(item.amountTtc)}</td>
+                                          <td>{item.conditionsLabel}</td>
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
 
                               <div className="table-wrap top-gap-sm">
                                 <table className="data-table">

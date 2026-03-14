@@ -279,6 +279,19 @@ def _parse_decimal(value: object | None, default: Decimal = Decimal("0.00")) -> 
     return parsed
 
 
+def _bool_or_default(value: object | None, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text_value = _lower(value)
+    if text_value in {"1", "true", "yes", "on", "oui"}:
+        return True
+    if text_value in {"0", "false", "no", "off", "non"}:
+        return False
+    return default
+
+
 def _form_label(config: TypeformFormConfig | None) -> str:
     if config is None:
         return "Formulaire inconnu"
@@ -1288,6 +1301,13 @@ def _build_preview_lines(
         quantity = _parse_decimal(template.get("quantity"), Decimal("1.00"))
         if quantity <= Decimal("0"):
             quantity = Decimal("1.00")
+        template_unit_price = _q2(_parse_decimal(template.get("unit_price_ttc")))
+        typeform_price_mode = ""
+        if template_unit_price > Decimal("0"):
+            if _bool_or_default(template.get("allow_price_override"), False) or _lower(template.get("price_mode")) in {"override", "forced"}:
+                typeform_price_mode = "override"
+            else:
+                typeform_price_mode = "fallback"
 
         line_category = "service" if kind == "activity" else "product"
         line_in = QuoteLineIn(
@@ -1301,11 +1321,13 @@ def _build_preview_lines(
             title=_text(template.get("title")) or "Typeform item",
             quantity=quantity,
             vat_rate=default_vat_rate,
-            unit_price_ttc=_parse_decimal(template.get("unit_price_ttc")),
+            unit_price_ttc=template_unit_price if typeform_price_mode == "override" else Decimal("0.00"),
             pricing_unit="session" if kind == "activity" else "item",
             sort_order=index,
             meta={
                 "typeform_template": template,
+                "typeform_price_mode": typeform_price_mode or None,
+                "typeform_unit_price_ttc": str(template_unit_price) if template_unit_price > Decimal("0") else None,
             },
         )
         code, title, description, _duration, unit_price, meta = _effective_item_price(
@@ -1318,6 +1340,10 @@ def _build_preview_lines(
         pricing_source = _text(meta.get("pricing_source"))
         if pricing_source == "activity_default_course_rate":
             warnings.append(f"Tarif catalogue absent pour {title}, tarif par defaut activite utilise.")
+        if pricing_source == "activity_default_hourly_rate":
+            warnings.append(f"Tarif catalogue absent pour {title}, tarif horaire par defaut activite utilise.")
+        if pricing_source == "typeform_template_fallback":
+            warnings.append(f"Tarif catalogue/activite absent pour {title}, tarif Typeform de secours utilise.")
         if pricing_source == "catalog_activity" and activity_id is not None and resolved_location_id is not None:
             location_specific_price = db.scalar(
                 select(PricingActivityPrice.id)

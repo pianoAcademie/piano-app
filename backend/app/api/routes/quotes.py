@@ -2051,6 +2051,12 @@ def _effective_item_price(
     duration = line.duration_minutes
     unit_price = _q2(line.unit_price_ttc)
     meta = dict(line.meta)
+    typeform_price_mode = str(meta.get("typeform_price_mode") or "").strip().lower()
+    typeform_unit_price_raw = _decimal_or_none(meta.get("typeform_unit_price_ttc"))
+    typeform_unit_price = _q2(typeform_unit_price_raw) if typeform_unit_price_raw is not None else Decimal("0.00")
+
+    if typeform_price_mode == "fallback":
+        unit_price = Decimal("0.00")
 
     if line.activity_id is not None:
         activity = db.scalar(select(CourseType).where(CourseType.id == line.activity_id, CourseType.active.is_(True)))
@@ -2093,6 +2099,11 @@ def _effective_item_price(
         if unit_price <= Decimal("0") and activity.default_course_rate_ttc is not None:
             unit_price = _q2(Decimal(activity.default_course_rate_ttc))
             meta["pricing_source"] = "activity_default_course_rate"
+        if unit_price <= Decimal("0") and int(activity.duration_minutes or 0) > 0:
+            hourly_rate = _decimal_or_none(activity.default_hourly_rate)
+            if hourly_rate is not None and hourly_rate > Decimal("0"):
+                unit_price = _q2(hourly_rate * (Decimal(int(activity.duration_minutes)) / Decimal("60")))
+                meta["pricing_source"] = "activity_default_hourly_rate"
 
     if line.product_id is not None:
         product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == line.product_id, CatalogProduct.active.is_(True)))
@@ -2146,6 +2157,12 @@ def _effective_item_price(
                 unit_price = _q2(Decimal(kit.price_incl_vat or 0))
             meta["pricing_source"] = "kit_price"
         meta["default_vat_rate"] = str(_q3(Decimal(kit.vat_rate or 0)))
+
+    if unit_price <= Decimal("0") and typeform_unit_price > Decimal("0"):
+        unit_price = typeform_unit_price
+        meta["pricing_source"] = "typeform_template_override" if typeform_price_mode == "override" else "typeform_template_fallback"
+    elif typeform_price_mode == "override" and typeform_unit_price > Decimal("0") and not str(meta.get("pricing_source") or "").strip():
+        meta["pricing_source"] = "typeform_template_override"
 
     return code, title, description, duration, unit_price, meta
 
