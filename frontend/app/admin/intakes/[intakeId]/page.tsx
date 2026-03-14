@@ -308,6 +308,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
 
   const ok = readParam(searchParams, "ok").trim();
   const error = readParam(searchParams, "error").trim();
+  const successModal = readParam(searchParams, "success_modal").trim();
   const editor = readParam(searchParams, "editor").trim();
   const editorError = readParam(searchParams, "editor_error").trim();
   const result = await backendRequest<TypeformIntakeDetailOut>(
@@ -328,11 +329,43 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const normalizedEditorHref = setDetailQueryParam(setDetailQueryParam(setDetailQueryParam(intakeHref, "error", null), "ok", null), "editor", "normalized");
   const closeNormalizedEditorHref = setDetailQueryParam(setDetailQueryParam(intakeHref, "editor", null), "editor_error", null);
   const dismissErrorHref = setDetailQueryParam(intakeHref, "error", null);
+  const dismissSuccessHref = setDetailQueryParam(
+    setDetailQueryParam(intakeHref, "success_modal", null),
+    "ok",
+    null,
+  );
   const showErrorModal = Boolean(error) && editor !== "normalized";
+  const showResolutionSavedModal = successModal === "resolution_saved" && Boolean(ok);
   const normalizedPayload = detail.normalized_payload_json || {};
+  const draftQuoteNeedsArbitrage = detail.intake_status === "MATCHING_REQUIRED";
+  const draftQuoteBlocked =
+    Boolean(detail.related_quote_id)
+    || detail.blockages.length > 0
+    || draftQuoteNeedsArbitrage
+    || detail.intake_status === "IGNORED";
 
   return (
     <section className="admin-page-grid">
+      {showResolutionSavedModal ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Arbitrage enregistre">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={dismissSuccessHref} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Arbitrage enregistre</h3>
+            <section className="flash-ok modal-flash" role="status">
+              {ok}
+            </section>
+            <p className="muted">
+              Les creneaux retenus ont bien ete sauvegardes pour cet intake.
+            </p>
+            <div className="row modal-actions-end top-gap-sm">
+              <Link href={dismissSuccessHref}>Fermer</Link>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
       {showErrorModal ? (
         <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Generation du devis impossible">
           <article className="modal-panel modal-compact">
@@ -524,7 +557,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         </div>
       </section>
 
-      {ok ? <section className="flash-ok">{ok}</section> : null}
+      {ok && !showResolutionSavedModal ? <section className="flash-ok">{ok}</section> : null}
 
       <section className={`grid cols-2 ${styles.panelGrid}`}>
         <article className="card">
@@ -792,11 +825,16 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
             <form action={generateTypeformDraftQuoteAction}>
               <input type="hidden" name="intake_id" value={detail.id} />
               <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
-              <button type="submit" disabled={Boolean(detail.related_quote_id)}>
+              <button type="submit" disabled={draftQuoteBlocked}>
                 {detail.related_quote_id ? "Devis deja cree" : "Generer devis brouillon"}
               </button>
             </form>
           </div>
+          {draftQuoteNeedsArbitrage && !detail.related_quote_id ? (
+            <p className="muted top-gap-sm">
+              Enregistrez d abord les arbitrages en attente avant de generer le devis.
+            </p>
+          ) : null}
 
           {detail.preview_quote ? (
             <>

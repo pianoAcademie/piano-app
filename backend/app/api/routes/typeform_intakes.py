@@ -1421,6 +1421,131 @@ def _requested_summary(normalized: dict[str, object]) -> str | None:
     return " · ".join(parts) if parts else None
 
 
+def _preview_line_haystack(line: TypeformQuotePreviewLineOut) -> str:
+    meta = _json_object(line.meta)
+    template = _json_object(meta.get("typeform_template"))
+    parts = [
+        line.code,
+        line.title,
+        line.description,
+        meta.get("activity_code"),
+        meta.get("activity_name"),
+        meta.get("service_code"),
+        meta.get("location_code"),
+        meta.get("location_name"),
+        template.get("activity_code"),
+        template.get("title"),
+        template.get("description"),
+        template.get("location_code"),
+        template.get("location_name"),
+    ]
+    return " ".join(_text(part) for part in parts if _text(part)).lower()
+
+
+def _is_online_runtime_context(runtime_context: dict[str, object]) -> bool:
+    tokens = {
+        _normalize_token(runtime_context.get("location_code")),
+        _normalize_token(runtime_context.get("location_name")),
+        _normalize_token(runtime_context.get("requested_location")),
+    }
+    tokens.discard("")
+    if "online" in tokens:
+        return True
+    return any(token in {"videocall", "video call", "visioconference", "video"} for token in tokens)
+
+
+def _is_non_blocking_solfege_line(
+    line: TypeformQuotePreviewLineOut,
+    *,
+    runtime_context: dict[str, object],
+) -> bool:
+    haystack = _normalize_token(_preview_line_haystack(line))
+    if "solfege" not in haystack:
+        return False
+    return _is_online_runtime_context(runtime_context) or "en ligne" in haystack or "online" in haystack
+
+
+def _is_solfege_recommendation(
+    recommendation: TypeformSessionRecommendationOut,
+    *,
+    runtime_context: dict[str, object],
+) -> bool:
+    haystack = _normalize_token(recommendation.activity_name)
+    if "solfege" not in haystack:
+        return False
+    return _is_online_runtime_context(runtime_context) or "en ligne" in haystack or "online" in haystack
+
+
+def _extract_estimated_solfege_level(
+    *,
+    normalized: dict[str, object],
+    session_recommendations: list[TypeformSessionRecommendationOut],
+) -> str | None:
+    if not any("solfege" in _normalize_token(item.activity_name) for item in session_recommendations):
+        return None
+
+    candidates = [
+        _text(item)
+        for item in _json_list(normalized.get("requested_products"))
+        if _text(item)
+    ]
+    requested_formula = _text(normalized.get("requested_formula_type"))
+    if requested_formula:
+        candidates.append(requested_formula)
+
+    for candidate in candidates:
+        normalized_candidate = _normalize_token(candidate)
+        if not normalized_candidate or "ne sais pas" in normalized_candidate:
+            continue
+        match = re.search(r"niveau\s*([1-5])", normalized_candidate)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _effective_selected_session_ids(
+    *,
+    resolution: dict[str, object],
+    session_recommendations: list[TypeformSessionRecommendationOut],
+) -> dict[str, str]:
+    stored_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
+    effective: dict[str, str] = {
+        _text(key): _text(value)
+        for key, value in stored_session_ids.items()
+        if _text(key) and _text(value)
+    }
+    for recommendation in session_recommendations:
+        activity_key = str(recommendation.activity_id)
+        if activity_key in effective or recommendation.selected_session_id is None:
+            continue
+        effective[activity_key] = str(recommendation.selected_session_id)
+    return effective
+
+
+def _recurrence_frequency_from_rule(value: object | None) -> str:
+    raw = _text(value).strip().upper()
+    if not raw:
+        return "weekly"
+    frequency_raw, interval_raw = raw.split(":", 1) if ":" in raw else (raw, "1")
+    try:
+        interval = int(interval_raw or "1")
+    except ValueError:
+        interval = 1
+    if frequency_raw == "MONTHLY":
+        return "monthly"
+    if frequency_raw == "WEEKLY" and interval == 2:
+        return "biweekly"
+    return "weekly"
+
+
+def _modality_from_delivery_mode(value: DeliveryMode | str | None) -> str | None:
+    if value == DeliveryMode.ONLINE or _text(value).strip().upper() == DeliveryMode.ONLINE.value:
+        return "online"
+    if value == DeliveryMode.ONSITE or _text(value).strip().upper() == DeliveryMode.ONSITE.value:
+        return "onsite"
+    return None
+
+
 def _build_session_recommendations(
     db: Session,
     *,
@@ -1490,6 +1615,10 @@ def _build_session_recommendations(
     for line in preview_lines:
         if line.activity_id is None:
             continue
+        allow_deferred_selection = _is_non_blocking_solfege_line(
+            line,
+            runtime_context=runtime_context,
+        )
         activity_rows = by_activity.get(line.activity_id, [])
         options: list[TypeformSessionMatchOptionOut] = []
         for session_obj, activity, location, booked_count in activity_rows:
@@ -1609,17 +1738,38 @@ def _build_session_recommendations(
         local_warnings: list[str] = []
         local_blockages: list[str] = []
         if not options:
-            summary_status = "no_relevant_slot"
-            summary_label = "Aucun creneau pertinent"
-            local_blockages.append(f"Aucun creneau pertinent trouve pour {line.title}.")
+            if allow_deferred_selection:
+                summary_status = "selection_deferred"
+                summary_label = "Creneau a confirmer ulterieurement"
+                local_warnings.append(
+                    f"Aucun creneau pertinent trouve pour {line.title}. Le choix pourra etre finalise plus tard."
+                )
+            else:
+                summary_status = "no_relevant_slot"
+                summary_label = "Aucun creneau pertinent"
+                local_blockages.append(f"Aucun creneau pertinent trouve pour {line.title}.")
         elif not available_options:
-            summary_status = "full"
-            summary_label = "Creneaux trouves mais complets"
-            local_blockages.append(f"Les creneaux trouves pour {line.title} sont complets.")
+            if allow_deferred_selection:
+                summary_status = "selection_deferred"
+                summary_label = "Creneau a confirmer ulterieurement"
+                local_warnings.append(
+                    f"Aucun creneau disponible immediatement pour {line.title}. Le choix pourra etre finalise plus tard."
+                )
+            else:
+                summary_status = "full"
+                summary_label = "Creneaux trouves mais complets"
+                local_blockages.append(f"Les creneaux trouves pour {line.title} sont complets.")
         elif len(available_options) > 1:
-            summary_status = "multiple_options"
-            summary_label = "Plusieurs creneaux possibles"
-            local_warnings.append(f"Plusieurs creneaux sont compatibles pour {line.title}.")
+            if allow_deferred_selection:
+                summary_status = "selection_deferred"
+                summary_label = "Creneau a confirmer ulterieurement"
+                local_warnings.append(
+                    f"Plusieurs creneaux sont compatibles pour {line.title}. Le choix pourra etre finalise plus tard."
+                )
+            else:
+                summary_status = "multiple_options"
+                summary_label = "Plusieurs creneaux possibles"
+                local_warnings.append(f"Plusieurs creneaux sont compatibles pour {line.title}.")
         elif options and options[0].is_full and available_options:
             summary_status = "full_with_alternative"
             summary_label = "Demande complete mais alternative disponible"
@@ -2406,7 +2556,10 @@ def _quote_meta_from_analysis(
     session_recommendations: list[TypeformSessionRecommendationOut],
     runtime_context: dict[str, object],
 ) -> dict[str, object]:
-    selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
+    selected_session_ids = _effective_selected_session_ids(
+        resolution=resolution,
+        session_recommendations=session_recommendations,
+    )
     return {
         "source": "typeform_intake",
         "language": config.default_language,
@@ -2436,13 +2589,18 @@ def _quote_meta_from_analysis(
 
 
 def _calendar_snapshot_from_analysis(
+    db: Session,
     *,
     normalized: dict[str, object],
     resolution: dict[str, object],
     session_recommendations: list[TypeformSessionRecommendationOut],
+    runtime_context: dict[str, object],
 ) -> dict[str, object]:
-    selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
-    return {
+    selected_session_ids = _effective_selected_session_ids(
+        resolution=resolution,
+        session_recommendations=session_recommendations,
+    )
+    snapshot = {
         "typeform_preferences": {
             "requested_days": _json_list(normalized.get("requested_days")),
             "requested_times": _json_list(normalized.get("requested_times")),
@@ -2470,6 +2628,161 @@ def _calendar_snapshot_from_analysis(
             for item in session_recommendations
         ],
     }
+    blocks: list[dict[str, object]] = []
+    sessions: list[dict[str, object]] = []
+    estimated_solfege_level = _extract_estimated_solfege_level(
+        normalized=normalized,
+        session_recommendations=session_recommendations,
+    )
+    solfege_selected_slot: dict[str, object] = {}
+
+    selected_uuid_map: dict[str, UUID] = {}
+    for activity_id, session_id in selected_session_ids.items():
+        parsed = _parse_uuid(session_id)
+        if parsed is not None:
+            selected_uuid_map[activity_id] = parsed
+
+    if selected_uuid_map:
+        selected_rows = db.execute(
+            select(CourseSession, CourseType, Location)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .join(Location, Location.id == CourseSession.location_id)
+            .where(CourseSession.id.in_(list(selected_uuid_map.values())))
+        ).all()
+        selected_rows_by_id: dict[UUID, tuple[CourseSession, CourseType, Location]] = {
+            session_obj.id: (session_obj, activity, location)
+            for session_obj, activity, location in selected_rows
+        }
+
+        for recommendation in session_recommendations:
+            selected_session_id = selected_uuid_map.get(str(recommendation.activity_id))
+            if selected_session_id is None:
+                continue
+            selected_row = selected_rows_by_id.get(selected_session_id)
+            if selected_row is None:
+                continue
+
+            session_obj, activity, location = selected_row
+            if session_obj.recurrence_group_id is not None:
+                series_sessions = db.scalars(
+                    select(CourseSession)
+                    .where(
+                        CourseSession.recurrence_group_id == session_obj.recurrence_group_id,
+                        CourseSession.status == SessionStatus.SCHEDULED,
+                        CourseSession.start_at_utc >= session_obj.start_at_utc - timedelta(minutes=1),
+                    )
+                    .order_by(CourseSession.start_at_utc.asc())
+                ).all()
+            else:
+                series_sessions = [session_obj]
+            if not series_sessions:
+                series_sessions = [session_obj]
+
+            zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+            first_local_start = series_sessions[0].start_at_utc.astimezone(zone)
+            first_local_end = series_sessions[0].end_at_utc.astimezone(zone)
+            last_local_start = series_sessions[-1].start_at_utc.astimezone(zone)
+            modality = _modality_from_delivery_mode(activity.mode)
+            blocks.append(
+                {
+                    "activity_id": str(activity.id),
+                    "activity_label": activity.name,
+                    "location_id": str(location.id),
+                    "location_label": location.name,
+                    "weekday": first_local_start.weekday(),
+                    "weekday_label": DAY_LABELS[first_local_start.weekday()],
+                    "recurrence_frequency": _recurrence_frequency_from_rule(session_obj.recurrence_rule),
+                    "start_date": first_local_start.date().isoformat(),
+                    "end_date": last_local_start.date().isoformat(),
+                    "start_time": first_local_start.strftime("%H:%M"),
+                    "end_time": first_local_end.strftime("%H:%M"),
+                    "modality": modality,
+                    "selection_pending": False,
+                }
+            )
+
+            for occurrence in series_sessions:
+                occurrence_zone = _safe_zoneinfo(occurrence.timezone or location.timezone)
+                local_start = occurrence.start_at_utc.astimezone(occurrence_zone)
+                local_end = occurrence.end_at_utc.astimezone(occurrence_zone)
+                sessions.append(
+                    {
+                        "date": local_start.date().isoformat(),
+                        "start_time": local_start.strftime("%H:%M"),
+                        "end_time": local_end.strftime("%H:%M"),
+                        "duration_minutes": int((local_end - local_start).total_seconds() // 60),
+                        "activity_id": str(activity.id),
+                        "activity_label": activity.name,
+                        "location_id": str(location.id),
+                        "location_label": location.name,
+                        "weekday": local_start.weekday(),
+                        "weekday_label": DAY_LABELS[local_start.weekday()],
+                        "modality": modality,
+                    }
+                )
+
+            if _is_solfege_recommendation(recommendation, runtime_context=runtime_context) and not solfege_selected_slot:
+                solfege_selected_slot = {
+                    "level_code": estimated_solfege_level,
+                    "weekday": first_local_start.weekday(),
+                    "weekday_label": DAY_LABELS[first_local_start.weekday()],
+                    "start_time": first_local_start.strftime("%H:%M"),
+                    "end_time": first_local_end.strftime("%H:%M"),
+                    "duration_minutes": int((first_local_end - first_local_start).total_seconds() // 60),
+                    "location_id": str(location.id),
+                    "location_label": location.name,
+                    "modality": modality,
+                    "label": f"{DAY_LABELS[first_local_start.weekday()]} {first_local_start.strftime('%H:%M')}-{first_local_end.strftime('%H:%M')} · {location.name}",
+                }
+
+    if estimated_solfege_level:
+        pending_recommendation = next(
+            (
+                item
+                for item in session_recommendations
+                if _is_solfege_recommendation(item, runtime_context=runtime_context)
+                and str(item.activity_id) not in selected_session_ids
+            ),
+            None,
+        )
+        if pending_recommendation is not None:
+            resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
+            resolved_location_name = _text(runtime_context.get("location_name")) or pending_recommendation.requested_location or None
+            blocks.append(
+                {
+                    "activity_id": str(pending_recommendation.activity_id),
+                    "activity_label": pending_recommendation.activity_name,
+                    "location_id": str(resolved_location_id) if resolved_location_id is not None else None,
+                    "location_label": resolved_location_name,
+                    "weekday": -1,
+                    "weekday_label": "Selection a faire",
+                    "recurrence_frequency": "weekly",
+                    "start_date": "",
+                    "end_date": "",
+                    "start_time": "",
+                    "end_time": "",
+                    "modality": "online" if _is_online_runtime_context(runtime_context) else None,
+                    "selection_pending": True,
+                }
+            )
+
+    sessions.sort(
+        key=lambda item: (
+            _text(item.get("date")),
+            _text(item.get("start_time")),
+            _text(item.get("activity_label")),
+        )
+    )
+    snapshot["blocks"] = blocks
+    snapshot["sessions"] = sessions
+    snapshot["sessions_count"] = len(sessions)
+    snapshot["generated_at"] = _utcnow().isoformat()
+    if estimated_solfege_level or solfege_selected_slot:
+        snapshot["solfege"] = {
+            "level_code": estimated_solfege_level,
+            "selected_slot": solfege_selected_slot,
+        }
+    return snapshot
 
 
 @router.get("/form-configs", response_model=list[TypeformFormConfigOut])
@@ -2639,6 +2952,17 @@ def create_draft_quote_from_typeform_intake(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Cette intake est ignoree. Reactivez-la avant de generer un devis.",
         )
+    if intake.intake_status == INTAKE_STATUS_BLOCKED:
+        blocking_messages = [message for message in analysis["blockages"] if _text(message)]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=" ; ".join(blocking_messages) or "Cette intake comporte encore des blocages.",
+        )
+    if intake.intake_status == INTAKE_STATUS_MATCHING_REQUIRED:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Enregistrez d abord les arbitrages client / creneau avant de generer le devis.",
+        )
     config = analysis["config"]
     if config is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Configuration formulaire introuvable")
@@ -2700,6 +3024,19 @@ def create_draft_quote_from_typeform_intake(
         quote_meta["typeform_selected_family_adult_client_id"] = client_resolution.get("selected_family_adult_client_id")
         quote_meta["typeform_selected_family_child_client_id"] = client_resolution.get("selected_family_child_client_id")
 
+    calendar_snapshot = _calendar_snapshot_from_analysis(
+        db,
+        normalized=normalized,
+        resolution=resolution,
+        session_recommendations=analysis["session_recommendations"],
+        runtime_context=_json_object(analysis.get("runtime_context")),
+    )
+    estimated_solfege_level = _extract_estimated_solfege_level(
+        normalized=normalized,
+        session_recommendations=analysis["session_recommendations"],
+    )
+    selected_solfege_slot = _json_object(_json_object(calendar_snapshot.get("solfege")).get("selected_slot"))
+
     quote_payload = QuoteCreateRequest(
         context_type=context_type,
         quote_type=_text(_json_object(analysis.get("runtime_context")).get("quote_type")) or _text(config.default_quote_type) or "forfait",
@@ -2714,11 +3051,9 @@ def create_draft_quote_from_typeform_intake(
         currency="EUR",
         language=config.default_language,
         vat_rate=_extract_vat_rate({"tva_rate": _text(_json_object(config.configuration_json).get("default_vat_rate"))}) or Decimal("20.00"),
-        calendar_snapshot=_calendar_snapshot_from_analysis(
-            normalized=normalized,
-            resolution=resolution,
-            session_recommendations=analysis["session_recommendations"],
-        ),
+        estimated_solfege_level=estimated_solfege_level,
+        selected_solfege_slot=selected_solfege_slot,
+        calendar_snapshot=calendar_snapshot,
         meta=quote_meta,
         lines=preview_lines_in,
     )

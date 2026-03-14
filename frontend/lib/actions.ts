@@ -8991,8 +8991,17 @@ export async function saveTypeformIntakeResolutionAction(formData: FormData): Pr
 
   const intakeId = String(formData.get("intake_id") ?? "").trim();
   const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  const cleanReturnTo = setQueryParam(
+    setQueryParam(
+      setQueryParam(returnTo, "error", null),
+      "ok",
+      null,
+    ),
+    "success_modal",
+    null,
+  );
   if (!intakeId) {
-    redirect(appendQueryMessage(returnTo, "error", "Intake introuvable"));
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Intake introuvable"));
   }
 
   const clientModeRaw = String(formData.get("client_mode") ?? "").trim();
@@ -9035,12 +9044,18 @@ export async function saveTypeformIntakeResolutionAction(formData: FormData): Pr
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(cleanReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/intakes");
   revalidatePath(`/admin/intakes/${intakeId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Arbitrage enregistre"));
+  redirect(
+    setQueryParam(
+      appendQueryMessage(cleanReturnTo, "ok", "Arbitrage enregistre"),
+      "success_modal",
+      "resolution_saved",
+    ),
+  );
 }
 
 export async function saveTypeformIntakeNormalizedDataAction(formData: FormData): Promise<void> {
