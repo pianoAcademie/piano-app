@@ -138,26 +138,41 @@ jobs:
             docker compose rm -sf backend frontend \$worker_targets || true
             docker compose up -d --build backend \$worker_targets
 
-            backend_id=\$(docker compose ps -q backend)
-            test -n \"\$backend_id\" || { echo 'Backend container introuvable apres demarrage'; exit 1; }
-
             for i in \$(seq 1 60); do
+              backend_id=\$(docker compose ps -q backend | tail -n 1)
+              if [ -z \"\$backend_id\" ]; then
+                sleep 2
+                continue
+              fi
+
               backend_health=\$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \"\$backend_id\" 2>/dev/null || true)
+              if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
+                backend_health='healthy'
+              fi
               if [ \"\$backend_health\" = 'healthy' ]; then
                 break
               fi
               if [ \"\$backend_health\" = 'exited' ] || [ \"\$backend_health\" = 'dead' ]; then
                 echo \"Backend failed during startup (status: \$backend_health)\"
-                docker logs --tail=200 \"\$backend_id\" || true
+                docker compose ps backend || true
+                docker compose logs --tail=200 backend || true
                 exit 1
               fi
               sleep 2
             done
 
-            backend_health=\$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \"\$backend_id\" 2>/dev/null || true)
+            backend_id=\$(docker compose ps -q backend | tail -n 1)
+            backend_health=''
+            if [ -n \"\$backend_id\" ]; then
+              backend_health=\$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \"\$backend_id\" 2>/dev/null || true)
+            fi
+            if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              backend_health='healthy'
+            fi
             if [ \"\$backend_health\" != 'healthy' ]; then
               echo \"Backend not healthy after wait window (status: \$backend_health)\"
-              docker logs --tail=200 \"\$backend_id\" || true
+              docker compose ps backend || true
+              docker compose logs --tail=200 backend || true
               exit 1
             fi
 
