@@ -46,7 +46,12 @@ type TypeformSessionMatchOptionOut = {
   title: string;
   start_at: string;
   start_time_label: string;
+  end_time_label: string;
   weekday_label: string;
+  occurrence_label: string;
+  selection_label: string;
+  recurrence_group_id: string | null;
+  recurrence_label: string | null;
   seats_remaining: number;
   is_full: boolean;
   score: number;
@@ -198,6 +203,21 @@ function normalizedEntries(payload: Record<string, unknown>): Array<{ key: strin
     key,
     value: stringifyValue(value),
   }));
+}
+
+function proposalLabel(index: number): string {
+  return `Proposition ${index + 1}`;
+}
+
+function slotBadgeLabel(option: TypeformSessionMatchOptionOut): string {
+  return option.recurrence_label || "Ponctuel";
+}
+
+function slotOptionTitle(option: TypeformSessionMatchOptionOut): string {
+  if (option.title && option.title !== option.activity_name) {
+    return option.title;
+  }
+  return option.activity_name;
 }
 
 function resolutionObject(detail: TypeformIntakeDetailOut): {
@@ -472,19 +492,24 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                       Creneau retenu
                       <select name={`selected_session_for_${recommendation.activity_id}`} defaultValue={recommendation.selected_session_id || ""}>
                         <option value="">Aucune selection</option>
-                        {recommendation.options.map((option) => (
+                        {recommendation.options.map((option, index) => (
                           <option key={option.session_id} value={option.session_id}>
-                            {option.weekday_label} {option.start_time_label} · {option.location_name} · places {option.seats_remaining}
+                            {proposalLabel(index)} · {option.selection_label}
                           </option>
                         ))}
                       </select>
                     </label>
+                    <p className="muted">
+                      {recommendation.options.length} proposition{recommendation.options.length > 1 ? "s" : ""} a arbitrer.
+                    </p>
                     {recommendation.options.length > 0 ? (
                       <div className="table-wrap top-gap-sm">
                         <table className="data-table">
                           <thead>
                             <tr>
-                              <th>Session</th>
+                              <th>Proposition</th>
+                              <th>Occurrence</th>
+                              <th>Serie</th>
                               <th>Lieu</th>
                               <th>Places</th>
                               <th>Score</th>
@@ -492,9 +517,26 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                             </tr>
                           </thead>
                           <tbody>
-                            {recommendation.options.map((option) => (
-                              <tr key={option.session_id}>
-                                <td>{option.weekday_label} {option.start_time_label}</td>
+                            {recommendation.options.map((option, index) => (
+                              <tr
+                                className={recommendation.selected_session_id === option.session_id ? styles.selectedOptionRow : undefined}
+                                key={option.session_id}
+                              >
+                                <td>
+                                  <div className={styles.optionCellStack}>
+                                    <strong>{proposalLabel(index)}</strong>
+                                    {recommendation.selected_session_id === option.session_id ? (
+                                      <span className="badge">Retenu</span>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className={styles.optionCellStack}>
+                                    <strong>{option.occurrence_label}</strong>
+                                    <span className="muted">{slotOptionTitle(option)}</span>
+                                  </div>
+                                </td>
+                                <td>{slotBadgeLabel(option)}</td>
                                 <td>{option.location_name}</td>
                                 <td>{option.seats_remaining}</td>
                                 <td>{option.score}</td>

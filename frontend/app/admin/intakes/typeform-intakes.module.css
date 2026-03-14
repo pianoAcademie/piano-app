@@ -51,6 +51,16 @@
   gap: 6px;
 }
 
+.optionCellStack {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.selectedOptionRow td {
+  background: #f7fbff;
+}
+
 .chipRow {
   display: flex;
   flex-wrap: wrap;

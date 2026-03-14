@@ -55,7 +55,12 @@ class TypeformSessionMatchOptionOut(BaseModel):
     title: str
     start_at: datetime
     start_time_label: str
+    end_time_label: str
     weekday_label: str
+    occurrence_label: str
+    selection_label: str
+    recurrence_group_id: UUID | None = None
+    recurrence_label: str | None = None
     seats_remaining: int
     is_full: bool
     score: int

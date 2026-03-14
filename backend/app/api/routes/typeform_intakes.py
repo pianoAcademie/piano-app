@@ -103,6 +103,33 @@ DAY_LABELS = {
 }
 
 
+def _recurrence_label(value: object | None) -> str | None:
+    raw = _text(value).strip().upper()
+    if not raw:
+        return None
+    frequency_raw, interval_raw = raw.split(":", 1) if ":" in raw else (raw, "1")
+    try:
+        interval = int(interval_raw or "1")
+    except ValueError:
+        interval = 1
+    safe_interval = interval if interval > 0 else 1
+    if frequency_raw == "DAILY":
+        return "Serie quotidienne" if safe_interval == 1 else f"Serie tous les {safe_interval} jours"
+    if frequency_raw == "WEEKLY":
+        return "Serie hebdo" if safe_interval == 1 else f"Serie toutes les {safe_interval} semaines"
+    if frequency_raw == "MONTHLY":
+        return "Serie mensuelle" if safe_interval == 1 else f"Serie tous les {safe_interval} mois"
+    return raw
+
+
+def _session_occurrence_label(local_start: datetime, end_at_utc: datetime, timezone_name: str | None) -> tuple[str, str]:
+    zone = _safe_zoneinfo(timezone_name)
+    local_end = end_at_utc.astimezone(zone)
+    date_label = f"{DAY_LABELS[local_start.weekday()]} {local_start.strftime('%d/%m/%Y')}"
+    time_range_label = f"{local_start.strftime('%H:%M')}-{local_end.strftime('%H:%M')}"
+    return f"{date_label} · {time_range_label}", time_range_label
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -1386,6 +1413,8 @@ def _build_session_recommendations(
             local_start = session_obj.start_at_utc.astimezone(zone)
             weekday = local_start.weekday()
             start_minutes = local_start.hour * 60 + local_start.minute
+            recurrence_label = _recurrence_label(session_obj.recurrence_rule)
+            occurrence_label, time_range_label = _session_occurrence_label(local_start, session_obj.end_at_utc, session_obj.timezone or location.timezone)
             score = 30
             reasons: list[str] = []
             if resolved_location_id is not None and resolved_location_id == location.id:
@@ -1458,6 +1487,12 @@ def _build_session_recommendations(
 
             if score <= 0:
                 continue
+            selection_label_parts = [
+                occurrence_label,
+                location.name,
+                recurrence_label or "Seance ponctuelle",
+                f"places {seats_remaining}",
+            ]
             options.append(
                 TypeformSessionMatchOptionOut(
                     session_id=session_obj.id,
@@ -1468,7 +1503,12 @@ def _build_session_recommendations(
                     title=session_obj.title,
                     start_at=session_obj.start_at_utc,
                     start_time_label=local_start.strftime("%H:%M"),
+                    end_time_label=time_range_label.split("-", 1)[1],
                     weekday_label=DAY_LABELS[weekday],
+                    occurrence_label=occurrence_label,
+                    selection_label=" · ".join(part for part in selection_label_parts if part),
+                    recurrence_group_id=session_obj.recurrence_group_id,
+                    recurrence_label=recurrence_label,
                     seats_remaining=seats_remaining,
                     is_full=is_full,
                     score=score,
