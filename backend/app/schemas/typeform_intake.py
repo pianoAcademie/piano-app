@@ -172,6 +172,10 @@ class TypeformIntakeResolutionRequest(BaseModel):
     resolution: dict[str, object] = Field(default_factory=dict)
 
 
+class TypeformIntakeNormalizedPatchRequest(BaseModel):
+    normalized_payload_json: dict[str, object | None] = Field(default_factory=dict)
+
+
 class TypeformWebhookOut(BaseModel):
     intake_id: UUID
     intake_status: str

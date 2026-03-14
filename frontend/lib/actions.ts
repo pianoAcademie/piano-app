@@ -138,6 +138,18 @@ function emailListField(formData: FormData, fieldName: string): string[] | null 
   return parsed.length > 0 ? parsed : null;
 }
 
+function multiValueField(formData: FormData, fieldName: string): string[] | null {
+  const value = String(formData.get(fieldName) ?? "").replace(/\r/g, "").trim();
+  if (!value) {
+    return null;
+  }
+  const parsed = value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return parsed.length > 0 ? parsed : null;
+}
+
 function checkboxField(formData: FormData, fieldName: string): boolean {
   return String(formData.get(fieldName) ?? "").toLowerCase() === "on";
 }
@@ -8926,6 +8938,71 @@ export async function saveTypeformIntakeResolutionAction(formData: FormData): Pr
   redirect(appendQueryMessage(returnTo, "ok", "Arbitrage enregistre"));
 }
 
+export async function saveTypeformIntakeNormalizedDataAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  const cleanReturnTo = setQueryParam(
+    setQueryParam(
+      setQueryParam(
+        setQueryParam(returnTo, "editor", null),
+        "editor_error",
+        null,
+      ),
+      "error",
+      null,
+    ),
+    "ok",
+    null,
+  );
+  if (!intakeId) {
+    redirect(setQueryParam(cleanReturnTo, "error", "Intake introuvable"));
+  }
+
+  const normalizedPayload = {
+    parent_first_name: optionalField(formData, "parent_first_name"),
+    parent_last_name: optionalField(formData, "parent_last_name"),
+    parent_email: optionalField(formData, "parent_email"),
+    parent_phone: optionalField(formData, "parent_phone"),
+    child_first_name: optionalField(formData, "child_first_name"),
+    child_last_name: optionalField(formData, "child_last_name"),
+    child_birth_date: optionalField(formData, "child_birth_date"),
+    customer_type: optionalField(formData, "customer_type"),
+    requested_course_mode: optionalField(formData, "requested_course_mode"),
+    requested_location: optionalField(formData, "requested_location"),
+    requested_days: multiValueField(formData, "requested_days"),
+    requested_times: multiValueField(formData, "requested_times"),
+    requested_slot_preferences: multiValueField(formData, "requested_slot_preferences"),
+    requested_formula_type: optionalField(formData, "requested_formula_type"),
+    requested_products: multiValueField(formData, "requested_products"),
+    notes: optionalField(formData, "notes"),
+  };
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/normalized`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        normalized_payload_json: normalizedPayload,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(setQueryParam(setQueryParam(cleanReturnTo, "editor", "normalized"), "editor_error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(setQueryParam(cleanReturnTo, "ok", "Donnees normalisees mises a jour"));
+}
+
 export async function generateTypeformDraftQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -8936,7 +9013,7 @@ export async function generateTypeformDraftQuoteAction(formData: FormData): Prom
   const intakeId = String(formData.get("intake_id") ?? "").trim();
   const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
   if (!intakeId) {
-    redirect(appendQueryMessage(returnTo, "error", "Intake introuvable"));
+    redirect(setQueryParam(returnTo, "error", "Intake introuvable"));
   }
 
   const result = await backendRequest<{ quote_id: string }>(
@@ -8948,7 +9025,7 @@ export async function generateTypeformDraftQuoteAction(formData: FormData): Prom
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(setQueryParam(setQueryParam(returnTo, "ok", null), "error", result.message));
   }
 
   revalidatePath("/admin/intakes");

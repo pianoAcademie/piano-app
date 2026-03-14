@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import {
   generateTypeformDraftQuoteAction,
+  saveTypeformIntakeNormalizedDataAction,
   saveTypeformIntakeResolutionAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
@@ -205,6 +206,46 @@ function normalizedEntries(payload: Record<string, unknown>): Array<{ key: strin
   }));
 }
 
+function setDetailQueryParam(path: string, key: string, value: string | null): string {
+  const [pathname, rawSearch = ""] = path.split("?");
+  const params = new URLSearchParams(rawSearch);
+  if (value === null || value === "") {
+    params.delete(key);
+  } else {
+    params.set(key, value);
+  }
+  const nextSearch = params.toString();
+  return nextSearch ? `${pathname}?${nextSearch}` : pathname;
+}
+
+function normalizedScalarValue(payload: Record<string, unknown>, key: string): string {
+  const value = payload[key];
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
+}
+
+function normalizedListValue(payload: Record<string, unknown>, key: string): string {
+  const value = payload[key];
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? "").trim())
+      .filter((item) => item.length > 0)
+      .join("\n");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return "";
+}
+
 function proposalLabel(index: number): string {
   return `Proposition ${index + 1}`;
 }
@@ -266,6 +307,8 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
 
   const ok = readParam(searchParams, "ok").trim();
   const error = readParam(searchParams, "error").trim();
+  const editor = readParam(searchParams, "editor").trim();
+  const editorError = readParam(searchParams, "editor_error").trim();
   const result = await backendRequest<TypeformIntakeDetailOut>(
     `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}`,
     {},
@@ -280,9 +323,185 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const resolution = resolutionObject(detail);
   const familyCandidates = detail.client_candidates.filter((item) => item.kind === "family");
   const clientCandidates = detail.client_candidates.filter((item) => item.kind === "client");
+  const intakeHref = `/admin/intakes/${encodeURIComponent(detail.id)}`;
+  const normalizedEditorHref = setDetailQueryParam(setDetailQueryParam(setDetailQueryParam(intakeHref, "error", null), "ok", null), "editor", "normalized");
+  const closeNormalizedEditorHref = setDetailQueryParam(setDetailQueryParam(intakeHref, "editor", null), "editor_error", null);
+  const dismissErrorHref = setDetailQueryParam(intakeHref, "error", null);
+  const showErrorModal = Boolean(error) && editor !== "normalized";
+  const normalizedPayload = detail.normalized_payload_json || {};
 
   return (
     <section className="admin-page-grid">
+      {showErrorModal ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Generation du devis impossible">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={dismissErrorHref} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Generation du devis impossible</h3>
+            <section className="flash-err modal-flash" role="alert">
+              {error}
+            </section>
+            <p className="muted">
+              Corrigez les donnees normalisees si le questionnaire est incomplet, puis relancez la generation du devis.
+            </p>
+            <div className="row modal-actions-end top-gap-sm">
+              <Link className="ghost" href={dismissErrorHref}>Fermer</Link>
+              <Link href={normalizedEditorHref}>Corriger les donnees</Link>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {editor === "normalized" ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Corriger les donnees normalisees">
+          <article className="modal-panel modal-panel-wide">
+            <Link className="modal-close-x" href={closeNormalizedEditorHref} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Corriger les donnees normalisees</h3>
+            <p className={styles.editorIntro}>
+              Utilisez cette correction manuelle si le questionnaire est incomplet ou si vous devez forcer une valeur
+              avant de generer le devis brouillon.
+            </p>
+            <form action={saveTypeformIntakeNormalizedDataAction} className={styles.editorForm}>
+              <input type="hidden" name="intake_id" value={detail.id} />
+              <input type="hidden" name="return_to" value={intakeHref} />
+
+              {editorError ? (
+                <section className="flash-err modal-flash" role="alert">
+                  {editorError}
+                </section>
+              ) : null}
+
+              <div className={styles.editorGrid}>
+                <section className={styles.editorSection}>
+                  <h4>Parent / adulte</h4>
+                  <label>
+                    Prenom
+                    <input name="parent_first_name" defaultValue={normalizedScalarValue(normalizedPayload, "parent_first_name")} />
+                  </label>
+                  <label>
+                    Nom
+                    <input name="parent_last_name" defaultValue={normalizedScalarValue(normalizedPayload, "parent_last_name")} />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      name="parent_email"
+                      type="email"
+                      defaultValue={normalizedScalarValue(normalizedPayload, "parent_email")}
+                      placeholder="parent@example.com"
+                    />
+                  </label>
+                  <label>
+                    Telephone
+                    <input name="parent_phone" defaultValue={normalizedScalarValue(normalizedPayload, "parent_phone")} />
+                  </label>
+                </section>
+
+                <section className={styles.editorSection}>
+                  <h4>Enfant / client</h4>
+                  <label>
+                    Type client
+                    <select name="customer_type" defaultValue={normalizedScalarValue(normalizedPayload, "customer_type") || "child"}>
+                      <option value="child">Enfant</option>
+                      <option value="adult">Adulte</option>
+                    </select>
+                  </label>
+                  <label>
+                    Prenom enfant
+                    <input name="child_first_name" defaultValue={normalizedScalarValue(normalizedPayload, "child_first_name")} />
+                  </label>
+                  <label>
+                    Nom enfant
+                    <input name="child_last_name" defaultValue={normalizedScalarValue(normalizedPayload, "child_last_name")} />
+                  </label>
+                  <label>
+                    Date de naissance
+                    <input name="child_birth_date" type="date" defaultValue={normalizedScalarValue(normalizedPayload, "child_birth_date")} />
+                  </label>
+                </section>
+
+                <section className={styles.editorSection}>
+                  <h4>Demande</h4>
+                  <label>
+                    Lieu demande
+                    <input name="requested_location" defaultValue={normalizedScalarValue(normalizedPayload, "requested_location")} />
+                  </label>
+                  <label>
+                    Mode de cours
+                    <input name="requested_course_mode" defaultValue={normalizedScalarValue(normalizedPayload, "requested_course_mode")} />
+                  </label>
+                  <label>
+                    Formule
+                    <input name="requested_formula_type" defaultValue={normalizedScalarValue(normalizedPayload, "requested_formula_type")} />
+                  </label>
+                </section>
+
+                <section className={styles.editorSection}>
+                  <h4>Preferences creneaux</h4>
+                  <label>
+                    Jours demandes
+                    <textarea
+                      name="requested_days"
+                      defaultValue={normalizedListValue(normalizedPayload, "requested_days")}
+                      rows={4}
+                      placeholder="Un jour par ligne"
+                    />
+                  </label>
+                  <label>
+                    Horaires demandes
+                    <textarea
+                      name="requested_times"
+                      defaultValue={normalizedListValue(normalizedPayload, "requested_times")}
+                      rows={4}
+                      placeholder="Un horaire par ligne"
+                    />
+                  </label>
+                  <label>
+                    Preferences de creneaux
+                    <textarea
+                      name="requested_slot_preferences"
+                      defaultValue={normalizedListValue(normalizedPayload, "requested_slot_preferences")}
+                      rows={5}
+                      placeholder="Une preference par ligne"
+                    />
+                  </label>
+                </section>
+
+                <section className={`${styles.editorSection} ${styles.editorSectionWide}`}>
+                  <h4>Produits et notes</h4>
+                  <label>
+                    Produits demandes
+                    <textarea
+                      name="requested_products"
+                      defaultValue={normalizedListValue(normalizedPayload, "requested_products")}
+                      rows={4}
+                      placeholder="Un produit ou une option par ligne"
+                    />
+                  </label>
+                  <label>
+                    Notes
+                    <textarea
+                      name="notes"
+                      defaultValue={normalizedScalarValue(normalizedPayload, "notes")}
+                      rows={5}
+                      placeholder="Commentaires internes ou precision admin"
+                    />
+                  </label>
+                </section>
+              </div>
+
+              <div className="row modal-actions-end top-gap-sm">
+                <Link className="ghost" href={closeNormalizedEditorHref}>Annuler</Link>
+                <button type="submit">Enregistrer les corrections</button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
@@ -305,7 +524,6 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
       </section>
 
       {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
 
       <section className={`grid cols-2 ${styles.panelGrid}`}>
         <article className="card">
@@ -361,7 +579,13 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         </article>
 
         <article className="card">
-          <h3>Donnees normalisees</h3>
+          <div className="row spread wrap gap-sm">
+            <div>
+              <h3>Donnees normalisees</h3>
+              <p className="muted">Bloc editable pour completer ou forcer les valeurs utiles au pipeline.</p>
+            </div>
+            <Link className="ghost" href={normalizedEditorHref}>Corriger / completer</Link>
+          </div>
           <div className="table-wrap top-gap-sm">
             <table className="data-table">
               <thead>

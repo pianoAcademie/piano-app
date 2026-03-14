@@ -42,6 +42,7 @@ from app.schemas.typeform_intake import (
     TypeformFormConfigOut,
     TypeformIntakeDetailOut,
     TypeformIntakeListOut,
+    TypeformIntakeNormalizedPatchRequest,
     TypeformIntakeResolutionRequest,
     TypeformMatchCandidateOut,
     TypeformQuotePreviewLineOut,
@@ -169,6 +170,36 @@ def _json_list(value: object | None) -> list[object]:
     if isinstance(value, list):
         return list(value)
     return []
+
+
+def _merge_normalized_payload_patch(
+    current: dict[str, object],
+    patch: dict[str, object | None],
+) -> dict[str, object]:
+    merged = dict(current)
+    for raw_key, raw_value in patch.items():
+        key = _text(raw_key)
+        if not key:
+            continue
+        if raw_value is None:
+            merged.pop(key, None)
+            continue
+        if isinstance(raw_value, str):
+            cleaned = raw_value.strip()
+            if cleaned:
+                merged[key] = cleaned
+            else:
+                merged.pop(key, None)
+            continue
+        if isinstance(raw_value, list):
+            cleaned_list = [_text(item) for item in raw_value if _text(item)]
+            if cleaned_list:
+                merged[key] = cleaned_list
+            else:
+                merged.pop(key, None)
+            continue
+        merged[key] = raw_value
+    return merged
 
 
 def _parse_dt(value: object | None) -> datetime | None:
@@ -2462,6 +2493,28 @@ def update_typeform_intake_resolution(
     if intake is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
     intake.resolution_json = _json_object(payload.resolution)
+    intake.updated_at = _utcnow()
+    db.add(intake)
+    analysis = _refresh_intake_analysis(db, intake)
+    db.commit()
+    db.refresh(intake)
+    return _intake_detail_out(intake, analysis)
+
+
+@router.patch("/intakes/{intake_id}/normalized", response_model=TypeformIntakeDetailOut)
+def update_typeform_intake_normalized_payload(
+    intake_id: UUID,
+    payload: TypeformIntakeNormalizedPatchRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TypeformIntakeDetailOut:
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
+    if intake is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
+    intake.normalized_payload_json = _merge_normalized_payload_patch(
+        _json_object(intake.normalized_payload_json),
+        _json_object(payload.normalized_payload_json),
+    )
     intake.updated_at = _utcnow()
     db.add(intake)
     analysis = _refresh_intake_analysis(db, intake)

@@ -42,6 +42,44 @@
   gap: 10px;
 }
 
+.editorIntro {
+  margin: 0;
+  color: #5f6f82;
+}
+
+.editorForm {
+  display: grid;
+  gap: 14px;
+}
+
+.editorGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.editorSection {
+  border: 1px solid #dbe3ed;
+  border-radius: 14px;
+  padding: 14px;
+  background: #fbfdff;
+  display: grid;
+  gap: 10px;
+}
+
+.editorSection h4 {
+  margin: 0;
+}
+
+.editorSectionWide {
+  grid-column: 1 / -1;
+}
+
+.editorSection label {
+  display: grid;
+  gap: 6px;
+}
+
 .candidateItem {
   border: 1px solid #dbe3ed;
   border-radius: 12px;
@@ -89,7 +127,12 @@
 
 @media (max-width: 1080px) {
   .kvGrid,
-  .totalRow {
+  .totalRow,
+  .editorGrid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .editorSectionWide {
+    grid-column: auto;
   }
 }
