@@ -3,6 +3,7 @@ export type PlanningEventChipData = {
   title: string;
   start_at_utc: string;
   end_at_utc: string;
+  timezone?: string;
   capacity_max: number;
   booked_count?: number;
   enrolled_count?: number;
@@ -28,14 +29,16 @@ const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 const TEST_TITLE_RE = /\b(smoke|pa\s*day|test)\b/i;
 const LONG_ID_RE = /\b\d{6,}\b/;
 
-function formatEventTime(value: string): string {
+function formatEventTime(value: string, timezone?: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "--:--";
   }
   return parsed.toLocaleTimeString("fr-FR", {
+    timeZone: timezone || "Europe/Paris",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
 }
 
@@ -157,8 +160,9 @@ export default function MonthEventChip({ event, href, expanded = false }: MonthE
   const locationLabel = (event.location_label || "").trim() || "Lieu";
   const typeLabel = normalizedTypeLabel(event.type_label);
   const displayTitle = sanitizeTitle(event.title, typeLabel);
-  const startTime = formatEventTime(event.start_at_utc);
-  const endTime = formatEventTime(event.end_at_utc);
+  const timezone = (event.timezone || "").trim() || "Europe/Paris";
+  const startTime = formatEventTime(event.start_at_utc, timezone);
+  const endTime = formatEventTime(event.end_at_utc, timezone);
   const tooltip = [
     `${startTime}-${endTime}`,
     event.title,
