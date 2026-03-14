@@ -9003,6 +9003,98 @@ export async function saveTypeformIntakeNormalizedDataAction(formData: FormData)
   redirect(setQueryParam(cleanReturnTo, "ok", "Donnees normalisees mises a jour"));
 }
 
+export async function ignoreTypeformIntakeAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  if (!intakeId) {
+    redirect(appendQueryMessage(returnTo, "error", "Intake introuvable"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/admin-state`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ ignored: true }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Intake ignoree"));
+}
+
+export async function restoreTypeformIntakeAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  if (!intakeId) {
+    redirect(appendQueryMessage(returnTo, "error", "Intake introuvable"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/admin-state`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ ignored: false }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Intake reactivee"));
+}
+
+export async function deleteTypeformIntakeAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  if (!intakeId) {
+    redirect(appendQueryMessage(returnTo, "error", "Intake introuvable"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}`,
+    {
+      method: "DELETE",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Intake supprimee"));
+}
+
 export async function generateTypeformDraftQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

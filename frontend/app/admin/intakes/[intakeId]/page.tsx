@@ -168,6 +168,7 @@ function statusLabel(value: string): string {
   if (value === "READY_FOR_DRAFT_QUOTE") return "Pret devis";
   if (value === "BLOCKED") return "Bloque";
   if (value === "PROCESSED") return "Traite";
+  if (value === "IGNORED") return "Ignore";
   return value;
 }
 

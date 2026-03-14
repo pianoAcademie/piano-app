@@ -36,6 +36,7 @@ from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.quote import QuoteCreateRequest, QuoteLineIn
 from app.schemas.typeform_intake import (
+    TypeformIntakeAdminStateRequest,
     TypeformAnswerOut,
     TypeformDemoSeedOut,
     TypeformDraftQuoteResultOut,
@@ -63,6 +64,7 @@ INTAKE_STATUS_MATCHING_REQUIRED = "MATCHING_REQUIRED"
 INTAKE_STATUS_READY = "READY_FOR_DRAFT_QUOTE"
 INTAKE_STATUS_BLOCKED = "BLOCKED"
 INTAKE_STATUS_PROCESSED = "PROCESSED"
+INTAKE_STATUS_IGNORED = "IGNORED"
 
 SEGMENTS = {"eveil", "child", "teen", "adult"}
 CLIENT_MODE_EXISTING = "existing_client"
@@ -920,6 +922,8 @@ def _default_resolution(
         selected_family_billing_client_id = str(family_candidates[0]["billing_client_id"])
 
     selected_session_ids = _json_object(slot_resolution.get("selected_session_ids"))
+    admin_state = _text(stored_resolution.get("admin_state")) or None
+    admin_state_meta = _json_object(stored_resolution.get("admin_state_meta"))
 
     return {
         "client_resolution": {
@@ -938,6 +942,8 @@ def _default_resolution(
         },
         "notes": notes,
         "created_entities": _json_object(stored_resolution.get("created_entities")),
+        "admin_state": admin_state,
+        "admin_state_meta": admin_state_meta,
     }
 
 
@@ -1747,8 +1753,11 @@ def _analysis_for_intake(
     if _needs_session_arbitrage(session_recommendations):
         warnings.append("Plusieurs creneaux compatibles demandent un arbitrage.")
 
+    admin_state = _lower(effective_resolution.get("admin_state"))
     if intake.related_quote_id is not None:
         intake_status = INTAKE_STATUS_PROCESSED
+    elif admin_state == "ignored":
+        intake_status = INTAKE_STATUS_IGNORED
     elif blockages:
         intake_status = INTAKE_STATUS_BLOCKED
     elif _needs_client_arbitrage(client_candidates, family_candidates, effective_resolution) or _needs_session_arbitrage(session_recommendations):
@@ -2492,7 +2501,45 @@ def update_typeform_intake_resolution(
     intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
     if intake is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
-    intake.resolution_json = _json_object(payload.resolution)
+    current_resolution = _json_object(intake.resolution_json)
+    next_resolution = _json_object(payload.resolution)
+    for preserved_key in ("created_entities", "admin_state", "admin_state_meta"):
+        if preserved_key not in next_resolution and preserved_key in current_resolution:
+            next_resolution[preserved_key] = current_resolution[preserved_key]
+    intake.resolution_json = next_resolution
+    intake.updated_at = _utcnow()
+    db.add(intake)
+    analysis = _refresh_intake_analysis(db, intake)
+    db.commit()
+    db.refresh(intake)
+    return _intake_detail_out(intake, analysis)
+
+
+@router.patch("/intakes/{intake_id}/admin-state", response_model=TypeformIntakeDetailOut)
+def update_typeform_intake_admin_state(
+    intake_id: UUID,
+    payload: TypeformIntakeAdminStateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TypeformIntakeDetailOut:
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
+    if intake is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
+    if payload.ignored and intake.related_quote_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Impossible d'ignorer une intake deja liee a un devis",
+        )
+    resolution = _json_object(intake.resolution_json)
+    if payload.ignored:
+        resolution["admin_state"] = "ignored"
+        resolution["admin_state_meta"] = {
+            "updated_at": _utcnow().isoformat(),
+        }
+    else:
+        resolution.pop("admin_state", None)
+        resolution.pop("admin_state_meta", None)
+    intake.resolution_json = resolution
     intake.updated_at = _utcnow()
     db.add(intake)
     analysis = _refresh_intake_analysis(db, intake)
@@ -2540,6 +2587,11 @@ def create_draft_quote_from_typeform_intake(
         )
 
     analysis = _refresh_intake_analysis(db, intake)
+    if intake.intake_status == INTAKE_STATUS_IGNORED:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cette intake est ignoree. Reactivez-la avant de generer un devis.",
+        )
     config = analysis["config"]
     if config is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Configuration formulaire introuvable")
@@ -2639,6 +2691,25 @@ def create_draft_quote_from_typeform_intake(
         quote_id=quote_detail.quote.id,
         intake_status=INTAKE_STATUS_PROCESSED,
     )
+
+
+@router.delete("/intakes/{intake_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_typeform_intake(
+    intake_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> None:
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
+    if intake is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
+    if intake.related_quote_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Impossible de supprimer une intake liee a un devis",
+        )
+    db.delete(intake)
+    db.commit()
+    return None
 
 
 @router.post("/demo/seed", response_model=TypeformDemoSeedOut, status_code=status.HTTP_201_CREATED)

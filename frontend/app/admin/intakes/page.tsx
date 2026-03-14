@@ -2,7 +2,13 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { seedTypeformDemoAction } from "../../../lib/actions";
+import ConfirmSubmitButton from "../../../components/confirm-submit-button";
+import {
+  deleteTypeformIntakeAction,
+  ignoreTypeformIntakeAction,
+  restoreTypeformIntakeAction,
+  seedTypeformDemoAction,
+} from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import styles from "./typeform-intakes.module.css";
 
@@ -42,6 +48,7 @@ function safeStatus(raw: string): string {
     || value === "READY_FOR_DRAFT_QUOTE"
     || value === "BLOCKED"
     || value === "PROCESSED"
+    || value === "IGNORED"
   ) {
     return value;
   }
@@ -63,6 +70,7 @@ function statusLabel(value: string): string {
   if (value === "READY_FOR_DRAFT_QUOTE") return "Pret devis";
   if (value === "BLOCKED") return "Bloque";
   if (value === "PROCESSED") return "Traite";
+  if (value === "IGNORED") return "Ignore";
   return value;
 }
 
@@ -95,6 +103,18 @@ function compactList(values: string[]): string {
   return `${values[0]} (+${values.length - 1})`;
 }
 
+function intakeListReturnTo(q: string, status: string): string {
+  const params = new URLSearchParams();
+  if (q) {
+    params.set("q", q);
+  }
+  if (status) {
+    params.set("status", status);
+  }
+  const search = params.toString();
+  return search ? `/admin/intakes?${search}` : "/admin/intakes";
+}
+
 export default async function AdminTypeformIntakesPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -105,6 +125,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   const status = safeStatus(readParam(searchParams, "status"));
   const ok = readParam(searchParams, "ok").trim();
   const error = readParam(searchParams, "error").trim();
+  const returnTo = intakeListReturnTo(q, status);
 
   const query = new URLSearchParams();
   if (q) query.set("q", q);
@@ -157,6 +178,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
               <option value="READY_FOR_DRAFT_QUOTE">Pret devis</option>
               <option value="BLOCKED">Bloque</option>
               <option value="PROCESSED">Traite</option>
+              <option value="IGNORED">Ignore</option>
             </select>
           </label>
           <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
@@ -218,6 +240,34 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
                         <Link className="ghost" href={`/admin/intakes/${encodeURIComponent(row.id)}`}>Ouvrir</Link>
                         {row.related_quote_id ? (
                           <Link className="ghost" href={`/admin/quotes/${encodeURIComponent(row.related_quote_id)}`}>Devis</Link>
+                        ) : null}
+                        {!row.related_quote_id && row.intake_status !== "IGNORED" ? (
+                          <form action={ignoreTypeformIntakeAction}>
+                            <input type="hidden" name="intake_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={returnTo} />
+                            <button type="submit" className="ghost">Ignorer</button>
+                          </form>
+                        ) : null}
+                        {!row.related_quote_id && row.intake_status === "IGNORED" ? (
+                          <form action={restoreTypeformIntakeAction}>
+                            <input type="hidden" name="intake_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={returnTo} />
+                            <button type="submit" className="ghost">Reprendre</button>
+                          </form>
+                        ) : null}
+                        {!row.related_quote_id ? (
+                          <form id={`delete-intake-${row.id}`} action={deleteTypeformIntakeAction}>
+                            <input type="hidden" name="intake_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={returnTo} />
+                            <ConfirmSubmitButton
+                              formId={`delete-intake-${row.id}`}
+                              label="Supprimer"
+                              title="Supprimer cette intake ?"
+                              description="Cette action supprime definitivement la reponse Typeform si aucun devis n'y est rattache."
+                              confirmLabel="Supprimer"
+                              className="danger ghost"
+                            />
+                          </form>
                         ) : null}
                       </div>
                     </td>

@@ -176,6 +176,10 @@ class TypeformIntakeNormalizedPatchRequest(BaseModel):
     normalized_payload_json: dict[str, object | None] = Field(default_factory=dict)
 
 
+class TypeformIntakeAdminStateRequest(BaseModel):
+    ignored: bool = False
+
+
 class TypeformWebhookOut(BaseModel):
     intake_id: UUID
     intake_status: str
