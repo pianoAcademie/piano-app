@@ -9680,7 +9680,8 @@ export async function resendCommunicationAction(formData: FormData): Promise<voi
   }
 
   revalidatePath("/admin/communications");
-  redirect(appendQueryMessage(returnTo, "ok", "Communication renvoyee"));
+  const successReturnTo = setQueryParam(setQueryParam(returnTo, "message_id", result.data.id), "ok", "Communication renvoyee");
+  redirect(successReturnTo);
 }
 
 export async function regenerateQuoteDocumentAction(formData: FormData): Promise<void> {
