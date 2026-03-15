@@ -405,6 +405,7 @@ type CreateSessionDraftPayload = {
   recurrence_frequency: string;
   recurrence_interval: string;
   recurrence_until_date: string;
+  recurrence_time_basis: string;
   session_visibility: "PRIVATE" | "PUBLIC";
   allow_online_booking: "1" | "0";
   public_description: string;
@@ -1873,6 +1874,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const recurrence_interval_raw = String(formData.get("recurrence_interval") ?? "1").trim();
   const recurrence_interval = parsePositiveInt(recurrence_interval_raw);
   const recurrence_until_date = String(formData.get("recurrence_until_date") ?? "").trim();
+  const recurrence_time_basis = checkboxField(formData, "recurrence_keep_local_time") ? "LOCAL" : "UTC";
 
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
@@ -1914,6 +1916,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     recurrence_frequency: recurrence_frequency || "WEEKLY",
     recurrence_interval: recurrence_interval_raw || "1",
     recurrence_until_date: recurrence_until_date || "",
+    recurrence_time_basis,
     session_visibility: is_private ? "PRIVATE" : "PUBLIC",
     allow_online_booking: allow_online_booking ? "1" : "0",
     public_description: clampDraftValue(public_description ?? "", 1200),
@@ -1998,6 +2001,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     const recurrence: Record<string, unknown> = {
       frequency: recurrence_frequency,
       interval: recurrence_interval ?? 1,
+      time_basis: recurrence_time_basis,
     };
     recurrence.until_date = recurrence_until_date;
     payload.recurrence = recurrence;
@@ -2054,6 +2058,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const recurrence_interval_raw = String(formData.get("recurrence_interval") ?? "1").trim();
   const recurrence_interval = parsePositiveInt(recurrence_interval_raw);
   const recurrence_until_date = String(formData.get("recurrence_until_date") ?? "").trim();
+  const recurrence_time_basis = checkboxField(formData, "recurrence_keep_local_time") ? "LOCAL" : "UTC";
 
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
@@ -2163,6 +2168,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
       frequency: recurrence_frequency,
       interval: recurrence_interval ?? 1,
       until_date: recurrence_until_date,
+      time_basis: recurrence_time_basis,
     };
   }
 

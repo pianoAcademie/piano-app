@@ -61,6 +61,7 @@ type CreateSessionDraft = {
   recurrence_frequency: string;
   recurrence_interval: string;
   recurrence_until_date: string;
+  recurrence_time_basis: string;
   session_visibility: "PRIVATE" | "PUBLIC";
   allow_online_booking: "1" | "0";
   public_description: string;
@@ -642,21 +643,20 @@ function recurrenceLabel(session: AdminSessionOut): string {
   if (!session.recurrence_rule) {
     return "Ponctuel";
   }
-  const raw = String(session.recurrence_rule || "").trim().toUpperCase();
-  const [frequencyRaw, intervalRaw] = raw.includes(":") ? raw.split(":", 2) : [raw, "1"];
-  const interval = Number.parseInt(intervalRaw || "1", 10);
-  const safeInterval = Number.isFinite(interval) && interval > 0 ? interval : 1;
+  const { frequency, interval, timeBasis } = parseRecurrenceRuleDefaults(session.recurrence_rule);
 
-  if (frequencyRaw === "DAILY") {
-    return safeInterval > 1 ? `Tous les ${safeInterval} jours` : "Quotidien";
+  let label = "Hebdo";
+  if (frequency === "DAILY") {
+    label = interval > 1 ? `Tous les ${interval} jours` : "Quotidien";
+  } else if (frequency === "WEEKLY") {
+    label = interval > 1 ? `Toutes les ${interval} semaines` : "Hebdo";
+  } else if (frequency === "MONTHLY") {
+    label = interval > 1 ? `Tous les ${interval} mois` : "Mensuel";
   }
-  if (frequencyRaw === "WEEKLY") {
-    return safeInterval > 1 ? `Toutes les ${safeInterval} semaines` : "Hebdo";
+  if (timeBasis === "LOCAL") {
+    return `${label} · heure locale fixe`;
   }
-  if (frequencyRaw === "MONTHLY") {
-    return safeInterval > 1 ? `Tous les ${safeInterval} mois` : "Mensuel";
-  }
-  return raw;
+  return `${label} · UTC fixe`;
 }
 
 function defaultApplyScope(session: AdminSessionOut): ApplyScope {
@@ -714,6 +714,7 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       recurrence_frequency: String(parsed.recurrence_frequency ?? "WEEKLY"),
       recurrence_interval: String(parsed.recurrence_interval ?? "1"),
       recurrence_until_date: String(parsed.recurrence_until_date ?? ""),
+      recurrence_time_basis: String(parsed.recurrence_time_basis ?? "LOCAL"),
       session_visibility: visibility,
       allow_online_booking: String(parsed.allow_online_booking ?? "") === "1" ? "1" : "0",
       public_description: String(parsed.public_description ?? ""),
@@ -749,16 +750,20 @@ function draftNonNegativeInteger(raw: string): number | null {
   return parsed;
 }
 
-function parseRecurrenceRuleDefaults(rawRule: string | null | undefined): { frequency: "DAILY" | "WEEKLY" | "MONTHLY"; interval: number } {
+function parseRecurrenceRuleDefaults(
+  rawRule: string | null | undefined,
+): { frequency: "DAILY" | "WEEKLY" | "MONTHLY"; interval: number; timeBasis: "LOCAL" | "UTC" } {
   const raw = String(rawRule || "").trim().toUpperCase();
   if (!raw) {
-    return { frequency: "WEEKLY", interval: 1 };
+    return { frequency: "WEEKLY", interval: 1, timeBasis: "LOCAL" };
   }
-  const [frequencyRaw, intervalRaw] = raw.includes(":") ? raw.split(":", 2) : [raw, "1"];
+  const [rulePart, basisPart] = raw.includes("@") ? raw.split("@", 2) : [raw, "UTC"];
+  const [frequencyRaw, intervalRaw] = rulePart.includes(":") ? rulePart.split(":", 2) : [rulePart, "1"];
   const frequency = frequencyRaw === "DAILY" || frequencyRaw === "MONTHLY" ? frequencyRaw : "WEEKLY";
   const intervalParsed = Number.parseInt(intervalRaw || "1", 10);
   const interval = Number.isFinite(intervalParsed) && intervalParsed > 0 ? intervalParsed : 1;
-  return { frequency, interval };
+  const timeBasis = basisPart === "LOCAL" ? "LOCAL" : "UTC";
+  return { frequency, interval, timeBasis };
 }
 
 function clientDisplayName(client: AdminClientOut): string {
@@ -1281,6 +1286,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       ? createRecurrenceFrequencyRaw
       : "WEEKLY";
   const createRecurrenceInterval = createDraft ? draftPositiveInteger(createDraft.recurrence_interval) ?? 1 : 1;
+  const createRecurrenceTimeBasis = createDraft?.recurrence_time_basis?.trim().toUpperCase() === "UTC" ? "UTC" : "LOCAL";
   const editRecurrenceDefaults = parseRecurrenceRuleDefaults(selectedSession?.recurrence_rule);
   const editRecurrenceUntilDate = selectedSession
     ? toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
@@ -1618,6 +1624,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       <input type="date" name="recurrence_until_date" defaultValue={createDraft?.recurrence_until_date || ""} />
                     </label>
                   </div>
+                  <label className="checkline">
+                    <input
+                      type="checkbox"
+                      name="recurrence_keep_local_time"
+                      value="1"
+                      defaultChecked={createRecurrenceTimeBasis === "LOCAL"}
+                    />
+                    Heure locale fixe
+                  </label>
+                  <p className="muted">
+                    Recommande pour la France : un creneau cree a 18h reste a 18h apres le changement d'heure ete/hiver.
+                  </p>
                   <p className="muted">La recurrence est creee jusqu a la date de fin incluse.</p>
                 </div>
               </fieldset>
@@ -2222,6 +2240,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           <input type="date" name="recurrence_until_date" defaultValue={editRecurrenceUntilDate} />
                         </label>
                       </div>
+                      <label className="checkline">
+                        <input
+                          type="checkbox"
+                          name="recurrence_keep_local_time"
+                          value="1"
+                          defaultChecked={editRecurrenceDefaults.timeBasis === "LOCAL"}
+                        />
+                        Heure locale fixe
+                      </label>
+                      <p className="muted">
+                        Quand cette option est activee, un cours a 18h reste a 18h en heure locale meme apres un changement d'heure.
+                      </p>
                       {selectedSession.recurrence_group_id ? (
                         <p className="muted">
                           Serie existante: pour changer la recurrence, choisir la portee <strong>Serie future</strong> ou <strong>Toute la serie</strong>.

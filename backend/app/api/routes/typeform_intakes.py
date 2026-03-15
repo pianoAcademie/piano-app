@@ -110,6 +110,8 @@ def _recurrence_label(value: object | None) -> str | None:
     raw = _text(value).strip().upper()
     if not raw:
         return None
+    if "@" in raw:
+        raw, _ = raw.split("@", 1)
     frequency_raw, interval_raw = raw.split(":", 1) if ":" in raw else (raw, "1")
     try:
         interval = int(interval_raw or "1")
@@ -1552,6 +1554,8 @@ def _recurrence_frequency_from_rule(value: object | None) -> str:
     raw = _text(value).strip().upper()
     if not raw:
         return "weekly"
+    if "@" in raw:
+        raw, _ = raw.split("@", 1)
     frequency_raw, interval_raw = raw.split(":", 1) if ":" in raw else (raw, "1")
     try:
         interval = int(interval_raw or "1")
