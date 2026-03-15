@@ -103,6 +103,10 @@ class CommunicationReportRow(BaseModel):
     error_message: str | None
 
 
+class CommunicationResendRequest(BaseModel):
+    recipient_email: str | None = Field(default=None, min_length=3, max_length=255)
+
+
 class CommunicationPeriod(str, enum.Enum):
     TODAY = "TODAY"
     WEEK = "WEEK"

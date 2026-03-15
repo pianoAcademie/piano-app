@@ -96,7 +96,7 @@ from app.schemas.quote import (
     TermsTemplateVersionOut,
     TermsTemplateVersionPublishRequest,
 )
-from app.services.email_delivery import send_email
+from app.services.email_delivery import email_delivery_disabled_reason, send_email
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
@@ -3346,6 +3346,9 @@ def send_quote(
     recipient = _resolve_recipient_email(db, quote, explicit_email=payload.recipient_email)
     if recipient is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No recipient email resolved for quote")
+    delivery_error = email_delivery_disabled_reason()
+    if delivery_error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=delivery_error)
 
     quote.meta = {**(quote.meta or {}), "recipient_email": recipient}
     lines = _load_quote_lines(db, quote.id)
@@ -3382,6 +3385,9 @@ def resend_quote(
     recipient = _resolve_recipient_email(db, quote, explicit_email=payload.recipient_email)
     if recipient is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No recipient email resolved for quote")
+    delivery_error = email_delivery_disabled_reason()
+    if delivery_error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=delivery_error)
 
     quote.meta = {**(quote.meta or {}), "recipient_email": recipient}
     lines = _load_quote_lines(db, quote.id)

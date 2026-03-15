@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
-from app.models.ops import CommunicationLog, LegalEntity
+from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity
 from app.models.payout import ProfessorSessionPayout
 from app.models.user import User, UserRole
 from app.schemas.report import (
@@ -26,11 +26,13 @@ from app.schemas.report import (
     CommunicationReportPageOut,
     CommunicationProfessorFilterOut,
     CommunicationReportRow,
+    CommunicationResendRequest,
     CommunicationTypeFilterOut,
     ProfessorStatementRow,
     ReservationReportRow,
 )
 from app.services.communication_journal import COMMUNICATION_TYPE_LABELS, KNOWN_COMMUNICATION_TYPES, communication_type_label
+from app.services.email_delivery import email_delivery_disabled_reason, send_email
 
 router = APIRouter(prefix="/admin/reports")
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
@@ -150,6 +152,54 @@ def _communication_row_out(row: CommunicationLog) -> CommunicationReportRow:
         content_format=row.content_format.value,
         error_message=row.error_message,
     )
+
+
+@router.post("/communications/{communication_id}/resend", response_model=CommunicationReportRow)
+def resend_communication(
+    communication_id: UUID = Path(...),
+    payload: CommunicationResendRequest | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> CommunicationReportRow:
+    row = db.scalar(select(CommunicationLog).where(CommunicationLog.id == communication_id).limit(1))
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Communication introuvable")
+    if row.channel != CommunicationChannelModel.EMAIL:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Seules les communications email peuvent etre renvoyees")
+
+    delivery_error = email_delivery_disabled_reason()
+    if delivery_error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=delivery_error)
+
+    recipient = str((payload.recipient_email if payload is not None else None) or row.recipient or "").strip().lower()
+    if not recipient:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Destinataire email introuvable")
+
+    message_id = send_email(
+        to_email=recipient,
+        subject=row.subject,
+        body=row.content,
+        body_format=row.content_format.value if hasattr(row.content_format, "value") else str(row.content_format),
+        context=f"{row.source}_RESEND",
+        sender_user_id=row.sender_user_id,
+        sender_label=row.sender_label,
+        sender_category=row.sender_category,
+        professor_id=row.professor_id,
+        recipient_user_id=row.recipient_user_id if recipient == str(row.recipient or "").strip().lower() else None,
+        communication_type=row.communication_type,
+    )
+    resent_row = db.scalar(
+        select(CommunicationLog)
+        .where(
+            CommunicationLog.provider_message_id == message_id,
+            CommunicationLog.channel == CommunicationChannelModel.EMAIL,
+        )
+        .order_by(CommunicationLog.occurred_at.desc())
+        .limit(1)
+    )
+    if resent_row is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Renvoi journalise introuvable")
+    return _communication_row_out(resent_row)
 
 
 @router.get("/reservations", response_model=list[ReservationReportRow])

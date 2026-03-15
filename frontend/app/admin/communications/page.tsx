@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { resendCommunicationAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import type {
   CommunicationFiltersOut,
@@ -382,9 +383,19 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
                     <span className="badge">{deliveryLabel(row.delivery_status)}</span>
                   </td>
                   <td>
-                    <a className="mode-link" href={buildHref(filters, { messageId: row.id })}>
-                      Voir
-                    </a>
+                    <div className="row wrap gap-sm">
+                      <a className="mode-link" href={buildHref(filters, { messageId: row.id })}>
+                        Voir
+                      </a>
+                      {row.channel === "EMAIL" ? (
+                        <form action={resendCommunicationAction}>
+                          <input type="hidden" name="communication_id" value={row.id} />
+                          <input type="hidden" name="recipient_email" value={row.recipient} />
+                          <input type="hidden" name="return_to" value={buildHref(filters, { messageId: row.id })} />
+                          <button type="submit" className="ghost">Renvoyer</button>
+                        </form>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -435,6 +446,17 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
               <p>
                 <strong>Erreur provider:</strong> {selected.error_message}
               </p>
+            ) : null}
+
+            {selected.channel === "EMAIL" ? (
+              <div className="row wrap gap-sm top-gap-sm">
+                <form action={resendCommunicationAction} className="row wrap gap-sm">
+                  <input type="hidden" name="communication_id" value={selected.id} />
+                  <input type="hidden" name="return_to" value={buildHref(filters, { messageId: selected.id })} />
+                  <input type="email" name="recipient_email" defaultValue={selected.recipient} />
+                  <button type="submit">Renvoyer cet email</button>
+                </form>
+              </div>
             ) : null}
 
             <h3>Contenu</h3>

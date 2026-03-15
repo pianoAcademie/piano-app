@@ -26,6 +26,17 @@ def _normalized_provider() -> str:
     return provider
 
 
+def email_delivery_disabled_reason() -> str | None:
+    provider = _normalized_provider()
+    if provider == "LOG":
+        return "Envoi email reel desactive sur ce serveur (EMAIL_PROVIDER=LOG)."
+    if provider == "SMTP" and not settings.smtp_host.strip():
+        return "Configuration email incomplete: SMTP_HOST manquant."
+    if not settings.smtp_username.strip() or not settings.smtp_password.strip():
+        return "Configuration email incomplete: identifiants SMTP manquants."
+    return None
+
+
 def _smtp_host_port(provider: str) -> tuple[str, int]:
     host = settings.smtp_host.strip()
     port = settings.smtp_port

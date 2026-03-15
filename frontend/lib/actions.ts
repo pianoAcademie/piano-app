@@ -9638,6 +9638,37 @@ export async function resendQuoteAction(formData: FormData): Promise<void> {
   redirect(appendQueryMessage(returnTo, "ok", "Devis renvoye"));
 }
 
+export async function resendCommunicationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const communicationId = String(formData.get("communication_id") ?? "").trim();
+  const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
+  const returnTo = safeAdminReturnPath(formData, "/admin/communications");
+  if (!communicationId) {
+    redirect(appendQueryMessage(returnTo, "error", "Communication introuvable"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/reports/communications/${encodeURIComponent(communicationId)}/resend`,
+    {
+      method: "POST",
+      body: JSON.stringify({ recipient_email: recipientEmail || null }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/communications");
+  redirect(appendQueryMessage(returnTo, "ok", "Communication renvoyee"));
+}
+
 export async function regenerateQuoteDocumentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
