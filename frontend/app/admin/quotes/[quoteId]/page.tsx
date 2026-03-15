@@ -133,6 +133,8 @@ type QuoteOut = {
   document_generated_at: string | null;
   public_token: string | null;
   pdf_token: string | null;
+  public_url: string | null;
+  public_pdf_url: string | null;
 };
 
 type QuoteDetailOut = {
@@ -1015,7 +1017,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   })();
   const pdfVersionTag = String(detail.quote.document_hash || detail.quote.document_generated_at || "").trim();
   const adminPdfHref = `/admin/quotes/${detail.quote.id}/pdf${pdfVersionTag ? `?v=${encodeURIComponent(pdfVersionTag)}` : ""}`;
-  const publicPdfHref = detail.quote.pdf_token
+  const publicPdfHref = detail.quote.public_pdf_url
+    ? `${detail.quote.public_pdf_url}${pdfVersionTag ? `&v=${encodeURIComponent(pdfVersionTag)}` : ""}`
+    : detail.quote.pdf_token
     ? `/q/${detail.quote.id}/pdf?t=${encodeURIComponent(detail.quote.pdf_token)}${pdfVersionTag ? `&v=${encodeURIComponent(pdfVersionTag)}` : ""}`
     : null;
   const regenerateFormId = `quote-regenerate-form-${detail.quote.id}`;
@@ -1418,15 +1422,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
                 {detail.quote.public_token ? (
                   <>
-                    <Link
+                    <a
                       className="ghost"
-                      href={`/q/${detail.quote.id}?t=${encodeURIComponent(detail.quote.public_token)}`}
+                      href={detail.quote.public_url ?? `/q/${detail.quote.id}?t=${encodeURIComponent(detail.quote.public_token)}`}
                       target="_blank"
+                      rel="noreferrer"
                     >
                       Ouvrir page publique
-                    </Link>
+                    </a>
                     <CopyLinkButton
-                      value={`${process.env.NEXT_PUBLIC_FRONTEND_URL ?? "http://localhost:3000"}/q/${detail.quote.id}?t=${detail.quote.public_token}`}
+                      value={detail.quote.public_url ?? `/q/${detail.quote.id}?t=${detail.quote.public_token}`}
                       label="Copier lien public"
                     />
                   </>
@@ -1435,13 +1440,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                 )}
 
                 {detail.quote.pdf_token ? (
-                  <Link
+                  <a
                     className="ghost"
                     href={publicPdfHref || "#"}
                     target="_blank"
+                    rel="noreferrer"
                   >
                     PDF public
-                  </Link>
+                  </a>
                 ) : null}
                 <Link className="ghost" href={adminPdfHref} target="_blank">
                   PDF admin

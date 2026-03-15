@@ -117,6 +117,8 @@ class QuoteOut(BaseModel):
     status: str
     public_token: str | None = None
     pdf_token: str | None = None
+    public_url: str | None = None
+    public_pdf_url: str | None = None
     version_number: int
     parent_quote_id: UUID | None = None
     currency: str

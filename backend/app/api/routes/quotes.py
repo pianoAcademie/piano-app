@@ -1298,6 +1298,9 @@ def _quote_out(row: Quote) -> QuoteOut:
     meta = row.meta or {}
     fallback_language = str(meta.get("language") or "").strip().lower() or None
     fallback_vat = _extract_vat_rate(meta)
+    frontend_base = (settings.frontend_base_url or "http://localhost:3000").rstrip("/")
+    public_url = f"{frontend_base}/q/{row.id}?t={row.public_token}" if row.public_token else None
+    public_pdf_url = f"{frontend_base}/api/v1/public/quotes/{row.id}/pdf?t={row.pdf_token}" if row.pdf_token else None
     return QuoteOut(
         id=row.id,
         quote_number=row.quote_number,
@@ -1317,6 +1320,8 @@ def _quote_out(row: Quote) -> QuoteOut:
         status=row.status,
         public_token=row.public_token,
         pdf_token=row.pdf_token,
+        public_url=public_url,
+        public_pdf_url=public_pdf_url,
         version_number=int(row.version_number or 1),
         parent_quote_id=row.parent_quote_id,
         currency=row.currency,

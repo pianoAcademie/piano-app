@@ -28,6 +28,8 @@ type QuoteOut = {
   status: string;
   public_token: string | null;
   pdf_token: string | null;
+  public_url: string | null;
+  public_pdf_url: string | null;
   context_type: string;
   currency: string;
   total_ttc: string;
@@ -495,8 +497,6 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
 
   const currencyValues = Array.from(new Set(quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean))).sort();
   const quoteTypeValues = Array.from(new Set(quotes.map((row) => (row.quote_type || "").trim()).filter(Boolean))).sort();
-  const frontendBase = process.env.NEXT_PUBLIC_FRONTEND_URL ?? "http://localhost:3000";
-
   return (
     <section className="admin-page-grid">
       <section className="card">
@@ -702,8 +702,8 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                     ? prospectTypeLabelFromMeta((owner as ProspectOut | undefined)?.meta || {})
                     : prospectTypeLabelFromClient(owner as AdminClientOut | undefined);
                   const detailHref = `/admin/quotes/${row.id}?back=${encodeURIComponent(currentListHref)}`;
-                  const publicHref = row.public_token ? `/q/${row.id}?t=${encodeURIComponent(row.public_token)}` : "";
-                  const publicAbsoluteHref = row.public_token ? `${frontendBase}/q/${row.id}?t=${row.public_token}` : "";
+                  const publicHref = row.public_url ?? (row.public_token ? `/q/${row.id}?t=${encodeURIComponent(row.public_token)}` : "");
+                  const publicAbsoluteHref = row.public_url ?? "";
                   const commercialState = quoteValidationState(row);
                   const integrationState = quoteIntegrationState(row, commercialState);
                   const nextAction = quoteNextAction(commercialState, integrationState);
@@ -749,7 +749,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                             <button type="submit" className="ghost">Dupliquer</button>
                           </form>
                           {publicHref ? (
-                            <Link className="ghost" href={publicHref} target="_blank">Page publique</Link>
+                            <a className="ghost" href={publicHref} target="_blank" rel="noreferrer">Page publique</a>
                           ) : null}
                           {publicAbsoluteHref ? (
                             <CopyLinkButton value={publicAbsoluteHref} label="Copier lien" />

@@ -13,7 +13,8 @@ export default function CopyLinkButton({ value, label = "Copier le lien", classN
 
   const handleCopy = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(value);
+      const resolvedValue = value.startsWith("/") ? `${window.location.origin}${value}` : value;
+      await navigator.clipboard.writeText(resolvedValue);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
