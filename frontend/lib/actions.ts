@@ -9659,14 +9659,15 @@ export async function resendCommunicationAction(formData: FormData): Promise<voi
   await ensureAdmin(token);
 
   const communicationId = String(formData.get("communication_id") ?? "").trim();
+  const normalizedCommunicationId = communicationId.replace(/^communication-log-/, "");
   const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
   const returnTo = safeAdminReturnPath(formData, "/admin/communications");
-  if (!communicationId) {
+  if (!normalizedCommunicationId) {
     redirect(appendQueryMessage(returnTo, "error", "Communication introuvable"));
   }
 
   const result = await backendRequest<{ id: string }>(
-    `/api/v1/admin/reports/communications/${encodeURIComponent(communicationId)}/resend`,
+    `/api/v1/admin/reports/communications/${encodeURIComponent(normalizedCommunicationId)}/resend`,
     {
       method: "POST",
       body: JSON.stringify({ recipient_email: recipientEmail || null }),

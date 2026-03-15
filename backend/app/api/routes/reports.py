@@ -130,6 +130,19 @@ def _archive_communications_older_than_one_year(db: Session, now_utc: datetime) 
     db.commit()
 
 
+def _parse_communication_log_id(raw_value: str) -> UUID:
+    raw = str(raw_value or "").strip()
+    if raw.startswith("communication-log-"):
+        raw = raw[len("communication-log-") :]
+    try:
+        return UUID(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Identifiant de communication invalide",
+        ) from exc
+
+
 def _communication_row_out(row: CommunicationLog) -> CommunicationReportRow:
     return CommunicationReportRow(
         id=f"communication-log-{row.id}",
@@ -156,12 +169,13 @@ def _communication_row_out(row: CommunicationLog) -> CommunicationReportRow:
 
 @router.post("/communications/{communication_id}/resend", response_model=CommunicationReportRow)
 def resend_communication(
-    communication_id: UUID = Path(...),
+    communication_id: str = Path(...),
     payload: CommunicationResendRequest | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> CommunicationReportRow:
-    row = db.scalar(select(CommunicationLog).where(CommunicationLog.id == communication_id).limit(1))
+    normalized_communication_id = _parse_communication_log_id(communication_id)
+    row = db.scalar(select(CommunicationLog).where(CommunicationLog.id == normalized_communication_id).limit(1))
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Communication introuvable")
     if row.channel != CommunicationChannelModel.EMAIL:
