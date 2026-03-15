@@ -33,6 +33,7 @@ from app.schemas.report import (
 )
 from app.services.communication_journal import COMMUNICATION_TYPE_LABELS, KNOWN_COMMUNICATION_TYPES, communication_type_label
 from app.services.email_delivery import email_delivery_disabled_reason, send_email
+from app.services.messaging_templates import resolve_sender_profile
 
 router = APIRouter(prefix="/admin/reports")
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
@@ -188,6 +189,8 @@ def resend_communication(
     recipient = str((payload.recipient_email if payload is not None else None) or row.recipient or "").strip().lower()
     if not recipient:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Destinataire email introuvable")
+    sender_category = getattr(row.sender_category, "value", str(row.sender_category or "")).strip().upper()
+    sender = resolve_sender_profile(db, sender_kind="TEACHER" if sender_category == "PROFESSOR" else "STUDIO")
 
     message_id = send_email(
         to_email=recipient,
@@ -195,6 +198,10 @@ def resend_communication(
         body=row.content,
         body_format=row.content_format.value if hasattr(row.content_format, "value") else str(row.content_format),
         context=f"{row.source}_RESEND",
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
         sender_user_id=row.sender_user_id,
         sender_label=row.sender_label,
         sender_category=row.sender_category,

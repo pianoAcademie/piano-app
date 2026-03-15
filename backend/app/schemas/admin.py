@@ -189,6 +189,7 @@ class AdminMessagingSettingsOut(BaseModel):
     smtp_use_ssl: bool
     smtp_timeout_seconds: int
     frontend_base_url: str
+    brevo_email_webhook_url: str
     delivery_enabled: bool
     delivery_error_message: str | None = None
     updated_at: datetime | None = None

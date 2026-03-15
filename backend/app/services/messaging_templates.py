@@ -83,6 +83,11 @@ class MessagingDeliveryConfig:
     frontend_base_url: str
 
 
+def resolve_brevo_email_webhook_url(db: Session | None = None) -> str:
+    base_url = resolve_frontend_base_url(db).rstrip("/")
+    return f"{base_url}/api/v1/notifications/webhooks/brevo/email"
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -669,6 +674,7 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         "smtp_use_ssl": delivery_config.smtp_use_ssl,
         "smtp_timeout_seconds": delivery_config.smtp_timeout_seconds,
         "frontend_base_url": delivery_config.frontend_base_url,
+        "brevo_email_webhook_url": resolve_brevo_email_webhook_url(db),
         "delivery_enabled": delivery_error is None,
         "delivery_error_message": delivery_error,
         "updated_at": updated_at,

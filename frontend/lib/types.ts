@@ -1473,6 +1473,7 @@ export type AdminMessagingSettingsOut = {
   smtp_use_ssl: boolean;
   smtp_timeout_seconds: number;
   frontend_base_url: string;
+  brevo_email_webhook_url: string;
   delivery_enabled: boolean;
   delivery_error_message: string | null;
   updated_at: string | null;

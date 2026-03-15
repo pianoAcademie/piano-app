@@ -98,7 +98,7 @@ from app.schemas.quote import (
 )
 from app.services.email_delivery import email_delivery_disabled_reason, send_email
 from app.services.invoice_documents import normalize_billing_entity
-from app.services.messaging_templates import resolve_frontend_base_url
+from app.services.messaging_templates import resolve_frontend_base_url, resolve_sender_profile
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.quotes.payment_plan_engine import PaymentPlanScheduleInput, build_payment_schedule
@@ -3278,6 +3278,7 @@ def _send_quote_email(
             return
 
     frontend_base = resolve_frontend_base_url(db).rstrip("/")
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
     public_url = f"{frontend_base}/q/{quote.id}?t={quote.public_token}"
     pdf_url = f"{frontend_base}/api/v1/public/quotes/{quote.id}/pdf?t={quote.pdf_token}"
     subject = f"Devis {quote.quote_number}"
@@ -3307,6 +3308,10 @@ def _send_quote_email(
         body=body,
         body_format="TEXT",
         context="QUOTE_SENT",
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
     )
     out.provider_message_id = provider_message_id
     out.status = "sent" if provider_message_id else "failed"

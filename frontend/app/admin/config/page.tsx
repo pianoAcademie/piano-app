@@ -2040,6 +2040,21 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <p className="muted">
                         Liens publics / emails: <strong>{messagingSettings.frontend_base_url}</strong>
                       </p>
+                      {messagingSettings.email_provider === "BREVO" ? (
+                        <>
+                          <p className="muted">
+                            Webhook Brevo transactionnel a configurer: <strong>{messagingSettings.brevo_email_webhook_url}</strong>
+                          </p>
+                          <label className="stack-sm top-gap-sm">
+                            URL webhook Brevo
+                            <input type="text" value={messagingSettings.brevo_email_webhook_url} readOnly />
+                          </label>
+                          <p className="muted">
+                            Dans Brevo, activez au minimum les evenements <strong>delivered</strong>, <strong>hardBounce</strong> et{" "}
+                            <strong>softBounce</strong> pour mettre a jour l etat de livraison.
+                          </p>
+                        </>
+                      ) : null}
                       <p className="muted">
                         SPF/DKIM se valident chez Brevo ou votre relais SMTP. Ici, vous pilotez les adresses, le transport et les
                         liens publics utilises par l application.

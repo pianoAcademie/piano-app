@@ -53,6 +53,8 @@ def _build_message(
     subject_prefix: str | None = None,
     attachments: Iterable[EmailAttachment] | None = None,
     delivery_config: MessagingDeliveryConfig,
+    provider_message_id: str | None = None,
+    context: str | None = None,
 ) -> EmailMessage:
     message = EmailMessage()
     sender_email = (from_email or delivery_config.from_email).strip()
@@ -63,6 +65,13 @@ def _build_message(
     message_reply_to = (reply_to if reply_to is not None else delivery_config.reply_to) or ""
     if message_reply_to.strip():
         message["Reply-To"] = message_reply_to.strip()
+    if provider_message_id:
+        message["X-Piano-Message-Id"] = provider_message_id
+        mailin_parts = [f"piano_message_id:{provider_message_id}"]
+        normalized_context = (context or "").strip().replace("|", "/").replace(":", "=")
+        if normalized_context:
+            mailin_parts.append(f"context:{normalized_context}")
+        message["X-Mailin-custom"] = "|".join(mailin_parts)
 
     normalized_format = (body_format or "TEXT").strip().lower()
     if normalized_format == "html":
@@ -220,6 +229,8 @@ def send_email(
         subject_prefix=subject_prefix,
         attachments=attachments,
         delivery_config=delivery_config,
+        provider_message_id=message_id,
+        context=context,
     )
 
     try:

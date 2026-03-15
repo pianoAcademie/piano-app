@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.quote import Prospect, Quote, QuoteEmailOutbox, QuoteEvent
 from app.services.email_delivery import send_email
+from app.services.messaging_templates import resolve_sender_profile
 from app.services.notifications.infrastructure.repository import append_job_run_log, finish_job_run, start_job_run
 
 
@@ -40,6 +41,7 @@ def _queue_email_if_new(
     body: str,
     now: datetime,
 ) -> bool:
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
     message_key = f"{kind}:{quote_id}:{recipient_email.lower()}"
     existing = db.scalar(
         select(QuoteEmailOutbox).where(
@@ -64,6 +66,10 @@ def _queue_email_if_new(
         body=body,
         body_format="TEXT",
         context=f"QUOTE_{kind.upper()}",
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
     )
     row.status = "sent" if message_id else "failed"
     row.provider_message_id = message_id
