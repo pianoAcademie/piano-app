@@ -738,6 +738,34 @@ def _resolve_recurrence_occurrences(
     return count
 
 
+def _recurrence_datetimes_until(
+    *,
+    anchor_start_at_utc: datetime,
+    recurrence_frequency: str,
+    recurrence_interval: int,
+    recurrence_until_date: date,
+    session_timezone: str,
+    recurrence_time_basis: str,
+    limit: int = 366,
+) -> list[datetime]:
+    out: list[datetime] = []
+    offset = 0
+    while offset < limit:
+        candidate = _advance_recurrence_datetime(
+            anchor_start_at_utc,
+            frequency=recurrence_frequency,
+            interval=recurrence_interval,
+            offset=offset,
+            timezone_name=session_timezone,
+            time_basis=recurrence_time_basis,
+        )
+        if _local_date_in_timezone(candidate, session_timezone) > recurrence_until_date:
+            break
+        out.append(candidate)
+        offset += 1
+    return out
+
+
 def _has_vacation_on_day(
     db: Session,
     *,
@@ -2750,6 +2778,7 @@ def update_session(
     recurrence_frequency = "WEEKLY"
     recurrence_interval = 1
     recurrence_time_basis = "UTC"
+    recurrence_until_date: date | None = None
     create_future_recurrences = False
     realign_existing_recurrence = False
     existing_recurrence_frequency, existing_recurrence_interval, existing_recurrence_time_basis = _parse_recurrence_rule(
@@ -2762,6 +2791,7 @@ def update_session(
         recurrence_frequency = _normalize_recurrence_frequency(str(recurrence_payload.get("frequency") or ""))
         recurrence_interval = _normalize_recurrence_interval(recurrence_payload.get("interval"))
         recurrence_time_basis = _normalize_recurrence_time_basis(str(recurrence_payload.get("time_basis") or "LOCAL"))
+        recurrence_until_date = recurrence_payload.get("until_date")
         recurrence_rule = _serialize_recurrence_rule(
             frequency=recurrence_frequency,
             interval=recurrence_interval,
@@ -2772,7 +2802,6 @@ def update_session(
             recurrence_group_id = session_obj.recurrence_group_id if apply_scope == "SERIES_ALL" else uuid4()
             realign_existing_recurrence = True
         else:
-            recurrence_until_date = recurrence_payload.get("until_date")
             recurrence_occurrences = _resolve_recurrence_occurrences(
                 recurrence_frequency=recurrence_frequency,
                 recurrence_interval=recurrence_interval,
@@ -2825,6 +2854,52 @@ def update_session(
                 recurrence_base_start = recurrence_base_start + anchor_start_shift
         else:
             recurrence_base_start = anchor_start
+
+    desired_recurrence_starts: list[datetime] | None = None
+    missing_recurrence_starts: list[datetime] = []
+    calendar_skip_cache: dict[str, object] = {}
+    if (
+        realign_existing_recurrence
+        and recurrence_rule is not None
+        and recurrence_until_date is not None
+        and recurrence_base_start is not None
+    ):
+        theoretical_recurrence_starts = _recurrence_datetimes_until(
+            anchor_start_at_utc=recurrence_base_start,
+            recurrence_frequency=recurrence_frequency,
+            recurrence_interval=recurrence_interval,
+            recurrence_until_date=recurrence_until_date,
+            session_timezone=anchor_timezone,
+            recurrence_time_basis=recurrence_time_basis,
+        )
+        desired_recurrence_starts = []
+        for starts_at in theoretical_recurrence_starts:
+            if not is_vacation and _has_vacation_on_day(
+                db,
+                location_id=location_id,
+                day_start_utc=_start_of_utc_day(starts_at),
+            ):
+                continue
+            if not is_vacation and _is_blocked_by_school_calendar(
+                db,
+                location_id=location_id,
+                location_timezone=location.timezone,
+                starts_at_utc=starts_at,
+                include_holidays=bool(course_type.exclude_holidays_in_recurrence),
+                include_school_vacations=bool(course_type.exclude_school_vacations_in_recurrence),
+                cache=calendar_skip_cache,
+            ):
+                continue
+            desired_recurrence_starts.append(starts_at)
+
+        if not desired_recurrence_starts:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="All recurring future occurrences were blocked by configured holidays, vacations or closure slots",
+            )
+
+        target_sessions = target_sessions[: len(desired_recurrence_starts)]
+        missing_recurrence_starts = desired_recurrence_starts[len(target_sessions):]
 
     for target_index, target in enumerate(target_sessions):
         target.course_type_id = course_type_id
@@ -2898,14 +2973,17 @@ def update_session(
             resolved_end = anchor_end
             resolved_deadline = anchor_deadline
         elif recurrence_base_start is not None and recurrence_rule is not None:
-            resolved_start = _advance_recurrence_datetime(
-                recurrence_base_start,
-                frequency=recurrence_frequency,
-                interval=recurrence_interval,
-                offset=target_index,
-                timezone_name=resolved_timezone,
-                time_basis=recurrence_time_basis,
-            )
+            if desired_recurrence_starts is not None:
+                resolved_start = desired_recurrence_starts[target_index]
+            else:
+                resolved_start = _advance_recurrence_datetime(
+                    recurrence_base_start,
+                    frequency=recurrence_frequency,
+                    interval=recurrence_interval,
+                    offset=target_index,
+                    timezone_name=resolved_timezone,
+                    time_basis=recurrence_time_basis,
+                )
             if resolved_is_all_day:
                 resolved_start = _start_of_utc_day(resolved_start)
                 resolved_end = resolved_start + timedelta(days=1)
@@ -3020,7 +3098,6 @@ def update_session(
         anchor_duration = session_obj.end_at_utc - session_obj.start_at_utc
         anchor_deadline_delta = session_obj.start_at_utc - session_obj.auto_cancel_deadline_utc
         created_future_count = 0
-        calendar_skip_cache: dict[str, object] = {}
 
         for index in range(1, recurrence_occurrences):
             starts_at = _advance_recurrence_datetime(
@@ -3102,6 +3179,59 @@ def update_session(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="All recurring future occurrences were blocked by configured holidays, vacations or closure slots",
+            )
+    elif missing_recurrence_starts and recurrence_group_id is not None and recurrence_rule is not None:
+        anchor_duration = session_obj.end_at_utc - session_obj.start_at_utc
+        anchor_deadline_delta = session_obj.start_at_utc - session_obj.auto_cancel_deadline_utc
+
+        for starts_at in missing_recurrence_starts:
+            if session_obj.is_all_day:
+                starts_at = _start_of_utc_day(starts_at)
+                ends_at = starts_at + timedelta(days=1)
+            else:
+                ends_at = starts_at + anchor_duration
+            deadline_at = starts_at - anchor_deadline_delta
+
+            _validate_session_times(
+                start_at_utc=starts_at,
+                end_at_utc=ends_at,
+                auto_cancel_deadline_utc=deadline_at,
+            )
+            _validate_same_day_slot(
+                start_at_utc=starts_at,
+                end_at_utc=ends_at,
+                is_all_day=session_obj.is_all_day,
+                session_timezone=session_obj.timezone,
+            )
+
+            db.add(
+                CourseSession(
+                    course_type_id=session_obj.course_type_id,
+                    billing_entity_snapshot=session_obj.billing_entity_snapshot,
+                    snapshot_seller_legal_entity_id=session_obj.snapshot_seller_legal_entity_id,
+                    snapshot_payor_legal_entity_id=session_obj.snapshot_payor_legal_entity_id,
+                    location_id=session_obj.location_id,
+                    professor_id=session_obj.professor_id,
+                    title=session_obj.title,
+                    description=session_obj.description,
+                    private_description=session_obj.private_description,
+                    professor_reminder_note=session_obj.professor_reminder_note,
+                    group_note=session_obj.group_note,
+                    start_at_utc=starts_at,
+                    end_at_utc=ends_at,
+                    is_all_day=session_obj.is_all_day,
+                    capacity_max=session_obj.capacity_max,
+                    status=session_obj.status,
+                    auto_cancel_deadline_utc=deadline_at,
+                    cancel_reason=session_obj.cancel_reason,
+                    zoom_link=session_obj.zoom_link,
+                    is_private=session_obj.is_private,
+                    allow_online_booking=session_obj.allow_online_booking,
+                    timezone=session_obj.timezone,
+                    recurrence_group_id=recurrence_group_id,
+                    recurrence_rule=recurrence_rule,
+                    updated_at=now,
+                )
             )
 
     db.commit()
