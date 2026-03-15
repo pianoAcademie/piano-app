@@ -69,6 +69,11 @@ type QuoteLinesEditorProps = {
   saveAction: (formData: FormData) => Promise<void>;
 };
 
+type ResolvedUnitPrice = {
+  unitPrice: string;
+  sourceLabel: string;
+};
+
 function lineAmount(line: EditableLine): number {
   const qty = Number(line.quantity);
   const price = Number(line.unitPrice);
@@ -309,6 +314,65 @@ function computeActivityFallbackPrice(activity: ActivityOption | undefined): str
   return null;
 }
 
+function resolvedSourceUnitPrice(
+  line: EditableLine,
+  activities: ActivityOption[],
+  products: ProductOption[],
+  kits: KitOption[],
+  activityCatalogPriceByActivityId: Record<string, string>,
+  productCatalogPriceByProductId: Record<string, string>,
+  kitCatalogPriceByKitId: Record<string, string>,
+): ResolvedUnitPrice | null {
+  if (line.kind === "activity") {
+    const activity = activities.find((item) => item.id === line.refId);
+    const catalogPrice = activityCatalogPriceByActivityId[line.refId];
+    if (catalogPrice && catalogPrice !== "") {
+      return { unitPrice: catalogPrice, sourceLabel: "tarif catalogue" };
+    }
+    const direct = parsePositive(activity?.default_course_rate_ttc);
+    if (direct !== null) {
+      return { unitPrice: direct.toFixed(2), sourceLabel: "tarif par cours activite" };
+    }
+    const fallbackPrice = computeActivityFallbackPrice(activity);
+    if (fallbackPrice && fallbackPrice !== "") {
+      return { unitPrice: fallbackPrice, sourceLabel: "tarif horaire activite" };
+    }
+    return null;
+  }
+  if (line.kind === "product") {
+    const product = products.find((item) => item.id === line.refId);
+    const catalogPrice = productCatalogPriceByProductId[line.refId];
+    if (catalogPrice && catalogPrice !== "") {
+      return { unitPrice: catalogPrice, sourceLabel: "tarif catalogue" };
+    }
+    if (product?.price_incl_vat) {
+      return { unitPrice: product.price_incl_vat, sourceLabel: "prix produit" };
+    }
+    return null;
+  }
+  if (line.kind === "kit") {
+    const kit = kits.find((item) => item.id === line.refId);
+    const catalogPrice = kitCatalogPriceByKitId[line.refId];
+    if (catalogPrice && catalogPrice !== "") {
+      return { unitPrice: catalogPrice, sourceLabel: "tarif catalogue" };
+    }
+    if (kit?.effective_price_ttc) {
+      return { unitPrice: kit.effective_price_ttc, sourceLabel: "prix kit" };
+    }
+    return null;
+  }
+  return null;
+}
+
+function sameMoneyValue(left: string | null | undefined, right: string | null | undefined): boolean {
+  const leftNumber = Number(String(left ?? "").trim());
+  const rightNumber = Number(String(right ?? "").trim());
+  if (!Number.isFinite(leftNumber) || !Number.isFinite(rightNumber)) {
+    return false;
+  }
+  return Math.abs(leftNumber - rightNumber) < 0.005;
+}
+
 function planningSummaryForLine(
   line: EditableLine,
   planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }>,
@@ -538,6 +602,26 @@ export default function QuoteLinesEditor({
   const activeLinePlanningMismatch = activeLine
     ? hasPlanningMismatch(activeLine, activeLinePlanningSummary)
     : false;
+  const activeLineResolvedSourcePrice = activeLine
+    ? resolvedSourceUnitPrice(
+      activeLine,
+      activities,
+      products,
+      kits,
+      activityCatalogPriceByActivityId,
+      productCatalogPriceByProductId,
+      kitCatalogPriceByKitId,
+    )
+    : null;
+  const activeLinePlannedQuantity = activeLinePlanningSummary?.plannedQuantity ?? 0;
+  const activeLineCanAlignQuantity =
+    activeLine?.kind === "activity"
+    && activeLinePlannedQuantity > 0
+    && formatQuantityDisplay(activeLine.quantity) !== String(activeLinePlannedQuantity);
+  const activeLineHasSourcePriceGap =
+    activeLine !== null
+    && activeLineResolvedSourcePrice !== null
+    && !sameMoneyValue(activeLine.unitPrice, activeLineResolvedSourcePrice.unitPrice);
 
   return (
     <form action={saveAction}>
@@ -576,7 +660,7 @@ export default function QuoteLinesEditor({
                     <th className="quote-col-qty">Qt facturee</th>
                     <th className="quote-col-qty-planned">Qt planifiee</th>
                     <th className="quote-col-vat">TVA</th>
-                    <th className="quote-col-price">Prix TTC</th>
+                    <th className="quote-col-price">PU TTC</th>
                     <th className="quote-col-total">Total TTC</th>
                     <th className="quote-col-status">Statut</th>
                     <th className="quote-col-actions">Actions</th>
@@ -689,6 +773,19 @@ export default function QuoteLinesEditor({
                       disabled={!editable}
                     />
                   </label>
+                  {activeLineCanAlignQuantity ? (
+                    <div className="quote-line-planning-summary cols-span-4">
+                      <span>Le planning prevoit {activeLinePlannedQuantity} seance(s) pour cette activite.</span>
+                      <button
+                        type="button"
+                        className="ghost small-btn"
+                        onClick={() => updateLine(activeLine.uid, { quantity: String(activeLinePlannedQuantity) })}
+                        disabled={!editable}
+                      >
+                        Aligner la quantite sur le planning
+                      </button>
+                    </div>
+                  ) : null}
                   {activeLine.kind === "activity" ? (
                     <div className={`quote-line-planning-summary cols-span-4${activeLinePlanningMismatch ? " is-warning" : ""}`}>
                       <span>Quantite facturee : {formatQuantityDisplay(activeLine.quantity)}</span>
@@ -709,7 +806,7 @@ export default function QuoteLinesEditor({
                     />
                   </label>
                   <label className="quote-price-field">
-                    Prix TTC
+                    Prix unitaire TTC
                     <input
                       type="number"
                       step="0.01"
@@ -719,9 +816,28 @@ export default function QuoteLinesEditor({
                       disabled={!editable}
                     />
                   </label>
+                  {activeLineResolvedSourcePrice ? (
+                    <div className={`quote-line-planning-summary cols-span-4${activeLineHasSourcePriceGap ? " is-warning" : ""}`}>
+                      <span>
+                        Tarif source actuel : {toMoney(Number(activeLineResolvedSourcePrice.unitPrice || "0"), currency)}
+                        {" · "}
+                        {activeLineResolvedSourcePrice.sourceLabel}
+                      </span>
+                      {activeLineHasSourcePriceGap ? (
+                        <button
+                          type="button"
+                          className="ghost small-btn"
+                          onClick={() => updateLine(activeLine.uid, { unitPrice: activeLineResolvedSourcePrice.unitPrice })}
+                          disabled={!editable}
+                        >
+                          Reappliquer ce tarif
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="quote-line-amounts-row">
                     <div className="quote-line-amount">
-                      <span>Montant TTC</span>
+                      <span>Total ligne TTC</span>
                       <strong>{toMoney(lineAmount(activeLine), currency)}</strong>
                     </div>
                     <div className="quote-line-amount">
@@ -736,7 +852,7 @@ export default function QuoteLinesEditor({
                 </div>
                 {isCatalogKind(activeLine.kind) ? (
                   <small className="muted">
-                    Prix pre-rempli depuis le devis, le catalogue ou la configuration source. Vous pouvez l ajuster si necessaire.
+                    Le total de ligne se recalcule automatiquement depuis la quantite et le prix unitaire. Vous pouvez reappliquer le tarif source actuel si necessaire.
                   </small>
                 ) : null}
               </article>
