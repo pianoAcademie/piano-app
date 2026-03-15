@@ -46,6 +46,7 @@ from app.services.invoice_documents import (
     InvoicePeriodLine,
     render_invoice_period_pdf,
 )
+from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
@@ -92,7 +93,7 @@ def _utcnow() -> datetime:
 
 
 def _frontend_url(*, path: str) -> str:
-    candidate = (settings.frontend_base_url or "").strip() or "http://localhost:3000"
+    candidate = resolve_frontend_base_url()
     if not candidate.startswith("http://") and not candidate.startswith("https://"):
         candidate = "https://" + candidate
     return candidate.rstrip("/") + path

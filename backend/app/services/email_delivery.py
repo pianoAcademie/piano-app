@@ -9,9 +9,9 @@ from typing import Iterable
 from uuid import uuid4
 from uuid import UUID
 
-from app.core.config import settings
 from app.models.ops import CommunicationChannel, CommunicationDeliveryStatus, CommunicationSenderCategory, MessageFormat
 from app.services.communication_journal import infer_communication_type, log_communication
+from app.services.messaging_templates import MessagingDeliveryConfig, messaging_delivery_disabled_reason, resolve_messaging_delivery_config
 
 logger = logging.getLogger(__name__)
 
@@ -19,37 +19,21 @@ logger = logging.getLogger(__name__)
 EmailAttachment = tuple[str, bytes, str]
 
 
-def _normalized_provider() -> str:
-    provider = (settings.email_provider or "LOG").strip().upper()
-    if provider not in {"LOG", "SMTP", "BREVO"}:
-        return "LOG"
-    return provider
-
-
 def email_delivery_disabled_reason() -> str | None:
-    provider = _normalized_provider()
-    if provider == "LOG":
-        return "Envoi email reel desactive sur ce serveur (EMAIL_PROVIDER=LOG)."
-    if provider == "SMTP" and not settings.smtp_host.strip():
-        return "Configuration email incomplete: SMTP_HOST manquant."
-    if not settings.smtp_username.strip() or not settings.smtp_password.strip():
-        return "Configuration email incomplete: identifiants SMTP manquants."
-    return None
+    return messaging_delivery_disabled_reason(resolve_messaging_delivery_config())
 
 
-def _smtp_host_port(provider: str) -> tuple[str, int]:
-    host = settings.smtp_host.strip()
-    port = settings.smtp_port
-    if provider == "BREVO":
-        if not host:
-            host = "smtp-relay.brevo.com"
-        if not settings.smtp_port:
-            port = 587
-    return host, port
+def _smtp_host_port(delivery_config: MessagingDeliveryConfig) -> tuple[str, int]:
+    return delivery_config.smtp_host, delivery_config.smtp_port
 
 
-def _subject_with_prefix(subject: str, *, subject_prefix: str | None = None) -> str:
-    prefix = (subject_prefix if subject_prefix is not None else settings.email_subject_prefix or "").strip()
+def _subject_with_prefix(
+    subject: str,
+    *,
+    delivery_config: MessagingDeliveryConfig,
+    subject_prefix: str | None = None,
+) -> str:
+    prefix = (subject_prefix if subject_prefix is not None else delivery_config.subject_prefix or "").strip()
     if not prefix:
         return subject
     if subject.startswith(prefix):
@@ -68,14 +52,15 @@ def _build_message(
     reply_to: str | None = None,
     subject_prefix: str | None = None,
     attachments: Iterable[EmailAttachment] | None = None,
+    delivery_config: MessagingDeliveryConfig,
 ) -> EmailMessage:
     message = EmailMessage()
-    sender_email = (from_email or settings.email_from).strip()
+    sender_email = (from_email or delivery_config.from_email).strip()
     sender_name = (from_name or "").strip()
     message["From"] = formataddr((sender_name, sender_email)) if sender_name else sender_email
     message["To"] = to_email
-    message["Subject"] = _subject_with_prefix(subject, subject_prefix=subject_prefix)
-    message_reply_to = (reply_to if reply_to is not None else settings.email_reply_to) or ""
+    message["Subject"] = _subject_with_prefix(subject, delivery_config=delivery_config, subject_prefix=subject_prefix)
+    message_reply_to = (reply_to if reply_to is not None else delivery_config.reply_to) or ""
     if message_reply_to.strip():
         message["Reply-To"] = message_reply_to.strip()
 
@@ -118,7 +103,8 @@ def send_email(
     communication_type: str | None = None,
 ) -> str:
     message_id = f"mail-{uuid4()}"
-    provider = _normalized_provider()
+    delivery_config = resolve_messaging_delivery_config()
+    provider = delivery_config.provider
     normalized_format = "HTML" if (body_format or "").strip().lower() == "html" else "TEXT"
     raw_sender_category = (
         sender_category.value
@@ -163,9 +149,9 @@ def send_email(
         )
         return message_id
 
-    host, port = _smtp_host_port(provider)
-    username = settings.smtp_username.strip()
-    password = settings.smtp_password
+    host, port = _smtp_host_port(delivery_config)
+    username = delivery_config.smtp_username.strip()
+    password = delivery_config.smtp_password
 
     if not host:
         logger.error(
@@ -233,21 +219,22 @@ def send_email(
         reply_to=reply_to,
         subject_prefix=subject_prefix,
         attachments=attachments,
+        delivery_config=delivery_config,
     )
 
     try:
-        if settings.smtp_use_ssl:
+        if delivery_config.smtp_use_ssl:
             with smtplib.SMTP_SSL(
                 host=host,
                 port=port,
-                timeout=settings.smtp_timeout_seconds,
+                timeout=delivery_config.smtp_timeout_seconds,
                 context=ssl.create_default_context(),
             ) as smtp:
                 smtp.login(username, password)
                 smtp.send_message(message)
         else:
-            with smtplib.SMTP(host=host, port=port, timeout=settings.smtp_timeout_seconds) as smtp:
-                if settings.smtp_use_tls:
+            with smtplib.SMTP(host=host, port=port, timeout=delivery_config.smtp_timeout_seconds) as smtp:
+                if delivery_config.smtp_use_tls:
                     smtp.starttls(context=ssl.create_default_context())
                 smtp.login(username, password)
                 smtp.send_message(message)

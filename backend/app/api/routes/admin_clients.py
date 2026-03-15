@@ -131,6 +131,8 @@ from app.services.invoice_documents import (
 from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
+    resolve_messaging_delivery_config,
+    resolve_frontend_base_url,
     resolve_predefined_template,
     resolve_sender_profile,
     upsert_predefined_template,
@@ -897,7 +899,7 @@ def _extract_template_variables(template: str) -> set[str]:
 
 
 def _frontend_base_url() -> str:
-    raw = (settings.frontend_base_url or "").strip() or "http://localhost:3000"
+    raw = resolve_frontend_base_url()
     if not raw.startswith("http://") and not raw.startswith("https://"):
         raw = "https://" + raw
     return raw.rstrip("/")
@@ -2486,7 +2488,7 @@ def _fallback_dashboard_transactions_url(raw_website: str) -> str:
 def _frontend_url(raw_website: str, *, path: str) -> str:
     candidate = raw_website.strip()
     if not candidate:
-        candidate = (settings.frontend_base_url or "").strip()
+        candidate = resolve_frontend_base_url()
     if not candidate:
         candidate = "http://localhost:3000"
     if not candidate.startswith("http://") and not candidate.startswith("https://"):
@@ -2568,7 +2570,7 @@ def _send_admin_subscription_immediate_cancellation_email(
     admin_email = (
         _get_setting_value(db, "config_account_contact_email", actor.email).strip()
         or actor.email
-        or settings.email_reply_to
+        or (resolve_messaging_delivery_config(db).reply_to or "")
         or settings.email_from
     )
     if not admin_email:

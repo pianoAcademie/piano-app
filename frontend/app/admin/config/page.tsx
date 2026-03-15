@@ -1881,64 +1881,154 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 ) : (
                   <form action={updateAdminConfigMessagingSettingsAction} className="grid cols-2 config-form-grid">
                     <input type="hidden" name="messaging_tab" value={messagingTab} />
-                    <label className="span-2">
-                      Courriel du studio
-                      <input type="email" name="studio_email" defaultValue={messagingSettings.studio_email} maxLength={255} />
-                    </label>
+                    <fieldset className="span-2 config-subsection">
+                      <legend>Profil expediteur</legend>
+                      <label className="span-2">
+                        Courriel du studio
+                        <input type="email" name="studio_email" defaultValue={messagingSettings.studio_email} maxLength={255} />
+                      </label>
 
-                    <label>
-                      Expediteur studio (nom affiche)
-                      <input
-                        type="text"
-                        name="studio_sender_name"
-                        defaultValue={messagingSettings.studio_sender_name}
-                        maxLength={120}
-                      />
-                    </label>
-                    <label>
-                      Expediteur enseignant (nom affiche)
-                      <input
-                        type="text"
-                        name="teacher_sender_name"
-                        defaultValue={messagingSettings.teacher_sender_name}
-                        maxLength={120}
-                      />
-                    </label>
+                      <label>
+                        Expediteur studio (nom affiche)
+                        <input
+                          type="text"
+                          name="studio_sender_name"
+                          defaultValue={messagingSettings.studio_sender_name}
+                          maxLength={120}
+                        />
+                      </label>
+                      <label>
+                        Expediteur enseignant (nom affiche)
+                        <input
+                          type="text"
+                          name="teacher_sender_name"
+                          defaultValue={messagingSettings.teacher_sender_name}
+                          maxLength={120}
+                        />
+                      </label>
 
-                    <label className="checkline span-2">
-                      <input
-                        type="checkbox"
-                        name="use_studio_name_as_default_sender"
-                        defaultChecked={messagingSettings.use_studio_name_as_default_sender}
-                      />
-                      Utiliser le nom du studio comme expediteur par defaut
-                    </label>
-                    <label className="checkline span-2">
-                      <input
-                        type="checkbox"
-                        name="use_studio_email_for_reminders"
-                        defaultChecked={messagingSettings.use_studio_email_for_reminders}
-                      />
-                      Utiliser le courriel du studio pour les rappels
-                    </label>
-                    <label className="checkline span-2">
-                      <input
-                        type="checkbox"
-                        name="use_studio_email_for_lesson_notes"
-                        defaultChecked={messagingSettings.use_studio_email_for_lesson_notes}
-                      />
-                      Utiliser le courriel du studio pour les notes de lecons
-                    </label>
-                    <label className="checkline span-2">
-                      <input type="checkbox" name="send_birthday_emails" defaultChecked={messagingSettings.send_birthday_emails} />
-                      Envoyer les courriels d anniversaire automatiques
-                    </label>
+                      <label className="checkline span-2">
+                        <input
+                          type="checkbox"
+                          name="use_studio_name_as_default_sender"
+                          defaultChecked={messagingSettings.use_studio_name_as_default_sender}
+                        />
+                        Utiliser le nom du studio comme expediteur par defaut
+                      </label>
+                      <label className="checkline span-2">
+                        <input
+                          type="checkbox"
+                          name="use_studio_email_for_reminders"
+                          defaultChecked={messagingSettings.use_studio_email_for_reminders}
+                        />
+                        Utiliser le courriel du studio pour les rappels
+                      </label>
+                      <label className="checkline span-2">
+                        <input
+                          type="checkbox"
+                          name="use_studio_email_for_lesson_notes"
+                          defaultChecked={messagingSettings.use_studio_email_for_lesson_notes}
+                        />
+                        Utiliser le courriel du studio pour les notes de lecons
+                      </label>
+                      <label className="checkline span-2">
+                        <input type="checkbox" name="send_birthday_emails" defaultChecked={messagingSettings.send_birthday_emails} />
+                        Envoyer les courriels d anniversaire automatiques
+                      </label>
+                    </fieldset>
+
+                    <fieldset className="span-2 config-subsection">
+                      <legend>Transport email</legend>
+                      <label>
+                        Fournisseur
+                        <select name="email_provider" defaultValue={messagingSettings.email_provider}>
+                          <option value="LOG">Journal uniquement (pas d envoi reel)</option>
+                          <option value="SMTP">SMTP generique</option>
+                          <option value="BREVO">Brevo SMTP</option>
+                        </select>
+                      </label>
+                      <label>
+                        Reply-To
+                        <input
+                          type="email"
+                          name="email_reply_to"
+                          defaultValue={messagingSettings.email_reply_to}
+                          maxLength={255}
+                        />
+                      </label>
+                      <label>
+                        Prefixe de sujet
+                        <input
+                          type="text"
+                          name="email_subject_prefix"
+                          defaultValue={messagingSettings.email_subject_prefix}
+                          maxLength={120}
+                        />
+                      </label>
+                      <label>
+                        URL publique frontend
+                        <input
+                          type="url"
+                          name="frontend_base_url"
+                          defaultValue={messagingSettings.frontend_base_url}
+                          maxLength={255}
+                        />
+                      </label>
+                      <label>
+                        SMTP host
+                        <input type="text" name="smtp_host" defaultValue={messagingSettings.smtp_host} maxLength={255} />
+                      </label>
+                      <label>
+                        SMTP port
+                        <input type="number" name="smtp_port" defaultValue={messagingSettings.smtp_port} min={1} max={65535} />
+                      </label>
+                      <label>
+                        SMTP username
+                        <input
+                          type="text"
+                          name="smtp_username"
+                          defaultValue={messagingSettings.smtp_username}
+                          maxLength={255}
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label>
+                        SMTP password
+                        <input type="password" name="smtp_password" defaultValue="" maxLength={255} autoComplete="new-password" />
+                        <span className="muted">
+                          {messagingSettings.smtp_password_configured
+                            ? `Mot de passe configure (${messagingSettings.smtp_password_masked || "masque"}). Laisser vide pour le conserver.`
+                            : "Aucun mot de passe configure. Laisser vide conserve le fallback serveur s il existe."}
+                        </span>
+                      </label>
+                      <label>
+                        Timeout SMTP (s)
+                        <input
+                          type="number"
+                          name="smtp_timeout_seconds"
+                          defaultValue={messagingSettings.smtp_timeout_seconds}
+                          min={1}
+                          max={120}
+                        />
+                      </label>
+                      <div className="span-2 row" style={{ gap: 16, alignItems: "center" }}>
+                        <label className="checkline" style={{ margin: 0 }}>
+                          <input type="checkbox" name="smtp_use_tls" defaultChecked={messagingSettings.smtp_use_tls} />
+                          Utiliser STARTTLS
+                        </label>
+                        <label className="checkline" style={{ margin: 0 }}>
+                          <input type="checkbox" name="smtp_use_ssl" defaultChecked={messagingSettings.smtp_use_ssl} />
+                          Utiliser SSL direct
+                        </label>
+                      </div>
+                    </fieldset>
 
                     <div className="span-2 config-note-box">
                       <strong>Etat technique</strong>
                       <p className="muted">
-                        SPF/DKIM se valident dans Brevo (ou votre SMTP). Ici, vous pilotez les adresses et modeles utilises par
-                        l application.
+                        {messagingSettings.delivery_enabled
+                          ? `Envoi email actif via ${messagingSettings.email_provider}.`
+                          : messagingSettings.delivery_error_message || "Envoi email indisponible."}
                       </p>
                       <p className="muted">
                         De: <strong>{messagingSettings.studio_sender_name || "Studio"}</strong> &lt;{messagingSettings.studio_email}&gt;
@@ -1946,6 +2036,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <p className="muted">
                         De (enseignant): <strong>{messagingSettings.teacher_sender_name || "Enseignant"}</strong> &lt;
                         {messagingSettings.studio_email}&gt;
+                      </p>
+                      <p className="muted">
+                        Liens publics / emails: <strong>{messagingSettings.frontend_base_url}</strong>
+                      </p>
+                      <p className="muted">
+                        SPF/DKIM se valident chez Brevo ou votre relais SMTP. Ici, vous pilotez les adresses, le transport et les
+                        liens publics utilises par l application.
                       </p>
                       {messagingSettings.updated_at ? (
                         <p className="muted">

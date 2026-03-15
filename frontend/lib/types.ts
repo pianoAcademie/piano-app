@@ -1461,6 +1461,20 @@ export type AdminMessagingSettingsOut = {
   use_studio_email_for_reminders: boolean;
   use_studio_email_for_lesson_notes: boolean;
   send_birthday_emails: boolean;
+  email_provider: string;
+  email_reply_to: string;
+  email_subject_prefix: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password_configured: boolean;
+  smtp_password_masked: string;
+  smtp_use_tls: boolean;
+  smtp_use_ssl: boolean;
+  smtp_timeout_seconds: number;
+  frontend_base_url: string;
+  delivery_enabled: boolean;
+  delivery_error_message: string | null;
   updated_at: string | null;
 };
 

@@ -29,7 +29,12 @@ from app.schemas.auth import (
 )
 from app.schemas.user import UserOut
 from app.services.email_delivery import send_email
-from app.services.messaging_templates import PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET, resolve_predefined_template, resolve_sender_profile
+from app.services.messaging_templates import (
+    PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
+    resolve_frontend_base_url,
+    resolve_predefined_template,
+    resolve_sender_profile,
+)
 from app.services.security import create_access_token, hash_password, verify_password
 
 router = APIRouter()
@@ -95,7 +100,7 @@ def _setting_value(db: Session, key: str, default: str) -> str:
 def _frontend_url(db: Session, *, path: str) -> str:
     candidate = _setting_value(db, "config_account_website", "").strip()
     if not candidate:
-        candidate = (settings.frontend_base_url or "").strip()
+        candidate = resolve_frontend_base_url(db)
     if not candidate:
         candidate = "http://localhost:3000"
     if not candidate.startswith("http://") and not candidate.startswith("https://"):

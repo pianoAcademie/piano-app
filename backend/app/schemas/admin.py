@@ -177,6 +177,20 @@ class AdminMessagingSettingsOut(BaseModel):
     use_studio_email_for_reminders: bool
     use_studio_email_for_lesson_notes: bool
     send_birthday_emails: bool
+    email_provider: str
+    email_reply_to: str
+    email_subject_prefix: str
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password_configured: bool
+    smtp_password_masked: str
+    smtp_use_tls: bool
+    smtp_use_ssl: bool
+    smtp_timeout_seconds: int
+    frontend_base_url: str
+    delivery_enabled: bool
+    delivery_error_message: str | None = None
     updated_at: datetime | None = None
 
 
@@ -188,6 +202,17 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
     use_studio_email_for_reminders: bool = True
     use_studio_email_for_lesson_notes: bool = True
     send_birthday_emails: bool = False
+    email_provider: str = Field(default="LOG", max_length=20)
+    email_reply_to: str = Field(default="", max_length=255)
+    email_subject_prefix: str = Field(default="", max_length=120)
+    smtp_host: str = Field(default="", max_length=255)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = Field(default="", max_length=255)
+    smtp_password: str | None = Field(default=None, max_length=255)
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: int = Field(default=15, ge=1, le=120)
+    frontend_base_url: str = Field(default="", max_length=255)
 
 
 class AdminMessagingChannel(str, enum.Enum):

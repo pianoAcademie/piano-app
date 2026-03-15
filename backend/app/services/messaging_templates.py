@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -10,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.ops import AppSetting
 
 MessagingChannel = Literal["EMAIL", "SMS", "GROUP_NOTE"]
@@ -22,6 +25,17 @@ MESSAGING_SETTINGS_USE_STUDIO_NAME_DEFAULT_KEY = "config_messaging_use_studio_na
 MESSAGING_SETTINGS_USE_STUDIO_EMAIL_FOR_REMINDERS_KEY = "config_messaging_use_studio_email_for_reminders"
 MESSAGING_SETTINGS_USE_STUDIO_EMAIL_FOR_LESSON_NOTES_KEY = "config_messaging_use_studio_email_for_lesson_notes"
 MESSAGING_SETTINGS_SEND_BIRTHDAY_EMAILS_KEY = "config_messaging_send_birthday_emails"
+MESSAGING_SETTINGS_EMAIL_PROVIDER_KEY = "config_messaging_email_provider"
+MESSAGING_SETTINGS_EMAIL_REPLY_TO_KEY = "config_messaging_email_reply_to"
+MESSAGING_SETTINGS_EMAIL_SUBJECT_PREFIX_KEY = "config_messaging_email_subject_prefix"
+MESSAGING_SETTINGS_SMTP_HOST_KEY = "config_messaging_smtp_host"
+MESSAGING_SETTINGS_SMTP_PORT_KEY = "config_messaging_smtp_port"
+MESSAGING_SETTINGS_SMTP_USERNAME_KEY = "config_messaging_smtp_username"
+MESSAGING_SETTINGS_SMTP_PASSWORD_KEY = "config_messaging_smtp_password"
+MESSAGING_SETTINGS_SMTP_USE_TLS_KEY = "config_messaging_smtp_use_tls"
+MESSAGING_SETTINGS_SMTP_USE_SSL_KEY = "config_messaging_smtp_use_ssl"
+MESSAGING_SETTINGS_SMTP_TIMEOUT_SECONDS_KEY = "config_messaging_smtp_timeout_seconds"
+MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY = "config_messaging_frontend_base_url"
 
 MESSAGING_PREDEFINED_TEMPLATES_KEY = "config_messaging_predefined_templates_v1"
 MESSAGING_CUSTOM_TEMPLATES_KEY = "config_messaging_custom_templates_v1"
@@ -53,6 +67,22 @@ class MessagingSenderProfile:
     subject_prefix: str
 
 
+@dataclass(frozen=True)
+class MessagingDeliveryConfig:
+    provider: str
+    from_email: str
+    reply_to: str | None
+    subject_prefix: str
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_use_tls: bool
+    smtp_use_ssl: bool
+    smtp_timeout_seconds: int
+    frontend_base_url: str
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -75,6 +105,49 @@ def _sanitize_optional_text(raw: object, *, max_length: int) -> str | None:
     return value or None
 
 
+def _sanitize_int(raw: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def _mask_secret(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _db_or_env(db_value: str | None, env_value: str) -> str:
+    normalized_db_value = (db_value or "").strip()
+    if normalized_db_value:
+        return normalized_db_value
+    return (env_value or "").strip()
+
+
+def _normalize_email_provider(raw: str | None) -> str:
+    candidate = (raw or "").strip().upper()
+    if candidate in {"SMTP", "BREVO"}:
+        return candidate
+    return "LOG"
+
+
+@contextmanager
+def _session_scope(db: Session | None = None) -> Iterator[Session]:
+    if db is not None:
+        yield db
+        return
+    managed_db = SessionLocal()
+    try:
+        yield managed_db
+    finally:
+        managed_db.close()
+
+
 def _get_setting(db: Session, key: str) -> AppSetting | None:
     return db.scalar(select(AppSetting).where(AppSetting.key == key))
 
@@ -95,6 +168,119 @@ def _set_setting_value(db: Session, key: str, value: str) -> datetime:
     setting.value = value
     setting.updated_at = now
     return now
+
+
+def resolve_messaging_delivery_config(db: Session | None = None) -> MessagingDeliveryConfig:
+    with _session_scope(db) as active_db:
+        provider = _normalize_email_provider(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_EMAIL_PROVIDER_KEY, ""),
+                settings.email_provider,
+            )
+        )
+        from_email = _sanitize_text(
+            _get_setting_value(active_db, MESSAGING_SETTINGS_STUDIO_EMAIL_KEY, settings.email_from),
+            max_length=255,
+        )
+        reply_to = _sanitize_optional_text(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_EMAIL_REPLY_TO_KEY, ""),
+                settings.email_reply_to or "",
+            ),
+            max_length=255,
+        )
+        subject_prefix = _sanitize_text(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_EMAIL_SUBJECT_PREFIX_KEY, ""),
+                settings.email_subject_prefix,
+            ),
+            max_length=120,
+        )
+        smtp_host = _sanitize_text(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_SMTP_HOST_KEY, ""),
+                settings.smtp_host,
+            ),
+            max_length=255,
+        )
+        if provider == "BREVO" and not smtp_host:
+            smtp_host = "smtp-relay.brevo.com"
+
+        smtp_port = _sanitize_int(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_SMTP_PORT_KEY, ""),
+                str(settings.smtp_port),
+            ),
+            default=587,
+            minimum=1,
+            maximum=65535,
+        )
+        smtp_username = _sanitize_text(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_SMTP_USERNAME_KEY, ""),
+                settings.smtp_username,
+            ),
+            max_length=255,
+        )
+        smtp_password = _db_or_env(
+            _get_setting_value(active_db, MESSAGING_SETTINGS_SMTP_PASSWORD_KEY, ""),
+            settings.smtp_password,
+        )
+        smtp_use_tls = _as_bool(
+            _get_setting_value(active_db, MESSAGING_SETTINGS_SMTP_USE_TLS_KEY, str(settings.smtp_use_tls).lower()),
+            settings.smtp_use_tls,
+        )
+        smtp_use_ssl = _as_bool(
+            _get_setting_value(active_db, MESSAGING_SETTINGS_SMTP_USE_SSL_KEY, str(settings.smtp_use_ssl).lower()),
+            settings.smtp_use_ssl,
+        )
+        smtp_timeout_seconds = _sanitize_int(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_SMTP_TIMEOUT_SECONDS_KEY, ""),
+                str(settings.smtp_timeout_seconds),
+            ),
+            default=15,
+            minimum=1,
+            maximum=120,
+        )
+        frontend_base_url = _sanitize_text(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY, ""),
+                settings.frontend_base_url,
+            ),
+            max_length=255,
+        ).rstrip("/")
+        if not frontend_base_url:
+            frontend_base_url = "http://localhost:3000"
+
+    return MessagingDeliveryConfig(
+        provider=provider,
+        from_email=from_email,
+        reply_to=reply_to,
+        subject_prefix=subject_prefix,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_username=smtp_username,
+        smtp_password=smtp_password,
+        smtp_use_tls=smtp_use_tls,
+        smtp_use_ssl=smtp_use_ssl,
+        smtp_timeout_seconds=smtp_timeout_seconds,
+        frontend_base_url=frontend_base_url,
+    )
+
+
+def messaging_delivery_disabled_reason(config: MessagingDeliveryConfig) -> str | None:
+    if config.provider == "LOG":
+        return "Envoi email reel desactive sur ce serveur (EMAIL_PROVIDER=LOG)."
+    if config.provider == "SMTP" and not config.smtp_host.strip():
+        return "Configuration email incomplete: SMTP_HOST manquant."
+    if not config.smtp_username.strip() or not config.smtp_password.strip():
+        return "Configuration email incomplete: identifiants SMTP manquants."
+    return None
+
+
+def resolve_frontend_base_url(db: Session | None = None) -> str:
+    return resolve_messaging_delivery_config(db).frontend_base_url
 
 
 def _load_json_value(db: Session, key: str, fallback: object) -> object:
@@ -415,6 +601,17 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         MESSAGING_SETTINGS_USE_STUDIO_EMAIL_FOR_REMINDERS_KEY,
         MESSAGING_SETTINGS_USE_STUDIO_EMAIL_FOR_LESSON_NOTES_KEY,
         MESSAGING_SETTINGS_SEND_BIRTHDAY_EMAILS_KEY,
+        MESSAGING_SETTINGS_EMAIL_PROVIDER_KEY,
+        MESSAGING_SETTINGS_EMAIL_REPLY_TO_KEY,
+        MESSAGING_SETTINGS_EMAIL_SUBJECT_PREFIX_KEY,
+        MESSAGING_SETTINGS_SMTP_HOST_KEY,
+        MESSAGING_SETTINGS_SMTP_PORT_KEY,
+        MESSAGING_SETTINGS_SMTP_USERNAME_KEY,
+        MESSAGING_SETTINGS_SMTP_PASSWORD_KEY,
+        MESSAGING_SETTINGS_SMTP_USE_TLS_KEY,
+        MESSAGING_SETTINGS_SMTP_USE_SSL_KEY,
+        MESSAGING_SETTINGS_SMTP_TIMEOUT_SECONDS_KEY,
+        MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY,
     ]
 
     updated_at: datetime | None = None
@@ -437,6 +634,8 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         _get_setting_value(db, MESSAGING_SETTINGS_TEACHER_SENDER_NAME_KEY, "Service ADMINISTRATION"),
         max_length=120,
     )
+    delivery_config = resolve_messaging_delivery_config(db)
+    delivery_error = messaging_delivery_disabled_reason(delivery_config)
 
     payload = {
         "studio_email": studio_email,
@@ -458,6 +657,20 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
             _get_setting_value(db, MESSAGING_SETTINGS_SEND_BIRTHDAY_EMAILS_KEY, "false"),
             False,
         ),
+        "email_provider": delivery_config.provider,
+        "email_reply_to": delivery_config.reply_to or "",
+        "email_subject_prefix": delivery_config.subject_prefix,
+        "smtp_host": delivery_config.smtp_host,
+        "smtp_port": delivery_config.smtp_port,
+        "smtp_username": delivery_config.smtp_username,
+        "smtp_password_configured": bool(delivery_config.smtp_password.strip()),
+        "smtp_password_masked": _mask_secret(delivery_config.smtp_password),
+        "smtp_use_tls": delivery_config.smtp_use_tls,
+        "smtp_use_ssl": delivery_config.smtp_use_ssl,
+        "smtp_timeout_seconds": delivery_config.smtp_timeout_seconds,
+        "frontend_base_url": delivery_config.frontend_base_url,
+        "delivery_enabled": delivery_error is None,
+        "delivery_error_message": delivery_error,
         "updated_at": updated_at,
     }
     return payload, updated_at
@@ -473,6 +686,17 @@ def save_messaging_settings(
     use_studio_email_for_reminders: bool,
     use_studio_email_for_lesson_notes: bool,
     send_birthday_emails: bool,
+    email_provider: str,
+    email_reply_to: str,
+    email_subject_prefix: str,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_username: str,
+    smtp_password: str | None,
+    smtp_use_tls: bool,
+    smtp_use_ssl: bool,
+    smtp_timeout_seconds: int,
+    frontend_base_url: str,
 ) -> dict[str, object]:
     _set_setting_value(db, MESSAGING_SETTINGS_STUDIO_EMAIL_KEY, _sanitize_text(studio_email, max_length=255))
     _set_setting_value(
@@ -504,6 +728,63 @@ def save_messaging_settings(
         db,
         MESSAGING_SETTINGS_SEND_BIRTHDAY_EMAILS_KEY,
         "true" if send_birthday_emails else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_EMAIL_PROVIDER_KEY,
+        _normalize_email_provider(email_provider),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_EMAIL_REPLY_TO_KEY,
+        _sanitize_text(email_reply_to, max_length=255),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_EMAIL_SUBJECT_PREFIX_KEY,
+        _sanitize_text(email_subject_prefix, max_length=120),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_SMTP_HOST_KEY,
+        _sanitize_text(smtp_host, max_length=255),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_SMTP_PORT_KEY,
+        str(_sanitize_int(smtp_port, default=587, minimum=1, maximum=65535)),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_SMTP_USERNAME_KEY,
+        _sanitize_text(smtp_username, max_length=255),
+    )
+    normalized_password = _sanitize_text(smtp_password, max_length=255)
+    if normalized_password:
+        _set_setting_value(
+            db,
+            MESSAGING_SETTINGS_SMTP_PASSWORD_KEY,
+            normalized_password,
+        )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_SMTP_USE_TLS_KEY,
+        "true" if smtp_use_tls else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_SMTP_USE_SSL_KEY,
+        "true" if smtp_use_ssl else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_SMTP_TIMEOUT_SECONDS_KEY,
+        str(_sanitize_int(smtp_timeout_seconds, default=15, minimum=1, maximum=120)),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY,
+        _sanitize_text(frontend_base_url, max_length=255).rstrip("/"),
     )
     payload, _ = load_messaging_settings(db)
     return payload
@@ -834,7 +1115,8 @@ def resolve_sender_profile(
     sender_kind: Literal["STUDIO", "TEACHER"] = "STUDIO",
 ) -> MessagingSenderProfile:
     settings_payload, _ = load_messaging_settings(db)
-    studio_email = str(settings_payload.get("studio_email") or "").strip() or settings.email_from
+    delivery_config = resolve_messaging_delivery_config(db)
+    studio_email = delivery_config.from_email
     use_studio_name = bool(settings_payload.get("use_studio_name_as_default_sender", True))
     studio_name = str(settings_payload.get("studio_sender_name") or "").strip()
     teacher_name = str(settings_payload.get("teacher_sender_name") or "").strip()
@@ -849,6 +1131,6 @@ def resolve_sender_profile(
     return MessagingSenderProfile(
         from_email=studio_email,
         from_name=from_name,
-        reply_to=settings.email_reply_to,
-        subject_prefix=settings.email_subject_prefix,
+        reply_to=delivery_config.reply_to,
+        subject_prefix=delivery_config.subject_prefix,
     )

@@ -2169,6 +2169,17 @@ def update_admin_messaging_settings(
         use_studio_email_for_reminders=payload.use_studio_email_for_reminders,
         use_studio_email_for_lesson_notes=payload.use_studio_email_for_lesson_notes,
         send_birthday_emails=payload.send_birthday_emails,
+        email_provider=payload.email_provider,
+        email_reply_to=payload.email_reply_to,
+        email_subject_prefix=payload.email_subject_prefix,
+        smtp_host=payload.smtp_host,
+        smtp_port=payload.smtp_port,
+        smtp_username=payload.smtp_username,
+        smtp_password=payload.smtp_password,
+        smtp_use_tls=payload.smtp_use_tls,
+        smtp_use_ssl=payload.smtp_use_ssl,
+        smtp_timeout_seconds=payload.smtp_timeout_seconds,
+        frontend_base_url=payload.frontend_base_url,
     )
     db.commit()
     return AdminMessagingSettingsOut(**updated_payload)

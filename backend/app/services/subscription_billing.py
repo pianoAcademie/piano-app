@@ -49,6 +49,7 @@ from app.services.notifications.infrastructure.repository import (
     list_admin_recipients_for_type,
     start_job_run,
 )
+from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment
 from app.services.payment_provider import PaymentProvider, detect_provider_from_reference, resolve_mode, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
@@ -517,7 +518,7 @@ def _emit_billing_notifications(
 
 
 def _resolve_recovery_urls(subscription_id: UUID, cycle_id: UUID) -> tuple[str, str, str]:
-    base = settings.frontend_base_url.rstrip("/")
+    base = resolve_frontend_base_url().rstrip("/")
     success_url = f"{base}/dashboard?tab=finance&subscription_recovery=success&subscription_id={subscription_id}"
     cancel_url = f"{base}/dashboard?tab=finance&subscription_recovery=cancelled&subscription_id={subscription_id}"
     webhook_url = f"{base}/api/v1/public/payments/webhook?subscription_id={subscription_id}&cycle_id={cycle_id}"

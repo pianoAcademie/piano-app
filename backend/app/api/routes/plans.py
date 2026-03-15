@@ -37,6 +37,7 @@ from app.schemas.plan import (
     PublicFormulaPurchaseSummaryOut,
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
+from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
 
@@ -341,7 +342,7 @@ def _is_online_collection_method(method_code: str | None) -> bool:
 
 
 def _frontend_url(*, path: str) -> str:
-    candidate = (settings.frontend_base_url or "").strip() or "http://localhost:3000"
+    candidate = resolve_frontend_base_url()
     if not candidate.startswith("http://") and not candidate.startswith("https://"):
         candidate = "https://" + candidate
     return candidate.rstrip("/") + path

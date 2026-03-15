@@ -8372,6 +8372,8 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
 
   await ensureAdmin(token);
   const messagingTab = normalizeMessagingConfigTab(String(formData.get("messaging_tab") ?? ""), "settings");
+  const smtpPort = Number.parseInt(String(formData.get("smtp_port") ?? "").trim() || "587", 10);
+  const smtpTimeoutSeconds = Number.parseInt(String(formData.get("smtp_timeout_seconds") ?? "").trim() || "15", 10);
 
   const payload = {
     studio_email: String(formData.get("studio_email") ?? "").trim(),
@@ -8381,6 +8383,17 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
     use_studio_email_for_reminders: checkboxField(formData, "use_studio_email_for_reminders"),
     use_studio_email_for_lesson_notes: checkboxField(formData, "use_studio_email_for_lesson_notes"),
     send_birthday_emails: checkboxField(formData, "send_birthday_emails"),
+    email_provider: String(formData.get("email_provider") ?? "LOG").trim().toUpperCase(),
+    email_reply_to: String(formData.get("email_reply_to") ?? "").trim(),
+    email_subject_prefix: String(formData.get("email_subject_prefix") ?? "").trim(),
+    smtp_host: String(formData.get("smtp_host") ?? "").trim(),
+    smtp_port: Number.isFinite(smtpPort) ? smtpPort : 587,
+    smtp_username: String(formData.get("smtp_username") ?? "").trim(),
+    smtp_password: String(formData.get("smtp_password") ?? "").trim(),
+    smtp_use_tls: checkboxField(formData, "smtp_use_tls"),
+    smtp_use_ssl: checkboxField(formData, "smtp_use_ssl"),
+    smtp_timeout_seconds: Number.isFinite(smtpTimeoutSeconds) ? smtpTimeoutSeconds : 15,
+    frontend_base_url: String(formData.get("frontend_base_url") ?? "").trim(),
   };
 
   const result = await backendRequest<AdminMessagingSettingsOut>(

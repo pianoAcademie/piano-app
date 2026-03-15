@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.core.config import settings
 from app.services.email_delivery import send_email
+from app.services.messaging_templates import resolve_messaging_delivery_config
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ def send_provider_email(
     body_format: str,
     context: str,
 ) -> EmailProviderSendResult:
-    provider_name = (settings.email_provider or "LOG").strip().upper()
+    provider_name = resolve_messaging_delivery_config().provider
     try:
         provider_message_id = send_email(
             to_email=to_email,

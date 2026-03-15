@@ -8,9 +8,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.services.email_delivery import send_email
-from app.services.messaging_templates import resolve_predefined_template, resolve_sender_profile
+from app.services.messaging_templates import resolve_frontend_base_url, resolve_predefined_template, resolve_sender_profile
 
 logger = logging.getLogger(__name__)
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
@@ -31,7 +30,7 @@ def _render_template(template: str, context: dict[str, str]) -> str:
 
 
 def _frontend_url(path: str) -> str:
-    candidate = (settings.frontend_base_url or "").strip() or "http://localhost:3000"
+    candidate = resolve_frontend_base_url()
     if not candidate.startswith("http://") and not candidate.startswith("https://"):
         candidate = "https://" + candidate
     return candidate.rstrip("/") + path
