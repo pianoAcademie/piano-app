@@ -200,6 +200,8 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
   const professorId = readParam(searchParams, "professor_id");
   const page = parsePage(readParam(searchParams, "page"));
   const perPage = parsePerPage(readParam(searchParams, "per_page"));
+  const flashError = readParam(searchParams, "error");
+  const flashOk = readParam(searchParams, "ok");
 
   const filters: CommunicationFiltersState = {
     channel,
@@ -254,6 +256,8 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
       </section>
 
       <section className="card">
+        {flashError ? <p className="flash-err top-gap-sm">{flashError}</p> : null}
+        {flashOk ? <p className="flash-ok top-gap-sm">{flashOk}</p> : null}
         {!dataResult.ok ? <p className="flash-err top-gap-sm">Erreur backend: {dataResult.message}</p> : null}
         {!filtersResult.ok ? <p className="flash-err top-gap-sm">Erreur filtres: {filtersResult.message}</p> : null}
       </section>
@@ -445,6 +449,14 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
             {selected.error_message ? (
               <p>
                 <strong>Erreur provider:</strong> {selected.error_message}
+              </p>
+            ) : null}
+            {flashError ? <p className="flash-err top-gap-sm">{flashError}</p> : null}
+            {flashOk ? <p className="flash-ok top-gap-sm">{flashOk}</p> : null}
+            {selected.provider === "LOG" ? (
+              <p className="flash-err top-gap-sm">
+                Envoi email reel desactive sur ce serveur. Cette communication a ete seulement journalisee, donc rien ne peut apparaitre
+                dans Brevo tant que la configuration SMTP/Brevo n&apos;est pas active.
               </p>
             ) : null}
 
