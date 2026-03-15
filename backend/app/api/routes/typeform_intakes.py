@@ -2709,6 +2709,7 @@ def _calendar_snapshot_from_analysis(
             first_local_end = series_sessions[0].end_at_utc.astimezone(zone)
             last_local_start = series_sessions[-1].start_at_utc.astimezone(zone)
             modality = _modality_from_delivery_mode(activity.mode)
+            series_key = str(session_obj.recurrence_group_id or session_obj.id)
             blocks.append(
                 {
                     "activity_id": str(activity.id),
@@ -2723,6 +2724,7 @@ def _calendar_snapshot_from_analysis(
                     "start_time": first_local_start.strftime("%H:%M"),
                     "end_time": first_local_end.strftime("%H:%M"),
                     "modality": modality,
+                    "series_key": series_key,
                     "selection_pending": False,
                 }
             )
@@ -2741,6 +2743,7 @@ def _calendar_snapshot_from_analysis(
                         "activity_label": activity.name,
                         "location_id": str(location.id),
                         "location_label": location.name,
+                        "series_key": series_key,
                         "weekday": local_start.weekday(),
                         "weekday_label": DAY_LABELS[local_start.weekday()],
                         "modality": modality,

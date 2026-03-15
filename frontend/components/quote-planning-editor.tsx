@@ -21,6 +21,7 @@ type PlanningBlock = {
   uid: string;
   activity_id: string;
   location_id: string;
+  series_key: string;
   weekday: number;
   recurrence_frequency: "weekly" | "biweekly" | "monthly";
   start_date: string;
@@ -134,6 +135,19 @@ function uniqueSortedDateList(values: string[]): string[] {
   );
 }
 
+function timeToMinutes(value: string): number | null {
+  const match = value.trim().match(/^(\d{2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
 function estimateSessionDates(block: PlanningBlock): string[] {
   const start = parseDateOnly(block.start_date);
   const end = parseDateOnly(block.end_date);
@@ -192,6 +206,7 @@ type SnapshotSession = {
   date: string;
   activity_id: string;
   location_id: string;
+  series_key: string;
   start_time: string;
   end_time: string;
   weekday: number | null;
@@ -210,6 +225,7 @@ function parseSnapshotSessions(snapshot: Record<string, unknown>): SnapshotSessi
       const date = String(row.date ?? "").trim();
       const activityId = String(row.activity_id ?? "").trim();
       const locationId = String(row.location_id ?? "").trim();
+      const seriesKey = String(row.series_key ?? "").trim();
       const startTime = String(row.start_time ?? "").trim();
       const endTime = String(row.end_time ?? "").trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !activityId || !startTime || !endTime) {
@@ -220,12 +236,62 @@ function parseSnapshotSessions(snapshot: Record<string, unknown>): SnapshotSessi
         date,
         activity_id: activityId,
         location_id: locationId,
+        series_key: seriesKey,
         start_time: startTime,
         end_time: endTime,
         weekday: Number.isFinite(weekdayRaw) && weekdayRaw >= 0 && weekdayRaw <= 6 ? weekdayRaw : null,
       };
     })
     .filter((item): item is SnapshotSession => item !== null);
+}
+
+function isLikelyDstShiftSeries(block: PlanningBlock, sessions: SnapshotSession[]): boolean {
+  if (sessions.length <= 1 || !block.start_time || !block.end_time) {
+    return false;
+  }
+  const exactRows = sessions.filter((row) => row.start_time === block.start_time && row.end_time === block.end_time);
+  const shiftedRows = sessions.filter((row) => row.start_time !== block.start_time || row.end_time !== block.end_time);
+  if (exactRows.length === 0 || shiftedRows.length === 0) {
+    return false;
+  }
+  const shiftedPairs = Array.from(new Set(shiftedRows.map((row) => `${row.start_time}|${row.end_time}`)));
+  if (shiftedPairs.length !== 1) {
+    return false;
+  }
+  const [shiftedStart, shiftedEnd] = shiftedPairs[0].split("|");
+  const blockStartMinutes = timeToMinutes(block.start_time);
+  const blockEndMinutes = timeToMinutes(block.end_time);
+  const shiftedStartMinutes = timeToMinutes(shiftedStart);
+  const shiftedEndMinutes = timeToMinutes(shiftedEnd);
+  if (
+    blockStartMinutes === null ||
+    blockEndMinutes === null ||
+    shiftedStartMinutes === null ||
+    shiftedEndMinutes === null
+  ) {
+    return false;
+  }
+  if (shiftedStartMinutes - blockStartMinutes !== 60 || shiftedEndMinutes - blockEndMinutes !== 60) {
+    return false;
+  }
+  const sorted = [...sessions].sort((left, right) => {
+    const byDate = left.date.localeCompare(right.date);
+    if (byDate !== 0) {
+      return byDate;
+    }
+    return left.start_time.localeCompare(right.start_time);
+  });
+  let sawShifted = false;
+  for (const row of sorted) {
+    const matchesBlockTime = row.start_time === block.start_time && row.end_time === block.end_time;
+    if (matchesBlockTime && sawShifted) {
+      return false;
+    }
+    if (!matchesBlockTime) {
+      sawShifted = true;
+    }
+  }
+  return true;
 }
 
 function datesFromSnapshotSessions(block: PlanningBlock, sessions: SnapshotSession[]): string[] {
@@ -239,15 +305,12 @@ function datesFromSnapshotSessions(block: PlanningBlock, sessions: SnapshotSessi
   }
   const startIso = start.toISOString().slice(0, 10);
   const endIso = end.toISOString().slice(0, 10);
-  const matched = sessions
+  const relaxedMatches = sessions
     .filter((row) => {
       if (row.activity_id !== block.activity_id) {
         return false;
       }
       if ((row.location_id || "") !== (block.location_id || "")) {
-        return false;
-      }
-      if (row.start_time !== block.start_time || row.end_time !== block.end_time) {
         return false;
       }
       if (row.date < startIso || row.date > endIso) {
@@ -258,8 +321,21 @@ function datesFromSnapshotSessions(block: PlanningBlock, sessions: SnapshotSessi
       }
       return true;
     })
+  if (block.series_key) {
+    const bySeries = relaxedMatches
+      .filter((row) => row.series_key && row.series_key === block.series_key)
+      .map((row) => row.date);
+    if (bySeries.length > 0) {
+      return uniqueSortedDateList(bySeries);
+    }
+  }
+  const exactMatches = relaxedMatches
+    .filter((row) => row.start_time === block.start_time && row.end_time === block.end_time)
     .map((row) => row.date);
-  return uniqueSortedDateList(matched);
+  if (exactMatches.length > 0 && isLikelyDstShiftSeries(block, relaxedMatches)) {
+    return uniqueSortedDateList(relaxedMatches.map((row) => row.date));
+  }
+  return uniqueSortedDateList(exactMatches);
 }
 
 function summarizeBySemester(dates: string[], semester: 1 | 2): Array<{ monthLabel: string; days: string }> {
@@ -417,6 +493,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         const startTime = typeof row.start_time === "string" ? row.start_time : "";
         const endTime = typeof row.end_time === "string" ? row.end_time : "";
         const locationId = typeof row.location_id === "string" ? row.location_id : "";
+        const seriesKey = typeof row.series_key === "string" ? row.series_key : "";
         const modality = typeof row.modality === "string" ? row.modality : "";
         const holidayDates = Array.isArray(row.holiday_dates)
           ? row.holiday_dates.map((item) => String(item)).filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item))
@@ -430,6 +507,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
           uid: `block-${index + 1}`,
           activity_id: activityId,
           location_id: locationId,
+          series_key: seriesKey,
           weekday: selectionPending
             ? WEEKDAY_UNSET
             : Number.isFinite(weekday) && weekday >= 0 && weekday <= 6
@@ -470,6 +548,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         uid: "block-1",
         activity_id: activityId,
         location_id: locationId,
+        series_key: "",
         weekday: weekday >= 0 && weekday <= 6 ? weekday : WEEKDAY_UNSET,
         recurrence_frequency: "weekly",
         start_date: startDate,
@@ -588,6 +667,7 @@ export default function QuotePlanningEditor({
         uid,
         activity_id: defaultActivityId,
         location_id: locations[0]?.id ?? "",
+        series_key: "",
         weekday: 0,
         recurrence_frequency: "weekly",
         start_date: "",
