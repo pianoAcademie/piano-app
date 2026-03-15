@@ -10654,6 +10654,11 @@ button.danger:focus-visible {
   background: #f4dfb9;
 }
 
+.quote-icon-button[aria-pressed="true"] {
+  background: #efd6a5;
+  border-color: #d2b172;
+}
+
 .quote-icon-button svg {
   width: 18px;
   height: 18px;
@@ -10710,6 +10715,13 @@ button.danger:focus-visible {
 
 .quote-line-editor-modal {
   width: min(780px, 94vw);
+  max-height: 88vh;
+  padding: 1rem;
+  gap: 0.9rem;
+}
+
+.quote-planning-editor-modal {
+  width: min(920px, 96vw);
   max-height: 88vh;
   padding: 1rem;
   gap: 0.9rem;
