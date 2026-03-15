@@ -52,6 +52,11 @@ type EditableLine = {
   dirty: boolean;
 };
 
+type EditorState = {
+  originalUid: string | null;
+  line: EditableLine;
+};
+
 type QuoteLinesEditorProps = {
   quoteId: string;
   returnTo: string;
@@ -73,6 +78,36 @@ type ResolvedUnitPrice = {
   unitPrice: string;
   sourceLabel: string;
 };
+
+function PencilIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M4 16.25V20h3.75L18.8 8.94l-3.75-3.75L4 16.25Zm2.92 2.33H6v-.92l9.8-9.79.92.92-9.8 9.79ZM20.7 7.04a1 1 0 0 0 0-1.42l-2.32-2.33a1.03 1.03 0 0 0-1.42 0l-1.31 1.3 3.75 3.75 1.3-1.3Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v8h-2V9Zm4 0h2v8h-2V9ZM7 9h2v8H7V9Zm-1 11a2 2 0 0 1-2-2V8h16v10a2 2 0 0 1-2 2H6Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function PlusIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" fill="currentColor" />
+    </svg>
+  );
+}
 
 function lineAmount(line: EditableLine): number {
   const qty = Number(line.quantity);
@@ -421,6 +456,29 @@ function hasPlanningMismatch(
   return Math.round(billedQuantity) !== summary.plannedQuantity || summary.pendingSelection;
 }
 
+function editableLineChanged(current: EditableLine, next: EditableLine): boolean {
+  return current.kind !== next.kind
+    || String(current.refId) !== String(next.refId)
+    || String(current.title) !== String(next.title)
+    || String(current.quantity) !== String(next.quantity)
+    || String(current.vatRate) !== String(next.vatRate)
+    || String(current.unitPrice) !== String(next.unitPrice);
+}
+
+function newLine(kind: LineKind, defaultVatRate: string): EditableLine {
+  return {
+    uid: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind,
+    refId: "",
+    title: "",
+    quantity: "1",
+    vatRate: kind === "discount" || kind === "surcharge" ? "0.00" : normalizePercentInput(defaultVatRate),
+    unitPrice: "0",
+    saved: false,
+    dirty: true,
+  };
+}
+
 export default function QuoteLinesEditor({
   quoteId,
   returnTo,
@@ -450,7 +508,7 @@ export default function QuoteLinesEditor({
       dirty: false,
     })),
   );
-  const [activeUid, setActiveUid] = useState<string | null>(initialLines[0]?.id ?? null);
+  const [editorState, setEditorState] = useState<EditorState | null>(null);
 
   const linesJson = useMemo(() => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index))), [lines]);
   const total = useMemo(() => lines.reduce((sum, line) => sum + lineAmount(line), 0), [lines]);
@@ -461,111 +519,136 @@ export default function QuoteLinesEditor({
   const newCount = lines.filter((line) => !line.saved).length;
   const pendingSaveCount = lines.filter((line) => !line.saved || line.dirty).length;
 
-  function addLine(kind: LineKind): void {
-    const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setLines((prev) => [
-      ...prev,
-      {
-        uid,
-        kind,
-        refId: "",
-        title: "",
-        quantity: "1",
-        vatRate: "0",
-        unitPrice: "0",
-        saved: false,
-        dirty: true,
-      },
-    ]);
-    setActiveUid(uid);
-  }
-
-  function removeLine(uid: string): void {
-    setLines((prev) => {
-      const next = prev.filter((line) => line.uid !== uid);
-      if (activeUid === uid) {
-        setActiveUid(next[0]?.uid ?? null);
-      }
-      return next;
+  function openCreateModal(kind: LineKind): void {
+    setEditorState({
+      originalUid: null,
+      line: newLine(kind, defaultVatRate),
     });
   }
 
-  function updateLine(uid: string, patch: Partial<EditableLine>): void {
-    setLines((prev) =>
-      prev.map((line) => {
-        if (line.uid !== uid) {
-          return line;
-        }
-        const next = { ...line, ...patch };
-        const changed = Object.entries(patch).some(([key, value]) => {
-          const current = line[key as keyof EditableLine];
-          return String(current ?? "") !== String(value ?? "");
-        });
-        if (!changed) {
-          return line;
-        }
-        return {
-          ...next,
-          dirty: line.saved ? true : next.dirty,
-        };
-      }),
-    );
-  }
-
-  function applyRefToLine(uid: string, kind: LineKind, refId: string): void {
-    if (!refId) {
-      updateLine(uid, { refId: "", title: "", unitPrice: "0" });
+  function openEditModal(uid: string): void {
+    const current = lines.find((line) => line.uid === uid);
+    if (!current) {
       return;
     }
-    setLines((prev) =>
-      prev.map((line) => {
-        if (line.uid !== uid) {
-          return line;
-        }
-        if (kind === "activity") {
-          const activity = activities.find((item) => item.id === refId);
-          const catalogPrice = activityCatalogPriceByActivityId[refId];
-          const fallbackPrice = computeActivityFallbackPrice(activity);
-          const resolvedUnitPrice = catalogPrice ?? fallbackPrice ?? line.unitPrice;
-          const currentVat = Number(line.vatRate || "0");
-          const shouldPrefillVat = !Number.isFinite(currentVat) || currentVat <= 0;
-          return {
+    setEditorState({
+      originalUid: uid,
+      line: { ...current },
+    });
+  }
+
+  function closeEditor(): void {
+    setEditorState(null);
+  }
+
+  function removeLine(uid: string): void {
+    setLines((prev) => prev.filter((line) => line.uid !== uid));
+    setEditorState((prev) => (prev?.originalUid === uid ? null : prev));
+  }
+
+  function updateEditor(patch: Partial<EditableLine>): void {
+    setEditorState((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return {
+        ...prev,
+        line: { ...prev.line, ...patch },
+      };
+    });
+  }
+
+  function applyRefToEditor(kind: LineKind, refId: string): void {
+    if (!editorState) {
+      return;
+    }
+    if (!refId) {
+      updateEditor({ refId: "", title: "", unitPrice: "0" });
+      return;
+    }
+    setEditorState((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const line = prev.line;
+      if (kind === "activity") {
+        const activity = activities.find((item) => item.id === refId);
+        const catalogPrice = activityCatalogPriceByActivityId[refId];
+        const fallbackPrice = computeActivityFallbackPrice(activity);
+        const resolvedUnitPrice = catalogPrice ?? fallbackPrice ?? line.unitPrice;
+        const currentVat = Number(line.vatRate || "0");
+        const shouldPrefillVat = !Number.isFinite(currentVat) || currentVat <= 0;
+        return {
+          ...prev,
+          line: {
             ...line,
             refId,
             title: activity?.name ?? "Activite",
             vatRate: shouldPrefillVat ? (defaultVatRate || "0") : line.vatRate,
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
-            dirty: line.saved ? true : line.dirty,
-          };
-        }
-        if (kind === "product") {
-          const product = products.find((item) => item.id === refId);
-          const catalogPrice = productCatalogPriceByProductId[refId];
-          const resolvedVatRate = product?.vat_rate ?? line.vatRate;
-          const resolvedUnitPrice = catalogPrice ?? product?.price_incl_vat ?? line.unitPrice;
-          return {
+          },
+        };
+      }
+      if (kind === "product") {
+        const product = products.find((item) => item.id === refId);
+        const catalogPrice = productCatalogPriceByProductId[refId];
+        const resolvedVatRate = product?.vat_rate ?? line.vatRate;
+        const resolvedUnitPrice = catalogPrice ?? product?.price_incl_vat ?? line.unitPrice;
+        return {
+          ...prev,
+          line: {
             ...line,
             refId,
             title: product?.title ?? "Produit",
             vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
-            dirty: line.saved ? true : line.dirty,
-          };
-        }
-        const kit = kits.find((item) => item.id === refId);
-        const catalogPrice = kitCatalogPriceByKitId[refId];
-        const resolvedVatRate = kit?.vat_rate ?? line.vatRate;
-        const resolvedUnitPrice = catalogPrice ?? kit?.effective_price_ttc ?? line.unitPrice;
-        return {
+          },
+        };
+      }
+      const kit = kits.find((item) => item.id === refId);
+      const catalogPrice = kitCatalogPriceByKitId[refId];
+      const resolvedVatRate = kit?.vat_rate ?? line.vatRate;
+      const resolvedUnitPrice = catalogPrice ?? kit?.effective_price_ttc ?? line.unitPrice;
+      return {
+        ...prev,
+        line: {
           ...line,
           refId,
           title: kit?.title ?? "Kit",
           vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
           unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
-          dirty: line.saved ? true : line.dirty,
+        },
+      };
+    });
+  }
+
+  function commitEditor(): void {
+    if (!editorState) {
+      return;
+    }
+    const draft = editorState.line;
+    if (editorState.originalUid === null) {
+      setLines((prev) => [...prev, draft]);
+      setEditorState(null);
+      return;
+    }
+    setLines((prev) =>
+      prev.map((line) => {
+        if (line.uid !== editorState.originalUid) {
+          return line;
+        }
+        if (!editableLineChanged(line, draft)) {
+          return line;
+        }
+        return {
+          ...draft,
+          uid: line.uid,
+          saved: line.saved,
+          dirty: line.saved ? true : draft.dirty,
         };
       }),
     );
+    setEditorState(null);
   }
 
   function lineStatusLabel(line: EditableLine): string {
@@ -592,19 +675,19 @@ export default function QuoteLinesEditor({
     return "Supplement";
   }
 
-  const activeLine = lines.find((line) => line.uid === activeUid) ?? null;
-  const activeLineSelectedLabel = activeLine
-    ? selectedOptionLabel(activeLine.kind, activeLine.refId, activities, products, kits)
+  const editorLine = editorState?.line ?? null;
+  const editorSelectedLabel = editorLine
+    ? selectedOptionLabel(editorLine.kind, editorLine.refId, activities, products, kits)
     : null;
-  const activeLinePlanningSummary = activeLine
-    ? planningSummaryForLine(activeLine, planningByActivityId)
+  const editorPlanningSummary = editorLine
+    ? planningSummaryForLine(editorLine, planningByActivityId)
     : null;
-  const activeLinePlanningMismatch = activeLine
-    ? hasPlanningMismatch(activeLine, activeLinePlanningSummary)
+  const editorPlanningMismatch = editorLine
+    ? hasPlanningMismatch(editorLine, editorPlanningSummary)
     : false;
-  const activeLineResolvedSourcePrice = activeLine
+  const editorResolvedSourcePrice = editorLine
     ? resolvedSourceUnitPrice(
-      activeLine,
+      editorLine,
       activities,
       products,
       kits,
@@ -613,15 +696,15 @@ export default function QuoteLinesEditor({
       kitCatalogPriceByKitId,
     )
     : null;
-  const activeLinePlannedQuantity = activeLinePlanningSummary?.plannedQuantity ?? 0;
-  const activeLineCanAlignQuantity =
-    activeLine?.kind === "activity"
-    && activeLinePlannedQuantity > 0
-    && formatQuantityDisplay(activeLine.quantity) !== String(activeLinePlannedQuantity);
-  const activeLineHasSourcePriceGap =
-    activeLine !== null
-    && activeLineResolvedSourcePrice !== null
-    && !sameMoneyValue(activeLine.unitPrice, activeLineResolvedSourcePrice.unitPrice);
+  const editorPlannedQuantity = editorPlanningSummary?.plannedQuantity ?? 0;
+  const editorCanAlignQuantity =
+    editorLine?.kind === "activity"
+    && editorPlannedQuantity > 0
+    && formatQuantityDisplay(editorLine.quantity) !== String(editorPlannedQuantity);
+  const editorHasSourcePriceGap =
+    editorLine !== null
+    && editorResolvedSourcePrice !== null
+    && !sameMoneyValue(editorLine.unitPrice, editorResolvedSourcePrice.unitPrice);
 
   return (
     <form action={saveAction}>
@@ -630,236 +713,297 @@ export default function QuoteLinesEditor({
       <input type="hidden" name="lines_json" value={linesJson} />
 
       <div className="quote-editor-toolbar row spread wrap gap-sm">
-        <div className="row wrap gap-sm">
-          <button type="button" className="ghost" onClick={() => addLine("activity")} disabled={!editable}>+ Activite</button>
-          <button type="button" className="ghost" onClick={() => addLine("product")} disabled={!editable}>+ Produit</button>
-          <button type="button" className="ghost" onClick={() => addLine("kit")} disabled={!editable}>+ Kit</button>
-          <button type="button" className="ghost" onClick={() => addLine("discount")} disabled={!editable}>+ Remise</button>
-          <button type="button" className="ghost" onClick={() => addLine("surcharge")} disabled={!editable}>+ Supplement</button>
+        <div className="quote-editor-toolbar-main">
+          <strong>Lignes facturees</strong>
+          <span className="quote-editor-count">
+            {savedCount} enregistree(s), {modifiedCount + newCount} brouillon(s)
+          </span>
         </div>
         <div className="row wrap gap-sm">
-          <span className="quote-editor-count">Lignes facturees — {savedCount} enregistree(s), {modifiedCount + newCount} brouillon(s)</span>
+          <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("activity")} disabled={!editable}>
+            <PlusIcon />
+            <span>Activite</span>
+          </button>
+          <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("product")} disabled={!editable}>
+            <PlusIcon />
+            <span>Produit</span>
+          </button>
+          <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("kit")} disabled={!editable}>
+            <PlusIcon />
+            <span>Kit</span>
+          </button>
+          <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("discount")} disabled={!editable}>
+            <PlusIcon />
+            <span>Remise</span>
+          </button>
+          <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("surcharge")} disabled={!editable}>
+            <PlusIcon />
+            <span>Supplement</span>
+          </button>
           <span className={`quote-status-chip ${pendingSaveCount > 0 ? "quote-status-chip-pending" : "quote-status-chip-saved"}`}>
             {pendingSaveCount > 0 ? "A enregistrer" : "Enregistre"}
           </span>
         </div>
       </div>
 
-      <div className="quote-editor-split quote-editor-split-pricing top-gap-sm">
-        <section className="quote-editor-pane quote-editor-pane-saved">
-          <h4>Lignes enregistrees</h4>
-          {lines.length === 0 ? (
-            <p className="quote-editor-empty">Aucune ligne enregistree pour ce devis.</p>
-          ) : (
-            <div className="quote-saved-table-wrap top-gap-sm">
-              <table className="quote-saved-table">
-                <thead>
-                  <tr>
-                    <th className="quote-col-type">Type</th>
-                    <th className="quote-col-title">Intitule</th>
-                    <th className="quote-col-qty">Qt facturee</th>
-                    <th className="quote-col-qty-planned">Qt planifiee</th>
-                    <th className="quote-col-vat">TVA</th>
-                    <th className="quote-col-price">PU TTC</th>
-                    <th className="quote-col-total">Total TTC</th>
-                    <th className="quote-col-status">Statut</th>
-                    <th className="quote-col-actions">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((line) => {
-                    const planningSummary = planningSummaryForLine(line, planningByActivityId);
-                    const planningMismatch = hasPlanningMismatch(line, planningSummary);
-                    return (
-                      <tr key={line.uid} className={activeUid === line.uid ? "active" : ""}>
-                        <td className="quote-col-type">{lineTypeLabel(line.kind)}</td>
-                        <td className="quote-col-title-cell">
-                          <span className="quote-line-title-text" title={line.title || "-"}>
-                            {line.title || "-"}
-                          </span>
-                        </td>
-                        <td className="quote-col-qty">{formatQuantityDisplay(line.quantity)}</td>
-                        <td className={`quote-col-qty-planned${planningMismatch ? " quote-col-qty-mismatch" : ""}`}>
-                          {formatPlannedQuantityDisplay(planningSummary)}
-                        </td>
-                        <td className="quote-col-vat">{formatPercentDisplay(line.vatRate)}</td>
-                        <td className="quote-col-price">{toMoney(Number(line.unitPrice || "0"), currency)}</td>
-                        <td className="quote-col-total">{toMoney(lineAmount(line), currency)}</td>
-                        <td className="quote-col-status">
-                          <span className={`quote-status-chip ${lineStatusClass(line)}`}>{lineStatusLabel(line)}</span>
-                        </td>
-                        <td className="quote-col-actions">
-                          <div className="row wrap gap-xs">
-                            <button type="button" className="ghost small-btn" onClick={() => setActiveUid(line.uid)}>
-                              Modifier
-                            </button>
-                            <button type="button" className="ghost small-btn" onClick={() => removeLine(line.uid)} disabled={!editable}>
-                              Supprimer
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+      <section className="quote-editor-pane quote-editor-pane-saved top-gap-sm">
+        {lines.length === 0 ? (
+          <p className="quote-editor-empty">Aucune ligne enregistree pour ce devis.</p>
+        ) : (
+          <div className="quote-saved-list">
+            {lines.map((line) => {
+              const planningSummary = planningSummaryForLine(line, planningByActivityId);
+              const planningMismatch = hasPlanningMismatch(line, planningSummary);
+              return (
+                <article key={line.uid} className="quote-saved-card">
+                  <div className="quote-saved-card-top">
+                    <div className="quote-saved-card-head">
+                      <div className="quote-saved-card-badges">
+                        <span className="quote-line-kind-pill">{lineTypeLabel(line.kind)}</span>
+                        <span className={`quote-status-chip ${lineStatusClass(line)}`}>{lineStatusLabel(line)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="quote-saved-card-title-button"
+                        onClick={() => openEditModal(line.uid)}
+                      >
+                        <span className="quote-line-title-text" title={line.title || "-"}>
+                          {line.title || "-"}
+                        </span>
+                      </button>
+                    </div>
+                    <div className="quote-saved-card-actions">
+                      <button
+                        type="button"
+                        className="quote-icon-button"
+                        onClick={() => openEditModal(line.uid)}
+                        disabled={!editable}
+                        aria-label={`Modifier ${line.title || "la ligne"}`}
+                        title="Modifier"
+                      >
+                        <PencilIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="quote-icon-button quote-icon-button-danger"
+                        onClick={() => removeLine(line.uid)}
+                        disabled={!editable}
+                        aria-label={`Supprimer ${line.title || "la ligne"}`}
+                        title="Supprimer"
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="quote-saved-card-metrics">
+                    <div>
+                      <span>Qt facturee</span>
+                      <strong>{formatQuantityDisplay(line.quantity)}</strong>
+                    </div>
+                    <div className={planningMismatch ? "quote-saved-card-metric-warning" : ""}>
+                      <span>Qt planifiee</span>
+                      <strong>{formatPlannedQuantityDisplay(planningSummary)}</strong>
+                    </div>
+                    <div>
+                      <span>PU TTC</span>
+                      <strong>{toMoney(Number(line.unitPrice || "0"), currency)}</strong>
+                    </div>
+                    <div>
+                      <span>Total TTC</span>
+                      <strong>{toMoney(lineAmount(line), currency)}</strong>
+                    </div>
+                  </div>
+                  <div className="quote-saved-card-footer">
+                    <span>TVA {formatPercentDisplay(line.vatRate)}</span>
+                    {planningMismatch ? <span>Le planning et la facturation ne sont pas alignes.</span> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
-        <section className="quote-editor-pane quote-editor-pane-draft">
-          <h4>Ajout / modification en cours</h4>
-          {!activeLine ? (
-            <div className="quote-editor-empty top-gap-sm">
-              Selectionnez une ligne enregistree (gauche) ou cliquez sur un bouton “+”.
-            </div>
-          ) : (
-            <>
-              <div className={`quote-draft-banner top-gap-sm ${activeLine.saved ? "editing" : "new"}`}>
-                {activeLine.saved ? "Modification en cours non enregistree" : "Nouvelle ligne non enregistree"}
+      {editorLine ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Modifier une ligne de devis">
+          <article className="modal-panel quote-line-editor-modal" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close-x" onClick={closeEditor} aria-label="Fermer">
+              ×
+            </button>
+            <div className="quote-line-editor-modal-head">
+              <div>
+                <p className="quote-line-editor-kicker">
+                  {editorState?.originalUid ? "Edition de ligne" : "Nouvelle ligne"}
+                </p>
+                <h3 className="modal-title">
+                  {editorState?.originalUid ? "Modifier la ligne" : `Ajouter ${lineTypeLabel(editorLine.kind).toLowerCase()}`}
+                </h3>
               </div>
-              <article className="quote-line-card top-gap-sm">
-                <div className="row spread wrap gap-sm">
-                  <strong>{lineTypeLabel(activeLine.kind)}</strong>
-                  <button type="button" className="ghost small-btn" onClick={() => removeLine(activeLine.uid)} disabled={!editable}>
+              <span className={`quote-status-chip ${editorLine.saved ? "quote-status-chip-editing" : "quote-status-chip-new"}`}>
+                {editorLine.saved ? "Brouillon modifie" : "Ajout au brouillon"}
+              </span>
+            </div>
+
+            <article className="quote-line-card quote-line-card-modal">
+              <div className="row spread wrap gap-sm">
+                <strong>{lineTypeLabel(editorLine.kind)}</strong>
+                {editorState?.originalUid ? (
+                  <button
+                    type="button"
+                    className="ghost small-btn"
+                    onClick={() => {
+                      removeLine(editorState.originalUid as string);
+                      closeEditor();
+                    }}
+                    disabled={!editable}
+                  >
                     Supprimer
                   </button>
-                </div>
-                {(activeLine.kind === "activity" || activeLine.kind === "product" || activeLine.kind === "kit") ? (
-                  <>
-                    <label className="top-gap-sm">
-                      Element
-                      <select
-                        value={activeLine.refId}
-                        onChange={(event) => applyRefToLine(activeLine.uid, activeLine.kind, event.target.value)}
-                        disabled={!editable}
-                      >
-                        <option value="">Selectionner</option>
-                        {selectableOptions(activeLine.kind, activities, products, kits).map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {activeLineSelectedLabel ? (
-                      <small className="muted quote-selected-item-label" title={activeLineSelectedLabel}>
-                        {activeLineSelectedLabel}
-                      </small>
-                    ) : null}
-                  </>
                 ) : null}
-                <div className="grid cols-4 top-gap-sm">
-                  <label className="cols-span-4">
-                    Intitule
-                    <input
-                      type="text"
-                      value={activeLine.title}
-                      onChange={(event) => updateLine(activeLine.uid, { title: event.target.value })}
-                      title={activeLine.title || ""}
-                      required
+              </div>
+              {(editorLine.kind === "activity" || editorLine.kind === "product" || editorLine.kind === "kit") ? (
+                <>
+                  <label className="top-gap-sm">
+                    Element
+                    <select
+                      value={editorLine.refId}
+                      onChange={(event) => applyRefToEditor(editorLine.kind, event.target.value)}
                       disabled={!editable}
-                    />
+                    >
+                      <option value="">Selectionner</option>
+                      {selectableOptions(editorLine.kind, activities, products, kits).map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
-                  <label>
-                    Quantite
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={activeLine.quantity}
-                      onChange={(event) => updateLine(activeLine.uid, { quantity: normalizeQuantityInput(event.target.value) })}
-                      required
+                  {editorSelectedLabel ? (
+                    <small className="muted quote-selected-item-label" title={editorSelectedLabel}>
+                      {editorSelectedLabel}
+                    </small>
+                  ) : null}
+                </>
+              ) : null}
+              <div className="grid cols-4 top-gap-sm">
+                <label className="cols-span-4">
+                  Intitule
+                  <input
+                    type="text"
+                    value={editorLine.title}
+                    onChange={(event) => updateEditor({ title: event.target.value })}
+                    title={editorLine.title || ""}
+                    required
+                    disabled={!editable}
+                  />
+                </label>
+                <label>
+                  Quantite
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={editorLine.quantity}
+                    onChange={(event) => updateEditor({ quantity: normalizeQuantityInput(event.target.value) })}
+                    required
+                    disabled={!editable}
+                  />
+                </label>
+                {editorCanAlignQuantity ? (
+                  <div className="quote-line-planning-summary cols-span-4">
+                    <span>Le planning prevoit {editorPlannedQuantity} seance(s) pour cette activite.</span>
+                    <button
+                      type="button"
+                      className="ghost small-btn"
+                      onClick={() => updateEditor({ quantity: String(editorPlannedQuantity) })}
                       disabled={!editable}
-                    />
-                  </label>
-                  {activeLineCanAlignQuantity ? (
-                    <div className="quote-line-planning-summary cols-span-4">
-                      <span>Le planning prevoit {activeLinePlannedQuantity} seance(s) pour cette activite.</span>
+                    >
+                      Aligner la quantite sur le planning
+                    </button>
+                  </div>
+                ) : null}
+                {editorLine.kind === "activity" ? (
+                  <div className={`quote-line-planning-summary cols-span-4${editorPlanningMismatch ? " is-warning" : ""}`}>
+                    <span>Quantite facturee : {formatQuantityDisplay(editorLine.quantity)}</span>
+                    <span>Quantite planifiee : {formatPlannedQuantityDisplay(editorPlanningSummary)}</span>
+                  </div>
+                ) : null}
+                <label>
+                  TVA (%)
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    value={editorLine.vatRate}
+                    onChange={(event) => updateEditor({ vatRate: event.target.value })}
+                    required
+                    disabled={!editable}
+                  />
+                </label>
+                <label className="quote-price-field">
+                  Prix unitaire TTC
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editorLine.unitPrice}
+                    onChange={(event) => updateEditor({ unitPrice: event.target.value })}
+                    required
+                    disabled={!editable}
+                  />
+                </label>
+                {editorResolvedSourcePrice ? (
+                  <div className={`quote-line-planning-summary cols-span-4${editorHasSourcePriceGap ? " is-warning" : ""}`}>
+                    <span>
+                      Tarif source actuel : {toMoney(Number(editorResolvedSourcePrice.unitPrice || "0"), currency)}
+                      {" · "}
+                      {editorResolvedSourcePrice.sourceLabel}
+                    </span>
+                    {editorHasSourcePriceGap ? (
                       <button
                         type="button"
                         className="ghost small-btn"
-                        onClick={() => updateLine(activeLine.uid, { quantity: String(activeLinePlannedQuantity) })}
+                        onClick={() => updateEditor({ unitPrice: editorResolvedSourcePrice.unitPrice })}
                         disabled={!editable}
                       >
-                        Aligner la quantite sur le planning
+                        Reappliquer ce tarif
                       </button>
-                    </div>
-                  ) : null}
-                  {activeLine.kind === "activity" ? (
-                    <div className={`quote-line-planning-summary cols-span-4${activeLinePlanningMismatch ? " is-warning" : ""}`}>
-                      <span>Quantite facturee : {formatQuantityDisplay(activeLine.quantity)}</span>
-                      <span>Quantite planifiee : {formatPlannedQuantityDisplay(activeLinePlanningSummary)}</span>
-                    </div>
-                  ) : null}
-                  <label>
-                    TVA (%)
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step="0.01"
-                      value={activeLine.vatRate}
-                      onChange={(event) => updateLine(activeLine.uid, { vatRate: event.target.value })}
-                      required
-                      disabled={!editable}
-                    />
-                  </label>
-                  <label className="quote-price-field">
-                    Prix unitaire TTC
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={activeLine.unitPrice}
-                      onChange={(event) => updateLine(activeLine.uid, { unitPrice: event.target.value })}
-                      required
-                      disabled={!editable}
-                    />
-                  </label>
-                  {activeLineResolvedSourcePrice ? (
-                    <div className={`quote-line-planning-summary cols-span-4${activeLineHasSourcePriceGap ? " is-warning" : ""}`}>
-                      <span>
-                        Tarif source actuel : {toMoney(Number(activeLineResolvedSourcePrice.unitPrice || "0"), currency)}
-                        {" · "}
-                        {activeLineResolvedSourcePrice.sourceLabel}
-                      </span>
-                      {activeLineHasSourcePriceGap ? (
-                        <button
-                          type="button"
-                          className="ghost small-btn"
-                          onClick={() => updateLine(activeLine.uid, { unitPrice: activeLineResolvedSourcePrice.unitPrice })}
-                          disabled={!editable}
-                        >
-                          Reappliquer ce tarif
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className="quote-line-amounts-row">
-                    <div className="quote-line-amount">
-                      <span>Total ligne TTC</span>
-                      <strong>{toMoney(lineAmount(activeLine), currency)}</strong>
-                    </div>
-                    <div className="quote-line-amount">
-                      <span>Montant HT</span>
-                      <strong>{toMoney(lineAmountHt(activeLine), currency)}</strong>
-                    </div>
-                    <div className="quote-line-amount">
-                      <span>Montant TVA</span>
-                      <strong>{toMoney(lineAmountVat(activeLine), currency)}</strong>
-                    </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="quote-line-amounts-row">
+                  <div className="quote-line-amount">
+                    <span>Total ligne TTC</span>
+                    <strong>{toMoney(lineAmount(editorLine), currency)}</strong>
+                  </div>
+                  <div className="quote-line-amount">
+                    <span>Montant HT</span>
+                    <strong>{toMoney(lineAmountHt(editorLine), currency)}</strong>
+                  </div>
+                  <div className="quote-line-amount">
+                    <span>Montant TVA</span>
+                    <strong>{toMoney(lineAmountVat(editorLine), currency)}</strong>
                   </div>
                 </div>
-                {isCatalogKind(activeLine.kind) ? (
-                  <small className="muted">
-                    Le total de ligne se recalcule automatiquement depuis la quantite et le prix unitaire. Vous pouvez reappliquer le tarif source actuel si necessaire.
-                  </small>
-                ) : null}
-              </article>
-            </>
-          )}
+              </div>
+              {isCatalogKind(editorLine.kind) ? (
+                <small className="muted">
+                  Le total de ligne se recalcule automatiquement depuis la quantite et le prix unitaire. Vous pouvez reappliquer le tarif source actuel si necessaire.
+                </small>
+              ) : null}
+            </article>
+
+            <div className="row modal-actions-end top-gap-sm">
+              <button type="button" className="ghost" onClick={closeEditor}>
+                Annuler
+              </button>
+              <button type="button" onClick={commitEditor} disabled={!editable}>
+                Appliquer au brouillon
+              </button>
+            </div>
+          </article>
         </section>
-      </div>
+      ) : null}
 
       <div className="row spread wrap top-gap-sm">
         <p className="quote-total">
