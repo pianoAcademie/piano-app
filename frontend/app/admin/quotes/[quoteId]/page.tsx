@@ -25,6 +25,7 @@ import {
   finalizeQuoteFollowupAction,
   quickTransformQuoteAction,
   regenerateQuoteDocumentAction,
+  resendQuoteAction,
   selectQuoteFollowupSlotAction,
   sendQuoteAction,
   updateQuoteLinesAction,
@@ -921,6 +922,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       || inferredParentFromFamily?.adult.phone
       || inferredParentFromFamily?.adult.home_phone
       || "-";
+  const quoteStatus = String(detail.quote.status || "").trim().toLowerCase();
+  const canSendQuote = quoteStatus === "created";
+  const canResendQuote = ["sent", "approved", "rejected", "expired"].includes(quoteStatus);
+  const primaryRecipientLabel = detail.quote.context_type === "acquisition" ? "prospect" : "client";
+  const ownerEmail = String(owner?.email || "").trim().toLowerCase();
+  const lastRecipientEmail = readStringMeta(detail.quote.meta || {}, "recipient_email", "").trim().toLowerCase();
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
@@ -1405,14 +1412,53 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             <section className="card" id="quote-document">
               <h3>Actions</h3>
               <div className="row wrap gap-sm top-gap-sm">
-                {detail.quote.status === "created" ? (
-                  <form action={sendQuoteAction} className="row wrap gap-sm">
-                    <input type="hidden" name="quote_id" value={detail.quote.id} />
-                    <input type="hidden" name="return_to" value={selfPath} />
-                    <input type="email" name="recipient_email" placeholder="Email destinataire (optionnel)" />
-                    <button type="submit">Envoyer le devis</button>
-                  </form>
-                ) : null}
+                {canSendQuote || canResendQuote ? (
+                  <>
+                    <div className="card" style={{ minWidth: 320, flex: "1 1 320px" }}>
+                      <h4>{canSendQuote ? `Envoyer au ${primaryRecipientLabel}` : `Renvoyer au ${primaryRecipientLabel}`}</h4>
+                      <p className="muted top-gap-sm">
+                        {ownerEmail
+                          ? `Cette action utilise l'email du ${primaryRecipientLabel} rattache au devis: ${ownerEmail}.`
+                          : `Aucun email de ${primaryRecipientLabel} n'est disponible pour ce devis.`}
+                      </p>
+                      <form action={canSendQuote ? sendQuoteAction : resendQuoteAction} className="top-gap-sm">
+                        <input type="hidden" name="quote_id" value={detail.quote.id} />
+                        <input type="hidden" name="return_to" value={selfPath} />
+                        <input type="hidden" name="recipient_email" value={ownerEmail} />
+                        <button type="submit" disabled={!ownerEmail}>
+                          {canSendQuote ? `Envoyer au ${primaryRecipientLabel}` : `Renvoyer au ${primaryRecipientLabel}`}
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="card" style={{ minWidth: 320, flex: "1 1 320px" }}>
+                      <h4>{canSendQuote ? "Envoyer a un tiers" : "Renvoyer a un tiers"}</h4>
+                      <p className="muted top-gap-sm">
+                        Saisissez une autre adresse email pour envoyer ce devis a un tiers.
+                      </p>
+                      <form action={canSendQuote ? sendQuoteAction : resendQuoteAction} className="row wrap gap-sm top-gap-sm">
+                        <input type="hidden" name="quote_id" value={detail.quote.id} />
+                        <input type="hidden" name="return_to" value={selfPath} />
+                        <input
+                          type="email"
+                          name="recipient_email"
+                          placeholder="Email du tiers"
+                          required
+                        />
+                        <button type="submit">
+                          {canSendQuote ? "Envoyer" : "Renvoyer"}
+                        </button>
+                      </form>
+                      {lastRecipientEmail ? (
+                        <small className="muted top-gap-sm">Dernier destinataire enregistre: {lastRecipientEmail}</small>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <small className="muted">
+                    Le devis ne peut pas etre envoye ou renvoye dans son statut actuel.
+                  </small>
+                )}
 
                 <form action={duplicateQuoteAction}>
                   <input type="hidden" name="quote_id" value={detail.quote.id} />

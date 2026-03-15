@@ -3264,12 +3264,17 @@ def _send_quote_email(
     recipient_email: str,
     kind: str,
     actor_id: UUID | None,
+    allow_duplicate: bool = False,
 ) -> None:
     now = _utcnow()
-    message_key = f"{kind}:{quote.id}:{recipient_email}"
-    existing = db.scalar(select(QuoteEmailOutbox).where(QuoteEmailOutbox.message_key == message_key).limit(1))
-    if existing is not None:
-        return
+    normalized_recipient = recipient_email.strip().lower()
+    if allow_duplicate:
+        message_key = f"{kind}:{quote.id}:{normalized_recipient}:{uuid4().hex}"
+    else:
+        message_key = f"{kind}:{quote.id}:{normalized_recipient}"
+        existing = db.scalar(select(QuoteEmailOutbox).where(QuoteEmailOutbox.message_key == message_key).limit(1))
+        if existing is not None:
+            return
 
     frontend_base = (settings.frontend_base_url or "http://localhost:3000").rstrip("/")
     public_url = f"{frontend_base}/q/{quote.id}?t={quote.public_token}"
@@ -3286,7 +3291,7 @@ def _send_quote_email(
         quote_id=quote.id,
         kind=kind,
         message_key=message_key,
-        recipient_email=recipient_email,
+        recipient_email=normalized_recipient,
         subject=subject,
         status="queued",
         created_at=now,
@@ -3296,7 +3301,7 @@ def _send_quote_email(
     db.flush()
 
     provider_message_id = send_email(
-        to_email=recipient_email,
+        to_email=normalized_recipient,
         subject=subject,
         body=body,
         body_format="TEXT",
@@ -3314,7 +3319,7 @@ def _send_quote_email(
             event_type="quote_email_sent",
             actor_type="admin",
             actor_id=actor_id,
-            payload={"kind": kind, "recipient_email": recipient_email},
+            payload={"kind": kind, "recipient_email": normalized_recipient},
             created_at=now,
         )
     )
@@ -3383,7 +3388,14 @@ def resend_quote(
     snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     quote.updated_at = _utcnow()
     db.add(quote)
-    _send_quote_email(db, quote=quote, recipient_email=recipient, kind="quote_resend", actor_id=current_user.id)
+    _send_quote_email(
+        db,
+        quote=quote,
+        recipient_email=recipient,
+        kind="quote_resend",
+        actor_id=current_user.id,
+        allow_duplicate=True,
+    )
     db.add(
         QuoteEvent(
             quote_id=quote.id,

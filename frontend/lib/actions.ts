@@ -9606,6 +9606,38 @@ export async function sendQuoteAction(formData: FormData): Promise<void> {
   redirect(appendQueryMessage(returnTo, "ok", "Devis envoye"));
 }
 
+export async function resendQuoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/resend`,
+    {
+      method: "POST",
+      body: JSON.stringify({ recipient_email: recipientEmail || null }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  revalidatePath("/admin/communications");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Devis renvoye"));
+}
+
 export async function regenerateQuoteDocumentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
