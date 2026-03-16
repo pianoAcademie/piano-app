@@ -18,7 +18,7 @@ from app.services.messaging_templates import (
 
 logger = logging.getLogger(__name__)
 
-BREVO_SMS_API_URL = "https://api.brevo.com/v3/transactionalSMS/sms"
+BREVO_SMS_API_URL = "https://api.brevo.com/v3/transactionalSMS/send"
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,25 @@ class SmsProviderSendResult:
     provider_message_id: str | None
     provider_status: str
     error_message: str | None = None
+
+
+def _normalize_brevo_sms_error(raw_error: str) -> str:
+    normalized = (raw_error or "").strip()
+    if not normalized:
+        return "Erreur SMS Brevo inconnue."
+    try:
+        payload = json.loads(normalized)
+    except json.JSONDecodeError:
+        return normalized
+    code = str(payload.get("code") or "").strip().lower()
+    message = str(payload.get("message") or "").strip()
+    if code == "unauthorized" or "key not found" in message.lower():
+        return (
+            "Cle API Brevo SMS invalide ou introuvable. "
+            "Utilisez une cle API Brevo issue de l'onglet 'Cles API et MCP', "
+            "pas un login SMTP ni une cle SMTP."
+        )
+    return message or normalized
 
 
 def sms_delivery_disabled_reason(db: Session | None = None) -> str | None:
@@ -145,7 +164,7 @@ def send_provider_sms(
             parsed = json.loads(raw_body or "{}")
     except urllib_error.HTTPError as exc:
         raw_error = exc.read().decode("utf-8", errors="replace")
-        error_message = raw_error.strip() or str(exc)
+        error_message = _normalize_brevo_sms_error(raw_error.strip() or str(exc))
         logger.warning("Brevo SMS send failed | to=%s | context=%s | error=%s", normalized_phone, context, error_message)
         _log_sms(
             to_phone=normalized_phone,
