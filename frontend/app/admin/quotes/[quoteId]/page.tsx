@@ -20,6 +20,7 @@ import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-fo
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
 import {
+  cancelQuoteAction,
   changeQuoteFollowupPaymentMethodAction,
   duplicateQuoteAction,
   finalizeQuoteFollowupAction,
@@ -51,6 +52,8 @@ import type {
   AdminClientOut,
   AdminClientFamilyOut,
   AdminLegalEntityOut,
+  AdminMessagingSettingsOut,
+  AdminMessagingTemplateOut,
   AdminSessionOut,
   LocationOut,
   PlanOut,
@@ -236,6 +239,18 @@ type QuoteDocumentPreviewOut = {
   hidden_blocks: string[];
   payment_schedule_compact_notice: string;
 };
+
+function messagingTemplateRef(template: AdminMessagingTemplateOut): string {
+  if (template.kind === "PREDEFINED") {
+    return `predefined:${template.code || ""}`;
+  }
+  return `custom:${template.id}`;
+}
+
+function messagingTemplateOptionLabel(template: AdminMessagingTemplateOut): string {
+  const suffix = template.kind === "PREDEFINED" ? "Systeme" : "Personnalise";
+  return `${template.name} · ${suffix}`;
+}
 
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
@@ -701,7 +716,28 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
-  const [detailResult, followupsResult, paymentPlansResult, quoteTypesResult, plansResult, legalEntitiesResult, catalogsResult, termsTemplatesResult, quoteTemplatesResult, activitiesResult, productsResult, kitsResult, locationsResult, solfegeRulesResult, prospectsResult, clientsResult, documentPreviewResult] = await Promise.all([
+  const [
+    detailResult,
+    followupsResult,
+    paymentPlansResult,
+    quoteTypesResult,
+    plansResult,
+    legalEntitiesResult,
+    catalogsResult,
+    termsTemplatesResult,
+    quoteTemplatesResult,
+    activitiesResult,
+    productsResult,
+    kitsResult,
+    locationsResult,
+    solfegeRulesResult,
+    prospectsResult,
+    clientsResult,
+    documentPreviewResult,
+    messagingSettingsResult,
+    quoteSendTemplatesResult,
+    quoteCancelTemplatesResult,
+  ] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
@@ -720,6 +756,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
     backendRequest<QuoteDocumentPreviewOut>(
       `/api/v1/quotes/${encodeURIComponent(quoteId)}/document-preview?audience=admin_preview`,
+      {},
+      token,
+    ),
+    backendRequest<AdminMessagingSettingsOut>("/api/v1/admin/config/messaging-settings", {}, token),
+    backendRequest<AdminMessagingTemplateOut[]>(
+      "/api/v1/admin/config/messaging-templates?channel=EMAIL&usage_context=QUOTE_SEND&active_only=true",
+      {},
+      token,
+    ),
+    backendRequest<AdminMessagingTemplateOut[]>(
+      "/api/v1/admin/config/messaging-templates?channel=EMAIL&usage_context=QUOTE_CANCEL&active_only=true",
       {},
       token,
     ),
@@ -778,6 +825,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
   const documentPreview = documentPreviewResult.ok ? documentPreviewResult.data : null;
+  const messagingSettings = messagingSettingsResult.ok ? messagingSettingsResult.data : null;
+  const quoteSendTemplates = quoteSendTemplatesResult.ok ? quoteSendTemplatesResult.data : [];
+  const quoteCancelTemplates = quoteCancelTemplatesResult.ok ? quoteCancelTemplatesResult.data : [];
   const activityPrices = activityPricesResult?.ok ? activityPricesResult.data : [];
   const productPrices = productPricesResult?.ok ? productPricesResult.data : [];
   const kitPrices = kitPricesResult?.ok ? kitPricesResult.data : [];
@@ -925,9 +975,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteStatus = String(detail.quote.status || "").trim().toLowerCase();
   const canSendQuote = quoteStatus === "created";
   const canResendQuote = ["sent", "approved", "rejected", "expired"].includes(quoteStatus);
+  const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
   const primaryRecipientLabel = detail.quote.context_type === "acquisition" ? "prospect" : "client";
   const ownerEmail = String(owner?.email || "").trim().toLowerCase();
   const lastRecipientEmail = readStringMeta(detail.quote.meta || {}, "recipient_email", "").trim().toLowerCase();
+  const defaultThirdPartyEmail = lastRecipientEmail && lastRecipientEmail !== ownerEmail ? lastRecipientEmail : "";
+  const defaultSendTemplateRef =
+    messagingSettings?.quote_send_template_ref ||
+    (quoteSendTemplates[0] ? messagingTemplateRef(quoteSendTemplates[0]) : "");
+  const defaultCancelTemplateRef =
+    messagingSettings?.quote_cancel_template_ref ||
+    (quoteCancelTemplates[0] ? messagingTemplateRef(quoteCancelTemplates[0]) : "");
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
@@ -1425,10 +1483,23 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                         <input type="hidden" name="quote_id" value={detail.quote.id} />
                         <input type="hidden" name="return_to" value={selfPath} />
                         <input type="hidden" name="recipient_email" value={ownerEmail} />
+                        <label>
+                          Template email
+                          <select name="template_ref" defaultValue={defaultSendTemplateRef} disabled={!ownerEmail || quoteSendTemplates.length === 0}>
+                            {quoteSendTemplates.map((template) => (
+                              <option key={`primary-send-${template.id}`} value={messagingTemplateRef(template)}>
+                                {messagingTemplateOptionLabel(template)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <button type="submit" disabled={!ownerEmail}>
                           {canSendQuote ? `Envoyer au ${primaryRecipientLabel}` : `Renvoyer au ${primaryRecipientLabel}`}
                         </button>
                       </form>
+                      <small className="muted top-gap-sm">
+                        Le contenu est choisi parmi les modeles BO "Envoi / renvoi du devis".
+                      </small>
                     </div>
 
                     <div className="card" style={{ minWidth: 320, flex: "1 1 320px" }}>
@@ -1436,18 +1507,34 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       <p className="muted top-gap-sm">
                         Saisissez une autre adresse email pour envoyer ce devis a un tiers.
                       </p>
-                      <form action={canSendQuote ? sendQuoteAction : resendQuoteAction} className="row wrap gap-sm top-gap-sm">
+                      <form action={canSendQuote ? sendQuoteAction : resendQuoteAction} className="top-gap-sm">
                         <input type="hidden" name="quote_id" value={detail.quote.id} />
                         <input type="hidden" name="return_to" value={selfPath} />
-                        <input
-                          type="email"
-                          name="recipient_email"
-                          placeholder="Email du tiers"
-                          required
-                        />
-                        <button type="submit">
-                          {canSendQuote ? "Envoyer" : "Renvoyer"}
-                        </button>
+                        <label>
+                          Destinataire tiers
+                          <input
+                            type="email"
+                            name="recipient_email"
+                            placeholder="Email du tiers"
+                            defaultValue={defaultThirdPartyEmail}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Template email
+                          <select name="template_ref" defaultValue={defaultSendTemplateRef} disabled={quoteSendTemplates.length === 0}>
+                            {quoteSendTemplates.map((template) => (
+                              <option key={`third-send-${template.id}`} value={messagingTemplateRef(template)}>
+                                {messagingTemplateOptionLabel(template)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="row wrap gap-sm top-gap-sm">
+                          <button type="submit">
+                            {canSendQuote ? "Envoyer" : "Renvoyer"}
+                          </button>
+                        </div>
                       </form>
                       {lastRecipientEmail ? (
                         <small className="muted top-gap-sm">Dernier destinataire enregistre: {lastRecipientEmail}</small>
@@ -1459,6 +1546,47 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                     Le devis ne peut pas etre envoye ou renvoye dans son statut actuel.
                   </small>
                 )}
+
+                {canCancelQuote ? (
+                  <div className="card" style={{ minWidth: 360, flex: "1 1 360px" }}>
+                    <h4>Annuler le devis</h4>
+                    <p className="muted top-gap-sm">
+                      Cette action passe le devis en statut annule. Vous pouvez aussi notifier le destinataire avec un template dedie.
+                    </p>
+                    <form action={cancelQuoteAction} className="top-gap-sm">
+                      <input type="hidden" name="quote_id" value={detail.quote.id} />
+                      <input type="hidden" name="return_to" value={selfPath} />
+                      <label className="checkline">
+                        <input type="checkbox" name="notify_recipient" defaultChecked={Boolean(ownerEmail)} />
+                        Notifier le destinataire par email
+                      </label>
+                      <label>
+                        Destinataire
+                        <input
+                          type="email"
+                          name="recipient_email"
+                          defaultValue={ownerEmail || defaultThirdPartyEmail}
+                          placeholder="Email a notifier"
+                        />
+                      </label>
+                      <label>
+                        Template d annulation
+                        <select name="template_ref" defaultValue={defaultCancelTemplateRef} disabled={quoteCancelTemplates.length === 0}>
+                          {quoteCancelTemplates.map((template) => (
+                            <option key={`cancel-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="row wrap gap-sm top-gap-sm">
+                        <button type="submit" className="danger">
+                          Annuler le devis
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                ) : null}
 
                 <form action={duplicateQuoteAction}>
                   <input type="hidden" name="quote_id" value={detail.quote.id} />

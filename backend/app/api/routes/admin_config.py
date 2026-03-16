@@ -1245,6 +1245,11 @@ def _serialize_messaging_template(raw: dict[str, object]) -> AdminMessagingTempl
         body=str(raw.get("body") or ""),
         body_format="HTML" if str(raw.get("body_format") or "").strip().upper() == "HTML" else "TEXT",
         active=bool(raw.get("active", True)),
+        usage_contexts=[
+            str(item).strip()
+            for item in (raw.get("usage_contexts") if isinstance(raw.get("usage_contexts"), list) else [])
+            if str(item).strip()
+        ],
         description=(str(raw["description"]) if raw.get("description") is not None else None),
         variables_hint=(str(raw["variables_hint"]) if raw.get("variables_hint") is not None else None),
         created_at=raw.get("created_at") if isinstance(raw.get("created_at"), datetime) else None,
@@ -2180,6 +2185,15 @@ def update_admin_messaging_settings(
         smtp_use_ssl=payload.smtp_use_ssl,
         smtp_timeout_seconds=payload.smtp_timeout_seconds,
         frontend_base_url=payload.frontend_base_url,
+        quote_send_template_ref=payload.quote_send_template_ref,
+        quote_reminder_template_ref=payload.quote_reminder_template_ref,
+        quote_cancel_template_ref=payload.quote_cancel_template_ref,
+        quote_reminder_enabled=payload.quote_reminder_enabled,
+        quote_reminder_lead_hours=payload.quote_reminder_lead_hours,
+        quote_daily_job_local_time=payload.quote_daily_job_local_time,
+        quote_auto_cancel_enabled=payload.quote_auto_cancel_enabled,
+        quote_auto_cancel_delay_hours=payload.quote_auto_cancel_delay_hours,
+        quote_cancel_notification_enabled=payload.quote_cancel_notification_enabled,
     )
     db.commit()
     return AdminMessagingSettingsOut(**updated_payload)
@@ -2189,6 +2203,8 @@ def update_admin_messaging_settings(
 def get_admin_messaging_templates(
     channel: AdminMessagingChannel | None = Query(default=None),
     kind: AdminMessagingTemplateKind | None = Query(default=None),
+    usage_context: str | None = Query(default=None),
+    active_only: bool = Query(default=False),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminMessagingTemplateOut]:
@@ -2196,6 +2212,8 @@ def get_admin_messaging_templates(
         db,
         channel=channel.value if channel is not None else None,
         kind=kind.value if kind is not None else None,
+        usage_context=usage_context,
+        active_only=active_only,
     )
     return [_serialize_messaging_template(item) for item in items]
 
@@ -2253,6 +2271,7 @@ def create_admin_custom_messaging_template(
             body=payload.body,
             body_format=payload.body_format,
             active=payload.active,
+            usage_contexts=payload.usage_contexts,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
@@ -2276,6 +2295,7 @@ def update_admin_custom_messaging_template(
             body=payload.body,
             body_format=payload.body_format,
             active=payload.active,
+            usage_contexts=payload.usage_contexts,
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

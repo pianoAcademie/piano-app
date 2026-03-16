@@ -190,6 +190,15 @@ class AdminMessagingSettingsOut(BaseModel):
     smtp_timeout_seconds: int
     frontend_base_url: str
     brevo_email_webhook_url: str
+    quote_send_template_ref: str
+    quote_reminder_template_ref: str
+    quote_cancel_template_ref: str
+    quote_reminder_enabled: bool
+    quote_reminder_lead_hours: int
+    quote_daily_job_local_time: str
+    quote_auto_cancel_enabled: bool
+    quote_auto_cancel_delay_hours: int
+    quote_cancel_notification_enabled: bool
     delivery_enabled: bool
     delivery_error_message: str | None = None
     updated_at: datetime | None = None
@@ -214,6 +223,15 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
     smtp_use_ssl: bool = False
     smtp_timeout_seconds: int = Field(default=15, ge=1, le=120)
     frontend_base_url: str = Field(default="", max_length=255)
+    quote_send_template_ref: str = Field(default="predefined:QUOTE_SEND_DEFAULT", max_length=120)
+    quote_reminder_template_ref: str = Field(default="predefined:QUOTE_REMINDER_DEFAULT", max_length=120)
+    quote_cancel_template_ref: str = Field(default="predefined:QUOTE_CANCEL_DEFAULT", max_length=120)
+    quote_reminder_enabled: bool = True
+    quote_reminder_lead_hours: int = Field(default=24, ge=1, le=168)
+    quote_daily_job_local_time: str = Field(default="07:00", max_length=5)
+    quote_auto_cancel_enabled: bool = True
+    quote_auto_cancel_delay_hours: int = Field(default=24, ge=0, le=720)
+    quote_cancel_notification_enabled: bool = True
 
 
 class AdminMessagingChannel(str, enum.Enum):
@@ -240,6 +258,7 @@ class AdminMessagingTemplateOut(BaseModel):
     body: str
     body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
+    usage_contexts: list[str] = Field(default_factory=list)
     description: str | None = None
     variables_hint: str | None = None
     created_at: datetime | None = None
@@ -260,6 +279,7 @@ class AdminMessagingCustomTemplateCreateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=12000)
     body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
+    usage_contexts: list[str] = Field(default_factory=list)
 
 
 class AdminMessagingCustomTemplateUpdateRequest(BaseModel):
@@ -268,6 +288,7 @@ class AdminMessagingCustomTemplateUpdateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=12000)
     body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
+    usage_contexts: list[str] = Field(default_factory=list)
 
 
 class AdminInvoiceTemplateOut(BaseModel):

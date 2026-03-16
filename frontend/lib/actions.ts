@@ -8394,6 +8394,15 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
     smtp_use_ssl: checkboxField(formData, "smtp_use_ssl"),
     smtp_timeout_seconds: Number.isFinite(smtpTimeoutSeconds) ? smtpTimeoutSeconds : 15,
     frontend_base_url: String(formData.get("frontend_base_url") ?? "").trim(),
+    quote_send_template_ref: String(formData.get("quote_send_template_ref") ?? "").trim(),
+    quote_reminder_template_ref: String(formData.get("quote_reminder_template_ref") ?? "").trim(),
+    quote_cancel_template_ref: String(formData.get("quote_cancel_template_ref") ?? "").trim(),
+    quote_reminder_enabled: checkboxField(formData, "quote_reminder_enabled"),
+    quote_reminder_lead_hours: Number.parseInt(String(formData.get("quote_reminder_lead_hours") ?? "").trim() || "24", 10),
+    quote_daily_job_local_time: String(formData.get("quote_daily_job_local_time") ?? "").trim() || "07:00",
+    quote_auto_cancel_enabled: checkboxField(formData, "quote_auto_cancel_enabled"),
+    quote_auto_cancel_delay_hours: Number.parseInt(String(formData.get("quote_auto_cancel_delay_hours") ?? "").trim() || "24", 10),
+    quote_cancel_notification_enabled: checkboxField(formData, "quote_cancel_notification_enabled"),
   };
 
   const result = await backendRequest<AdminMessagingSettingsOut>(
@@ -8528,6 +8537,7 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const active = checkboxField(formData, "active");
+  const usageContexts = parseStringList(formData.getAll("usage_contexts"));
   const requestedTabRaw = String(formData.get("messaging_tab") ?? "");
 
   const defaultTabForChannel =
@@ -8589,6 +8599,7 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
     body,
     body_format: bodyFormat,
     active,
+    usage_contexts: usageContexts,
   };
 
   const endpoint = templateId
@@ -9606,7 +9617,10 @@ export async function sendQuoteAction(formData: FormData): Promise<void> {
     `/api/v1/quotes/${encodeURIComponent(quoteId)}/send`,
     {
       method: "POST",
-      body: JSON.stringify({ recipient_email: recipientEmail || null }),
+      body: JSON.stringify({
+        recipient_email: recipientEmail || null,
+        template_ref: optionalField(formData, "template_ref"),
+      }),
     },
     token,
   );
@@ -9637,7 +9651,10 @@ export async function resendQuoteAction(formData: FormData): Promise<void> {
     `/api/v1/quotes/${encodeURIComponent(quoteId)}/resend`,
     {
       method: "POST",
-      body: JSON.stringify({ recipient_email: recipientEmail || null }),
+      body: JSON.stringify({
+        recipient_email: recipientEmail || null,
+        template_ref: optionalField(formData, "template_ref"),
+      }),
     },
     token,
   );
@@ -9649,6 +9666,42 @@ export async function resendQuoteAction(formData: FormData): Promise<void> {
   revalidatePath("/admin/communications");
   revalidatePath(`/admin/quotes/${quoteId}`);
   redirect(appendQueryMessage(returnTo, "ok", "Devis renvoye"));
+}
+
+export async function cancelQuoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/cancel`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        notify_recipient: checkboxField(formData, "notify_recipient"),
+        recipient_email: optionalField(formData, "recipient_email"),
+        template_ref: optionalField(formData, "template_ref"),
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath("/admin/communications");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Devis annule"));
 }
 
 export async function resendCommunicationAction(formData: FormData): Promise<void> {

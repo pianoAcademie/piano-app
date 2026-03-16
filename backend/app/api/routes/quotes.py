@@ -59,6 +59,7 @@ from app.schemas.quote import (
     ProspectUpdateRequest,
     QuoteCalendarPreviewRequest,
     QuoteChangeRequestIn,
+    QuoteCancelRequest,
     QuoteCreateRequest,
     QuoteDetailOut,
     QuoteFollowupOut,
@@ -96,10 +97,16 @@ from app.schemas.quote import (
     TermsTemplateVersionOut,
     TermsTemplateVersionPublishRequest,
 )
-from app.services.email_delivery import email_delivery_disabled_reason, send_email
+from app.services.email_delivery import email_delivery_disabled_reason
 from app.services.invoice_documents import normalize_billing_entity
-from app.services.messaging_templates import resolve_frontend_base_url, resolve_sender_profile
+from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
+from app.services.quotes.email_templates import (
+    USAGE_CONTEXT_QUOTE_CANCEL,
+    USAGE_CONTEXT_QUOTE_REMINDER,
+    USAGE_CONTEXT_QUOTE_SEND,
+    send_quote_templated_email,
+)
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.quotes.payment_plan_engine import PaymentPlanScheduleInput, build_payment_schedule
 from app.services.quotes.quote_documents import (
@@ -3262,10 +3269,13 @@ def _send_quote_email(
     db: Session,
     *,
     quote: Quote,
+    lines: list[QuoteLine],
     recipient_email: str,
     kind: str,
+    usage_context: str,
     actor_id: UUID | None,
     allow_duplicate: bool = False,
+    template_ref: str | None = None,
 ) -> None:
     now = _utcnow()
     normalized_recipient = recipient_email.strip().lower()
@@ -3277,24 +3287,12 @@ def _send_quote_email(
         if existing is not None:
             return
 
-    frontend_base = resolve_frontend_base_url(db).rstrip("/")
-    sender = resolve_sender_profile(db, sender_kind="STUDIO")
-    public_url = f"{frontend_base}/q/{quote.id}?t={quote.public_token}"
-    pdf_url = f"{frontend_base}/api/v1/public/quotes/{quote.id}/pdf?t={quote.pdf_token}"
-    subject = f"Devis {quote.quote_number}"
-    body = (
-        f"Votre devis {quote.quote_number} est disponible.\n\n"
-        f"Consulter et agir: {public_url}\n"
-        f"Telecharger le PDF: {pdf_url}\n"
-        f"Total TTC: {quote.total_ttc} {quote.currency}\n"
-    )
-
     out = QuoteEmailOutbox(
         quote_id=quote.id,
         kind=kind,
         message_key=message_key,
         recipient_email=normalized_recipient,
-        subject=subject,
+        subject=f"Devis {quote.quote_number}",
         status="queued",
         created_at=now,
         updated_at=now,
@@ -3302,17 +3300,16 @@ def _send_quote_email(
     db.add(out)
     db.flush()
 
-    provider_message_id = send_email(
-        to_email=normalized_recipient,
-        subject=subject,
-        body=body,
-        body_format="TEXT",
-        context="QUOTE_SENT",
-        from_email=sender.from_email,
-        from_name=sender.from_name,
-        reply_to=sender.reply_to,
-        subject_prefix=sender.subject_prefix,
+    rendered, provider_message_id = send_quote_templated_email(
+        db,
+        quote=quote,
+        lines=lines,
+        recipient_email=normalized_recipient,
+        usage_context=usage_context,
+        template_ref=template_ref,
+        email_context=kind.upper(),
     )
+    out.subject = rendered.subject
     out.provider_message_id = provider_message_id
     out.status = "sent" if provider_message_id else "failed"
     out.sent_at = now if provider_message_id else None
@@ -3325,7 +3322,12 @@ def _send_quote_email(
             event_type="quote_email_sent",
             actor_type="admin",
             actor_id=actor_id,
-            payload={"kind": kind, "recipient_email": normalized_recipient},
+            payload={
+                "kind": kind,
+                "recipient_email": normalized_recipient,
+                "template_ref": rendered.template_ref,
+                "usage_context": usage_context,
+            },
             created_at=now,
         )
     )
@@ -3370,7 +3372,16 @@ def send_quote(
             created_at=now,
         )
     )
-    _send_quote_email(db, quote=quote, recipient_email=recipient, kind="quote_sent", actor_id=current_user.id)
+    _send_quote_email(
+        db,
+        quote=quote,
+        lines=lines,
+        recipient_email=recipient,
+        kind="quote_sent",
+        usage_context=USAGE_CONTEXT_QUOTE_SEND,
+        actor_id=current_user.id,
+        template_ref=payload.template_ref,
+    )
     db.commit()
     db.refresh(quote)
     return _quote_detail_out(db, quote)
@@ -3403,10 +3414,13 @@ def resend_quote(
     _send_quote_email(
         db,
         quote=quote,
+        lines=lines,
         recipient_email=recipient,
         kind="quote_resend",
+        usage_context=USAGE_CONTEXT_QUOTE_SEND,
         actor_id=current_user.id,
         allow_duplicate=True,
+        template_ref=payload.template_ref,
     )
     db.add(
         QuoteEvent(
@@ -3416,6 +3430,67 @@ def resend_quote(
             actor_id=current_user.id,
             payload={"recipient_email": recipient, "document_snapshot_id": str(snapshot.id), "document_hash": snapshot.document_hash},
             created_at=_utcnow(),
+        )
+    )
+    db.commit()
+    db.refresh(quote)
+    return _quote_detail_out(db, quote)
+
+
+@router.post("/quotes/{quote_id}/cancel", response_model=QuoteDetailOut)
+def cancel_quote(
+    quote_id: UUID,
+    payload: QuoteCancelRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    quote = _load_quote(db, quote_id, lock=True)
+    if quote.status in {"approved", "rejected", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be cancelled in current status")
+    _ensure_public_token(quote)
+
+    now = _utcnow()
+    quote.status = "cancelled"
+    quote.cancelled_at = now
+    quote.updated_at = now
+    recipient = _resolve_recipient_email(db, quote, explicit_email=payload.recipient_email)
+    lines = _load_quote_lines(db, quote.id)
+
+    if payload.notify_recipient:
+        delivery_error = email_delivery_disabled_reason()
+        if delivery_error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=delivery_error)
+        if recipient is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No recipient email resolved for quote cancellation",
+            )
+        quote.meta = {**(quote.meta or {}), "recipient_email": recipient}
+        _send_quote_email(
+            db,
+            quote=quote,
+            lines=lines,
+            recipient_email=recipient,
+            kind="quote_cancel",
+            usage_context=USAGE_CONTEXT_QUOTE_CANCEL,
+            actor_id=current_user.id,
+            allow_duplicate=True,
+            template_ref=payload.template_ref,
+        )
+
+    db.add(quote)
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_cancelled",
+            actor_type="admin",
+            actor_id=current_user.id,
+            payload={
+                "recipient_email": recipient,
+                "notified": bool(payload.notify_recipient and recipient),
+                "template_ref": payload.template_ref,
+            },
+            created_at=now,
         )
     )
     db.commit()

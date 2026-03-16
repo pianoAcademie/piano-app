@@ -1474,6 +1474,15 @@ export type AdminMessagingSettingsOut = {
   smtp_timeout_seconds: number;
   frontend_base_url: string;
   brevo_email_webhook_url: string;
+  quote_send_template_ref: string;
+  quote_reminder_template_ref: string;
+  quote_cancel_template_ref: string;
+  quote_reminder_enabled: boolean;
+  quote_reminder_lead_hours: number;
+  quote_daily_job_local_time: string;
+  quote_auto_cancel_enabled: boolean;
+  quote_auto_cancel_delay_hours: number;
+  quote_cancel_notification_enabled: boolean;
   delivery_enabled: boolean;
   delivery_error_message: string | null;
   updated_at: string | null;
@@ -1492,10 +1501,19 @@ export type AdminMessagingTemplateOut = {
   body: string;
   body_format: "TEXT" | "HTML";
   active: boolean;
+  usage_contexts: string[];
   description: string | null;
   variables_hint: string | null;
   created_at: string | null;
   updated_at: string | null;
+};
+
+export type QuoteTemplateVariableOut = {
+  key: string;
+  label: string;
+  description: string;
+  example: string | null;
+  category: string;
 };
 
 export type AdminInvoiceTemplateOut = {

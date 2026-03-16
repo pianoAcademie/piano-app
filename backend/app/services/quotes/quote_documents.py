@@ -2176,6 +2176,17 @@ def _build_template_values(
     return values, html_keys, document_context
 
 
+def build_quote_template_values(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    audience: str = DEFAULT_AUDIENCE,
+) -> tuple[dict[str, str], set[str], dict[str, Any]]:
+    values, html_keys, document_context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
+    return dict(values), set(html_keys), dict(document_context)
+
+
 def _default_quote_body_template() -> str:
     return (
         "{document_style_html}"

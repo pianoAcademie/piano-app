@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -17,6 +17,7 @@ from app.models.ops import AppSetting
 
 MessagingChannel = Literal["EMAIL", "SMS", "GROUP_NOTE"]
 MessagingTemplateKind = Literal["PREDEFINED", "CUSTOM"]
+MessagingTemplateUsageContext = Literal["QUOTE_SEND", "QUOTE_REMINDER", "QUOTE_CANCEL"]
 
 MESSAGING_SETTINGS_STUDIO_EMAIL_KEY = "config_messaging_studio_email"
 MESSAGING_SETTINGS_STUDIO_SENDER_NAME_KEY = "config_messaging_studio_sender_name"
@@ -36,6 +37,15 @@ MESSAGING_SETTINGS_SMTP_USE_TLS_KEY = "config_messaging_smtp_use_tls"
 MESSAGING_SETTINGS_SMTP_USE_SSL_KEY = "config_messaging_smtp_use_ssl"
 MESSAGING_SETTINGS_SMTP_TIMEOUT_SECONDS_KEY = "config_messaging_smtp_timeout_seconds"
 MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY = "config_messaging_frontend_base_url"
+MESSAGING_SETTINGS_QUOTE_SEND_TEMPLATE_REF_KEY = "config_messaging_quote_send_template_ref"
+MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY = "config_messaging_quote_reminder_template_ref"
+MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY = "config_messaging_quote_cancel_template_ref"
+MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY = "config_messaging_quote_reminder_enabled"
+MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY = "config_messaging_quote_reminder_lead_hours"
+MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY = "config_messaging_quote_daily_job_local_time"
+MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY = "config_messaging_quote_auto_cancel_enabled"
+MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY = "config_messaging_quote_auto_cancel_delay_hours"
+MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_cancel_notification_enabled"
 
 MESSAGING_PREDEFINED_TEMPLATES_KEY = "config_messaging_predefined_templates_v1"
 MESSAGING_CUSTOM_TEMPLATES_KEY = "config_messaging_custom_templates_v1"
@@ -46,6 +56,17 @@ LEGACY_CLIENT_PASSWORD_BODY_KEY = "config_client_password_email_body"
 PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD = "CLIENT_PASSWORD_SETUP"
 PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET = "PASSWORD_RESET"
 PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD = "TEACHER_PORTAL_LOGIN_SETUP"
+PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_DEFAULT"
+PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_DEFAULT"
+PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_DEFAULT"
+
+USAGE_CONTEXT_QUOTE_SEND = "QUOTE_SEND"
+USAGE_CONTEXT_QUOTE_REMINDER = "QUOTE_REMINDER"
+USAGE_CONTEXT_QUOTE_CANCEL = "QUOTE_CANCEL"
+
+QUOTE_SEND_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT}"
+QUOTE_REMINDER_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT}"
+QUOTE_CANCEL_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT}"
 
 
 @dataclass(frozen=True)
@@ -57,6 +78,8 @@ class MessagingTemplateDefinition:
     body: str
     description: str
     variables_hint: str
+    body_format: str = "TEXT"
+    usage_contexts: tuple[MessagingTemplateUsageContext, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -139,6 +162,42 @@ def _normalize_email_provider(raw: str | None) -> str:
     if candidate in {"SMTP", "BREVO"}:
         return candidate
     return "LOG"
+
+
+def _normalize_usage_context(raw: object) -> str | None:
+    candidate = str(raw or "").strip().upper()
+    if candidate in {USAGE_CONTEXT_QUOTE_SEND, USAGE_CONTEXT_QUOTE_REMINDER, USAGE_CONTEXT_QUOTE_CANCEL}:
+        return candidate
+    return None
+
+
+def _normalize_usage_contexts(raw_values: Iterable[object] | None) -> list[str]:
+    normalized: list[str] = []
+    for raw_value in raw_values or ():
+        candidate = _normalize_usage_context(raw_value)
+        if candidate is None or candidate in normalized:
+            continue
+        normalized.append(candidate)
+    return normalized
+
+
+def _sanitize_template_ref(raw: object, *, default: str) -> str:
+    candidate = _sanitize_text(None if raw is None else str(raw), max_length=120)
+    return candidate or default
+
+
+def _sanitize_local_time(raw: object, *, default: str) -> str:
+    candidate = _sanitize_text(None if raw is None else str(raw), max_length=5)
+    if len(candidate) != 5 or candidate[2] != ":":
+        return default
+    hour_part, minute_part = candidate.split(":", 1)
+    if not (hour_part.isdigit() and minute_part.isdigit()):
+        return default
+    hour = int(hour_part)
+    minute = int(minute_part)
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return default
+    return f"{hour:02d}:{minute:02d}"
 
 
 @contextmanager
@@ -367,6 +426,67 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         ),
         description="Activation du portail professeur et envoi du mot de passe temporaire.",
         variables_hint="{first_name} {last_name} {full_name} {email} {temporary_password} {login_url}",
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT,
+        name="Devis - Envoi / renvoi",
+        channel="EMAIL",
+        subject="Votre devis {quote_number} Piano Academie",
+        body=(
+            "<p>Bonjour {recipient_name},</p>"
+            "<p>Votre devis <strong>{quote_number}</strong> est disponible.</p>"
+            "<p><strong>Total TTC :</strong> {total_ttc} {currency}<br>"
+            "<strong>Expiration :</strong> {expires_at_local}</p>"
+            "<p><a href=\"{quote_public_url}\">Consulter et agir sur le devis</a><br>"
+            "<a href=\"{quote_pdf_url}\">Telecharger le PDF</a></p>"
+            "<p>Piano Academie</p>"
+        ),
+        description="Envoi initial et renvoi manuel d un devis.",
+        variables_hint=(
+            "{quote_number} {recipient_name} {recipient_email} {total_ttc} {currency} "
+            "{expires_at_local} {quote_public_url} {quote_pdf_url} {school_year_label} {calendar_summary}"
+        ),
+        body_format="HTML",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_SEND,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT,
+        name="Devis - Rappel avant expiration",
+        channel="EMAIL",
+        subject="Rappel: votre devis {quote_number} expire bientot",
+        body=(
+            "<p>Bonjour {recipient_name},</p>"
+            "<p>Votre devis <strong>{quote_number}</strong> arrive a expiration.</p>"
+            "<p><strong>Expiration :</strong> {expires_at_local}<br>"
+            "<strong>Total TTC :</strong> {total_ttc} {currency}</p>"
+            "<p><a href=\"{quote_public_url}\">Consulter le devis</a><br>"
+            "<a href=\"{quote_pdf_url}\">Telecharger le PDF</a></p>"
+            "<p>Piano Academie</p>"
+        ),
+        description="Rappel automatique avant expiration d un devis.",
+        variables_hint=(
+            "{quote_number} {recipient_name} {recipient_email} {expires_at_local} {total_ttc} "
+            "{currency} {quote_public_url} {quote_pdf_url}"
+        ),
+        body_format="HTML",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_REMINDER,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT,
+        name="Devis - Annulation",
+        channel="EMAIL",
+        subject="Votre devis {quote_number} a ete annule",
+        body=(
+            "<p>Bonjour {recipient_name},</p>"
+            "<p>Votre devis <strong>{quote_number}</strong> a ete annule.</p>"
+            "<p><strong>Statut :</strong> {quote_status_label}</p>"
+            "<p>Si besoin, notre equipe peut vous preparer une nouvelle proposition.</p>"
+            "<p>Piano Academie</p>"
+        ),
+        description="Notification d annulation manuelle ou automatique d un devis.",
+        variables_hint="{quote_number} {recipient_name} {quote_status_label} {cancelled_at_local}",
+        body_format="HTML",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_CANCEL,),
     ),
     MessagingTemplateDefinition(
         code="EVENT_REMINDER",
@@ -617,6 +737,15 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         MESSAGING_SETTINGS_SMTP_USE_SSL_KEY,
         MESSAGING_SETTINGS_SMTP_TIMEOUT_SECONDS_KEY,
         MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY,
+        MESSAGING_SETTINGS_QUOTE_SEND_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY,
+        MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY,
+        MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY,
+        MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY,
+        MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY,
     ]
 
     updated_at: datetime | None = None
@@ -675,6 +804,46 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         "smtp_timeout_seconds": delivery_config.smtp_timeout_seconds,
         "frontend_base_url": delivery_config.frontend_base_url,
         "brevo_email_webhook_url": resolve_brevo_email_webhook_url(db),
+        "quote_send_template_ref": _sanitize_template_ref(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_SEND_TEMPLATE_REF_KEY, QUOTE_SEND_TEMPLATE_REF_DEFAULT),
+            default=QUOTE_SEND_TEMPLATE_REF_DEFAULT,
+        ),
+        "quote_reminder_template_ref": _sanitize_template_ref(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY, QUOTE_REMINDER_TEMPLATE_REF_DEFAULT),
+            default=QUOTE_REMINDER_TEMPLATE_REF_DEFAULT,
+        ),
+        "quote_cancel_template_ref": _sanitize_template_ref(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY, QUOTE_CANCEL_TEMPLATE_REF_DEFAULT),
+            default=QUOTE_CANCEL_TEMPLATE_REF_DEFAULT,
+        ),
+        "quote_reminder_enabled": _as_bool(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY, "true"),
+            True,
+        ),
+        "quote_reminder_lead_hours": _sanitize_int(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY, "24"),
+            default=24,
+            minimum=1,
+            maximum=168,
+        ),
+        "quote_daily_job_local_time": _sanitize_local_time(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY, "07:00"),
+            default="07:00",
+        ),
+        "quote_auto_cancel_enabled": _as_bool(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY, "true"),
+            True,
+        ),
+        "quote_auto_cancel_delay_hours": _sanitize_int(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY, "24"),
+            default=24,
+            minimum=0,
+            maximum=720,
+        ),
+        "quote_cancel_notification_enabled": _as_bool(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY, "true"),
+            True,
+        ),
         "delivery_enabled": delivery_error is None,
         "delivery_error_message": delivery_error,
         "updated_at": updated_at,
@@ -703,6 +872,15 @@ def save_messaging_settings(
     smtp_use_ssl: bool,
     smtp_timeout_seconds: int,
     frontend_base_url: str,
+    quote_send_template_ref: str,
+    quote_reminder_template_ref: str,
+    quote_cancel_template_ref: str,
+    quote_reminder_enabled: bool,
+    quote_reminder_lead_hours: int,
+    quote_daily_job_local_time: str,
+    quote_auto_cancel_enabled: bool,
+    quote_auto_cancel_delay_hours: int,
+    quote_cancel_notification_enabled: bool,
 ) -> dict[str, object]:
     _set_setting_value(db, MESSAGING_SETTINGS_STUDIO_EMAIL_KEY, _sanitize_text(studio_email, max_length=255))
     _set_setting_value(
@@ -792,6 +970,51 @@ def save_messaging_settings(
         MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY,
         _sanitize_text(frontend_base_url, max_length=255).rstrip("/"),
     )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_SEND_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_send_template_ref, default=QUOTE_SEND_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_reminder_template_ref, default=QUOTE_REMINDER_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_cancel_template_ref, default=QUOTE_CANCEL_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY,
+        "true" if quote_reminder_enabled else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY,
+        str(_sanitize_int(quote_reminder_lead_hours, default=24, minimum=1, maximum=168)),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY,
+        _sanitize_local_time(quote_daily_job_local_time, default="07:00"),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY,
+        "true" if quote_auto_cancel_enabled else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY,
+        str(_sanitize_int(quote_auto_cancel_delay_hours, default=24, minimum=0, maximum=720)),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY,
+        "true" if quote_cancel_notification_enabled else "false",
+    )
     payload, _ = load_messaging_settings(db)
     return payload
 
@@ -837,6 +1060,7 @@ def _custom_templates(db: Session) -> list[dict[str, object]]:
                 "body": _sanitize_text(str(row.get("body", "")), max_length=12000),
                 "body_format": _normalize_body_format(row.get("body_format"), default="TEXT"),
                 "active": bool(row.get("active", True)),
+                "usage_contexts": _normalize_usage_contexts(row.get("usage_contexts")),
                 "created_at": str(row.get("created_at", "")),
                 "updated_at": str(row.get("updated_at", "")),
             }
@@ -879,7 +1103,7 @@ def resolve_predefined_template(
         subject = None
 
     body = _sanitize_text(str(override.get("body") or legacy_body or definition.body), max_length=12000) or definition.body
-    body_format = _normalize_body_format(override.get("body_format"), default="TEXT")
+    body_format = _normalize_body_format(override.get("body_format"), default=definition.body_format)
     if definition.channel != "EMAIL":
         body_format = "TEXT"
     active = bool(override.get("active", True))
@@ -895,6 +1119,7 @@ def resolve_predefined_template(
         "body": body,
         "body_format": body_format,
         "active": active,
+        "usage_contexts": list(definition.usage_contexts),
         "description": definition.description,
         "variables_hint": definition.variables_hint,
         "created_at": None,
@@ -974,34 +1199,46 @@ def list_messaging_templates(
     *,
     channel: MessagingChannel | None = None,
     kind: MessagingTemplateKind | None = None,
+    usage_context: str | None = None,
+    active_only: bool = False,
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
+    normalized_usage_context = _normalize_usage_context(usage_context)
 
     if kind in {None, "PREDEFINED"}:
         for definition in list_predefined_template_definitions(channel=channel):
-            items.append(resolve_predefined_template(db, code=definition.code))
+            template = resolve_predefined_template(db, code=definition.code)
+            if active_only and not template["active"]:
+                continue
+            if normalized_usage_context and normalized_usage_context not in list(template.get("usage_contexts") or []):
+                continue
+            items.append(template)
 
     if kind in {None, "CUSTOM"}:
         for row in _custom_templates(db):
             if channel is not None and row["channel"] != channel:
                 continue
-            items.append(
-                {
-                    "id": row["id"],
-                    "code": None,
-                    "name": row["name"] or "Modele personnalise",
-                    "channel": row["channel"],
-                    "kind": "CUSTOM",
-                    "subject": row["subject"] if row["channel"] == "EMAIL" else None,
-                    "body": row["body"],
-                    "body_format": _normalize_body_format(row.get("body_format"), default="TEXT"),
-                    "active": bool(row["active"]),
-                    "description": "Modele personnalise",
-                    "variables_hint": "",
-                    "created_at": _parse_iso_datetime(row["created_at"]),
-                    "updated_at": _parse_iso_datetime(row["updated_at"]),
-                }
-            )
+            template = {
+                "id": row["id"],
+                "code": None,
+                "name": row["name"] or "Modele personnalise",
+                "channel": row["channel"],
+                "kind": "CUSTOM",
+                "subject": row["subject"] if row["channel"] == "EMAIL" else None,
+                "body": row["body"],
+                "body_format": _normalize_body_format(row.get("body_format"), default="TEXT"),
+                "active": bool(row["active"]),
+                "usage_contexts": list(row.get("usage_contexts") or []),
+                "description": "Modele personnalise",
+                "variables_hint": "",
+                "created_at": _parse_iso_datetime(row["created_at"]),
+                "updated_at": _parse_iso_datetime(row["updated_at"]),
+            }
+            if active_only and not template["active"]:
+                continue
+            if normalized_usage_context and normalized_usage_context not in list(template.get("usage_contexts") or []):
+                continue
+            items.append(template)
 
     items.sort(key=lambda row: (str(row["channel"]), str(row["name"]).casefold(), str(row["id"])))
     return items
@@ -1016,6 +1253,7 @@ def create_custom_template(
     body: str,
     body_format: str,
     active: bool,
+    usage_contexts: list[str] | None = None,
 ) -> dict[str, object]:
     cleaned_name = _sanitize_text(name, max_length=180)
     if not cleaned_name:
@@ -1044,6 +1282,7 @@ def create_custom_template(
             "body": cleaned_body,
             "body_format": cleaned_body_format,
             "active": bool(active),
+            "usage_contexts": _normalize_usage_contexts(usage_contexts),
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
         }
@@ -1064,6 +1303,7 @@ def update_custom_template(
     body: str,
     body_format: str,
     active: bool,
+    usage_contexts: list[str] | None = None,
 ) -> dict[str, object]:
     rows = _custom_templates(db)
     now = _utcnow()
@@ -1096,6 +1336,7 @@ def update_custom_template(
     match["body"] = cleaned_body
     match["body_format"] = cleaned_body_format
     match["active"] = bool(active)
+    match["usage_contexts"] = _normalize_usage_contexts(usage_contexts)
     match["updated_at"] = now.isoformat()
     _save_custom_templates(db, rows)
 
@@ -1140,3 +1381,38 @@ def resolve_sender_profile(
         reply_to=delivery_config.reply_to,
         subject_prefix=delivery_config.subject_prefix,
     )
+
+
+def resolve_messaging_template_ref(
+    db: Session,
+    *,
+    template_ref: str | None,
+    default_ref: str,
+    channel: MessagingChannel = "EMAIL",
+    usage_context: str | None = None,
+    active_only: bool = True,
+) -> dict[str, object]:
+    normalized_ref = _sanitize_template_ref(template_ref, default=default_ref)
+    kind, separator, raw_identifier = normalized_ref.partition(":")
+    if not separator:
+        kind = "predefined"
+        raw_identifier = normalized_ref
+    normalized_kind = kind.strip().lower()
+    identifier = _sanitize_text(raw_identifier, max_length=120)
+    if normalized_kind == "predefined":
+        template = resolve_predefined_template(db, code=identifier)
+    elif normalized_kind == "custom":
+        template = next((item for item in list_messaging_templates(db, kind="CUSTOM") if item["id"] == identifier), None)
+        if template is None:
+            raise KeyError("Custom template not found")
+    else:
+        raise KeyError("Unknown template reference")
+
+    if template.get("channel") != channel:
+        raise ValueError("Template channel mismatch")
+    if active_only and not bool(template.get("active", True)):
+        raise ValueError("Template inactive")
+    normalized_usage_context = _normalize_usage_context(usage_context)
+    if normalized_usage_context and normalized_usage_context not in list(template.get("usage_contexts") or []):
+        raise ValueError("Template not usable for this context")
+    return template
