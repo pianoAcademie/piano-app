@@ -27,6 +27,7 @@ import {
   quickTransformQuoteAction,
   regenerateQuoteDocumentAction,
   resendQuoteAction,
+  restoreQuotePublicResponseAction,
   selectQuoteFollowupSlotAction,
   sendQuoteAction,
   updateQuoteLinesAction,
@@ -350,6 +351,18 @@ function labelForClientKind(value: string | null | undefined): string {
   if (normalized === "CHILD") return "Enfant";
   if (normalized === "ADULT") return "Adulte";
   return "-";
+}
+
+function labelForQuoteStatus(value: string | null | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "created") return "Brouillon";
+  if (normalized === "sent") return "Envoye";
+  if (normalized === "approved") return "Approuve";
+  if (normalized === "rejected") return "Refuse";
+  if (normalized === "change_requested") return "Modification demandee";
+  if (normalized === "cancelled") return "Annule";
+  if (normalized === "expired") return "Expire";
+  return normalized || "-";
 }
 
 function displayName(firstName: string | null, lastName: string | null, fallback: string): string {
@@ -990,6 +1003,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const canSendQuote = quoteStatus === "created";
   const canResendQuote = ["sent", "approved", "rejected", "expired"].includes(quoteStatus);
   const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
+  const canRestorePublicResponse = ["approved", "rejected", "change_requested"].includes(quoteStatus);
+  const restoreTargetStatusRaw = readStringMeta(detail.quote.meta || {}, "public_response_previous_status", "").trim().toLowerCase();
+  const restoreTargetStatus =
+    restoreTargetStatusRaw === "sent" || restoreTargetStatusRaw === "change_requested"
+      ? restoreTargetStatusRaw
+      : "sent";
+  const restoreTargetStatusLabel = labelForQuoteStatus(restoreTargetStatus);
   const primaryRecipientLabel = detail.quote.context_type === "acquisition" ? "prospect" : "client";
   const ownerEmail = String(owner?.email || "").trim().toLowerCase();
   const lastRecipientEmail = readStringMeta(detail.quote.meta || {}, "recipient_email", "").trim().toLowerCase();
@@ -1112,6 +1132,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     ? `/q/${detail.quote.id}/pdf?t=${encodeURIComponent(detail.quote.pdf_token)}${pdfVersionTag ? `&v=${encodeURIComponent(pdfVersionTag)}` : ""}`
     : null;
   const regenerateFormId = `quote-regenerate-form-${detail.quote.id}`;
+  const restorePublicResponseFormId = `quote-restore-public-response-form-${detail.quote.id}`;
 
   const quoteBasePath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}`;
   const sectionHref = (section: QuoteWorkspaceSection): string =>
@@ -1665,6 +1686,32 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           Annuler le devis
                         </button>
                       </div>
+                    </form>
+                  </div>
+                ) : null}
+
+                {canRestorePublicResponse ? (
+                  <div className="card" style={{ minWidth: 360, flex: "1 1 360px" }}>
+                    <h4>Restaurer l etat precedent</h4>
+                    <p className="muted top-gap-sm">
+                      Utilisez cette action si la reponse publique a ete enregistree par erreur.
+                      Aucun email ne sera envoye au prospect.
+                    </p>
+                    <p className="top-gap-sm">
+                      <strong>Statut actuel :</strong> {labelForQuoteStatus(quoteStatus)}<br />
+                      <strong>Statut restaure :</strong> {restoreTargetStatusLabel}
+                    </p>
+                    <form id={restorePublicResponseFormId} action={restoreQuotePublicResponseAction} className="top-gap-sm">
+                      <input type="hidden" name="quote_id" value={detail.quote.id} />
+                      <input type="hidden" name="return_to" value={selfPath} />
+                      <ConfirmSubmitButton
+                        formId={restorePublicResponseFormId}
+                        label="Restaurer l etat precedent"
+                        title="Confirmer la restauration du statut public ?"
+                        description={`Le devis repassera de ${labelForQuoteStatus(quoteStatus)} a ${restoreTargetStatusLabel}, sans notification envoyee au prospect.`}
+                        confirmLabel="Restaurer"
+                        className="ghost"
+                      />
                     </form>
                   </div>
                 ) : null}

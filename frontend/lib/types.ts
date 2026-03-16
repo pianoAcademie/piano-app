@@ -1485,6 +1485,9 @@ export type AdminMessagingSettingsOut = {
   quote_reminder_sms_template_ref: string;
   quote_cancel_template_ref: string;
   quote_cancel_sms_template_ref: string;
+  quote_approved_template_ref: string;
+  quote_rejected_template_ref: string;
+  quote_change_requested_template_ref: string;
   quote_reminder_enabled: boolean;
   quote_reminder_sms_enabled: boolean;
   quote_reminder_lead_hours: number;

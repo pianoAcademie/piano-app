@@ -17,7 +17,14 @@ from app.models.ops import AppSetting
 
 MessagingChannel = Literal["EMAIL", "SMS", "GROUP_NOTE"]
 MessagingTemplateKind = Literal["PREDEFINED", "CUSTOM"]
-MessagingTemplateUsageContext = Literal["QUOTE_SEND", "QUOTE_REMINDER", "QUOTE_CANCEL"]
+MessagingTemplateUsageContext = Literal[
+    "QUOTE_SEND",
+    "QUOTE_REMINDER",
+    "QUOTE_CANCEL",
+    "QUOTE_APPROVED",
+    "QUOTE_REJECTED",
+    "QUOTE_CHANGE_REQUESTED",
+]
 
 MESSAGING_SETTINGS_STUDIO_EMAIL_KEY = "config_messaging_studio_email"
 MESSAGING_SETTINGS_STUDIO_SENDER_NAME_KEY = "config_messaging_studio_sender_name"
@@ -46,6 +53,9 @@ MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY = "config_messaging_quote_rem
 MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_TEMPLATE_REF_KEY = "config_messaging_quote_reminder_sms_template_ref"
 MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY = "config_messaging_quote_cancel_template_ref"
 MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY = "config_messaging_quote_cancel_sms_template_ref"
+MESSAGING_SETTINGS_QUOTE_APPROVED_TEMPLATE_REF_KEY = "config_messaging_quote_approved_template_ref"
+MESSAGING_SETTINGS_QUOTE_REJECTED_TEMPLATE_REF_KEY = "config_messaging_quote_rejected_template_ref"
+MESSAGING_SETTINGS_QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_KEY = "config_messaging_quote_change_requested_template_ref"
 MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY = "config_messaging_quote_reminder_enabled"
 MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY = "config_messaging_quote_reminder_sms_enabled"
 MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY = "config_messaging_quote_reminder_lead_hours"
@@ -67,6 +77,9 @@ PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD = "TEACHER_PORTAL_LOGIN_SETUP"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_DEFAULT"
+PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT = "QUOTE_APPROVED_DEFAULT"
+PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT = "QUOTE_REJECTED_DEFAULT"
+PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT = "QUOTE_CHANGE_REQUESTED_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_SMS_DEFAULT"
@@ -74,6 +87,9 @@ PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_SMS_DEFAULT"
 USAGE_CONTEXT_QUOTE_SEND = "QUOTE_SEND"
 USAGE_CONTEXT_QUOTE_REMINDER = "QUOTE_REMINDER"
 USAGE_CONTEXT_QUOTE_CANCEL = "QUOTE_CANCEL"
+USAGE_CONTEXT_QUOTE_APPROVED = "QUOTE_APPROVED"
+USAGE_CONTEXT_QUOTE_REJECTED = "QUOTE_REJECTED"
+USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED = "QUOTE_CHANGE_REQUESTED"
 
 QUOTE_SEND_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT}"
 QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT}"
@@ -81,6 +97,9 @@ QUOTE_REMINDER_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QU
 QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT}"
 QUOTE_CANCEL_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT}"
 QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT}"
+QUOTE_APPROVED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT}"
+QUOTE_REJECTED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT}"
+QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT}"
 
 
 @dataclass(frozen=True)
@@ -200,7 +219,14 @@ def _normalize_sms_provider(raw: str | None) -> str:
 
 def _normalize_usage_context(raw: object) -> str | None:
     candidate = str(raw or "").strip().upper()
-    if candidate in {USAGE_CONTEXT_QUOTE_SEND, USAGE_CONTEXT_QUOTE_REMINDER, USAGE_CONTEXT_QUOTE_CANCEL}:
+    if candidate in {
+        USAGE_CONTEXT_QUOTE_SEND,
+        USAGE_CONTEXT_QUOTE_REMINDER,
+        USAGE_CONTEXT_QUOTE_CANCEL,
+        USAGE_CONTEXT_QUOTE_APPROVED,
+        USAGE_CONTEXT_QUOTE_REJECTED,
+        USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,
+    }:
         return candidate
     return None
 
@@ -570,6 +596,57 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         usage_contexts=(USAGE_CONTEXT_QUOTE_CANCEL,),
     ),
     MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT,
+        name="Devis - Confirmation d approbation",
+        channel="EMAIL",
+        subject="Votre approbation du devis {quote_number} est bien enregistree",
+        body=(
+            "<p>Bonjour {recipient_name},</p>"
+            "<p>Nous vous confirmons que votre approbation du devis <strong>{quote_number}</strong> a bien ete prise en compte.</p>"
+            "<p><strong>Statut :</strong> {quote_status_label}</p>"
+            "<p>Vous pouvez conserver votre lien d acces si besoin : <a href=\"{quote_public_url}\">consulter le devis</a>.</p>"
+            "<p>Piano Academie</p>"
+        ),
+        description="Confirmation envoyee au prospect apres approbation du devis depuis l interface publique.",
+        variables_hint="{quote_number} {recipient_name} {quote_status_label} {quote_public_url} {approved_at_local}",
+        body_format="HTML",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_APPROVED,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT,
+        name="Devis - Confirmation de refus",
+        channel="EMAIL",
+        subject="Votre refus du devis {quote_number} est bien enregistre",
+        body=(
+            "<p>Bonjour {recipient_name},</p>"
+            "<p>Nous vous confirmons que votre refus du devis <strong>{quote_number}</strong> a bien ete pris en compte.</p>"
+            "<p><strong>Statut :</strong> {quote_status_label}</p>"
+            "<p>Si votre situation evolue, notre equipe pourra vous preparer une nouvelle proposition.</p>"
+            "<p>Piano Academie</p>"
+        ),
+        description="Confirmation envoyee au prospect apres refus du devis depuis l interface publique.",
+        variables_hint="{quote_number} {recipient_name} {quote_status_label} {rejected_at_local}",
+        body_format="HTML",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_REJECTED,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT,
+        name="Devis - Confirmation de demande de modification",
+        channel="EMAIL",
+        subject="Votre demande de modification du devis {quote_number} a bien ete recue",
+        body=(
+            "<p>Bonjour {recipient_name},</p>"
+            "<p>Nous vous confirmons que votre demande de modification du devis <strong>{quote_number}</strong> a bien ete prise en compte.</p>"
+            "<p>Notre equipe reviendra vers vous apres analyse de votre demande.</p>"
+            "<p>Vous pouvez relire le devis ici : <a href=\"{quote_public_url}\">consulter le devis</a>.</p>"
+            "<p>Piano Academie</p>"
+        ),
+        description="Confirmation envoyee au prospect apres demande de modification depuis l interface publique.",
+        variables_hint="{quote_number} {recipient_name} {quote_status_label} {quote_public_url}",
+        body_format="HTML",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,),
+    ),
+    MessagingTemplateDefinition(
         code=PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT,
         name="Devis - Envoi / renvoi (SMS)",
         channel="SMS",
@@ -865,6 +942,9 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_APPROVED_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_REJECTED_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY,
@@ -970,6 +1050,22 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
             ),
             default=QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT,
         ),
+        "quote_approved_template_ref": _sanitize_template_ref(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_APPROVED_TEMPLATE_REF_KEY, QUOTE_APPROVED_TEMPLATE_REF_DEFAULT),
+            default=QUOTE_APPROVED_TEMPLATE_REF_DEFAULT,
+        ),
+        "quote_rejected_template_ref": _sanitize_template_ref(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REJECTED_TEMPLATE_REF_KEY, QUOTE_REJECTED_TEMPLATE_REF_DEFAULT),
+            default=QUOTE_REJECTED_TEMPLATE_REF_DEFAULT,
+        ),
+        "quote_change_requested_template_ref": _sanitize_template_ref(
+            _get_setting_value(
+                db,
+                MESSAGING_SETTINGS_QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_KEY,
+                QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT,
+            ),
+            default=QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT,
+        ),
         "quote_reminder_enabled": _as_bool(
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY, "true"),
             True,
@@ -1045,6 +1141,9 @@ def save_messaging_settings(
     quote_reminder_sms_template_ref: str,
     quote_cancel_template_ref: str,
     quote_cancel_sms_template_ref: str,
+    quote_approved_template_ref: str,
+    quote_rejected_template_ref: str,
+    quote_change_requested_template_ref: str,
     quote_reminder_enabled: bool,
     quote_reminder_sms_enabled: bool,
     quote_reminder_lead_hours: int,
@@ -1188,6 +1287,24 @@ def save_messaging_settings(
         db,
         MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY,
         _sanitize_template_ref(quote_cancel_sms_template_ref, default=QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_APPROVED_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_approved_template_ref, default=QUOTE_APPROVED_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_REJECTED_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_rejected_template_ref, default=QUOTE_REJECTED_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(
+            quote_change_requested_template_ref,
+            default=QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT,
+        ),
     )
     _set_setting_value(
         db,

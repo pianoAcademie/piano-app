@@ -162,6 +162,9 @@ const QUOTE_TEMPLATE_USAGE_CONTEXTS = [
   { value: "QUOTE_SEND", label: "Envoi / renvoi du devis" },
   { value: "QUOTE_REMINDER", label: "Relance avant expiration" },
   { value: "QUOTE_CANCEL", label: "Notification d annulation" },
+  { value: "QUOTE_APPROVED", label: "Confirmation d approbation du devis" },
+  { value: "QUOTE_REJECTED", label: "Confirmation de refus du devis" },
+  { value: "QUOTE_CHANGE_REQUESTED", label: "Confirmation de demande de modification" },
 ] as const;
 
 type ActivityModalSectionProps = {
@@ -772,6 +775,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const quoteSendTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_SEND"));
   const quoteReminderTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REMINDER"));
   const quoteCancelTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_CANCEL"));
+  const quoteApprovedTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_APPROVED"));
+  const quoteRejectedTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REJECTED"));
+  const quoteChangeRequestedTemplates = activeEmailTemplates.filter((template) =>
+    template.usage_contexts.includes("QUOTE_CHANGE_REQUESTED")
+  );
   const quoteSendSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_SEND"));
   const quoteReminderSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REMINDER"));
   const quoteCancelSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_CANCEL"));
@@ -2151,6 +2159,39 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_cancel_template_ref" defaultValue={messagingSettings.quote_cancel_template_ref}>
                           {quoteCancelTemplates.map((template) => (
                             <option key={`cancel-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Template de confirmation d approbation
+                        <select name="quote_approved_template_ref" defaultValue={messagingSettings.quote_approved_template_ref}>
+                          {quoteApprovedTemplates.map((template) => (
+                            <option key={`approved-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Template de confirmation de refus
+                        <select name="quote_rejected_template_ref" defaultValue={messagingSettings.quote_rejected_template_ref}>
+                          {quoteRejectedTemplates.map((template) => (
+                            <option key={`rejected-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="span-2">
+                        Template de confirmation de demande de modification
+                        <select
+                          name="quote_change_requested_template_ref"
+                          defaultValue={messagingSettings.quote_change_requested_template_ref}
+                        >
+                          {quoteChangeRequestedTemplates.map((template) => (
+                            <option key={`change-requested-${template.id}`} value={messagingTemplateRef(template)}>
                               {messagingTemplateOptionLabel(template)}
                             </option>
                           ))}

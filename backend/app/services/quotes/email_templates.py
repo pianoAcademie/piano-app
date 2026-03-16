@@ -13,13 +13,19 @@ from app.models.catalog import Location
 from app.models.quote import Quote, QuoteLine
 from app.services.email_delivery import send_email
 from app.services.messaging_templates import (
+    QUOTE_APPROVED_TEMPLATE_REF_DEFAULT,
     QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT,
     QUOTE_CANCEL_TEMPLATE_REF_DEFAULT,
+    QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT,
+    QUOTE_REJECTED_TEMPLATE_REF_DEFAULT,
     QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT,
     QUOTE_REMINDER_TEMPLATE_REF_DEFAULT,
     QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT,
     QUOTE_SEND_TEMPLATE_REF_DEFAULT,
+    USAGE_CONTEXT_QUOTE_APPROVED,
     USAGE_CONTEXT_QUOTE_CANCEL,
+    USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,
+    USAGE_CONTEXT_QUOTE_REJECTED,
     USAGE_CONTEXT_QUOTE_REMINDER,
     USAGE_CONTEXT_QUOTE_SEND,
     load_messaging_settings,
@@ -109,6 +115,12 @@ def _default_template_ref_for_usage_context(usage_context: str, *, channel: str 
         if usage_context == USAGE_CONTEXT_QUOTE_CANCEL:
             return QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT
         return QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT
+    if usage_context == USAGE_CONTEXT_QUOTE_APPROVED:
+        return QUOTE_APPROVED_TEMPLATE_REF_DEFAULT
+    if usage_context == USAGE_CONTEXT_QUOTE_REJECTED:
+        return QUOTE_REJECTED_TEMPLATE_REF_DEFAULT
+    if usage_context == USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED:
+        return QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT
     if usage_context == USAGE_CONTEXT_QUOTE_REMINDER:
         return QUOTE_REMINDER_TEMPLATE_REF_DEFAULT
     if usage_context == USAGE_CONTEXT_QUOTE_CANCEL:
@@ -128,6 +140,15 @@ def _settings_template_ref_for_usage_context(
         if usage_context == USAGE_CONTEXT_QUOTE_CANCEL:
             return str(settings_payload.get("quote_cancel_sms_template_ref") or QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT)
         return str(settings_payload.get("quote_send_sms_template_ref") or QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT)
+    if usage_context == USAGE_CONTEXT_QUOTE_APPROVED:
+        return str(settings_payload.get("quote_approved_template_ref") or QUOTE_APPROVED_TEMPLATE_REF_DEFAULT)
+    if usage_context == USAGE_CONTEXT_QUOTE_REJECTED:
+        return str(settings_payload.get("quote_rejected_template_ref") or QUOTE_REJECTED_TEMPLATE_REF_DEFAULT)
+    if usage_context == USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED:
+        return str(
+            settings_payload.get("quote_change_requested_template_ref")
+            or QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT
+        )
     if usage_context == USAGE_CONTEXT_QUOTE_REMINDER:
         return str(settings_payload.get("quote_reminder_template_ref") or QUOTE_REMINDER_TEMPLATE_REF_DEFAULT)
     if usage_context == USAGE_CONTEXT_QUOTE_CANCEL:
@@ -304,7 +325,10 @@ def send_quote_templated_sms(
 __all__ = [
     "QuoteRenderedEmail",
     "QuoteRenderedSms",
+    "USAGE_CONTEXT_QUOTE_APPROVED",
     "USAGE_CONTEXT_QUOTE_CANCEL",
+    "USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED",
+    "USAGE_CONTEXT_QUOTE_REJECTED",
     "USAGE_CONTEXT_QUOTE_REMINDER",
     "USAGE_CONTEXT_QUOTE_SEND",
     "build_quote_email_context",

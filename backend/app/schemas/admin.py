@@ -201,6 +201,9 @@ class AdminMessagingSettingsOut(BaseModel):
     quote_reminder_sms_template_ref: str
     quote_cancel_template_ref: str
     quote_cancel_sms_template_ref: str
+    quote_approved_template_ref: str
+    quote_rejected_template_ref: str
+    quote_change_requested_template_ref: str
     quote_reminder_enabled: bool
     quote_reminder_sms_enabled: bool
     quote_reminder_lead_hours: int
@@ -244,6 +247,9 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
     quote_reminder_sms_template_ref: str = Field(default="predefined:QUOTE_REMINDER_SMS_DEFAULT", max_length=120)
     quote_cancel_template_ref: str = Field(default="predefined:QUOTE_CANCEL_DEFAULT", max_length=120)
     quote_cancel_sms_template_ref: str = Field(default="predefined:QUOTE_CANCEL_SMS_DEFAULT", max_length=120)
+    quote_approved_template_ref: str = Field(default="predefined:QUOTE_APPROVED_DEFAULT", max_length=120)
+    quote_rejected_template_ref: str = Field(default="predefined:QUOTE_REJECTED_DEFAULT", max_length=120)
+    quote_change_requested_template_ref: str = Field(default="predefined:QUOTE_CHANGE_REQUESTED_DEFAULT", max_length=120)
     quote_reminder_enabled: bool = True
     quote_reminder_sms_enabled: bool = False
     quote_reminder_lead_hours: int = Field(default=24, ge=1, le=168)

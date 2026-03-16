@@ -8403,6 +8403,9 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
     quote_reminder_sms_template_ref: String(formData.get("quote_reminder_sms_template_ref") ?? "").trim(),
     quote_cancel_template_ref: String(formData.get("quote_cancel_template_ref") ?? "").trim(),
     quote_cancel_sms_template_ref: String(formData.get("quote_cancel_sms_template_ref") ?? "").trim(),
+    quote_approved_template_ref: String(formData.get("quote_approved_template_ref") ?? "").trim(),
+    quote_rejected_template_ref: String(formData.get("quote_rejected_template_ref") ?? "").trim(),
+    quote_change_requested_template_ref: String(formData.get("quote_change_requested_template_ref") ?? "").trim(),
     quote_reminder_enabled: checkboxField(formData, "quote_reminder_enabled"),
     quote_reminder_sms_enabled: checkboxField(formData, "quote_reminder_sms_enabled"),
     quote_reminder_lead_hours: Number.parseInt(String(formData.get("quote_reminder_lead_hours") ?? "").trim() || "24", 10),
@@ -9719,6 +9722,36 @@ export async function cancelQuoteAction(formData: FormData): Promise<void> {
   revalidatePath("/admin/communications");
   revalidatePath(`/admin/quotes/${quoteId}`);
   redirect(appendQueryMessage(returnTo, "ok", "Devis annule"));
+}
+
+export async function restoreQuotePublicResponseAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/restore-public-response`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Statut public du devis restaure"));
 }
 
 export async function resendCommunicationAction(formData: FormData): Promise<void> {

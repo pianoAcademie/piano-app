@@ -102,7 +102,10 @@ from app.services.invoice_documents import normalize_billing_entity
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.email_templates import (
+    USAGE_CONTEXT_QUOTE_APPROVED,
     USAGE_CONTEXT_QUOTE_CANCEL,
+    USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,
+    USAGE_CONTEXT_QUOTE_REJECTED,
     USAGE_CONTEXT_QUOTE_REMINDER,
     USAGE_CONTEXT_QUOTE_SEND,
     send_quote_templated_email,
@@ -133,6 +136,11 @@ QUOTE_FINANCIAL_ADJUSTMENT_CREDIT = "credit"
 QUOTE_FINANCIAL_ADJUSTMENT_DEBT = "debt"
 QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY = "pre_registration_deposit"
 QUOTE_PRE_REGISTRATION_DEPOSIT_DEFAULT_AMOUNT = Decimal("200.00")
+QUOTE_PUBLIC_RESPONSE_PREVIOUS_STATUS_META_KEY = "public_response_previous_status"
+QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY = "public_response_last_action"
+QUOTE_PUBLIC_RESPONSE_LAST_AT_META_KEY = "public_response_last_at"
+QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY = "public_response_last_message"
+QUOTE_PUBLIC_RESPONSE_LAST_RESTORED_FROM_META_KEY = "public_response_last_restored_from"
 
 
 def _utcnow() -> datetime:
@@ -1868,6 +1876,121 @@ def _resolve_recipient_phone(db: Session, quote: Quote, explicit_phone: str | No
     return resolve_quote_recipient_phone(db, quote, explicit_phone=explicit_phone)
 
 
+def _quote_meta_dict(quote: Quote) -> dict[str, object]:
+    return dict(quote.meta) if isinstance(quote.meta, dict) else {}
+
+
+def _update_public_response_meta(
+    quote: Quote,
+    *,
+    previous_status: str,
+    next_status: str,
+    action: str,
+    at: datetime,
+    message: str | None = None,
+) -> None:
+    next_meta = _quote_meta_dict(quote)
+    normalized_previous = previous_status.strip().lower()
+    normalized_next = next_status.strip().lower()
+    if normalized_previous and normalized_previous != normalized_next:
+        next_meta[QUOTE_PUBLIC_RESPONSE_PREVIOUS_STATUS_META_KEY] = normalized_previous
+    next_meta[QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY] = action
+    next_meta[QUOTE_PUBLIC_RESPONSE_LAST_AT_META_KEY] = at.isoformat()
+    if message is not None:
+        trimmed_message = message.strip()
+        if trimmed_message:
+            next_meta[QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY] = trimmed_message
+        else:
+            next_meta.pop(QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY, None)
+    quote.meta = next_meta
+
+
+def _restore_public_response_target_status(quote: Quote) -> str:
+    candidate = str(_quote_meta_dict(quote).get(QUOTE_PUBLIC_RESPONSE_PREVIOUS_STATUS_META_KEY) or "").strip().lower()
+    if candidate in {"sent", "change_requested"}:
+        return candidate
+    return "sent"
+
+
+def _try_send_public_quote_confirmation_email(
+    db: Session,
+    *,
+    quote: Quote,
+    lines: list[QuoteLine],
+    usage_context: str,
+    kind: str,
+) -> None:
+    recipient_email = _resolve_recipient_email(db, quote)
+    now = _utcnow()
+    if recipient_email is None:
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_public_confirmation_email_skipped",
+                actor_type="system",
+                payload={
+                    "kind": kind,
+                    "usage_context": usage_context,
+                    "reason": "missing_recipient_email",
+                },
+                created_at=now,
+            )
+        )
+        db.commit()
+        return
+    delivery_error = email_delivery_disabled_reason()
+    if delivery_error:
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_public_confirmation_email_skipped",
+                actor_type="system",
+                payload={
+                    "kind": kind,
+                    "usage_context": usage_context,
+                    "reason": "delivery_disabled",
+                    "detail": delivery_error,
+                    "recipient_email": recipient_email,
+                },
+                created_at=now,
+            )
+        )
+        db.commit()
+        return
+    try:
+        quote.meta = {**_quote_meta_dict(quote), "recipient_email": recipient_email}
+        db.add(quote)
+        _send_quote_email(
+            db,
+            quote=quote,
+            lines=lines,
+            recipient_email=recipient_email,
+            kind=kind,
+            usage_context=usage_context,
+            actor_id=None,
+            actor_type="system",
+            allow_duplicate=True,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_public_confirmation_email_failed",
+                actor_type="system",
+                payload={
+                    "kind": kind,
+                    "usage_context": usage_context,
+                    "recipient_email": recipient_email,
+                    "error": str(exc),
+                },
+                created_at=_utcnow(),
+            )
+        )
+        db.commit()
+
+
 def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: Decimal) -> list[dict[str, object]]:
     if quote.payment_plan_id is None:
         return []
@@ -3268,6 +3391,7 @@ def _send_quote_email(
     kind: str,
     usage_context: str,
     actor_id: UUID | None,
+    actor_type: str = "admin",
     allow_duplicate: bool = False,
     template_ref: str | None = None,
 ) -> None:
@@ -3314,7 +3438,7 @@ def _send_quote_email(
         QuoteEvent(
             quote_id=quote.id,
             event_type="quote_email_sent",
-            actor_type="admin",
+            actor_type=actor_type,
             actor_id=actor_id,
             payload={
                 "kind": kind,
@@ -3756,9 +3880,18 @@ def public_approve_quote(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be approved in current status")
 
     now = _utcnow()
+    previous_status = str(quote.status or "").strip().lower()
     quote.status = "approved"
     quote.approved_at = now
+    quote.rejected_at = None
     quote.updated_at = now
+    _update_public_response_meta(
+        quote,
+        previous_status=previous_status,
+        next_status="approved",
+        action="approved",
+        at=now,
+    )
 
     target_client_id = _ensure_pending_client_from_prospect(db, quote)
     followup = _ensure_followup(db, quote)
@@ -3786,6 +3919,13 @@ def public_approve_quote(
     db.add(quote)
     db.commit()
     db.refresh(quote)
+    _try_send_public_quote_confirmation_email(
+        db,
+        quote=quote,
+        lines=lines,
+        usage_context=USAGE_CONTEXT_QUOTE_APPROVED,
+        kind="quote_public_approved_confirmation",
+    )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
         list((quote.payment_terms_snapshot or {}).get("schedule", []))
@@ -3812,9 +3952,18 @@ def public_reject_quote(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be rejected in current status")
 
     now = _utcnow()
+    previous_status = str(quote.status or "").strip().lower()
     quote.status = "rejected"
     quote.rejected_at = now
+    quote.approved_at = None
     quote.updated_at = now
+    _update_public_response_meta(
+        quote,
+        previous_status=previous_status,
+        next_status="rejected",
+        action="rejected",
+        at=now,
+    )
     db.add(quote)
     db.add(
         QuoteEvent(
@@ -3828,6 +3977,13 @@ def public_reject_quote(
     db.commit()
     db.refresh(quote)
     lines = _load_quote_lines(db, quote.id)
+    _try_send_public_quote_confirmation_email(
+        db,
+        quote=quote,
+        lines=lines,
+        usage_context=USAGE_CONTEXT_QUOTE_REJECTED,
+        kind="quote_public_rejected_confirmation",
+    )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
         list((quote.payment_terms_snapshot or {}).get("schedule", []))
@@ -3855,8 +4011,19 @@ def public_change_request_quote(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot accept change request in current status")
 
     now = _utcnow()
+    previous_status = str(quote.status or "").strip().lower()
     quote.status = "change_requested"
+    quote.approved_at = None
+    quote.rejected_at = None
     quote.updated_at = now
+    _update_public_response_meta(
+        quote,
+        previous_status=previous_status,
+        next_status="change_requested",
+        action="change_requested",
+        at=now,
+        message=payload.message,
+    )
     db.add(quote)
     db.add(
         QuoteEvent(
@@ -3870,6 +4037,13 @@ def public_change_request_quote(
     db.commit()
     db.refresh(quote)
     lines = _load_quote_lines(db, quote.id)
+    _try_send_public_quote_confirmation_email(
+        db,
+        quote=quote,
+        lines=lines,
+        usage_context=USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,
+        kind="quote_public_change_requested_confirmation",
+    )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
         list((quote.payment_terms_snapshot or {}).get("schedule", []))
@@ -3881,6 +4055,58 @@ def public_change_request_quote(
         lines=[_line_out(row) for row in lines],
         payment_schedule=public_schedule,
     )
+
+
+@router.post("/quotes/{quote_id}/restore-public-response", response_model=QuoteDetailOut)
+def restore_quote_public_response(
+    quote_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    quote = _load_quote(db, quote_id, lock=True)
+    current_status = str(quote.status or "").strip().lower()
+    if current_status not in {"approved", "rejected", "change_requested"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Quote public response cannot be restored in current status",
+        )
+
+    target_status = _restore_public_response_target_status(quote)
+    now = _utcnow()
+    next_meta = _quote_meta_dict(quote)
+    next_meta[QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY] = "admin_restore"
+    next_meta[QUOTE_PUBLIC_RESPONSE_LAST_AT_META_KEY] = now.isoformat()
+    next_meta[QUOTE_PUBLIC_RESPONSE_LAST_RESTORED_FROM_META_KEY] = current_status
+    next_meta.pop(QUOTE_PUBLIC_RESPONSE_PREVIOUS_STATUS_META_KEY, None)
+    quote.meta = next_meta
+    quote.status = target_status
+    quote.approved_at = None
+    quote.rejected_at = None
+    quote.updated_at = now
+
+    followup = db.scalar(select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.quote_id == quote.id).limit(1))
+    if followup is not None and current_status == "approved":
+        followup.status = "restored"
+        followup.updated_at = now
+        db.add(followup)
+
+    db.add(quote)
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_public_response_restored",
+            actor_type="admin",
+            actor_id=current_user.id,
+            payload={
+                "from_status": current_status,
+                "to_status": target_status,
+            },
+            created_at=now,
+        )
+    )
+    db.commit()
+    db.refresh(quote)
+    return _quote_detail_out(db, quote)
 
 
 @router.get("/public/quotes/{quote_id}/pdf")
