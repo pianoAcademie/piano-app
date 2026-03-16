@@ -215,12 +215,18 @@ class QuoteUpdateRequest(BaseModel):
 class QuoteSendRequest(BaseModel):
     recipient_email: str | None = Field(default=None, min_length=3, max_length=255)
     template_ref: str | None = Field(default=None, max_length=120)
+    send_sms: bool = False
+    recipient_phone: str | None = Field(default=None, max_length=40)
+    sms_template_ref: str | None = Field(default=None, max_length=120)
 
 
 class QuoteCancelRequest(BaseModel):
     notify_recipient: bool = True
     recipient_email: str | None = Field(default=None, min_length=3, max_length=255)
     template_ref: str | None = Field(default=None, max_length=120)
+    notify_recipient_sms: bool = False
+    recipient_phone: str | None = Field(default=None, max_length=40)
+    sms_template_ref: str | None = Field(default=None, max_length=120)
 
 
 class QuoteCalendarPreviewRequest(BaseModel):

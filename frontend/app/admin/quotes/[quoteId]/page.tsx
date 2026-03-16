@@ -736,7 +736,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     documentPreviewResult,
     messagingSettingsResult,
     quoteSendTemplatesResult,
+    quoteSendSmsTemplatesResult,
     quoteCancelTemplatesResult,
+    quoteCancelSmsTemplatesResult,
   ] = await Promise.all([
     backendRequest<QuoteDetailOut>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`, {}, token),
     backendRequest<QuoteFollowupOut[]>(`/api/v1/quote-followups?quote_id=${encodeURIComponent(quoteId)}`, {}, token),
@@ -766,7 +768,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       token,
     ),
     backendRequest<AdminMessagingTemplateOut[]>(
+      "/api/v1/admin/config/messaging-templates?channel=SMS&usage_context=QUOTE_SEND&active_only=true",
+      {},
+      token,
+    ),
+    backendRequest<AdminMessagingTemplateOut[]>(
       "/api/v1/admin/config/messaging-templates?channel=EMAIL&usage_context=QUOTE_CANCEL&active_only=true",
+      {},
+      token,
+    ),
+    backendRequest<AdminMessagingTemplateOut[]>(
+      "/api/v1/admin/config/messaging-templates?channel=SMS&usage_context=QUOTE_CANCEL&active_only=true",
       {},
       token,
     ),
@@ -827,7 +839,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const documentPreview = documentPreviewResult.ok ? documentPreviewResult.data : null;
   const messagingSettings = messagingSettingsResult.ok ? messagingSettingsResult.data : null;
   const quoteSendTemplates = quoteSendTemplatesResult.ok ? quoteSendTemplatesResult.data : [];
+  const quoteSendSmsTemplates = quoteSendSmsTemplatesResult.ok ? quoteSendSmsTemplatesResult.data : [];
   const quoteCancelTemplates = quoteCancelTemplatesResult.ok ? quoteCancelTemplatesResult.data : [];
+  const quoteCancelSmsTemplates = quoteCancelSmsTemplatesResult.ok ? quoteCancelSmsTemplatesResult.data : [];
   const activityPrices = activityPricesResult?.ok ? activityPricesResult.data : [];
   const productPrices = productPricesResult?.ok ? productPricesResult.data : [];
   const kitPrices = kitPricesResult?.ok ? kitPricesResult.data : [];
@@ -979,13 +993,23 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const primaryRecipientLabel = detail.quote.context_type === "acquisition" ? "prospect" : "client";
   const ownerEmail = String(owner?.email || "").trim().toLowerCase();
   const lastRecipientEmail = readStringMeta(detail.quote.meta || {}, "recipient_email", "").trim().toLowerCase();
+  const lastRecipientPhone = readStringMeta(detail.quote.meta || {}, "recipient_phone", "").trim();
   const defaultThirdPartyEmail = lastRecipientEmail && lastRecipientEmail !== ownerEmail ? lastRecipientEmail : "";
+  const defaultPrimaryPhone = [lastRecipientPhone, resolvedParentReferentPhone, ownerPhone]
+    .map((value) => String(value || "").trim())
+    .find((value) => value && value !== "-") || "";
   const defaultSendTemplateRef =
     messagingSettings?.quote_send_template_ref ||
     (quoteSendTemplates[0] ? messagingTemplateRef(quoteSendTemplates[0]) : "");
+  const defaultSendSmsTemplateRef =
+    messagingSettings?.quote_send_sms_template_ref ||
+    (quoteSendSmsTemplates[0] ? messagingTemplateRef(quoteSendSmsTemplates[0]) : "");
   const defaultCancelTemplateRef =
     messagingSettings?.quote_cancel_template_ref ||
     (quoteCancelTemplates[0] ? messagingTemplateRef(quoteCancelTemplates[0]) : "");
+  const defaultCancelSmsTemplateRef =
+    messagingSettings?.quote_cancel_sms_template_ref ||
+    (quoteCancelSmsTemplates[0] ? messagingTemplateRef(quoteCancelSmsTemplates[0]) : "");
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
@@ -1493,6 +1517,34 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                             ))}
                           </select>
                         </label>
+                        {defaultPrimaryPhone ? (
+                          <>
+                            <label className="checkline">
+                              <input type="checkbox" name="send_sms" />
+                              Envoyer aussi un SMS
+                            </label>
+                            <label>
+                              Numero de mobile
+                              <input type="text" name="recipient_phone" defaultValue={defaultPrimaryPhone} maxLength={30} />
+                            </label>
+                            <label>
+                              Template SMS
+                              <select
+                                name="sms_template_ref"
+                                defaultValue={defaultSendSmsTemplateRef}
+                                disabled={quoteSendSmsTemplates.length === 0}
+                              >
+                                {quoteSendSmsTemplates.map((template) => (
+                                  <option key={`primary-send-sms-${template.id}`} value={messagingTemplateRef(template)}>
+                                    {messagingTemplateOptionLabel(template)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </>
+                        ) : (
+                          <small className="muted top-gap-sm">Aucun numero mobile resolu pour proposer l envoi par SMS.</small>
+                        )}
                         <button type="submit" disabled={!ownerEmail}>
                           {canSendQuote ? `Envoyer au ${primaryRecipientLabel}` : `Renvoyer au ${primaryRecipientLabel}`}
                         </button>
@@ -1539,6 +1591,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       {lastRecipientEmail ? (
                         <small className="muted top-gap-sm">Dernier destinataire enregistre: {lastRecipientEmail}</small>
                       ) : null}
+                      {lastRecipientPhone ? (
+                        <small className="muted top-gap-sm">Dernier numero utilise: {lastRecipientPhone}</small>
+                      ) : null}
                     </div>
                   </>
                 ) : (
@@ -1579,6 +1634,32 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           ))}
                         </select>
                       </label>
+                      {defaultPrimaryPhone ? (
+                        <>
+                          <label className="checkline">
+                            <input type="checkbox" name="notify_recipient_sms" defaultChecked />
+                            Notifier aussi par SMS
+                          </label>
+                          <label>
+                            Numero SMS
+                            <input type="text" name="recipient_phone" defaultValue={defaultPrimaryPhone} maxLength={30} />
+                          </label>
+                          <label>
+                            Template SMS d annulation
+                            <select
+                              name="sms_template_ref"
+                              defaultValue={defaultCancelSmsTemplateRef}
+                              disabled={quoteCancelSmsTemplates.length === 0}
+                            >
+                              {quoteCancelSmsTemplates.map((template) => (
+                                <option key={`cancel-sms-${template.id}`} value={messagingTemplateRef(template)}>
+                                  {messagingTemplateOptionLabel(template)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </>
+                      ) : null}
                       <div className="row wrap gap-sm top-gap-sm">
                         <button type="submit" className="danger">
                           Annuler le devis

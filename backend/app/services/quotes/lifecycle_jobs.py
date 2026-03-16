@@ -17,7 +17,10 @@ from app.services.quotes.email_templates import (
     USAGE_CONTEXT_QUOTE_CANCEL,
     USAGE_CONTEXT_QUOTE_REMINDER,
     send_quote_templated_email,
+    send_quote_templated_sms,
 )
+from app.services.quotes.recipient_resolution import resolve_quote_recipient_phone
+from app.services.providers.sms import sms_delivery_disabled_reason
 
 JOB_NAME = "quote_daily_lifecycle_job"
 DEFAULT_QUOTE_TIMEZONE = "Europe/Paris"
@@ -35,8 +38,13 @@ class QuoteDailyLifecycleSettings:
     auto_cancel_delay_hours: int
     cancel_notification_enabled: bool
     delivery_enabled: bool
+    sms_delivery_enabled: bool
     quote_reminder_template_ref: str | None
     quote_cancel_template_ref: str | None
+    quote_reminder_sms_template_ref: str | None
+    quote_cancel_sms_template_ref: str | None
+    quote_reminder_sms_enabled: bool
+    quote_cancel_sms_notification_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -69,8 +77,13 @@ def _load_quote_lifecycle_settings(db: Session) -> QuoteDailyLifecycleSettings:
         auto_cancel_delay_hours=max(int(payload.get("quote_auto_cancel_delay_hours") or 24), 0),
         cancel_notification_enabled=bool(payload.get("quote_cancel_notification_enabled", True)),
         delivery_enabled=email_delivery_disabled_reason() is None,
+        sms_delivery_enabled=sms_delivery_disabled_reason(db) is None,
         quote_reminder_template_ref=str(payload.get("quote_reminder_template_ref") or "").strip() or None,
         quote_cancel_template_ref=str(payload.get("quote_cancel_template_ref") or "").strip() or None,
+        quote_reminder_sms_template_ref=str(payload.get("quote_reminder_sms_template_ref") or "").strip() or None,
+        quote_cancel_sms_template_ref=str(payload.get("quote_cancel_sms_template_ref") or "").strip() or None,
+        quote_reminder_sms_enabled=bool(payload.get("quote_reminder_sms_enabled", False)),
+        quote_cancel_sms_notification_enabled=bool(payload.get("quote_cancel_sms_notification_enabled", False)),
     )
 
 
@@ -167,6 +180,51 @@ def _queue_email_if_new(
     return bool(message_id)
 
 
+def _send_sms_if_enabled(
+    db: Session,
+    *,
+    quote: Quote,
+    lines: list[QuoteLine],
+    kind: str,
+    usage_context: str,
+    recipient_phone: str,
+    template_ref: str | None,
+    now: datetime,
+    delivery_enabled: bool,
+) -> bool:
+    if not delivery_enabled:
+        return False
+    rendered, provider_result = send_quote_templated_sms(
+        db,
+        quote=quote,
+        lines=lines,
+        recipient_phone=recipient_phone,
+        usage_context=usage_context,
+        template_ref=template_ref,
+        sms_context=f"QUOTE_{kind.upper()}",
+    )
+    if not provider_result.ok:
+        return False
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_sms_sent",
+            actor_type="system",
+            payload={
+                "kind": kind,
+                "usage_context": usage_context,
+                "recipient_phone": recipient_phone,
+                "template_ref": rendered.template_ref,
+                "provider": provider_result.provider_name,
+                "provider_status": provider_result.provider_status,
+                "provider_message_id": provider_result.provider_message_id,
+            },
+            created_at=now,
+        )
+    )
+    return True
+
+
 def run_quote_daily_lifecycle_job(
     db: Session,
     *,
@@ -226,7 +284,8 @@ def run_quote_daily_lifecycle_job(
                     str((quote.meta or {}).get("recipient_email") or "").strip().lower()
                     or str((quote.meta or {}).get("prospect_email") or "").strip().lower()
                 )
-                if not recipient:
+                recipient_phone = resolve_quote_recipient_phone(db, quote)
+                if not recipient and not recipient_phone:
                     failed += 1
                     append_job_run_log(
                         db,
@@ -236,18 +295,33 @@ def run_quote_daily_lifecycle_job(
                         context_json={"quote_id": str(quote.id)},
                     )
                     continue
+                email_sent = False
+                sms_sent = False
                 try:
-                    sent = _queue_email_if_new(
-                        db,
-                        quote=quote,
-                        lines=quote_lines_by_id.get(quote.id, []),
-                        kind="reminder",
-                        usage_context=USAGE_CONTEXT_QUOTE_REMINDER,
-                        recipient_email=recipient,
-                        template_ref=settings.quote_reminder_template_ref,
-                        now=ts,
-                        delivery_enabled=settings.delivery_enabled,
-                    )
+                    if recipient:
+                        email_sent = _queue_email_if_new(
+                            db,
+                            quote=quote,
+                            lines=quote_lines_by_id.get(quote.id, []),
+                            kind="reminder",
+                            usage_context=USAGE_CONTEXT_QUOTE_REMINDER,
+                            recipient_email=recipient,
+                            template_ref=settings.quote_reminder_template_ref,
+                            now=ts,
+                            delivery_enabled=settings.delivery_enabled,
+                        )
+                    if recipient_phone and settings.quote_reminder_sms_enabled:
+                        sms_sent = _send_sms_if_enabled(
+                            db,
+                            quote=quote,
+                            lines=quote_lines_by_id.get(quote.id, []),
+                            kind="reminder",
+                            usage_context=USAGE_CONTEXT_QUOTE_REMINDER,
+                            recipient_phone=recipient_phone,
+                            template_ref=settings.quote_reminder_sms_template_ref,
+                            now=ts,
+                            delivery_enabled=settings.sms_delivery_enabled,
+                        )
                 except Exception as exc:
                     failed += 1
                     append_job_run_log(
@@ -258,7 +332,7 @@ def run_quote_daily_lifecycle_job(
                         context_json={"quote_id": str(quote.id), "error": str(exc)},
                     )
                     continue
-                if sent:
+                if email_sent or sms_sent:
                     reminders_sent += 1
                     quote.reminder_sent_at = ts
                     quote.updated_at = ts
@@ -343,25 +417,40 @@ def run_quote_daily_lifecycle_job(
                 cancelled += 1
 
                 if not settings.cancel_notification_enabled:
-                    continue
-                recipient = (
-                    str((quote.meta or {}).get("recipient_email") or "").strip().lower()
-                    or str((quote.meta or {}).get("prospect_email") or "").strip().lower()
-                )
-                if not recipient:
+                    recipient = ""
+                else:
+                    recipient = (
+                        str((quote.meta or {}).get("recipient_email") or "").strip().lower()
+                        or str((quote.meta or {}).get("prospect_email") or "").strip().lower()
+                    )
+                recipient_phone = resolve_quote_recipient_phone(db, quote)
+                if not recipient and not recipient_phone:
                     continue
                 try:
-                    _queue_email_if_new(
-                        db,
-                        quote=quote,
-                        lines=quote_lines_by_id.get(quote.id, []),
-                        kind="cancel",
-                        usage_context=USAGE_CONTEXT_QUOTE_CANCEL,
-                        recipient_email=recipient,
-                        template_ref=settings.quote_cancel_template_ref,
-                        now=ts,
-                        delivery_enabled=settings.delivery_enabled,
-                    )
+                    if recipient and settings.cancel_notification_enabled:
+                        _queue_email_if_new(
+                            db,
+                            quote=quote,
+                            lines=quote_lines_by_id.get(quote.id, []),
+                            kind="cancel",
+                            usage_context=USAGE_CONTEXT_QUOTE_CANCEL,
+                            recipient_email=recipient,
+                            template_ref=settings.quote_cancel_template_ref,
+                            now=ts,
+                            delivery_enabled=settings.delivery_enabled,
+                        )
+                    if recipient_phone and settings.quote_cancel_sms_notification_enabled:
+                        _send_sms_if_enabled(
+                            db,
+                            quote=quote,
+                            lines=quote_lines_by_id.get(quote.id, []),
+                            kind="cancel",
+                            usage_context=USAGE_CONTEXT_QUOTE_CANCEL,
+                            recipient_phone=recipient_phone,
+                            template_ref=settings.quote_cancel_sms_template_ref,
+                            now=ts,
+                            delivery_enabled=settings.sms_delivery_enabled,
+                        )
                 except Exception as exc:
                     failed += 1
                     append_job_run_log(

@@ -766,9 +766,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const activeEmailTemplates = [...emailPredefinedTemplates, ...customEmailTemplates]
     .filter((template) => template.active)
     .sort((left, right) => left.name.localeCompare(right.name, "fr"));
+  const activeSmsTemplates = [...smsPredefinedTemplates, ...customSmsTemplates]
+    .filter((template) => template.active)
+    .sort((left, right) => left.name.localeCompare(right.name, "fr"));
   const quoteSendTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_SEND"));
   const quoteReminderTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REMINDER"));
   const quoteCancelTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_CANCEL"));
+  const quoteSendSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_SEND"));
+  const quoteReminderSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REMINDER"));
+  const quoteCancelSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_CANCEL"));
   const quoteTemplateVariablesByCategory = quoteTemplateVariables.reduce<Record<string, QuoteTemplateVariableOut[]>>((acc, item) => {
     const key = item.category || "Autres";
     if (!acc[key]) {
@@ -2070,6 +2076,31 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </fieldset>
 
                     <fieldset className="span-2 config-subsection">
+                      <legend>Transport SMS</legend>
+                      <label>
+                        Fournisseur SMS
+                        <select name="sms_provider" defaultValue={messagingSettings.sms_provider}>
+                          <option value="LOG">Journal uniquement (pas d envoi reel)</option>
+                          <option value="BREVO">Brevo SMS</option>
+                        </select>
+                      </label>
+                      <label>
+                        Expediteur SMS
+                        <input type="text" name="sms_sender" defaultValue={messagingSettings.sms_sender} maxLength={32} />
+                        <span className="muted">11 caracteres max en general selon l operateur.</span>
+                      </label>
+                      <label className="span-2">
+                        Cle API SMS Brevo
+                        <input type="password" name="brevo_sms_api_key" defaultValue="" maxLength={255} autoComplete="new-password" />
+                        <span className="muted">
+                          {messagingSettings.brevo_sms_api_key_configured
+                            ? `Cle configuree (${messagingSettings.brevo_sms_api_key_masked || "masquee"}). Laisser vide pour la conserver.`
+                            : "Aucune cle SMS configuree."}
+                        </span>
+                      </label>
+                    </fieldset>
+
+                    <fieldset className="span-2 config-subsection">
                       <legend>Cycle de vie des devis</legend>
                       <p className="muted">
                         Ces reglages pilotent les emails manuels, les relances d expiration et l annulation automatique.
@@ -2086,6 +2117,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
+                        Template SMS pour l envoi / renvoi
+                        <select name="quote_send_sms_template_ref" defaultValue={messagingSettings.quote_send_sms_template_ref}>
+                          {quoteSendSmsTemplates.map((template) => (
+                            <option key={`send-sms-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
                         Template de relance avant expiration
                         <select name="quote_reminder_template_ref" defaultValue={messagingSettings.quote_reminder_template_ref}>
                           {quoteReminderTemplates.map((template) => (
@@ -2096,10 +2137,30 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
+                        Template SMS de relance avant expiration
+                        <select name="quote_reminder_sms_template_ref" defaultValue={messagingSettings.quote_reminder_sms_template_ref}>
+                          {quoteReminderSmsTemplates.map((template) => (
+                            <option key={`reminder-sms-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
                         Template de notification d annulation
                         <select name="quote_cancel_template_ref" defaultValue={messagingSettings.quote_cancel_template_ref}>
                           {quoteCancelTemplates.map((template) => (
                             <option key={`cancel-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Template SMS d annulation
+                        <select name="quote_cancel_sms_template_ref" defaultValue={messagingSettings.quote_cancel_sms_template_ref}>
+                          {quoteCancelSmsTemplates.map((template) => (
+                            <option key={`cancel-sms-${template.id}`} value={messagingTemplateRef(template)}>
                               {messagingTemplateOptionLabel(template)}
                             </option>
                           ))}
@@ -2123,6 +2184,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           defaultChecked={messagingSettings.quote_reminder_enabled}
                         />
                         Envoyer un rappel avant expiration
+                      </label>
+                      <label className="checkline span-2">
+                        <input
+                          type="checkbox"
+                          name="quote_reminder_sms_enabled"
+                          defaultChecked={messagingSettings.quote_reminder_sms_enabled}
+                        />
+                        Envoyer aussi un SMS de rappel avant expiration
                       </label>
                       <label>
                         Delai de rappel avant expiration (heures)
@@ -2166,6 +2235,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         />
                         Notifier le destinataire quand un devis est annule automatiquement
                       </label>
+                      <label className="checkline span-2">
+                        <input
+                          type="checkbox"
+                          name="quote_cancel_sms_notification_enabled"
+                          defaultChecked={messagingSettings.quote_cancel_sms_notification_enabled}
+                        />
+                        Envoyer aussi un SMS quand un devis est annule automatiquement
+                      </label>
                     </fieldset>
 
                     <div className="span-2 config-note-box">
@@ -2174,6 +2251,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         {messagingSettings.delivery_enabled
                           ? `Envoi email actif via ${messagingSettings.email_provider}.`
                           : messagingSettings.delivery_error_message || "Envoi email indisponible."}
+                      </p>
+                      <p className="muted">
+                        {messagingSettings.sms_delivery_enabled
+                          ? `Envoi SMS actif via ${messagingSettings.sms_provider}.`
+                          : messagingSettings.sms_delivery_error_message || "Envoi SMS indisponible."}
                       </p>
                       <p className="muted">
                         De: <strong>{messagingSettings.studio_sender_name || "Studio"}</strong> &lt;{messagingSettings.studio_email}&gt;
@@ -2186,9 +2268,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         Liens publics / emails: <strong>{messagingSettings.frontend_base_url}</strong>
                       </p>
                       <p className="muted">
+                        Expediteur SMS: <strong>{messagingSettings.sms_sender || "-"}</strong>
+                      </p>
+                      <p className="muted">
                         Job devis quotidien: <strong>{messagingSettings.quote_daily_job_local_time}</strong> dans le fuseau du devis.
                         Rappel {messagingSettings.quote_reminder_enabled ? "actif" : "desactive"} ({messagingSettings.quote_reminder_lead_hours} h avant) ·
-                        auto-annulation {messagingSettings.quote_auto_cancel_enabled ? "active" : "desactive"} ({messagingSettings.quote_auto_cancel_delay_hours} h apres expiration).
+                        rappel SMS {messagingSettings.quote_reminder_sms_enabled ? "actif" : "desactive"} ·
+                        auto-annulation {messagingSettings.quote_auto_cancel_enabled ? "active" : "desactive"} ({messagingSettings.quote_auto_cancel_delay_hours} h apres expiration) ·
+                        annulation SMS {messagingSettings.quote_cancel_sms_notification_enabled ? "active" : "desactive"}.
                       </p>
                       {messagingSettings.email_provider === "BREVO" ? (
                         <>
@@ -2203,6 +2290,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             Dans Brevo, activez au minimum les evenements <strong>delivered</strong>, <strong>hardBounce</strong> et{" "}
                             <strong>softBounce</strong> pour mettre a jour l etat de livraison.
                           </p>
+                          <p className="muted">
+                            Webhook Brevo SMS a configurer: <strong>{messagingSettings.brevo_sms_webhook_url}</strong>
+                          </p>
+                          <label className="stack-sm top-gap-sm">
+                            URL webhook Brevo SMS
+                            <input type="text" value={messagingSettings.brevo_sms_webhook_url} readOnly />
+                          </label>
                         </>
                       ) : null}
                       <p className="muted">
@@ -2328,6 +2422,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <tr>
                           <th>Nom</th>
                           <th>Contenu</th>
+                          <th>Utilisation</th>
                           <th>Actif</th>
                           <th aria-label="Actions" />
                         </tr>
@@ -2337,6 +2432,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <tr key={template.id}>
                             <td>{template.name}</td>
                             <td>{template.body.slice(0, 90)}{template.body.length > 90 ? "..." : ""}</td>
+                            <td>
+                              <div className="row wrap gap-sm">
+                                {template.usage_contexts.length === 0 ? (
+                                  <span className="status-pill status-off">Aucun usage affecte</span>
+                                ) : (
+                                  template.usage_contexts.map((usageContext) => (
+                                    <span key={`${template.id}-${usageContext}`} className="badge">
+                                      {quoteUsageContextLabel(usageContext)}
+                                    </span>
+                                  ))
+                                )}
+                              </div>
+                            </td>
                             <td>{template.active ? "Oui" : "Non"}</td>
                             <td>
                               <Link
@@ -2465,6 +2573,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <tr>
                           <th>Nom</th>
                           <th>Contenu</th>
+                          <th>Utilisation</th>
                           <th>Actif</th>
                           <th aria-label="Actions" />
                         </tr>
@@ -2476,6 +2585,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <td>
                               {template.body.slice(0, 90)}
                               {template.body.length > 90 ? "..." : ""}
+                            </td>
+                            <td>
+                              <div className="row wrap gap-sm">
+                                {template.usage_contexts.length === 0 ? (
+                                  <span className="status-pill status-off">Aucun usage affecte</span>
+                                ) : (
+                                  template.usage_contexts.map((usageContext) => (
+                                    <span key={`${template.id}-${usageContext}`} className="badge">
+                                      {quoteUsageContextLabel(usageContext)}
+                                    </span>
+                                  ))
+                                )}
+                              </div>
                             </td>
                             <td>{template.active ? "Oui" : "Non"}</td>
                             <td>
@@ -2639,33 +2761,36 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   Objet du courriel
                                   <input type="text" name="subject" defaultValue={editingTemplate.subject ?? ""} maxLength={255} required />
                                 </label>
-                                {editingTemplate.kind === "CUSTOM" ? (
-                                  <fieldset className="span-2 config-subsection">
-                                    <legend>Usages autorises pour ce template</legend>
-                                    <div className="row wrap gap-sm">
-                                      {QUOTE_TEMPLATE_USAGE_CONTEXTS.map((usageContext) => (
-                                        <label key={`${editingTemplate.id}-${usageContext.value}`} className="checkline">
-                                          <input
-                                            type="checkbox"
-                                            name="usage_contexts"
-                                            value={usageContext.value}
-                                            defaultChecked={editingTemplate.usage_contexts.includes(usageContext.value)}
-                                          />
-                                          {usageContext.label}
-                                        </label>
-                                      ))}
-                                    </div>
-                                  </fieldset>
-                                ) : (
-                                  <div className="span-2 row wrap gap-sm">
-                                    {editingTemplate.usage_contexts.map((usageContext) => (
-                                      <span key={`${editingTemplate.id}-${usageContext}`} className="badge">
-                                        {quoteUsageContextLabel(usageContext)}
-                                      </span>
+                              </>
+                            ) : null}
+
+                            {editingTemplate.channel !== "GROUP_NOTE" ? (
+                              editingTemplate.kind === "CUSTOM" ? (
+                                <fieldset className="span-2 config-subsection">
+                                  <legend>Usages autorises pour ce template</legend>
+                                  <div className="row wrap gap-sm">
+                                    {QUOTE_TEMPLATE_USAGE_CONTEXTS.map((usageContext) => (
+                                      <label key={`${editingTemplate.id}-${usageContext.value}`} className="checkline">
+                                        <input
+                                          type="checkbox"
+                                          name="usage_contexts"
+                                          value={usageContext.value}
+                                          defaultChecked={editingTemplate.usage_contexts.includes(usageContext.value)}
+                                        />
+                                        {usageContext.label}
+                                      </label>
                                     ))}
                                   </div>
-                                )}
-                              </>
+                                </fieldset>
+                              ) : (
+                                <div className="span-2 row wrap gap-sm">
+                                  {editingTemplate.usage_contexts.map((usageContext) => (
+                                    <span key={`${editingTemplate.id}-${usageContext}`} className="badge">
+                                      {quoteUsageContextLabel(usageContext)}
+                                    </span>
+                                  ))}
+                                </div>
+                              )
                             ) : null}
 
                             <label className="messaging-editor-label">
@@ -2704,7 +2829,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               Objet (email uniquement)
                               <input type="text" name="subject" maxLength={255} />
                             </label>
-                            {newCustomTemplateChannel === "EMAIL" ? (
+                            {newCustomTemplateChannel !== "GROUP_NOTE" ? (
                               <fieldset className="span-2 config-subsection">
                                 <legend>Usages autorises pour ce template</legend>
                                 <div className="row wrap gap-sm">
@@ -2731,7 +2856,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         {editingTemplate?.variables_hint ? (
                           <p className="muted">Variables: {editingTemplate.variables_hint}</p>
                         ) : null}
-                        {(editingTemplate?.channel === "EMAIL" || newCustomTemplateChannel === "EMAIL") && quoteTemplateVariables.length > 0 ? (
+                        {(editingTemplate?.channel !== "GROUP_NOTE" || (createCustomMessagingTemplate && newCustomTemplateChannel !== "GROUP_NOTE")) && quoteTemplateVariables.length > 0 ? (
                           <div className="span-2 item">
                             <strong>Variables devis disponibles</strong>
                             <div className="row wrap gap-sm top-gap-sm">

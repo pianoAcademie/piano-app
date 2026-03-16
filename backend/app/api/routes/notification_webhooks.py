@@ -37,6 +37,8 @@ def _event_type_from_payload(payload: DeliveryFeedbackWebhookRequest) -> str:
         if "bounce" in raw_event or "bounced" in raw_event:
             return EVENT_EMAIL_BOUNCED
     if raw_channel == "SMS":
+        if "deliver" in raw_event:
+            return "sms_delivered"
         if "permanent" in raw_event or "failed_permanent" in raw_event or "invalid" in raw_event:
             return EVENT_SMS_DELIVERY_FAILED_PERMANENT
     if raw_event == EVENT_EMAIL_BOUNCED:
@@ -129,6 +131,25 @@ def _brevo_error_detail(payload: dict[str, Any]) -> str | None:
         return "invalid recipient"
     if event_name == "error":
         return "provider delivery error"
+    return None
+
+
+def _brevo_sms_message_id(payload: dict[str, Any]) -> str | None:
+    for key in ("messageId", "message_id", "message-id", "id", "reference"):
+        candidate = str(payload.get(key) or "").strip()
+        if candidate:
+            return candidate
+    return None
+
+
+def _brevo_sms_delivery_status(payload: dict[str, Any]) -> CommunicationDeliveryStatus | None:
+    event_name = _normalize_brevo_event_name(payload.get("event") or payload.get("status"))
+    if event_name in {"delivered", "deliverysucceeded", "success"}:
+        return CommunicationDeliveryStatus.DELIVERED
+    if event_name in {"sent", "request", "queued", "accepted"}:
+        return CommunicationDeliveryStatus.SENT
+    if event_name in {"hardbounce", "softbounce", "bounce", "blocked", "invalid", "error", "failed", "rejected"}:
+        return CommunicationDeliveryStatus.FAILED
     return None
 
 
@@ -253,6 +274,19 @@ def sms_feedback_webhook(
     if not event_type:
         return {"accepted": False, "reason": "unsupported event"}
 
+    if event_type == "sms_delivered":
+        delivered_at = payload.occurred_at or _utcnow()
+        communication_id = update_communication_delivery_status(
+            provider_message_id=payload.provider_message_id,
+            channel=CommunicationChannel.SMS,
+            delivery_status=CommunicationDeliveryStatus.DELIVERED,
+            provider=(payload.provider_name or "").strip() or None,
+            delivered_at=delivered_at,
+            db=db,
+        )
+        db.commit()
+        return {"accepted": True, "communication_id": str(communication_id) if communication_id is not None else None}
+
     occurred_at = payload.occurred_at or _utcnow()
     event = create_domain_event(
         db,
@@ -273,3 +307,63 @@ def sms_feedback_webhook(
     db.commit()
     queue_push(QUEUE_DELIVERY_FEEDBACK, {"event_id": str(event.id)})
     return {"accepted": True, "event_id": str(event.id)}
+
+
+@router.post("/brevo/sms")
+def brevo_sms_webhook(
+    payload: Any = Body(...),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    accepted = 0
+    updated = 0
+    queued = 0
+
+    for item in _iter_payload_items(payload):
+        provider_message_id = _brevo_sms_message_id(item)
+        if provider_message_id is None:
+            continue
+        delivery_status = _brevo_sms_delivery_status(item)
+        if delivery_status is None:
+            continue
+        accepted += 1
+        occurred_at = _parse_brevo_timestamp(item) or _utcnow()
+        communication_id = update_communication_delivery_status(
+            provider_message_id=provider_message_id,
+            channel=CommunicationChannel.SMS,
+            delivery_status=delivery_status,
+            provider="BREVO",
+            error_message=_brevo_error_detail(item) if delivery_status == CommunicationDeliveryStatus.FAILED else None,
+            delivered_at=occurred_at if delivery_status == CommunicationDeliveryStatus.DELIVERED else None,
+            failed_at=occurred_at if delivery_status == CommunicationDeliveryStatus.FAILED else None,
+            db=db,
+        )
+        if communication_id is not None:
+            updated += 1
+
+        if delivery_status == CommunicationDeliveryStatus.FAILED:
+            event = create_domain_event(
+                db,
+                event_type=EVENT_SMS_DELIVERY_FAILED_PERMANENT,
+                source=SOURCE_PROVIDER_WEBHOOK,
+                actor_type="provider",
+                actor_id=None,
+                related_entity_type="provider_message",
+                related_entity_id=_provider_message_related_entity_id(provider_message_id),
+                occurred_at=occurred_at,
+                payload_json={
+                    "provider_name": "BREVO",
+                    "provider_message_id": provider_message_id,
+                    "provider_status": str(item.get("event") or item.get("status") or "").strip() or None,
+                    "detail": _brevo_error_detail(item),
+                },
+            )
+            queue_push(QUEUE_DELIVERY_FEEDBACK, {"event_id": str(event.id)})
+            queued += 1
+
+    db.commit()
+    return {
+        "accepted": True,
+        "events_received": accepted,
+        "communications_updated": updated,
+        "feedback_events_queued": queued,
+    }

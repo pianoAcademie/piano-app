@@ -188,19 +188,31 @@ class AdminMessagingSettingsOut(BaseModel):
     smtp_use_tls: bool
     smtp_use_ssl: bool
     smtp_timeout_seconds: int
+    sms_provider: str
+    sms_sender: str
+    brevo_sms_api_key_configured: bool
+    brevo_sms_api_key_masked: str
     frontend_base_url: str
     brevo_email_webhook_url: str
+    brevo_sms_webhook_url: str
     quote_send_template_ref: str
+    quote_send_sms_template_ref: str
     quote_reminder_template_ref: str
+    quote_reminder_sms_template_ref: str
     quote_cancel_template_ref: str
+    quote_cancel_sms_template_ref: str
     quote_reminder_enabled: bool
+    quote_reminder_sms_enabled: bool
     quote_reminder_lead_hours: int
     quote_daily_job_local_time: str
     quote_auto_cancel_enabled: bool
     quote_auto_cancel_delay_hours: int
     quote_cancel_notification_enabled: bool
+    quote_cancel_sms_notification_enabled: bool
     delivery_enabled: bool
     delivery_error_message: str | None = None
+    sms_delivery_enabled: bool
+    sms_delivery_error_message: str | None = None
     updated_at: datetime | None = None
 
 
@@ -222,16 +234,24 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
     smtp_use_tls: bool = True
     smtp_use_ssl: bool = False
     smtp_timeout_seconds: int = Field(default=15, ge=1, le=120)
+    sms_provider: str = Field(default="LOG", max_length=20)
+    sms_sender: str = Field(default="", max_length=60)
+    brevo_sms_api_key: str | None = Field(default=None, max_length=255)
     frontend_base_url: str = Field(default="", max_length=255)
     quote_send_template_ref: str = Field(default="predefined:QUOTE_SEND_DEFAULT", max_length=120)
+    quote_send_sms_template_ref: str = Field(default="predefined:QUOTE_SEND_SMS_DEFAULT", max_length=120)
     quote_reminder_template_ref: str = Field(default="predefined:QUOTE_REMINDER_DEFAULT", max_length=120)
+    quote_reminder_sms_template_ref: str = Field(default="predefined:QUOTE_REMINDER_SMS_DEFAULT", max_length=120)
     quote_cancel_template_ref: str = Field(default="predefined:QUOTE_CANCEL_DEFAULT", max_length=120)
+    quote_cancel_sms_template_ref: str = Field(default="predefined:QUOTE_CANCEL_SMS_DEFAULT", max_length=120)
     quote_reminder_enabled: bool = True
+    quote_reminder_sms_enabled: bool = False
     quote_reminder_lead_hours: int = Field(default=24, ge=1, le=168)
     quote_daily_job_local_time: str = Field(default="07:00", max_length=5)
     quote_auto_cancel_enabled: bool = True
     quote_auto_cancel_delay_hours: int = Field(default=24, ge=0, le=720)
     quote_cancel_notification_enabled: bool = True
+    quote_cancel_sms_notification_enabled: bool = False
 
 
 class AdminMessagingChannel(str, enum.Enum):

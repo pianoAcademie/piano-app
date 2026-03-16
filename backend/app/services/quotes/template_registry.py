@@ -53,6 +53,12 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "marie@example.com",
     },
     {
+        "key": "recipient_phone",
+        "label": "Telephone destinataire",
+        "description": "Numero de telephone utilise pour les notifications SMS du devis.",
+        "example": "+33601020304",
+    },
+    {
         "key": "total_ttc",
         "label": "Total TTC",
         "description": "Montant total TTC facture (apres avoir/dette).",

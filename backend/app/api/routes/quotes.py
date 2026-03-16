@@ -106,7 +106,9 @@ from app.services.quotes.email_templates import (
     USAGE_CONTEXT_QUOTE_REMINDER,
     USAGE_CONTEXT_QUOTE_SEND,
     send_quote_templated_email,
+    send_quote_templated_sms,
 )
+from app.services.quotes.recipient_resolution import resolve_quote_recipient_email, resolve_quote_recipient_phone
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.quotes.payment_plan_engine import PaymentPlanScheduleInput, build_payment_schedule
 from app.services.quotes.quote_documents import (
@@ -120,6 +122,7 @@ from app.services.quotes.quote_documents import (
 from app.services.quotes.template_registry import (
     list_quote_template_variables,
 )
+from app.services.providers.sms import sms_delivery_disabled_reason
 from app.services.security import hash_password
 
 router = APIRouter()
@@ -1858,20 +1861,11 @@ def _quote_detail_out(db: Session, quote: Quote) -> QuoteDetailOut:
 
 
 def _resolve_recipient_email(db: Session, quote: Quote, explicit_email: str | None = None) -> str | None:
-    if explicit_email and explicit_email.strip():
-        return explicit_email.strip().lower()
-    from_meta = str((quote.meta or {}).get("recipient_email") or "").strip().lower()
-    if from_meta:
-        return from_meta
-    if quote.prospect_id is not None:
-        prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id))
-        if prospect is not None and prospect.email:
-            return prospect.email.strip().lower()
-    if quote.client_id is not None:
-        user = db.scalar(select(User).where(User.id == quote.client_id))
-        if user is not None and user.email:
-            return user.email.strip().lower()
-    return None
+    return resolve_quote_recipient_email(db, quote, explicit_email=explicit_email)
+
+
+def _resolve_recipient_phone(db: Session, quote: Quote, explicit_phone: str | None = None) -> str | None:
+    return resolve_quote_recipient_phone(db, quote, explicit_phone=explicit_phone)
 
 
 def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: Decimal) -> list[dict[str, object]]:
@@ -3333,6 +3327,53 @@ def _send_quote_email(
     )
 
 
+def _send_quote_sms(
+    db: Session,
+    *,
+    quote: Quote,
+    lines: list[QuoteLine],
+    recipient_phone: str,
+    kind: str,
+    usage_context: str,
+    actor_id: UUID | None,
+    template_ref: str | None = None,
+) -> None:
+    now = _utcnow()
+    normalized_recipient = recipient_phone.strip()
+    rendered, provider_result = send_quote_templated_sms(
+        db,
+        quote=quote,
+        lines=lines,
+        recipient_phone=normalized_recipient,
+        usage_context=usage_context,
+        template_ref=template_ref,
+        sms_context=kind.upper(),
+    )
+    if not provider_result.ok:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=provider_result.error_message or "SMS provider send failed",
+        )
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_sms_sent",
+            actor_type="admin",
+            actor_id=actor_id,
+            payload={
+                "kind": kind,
+                "recipient_phone": normalized_recipient,
+                "template_ref": rendered.template_ref,
+                "usage_context": usage_context,
+                "provider": provider_result.provider_name,
+                "provider_status": provider_result.provider_status,
+                "provider_message_id": provider_result.provider_message_id,
+            },
+            created_at=now,
+        )
+    )
+
+
 @router.post("/quotes/{quote_id}/send", response_model=QuoteDetailOut)
 def send_quote(
     quote_id: UUID,
@@ -3357,8 +3398,19 @@ def send_quote(
     delivery_error = email_delivery_disabled_reason()
     if delivery_error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=delivery_error)
+    recipient_phone = _resolve_recipient_phone(db, quote, explicit_phone=payload.recipient_phone) if payload.send_sms else None
+    if payload.send_sms and recipient_phone is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No recipient phone resolved for quote SMS")
+    if payload.send_sms:
+        sms_error = sms_delivery_disabled_reason(db)
+        if sms_error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=sms_error)
 
-    quote.meta = {**(quote.meta or {}), "recipient_email": recipient}
+    quote.meta = {
+        **(quote.meta or {}),
+        "recipient_email": recipient,
+        **({"recipient_phone": recipient_phone} if recipient_phone else {}),
+    }
     lines = _load_quote_lines(db, quote.id)
     snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     db.add(quote)
@@ -3368,7 +3420,13 @@ def send_quote(
             event_type="quote_sent",
             actor_type="admin",
             actor_id=current_user.id,
-            payload={"recipient_email": recipient, "document_snapshot_id": str(snapshot.id), "document_hash": snapshot.document_hash},
+            payload={
+                "recipient_email": recipient,
+                "recipient_phone": recipient_phone,
+                "sent_sms": bool(payload.send_sms and recipient_phone),
+                "document_snapshot_id": str(snapshot.id),
+                "document_hash": snapshot.document_hash,
+            },
             created_at=now,
         )
     )
@@ -3382,6 +3440,17 @@ def send_quote(
         actor_id=current_user.id,
         template_ref=payload.template_ref,
     )
+    if payload.send_sms and recipient_phone:
+        _send_quote_sms(
+            db,
+            quote=quote,
+            lines=lines,
+            recipient_phone=recipient_phone,
+            kind="quote_sent",
+            usage_context=USAGE_CONTEXT_QUOTE_SEND,
+            actor_id=current_user.id,
+            template_ref=payload.sms_template_ref,
+        )
     db.commit()
     db.refresh(quote)
     return _quote_detail_out(db, quote)
@@ -3405,8 +3474,19 @@ def resend_quote(
     delivery_error = email_delivery_disabled_reason()
     if delivery_error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=delivery_error)
+    recipient_phone = _resolve_recipient_phone(db, quote, explicit_phone=payload.recipient_phone) if payload.send_sms else None
+    if payload.send_sms and recipient_phone is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No recipient phone resolved for quote SMS")
+    if payload.send_sms:
+        sms_error = sms_delivery_disabled_reason(db)
+        if sms_error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=sms_error)
 
-    quote.meta = {**(quote.meta or {}), "recipient_email": recipient}
+    quote.meta = {
+        **(quote.meta or {}),
+        "recipient_email": recipient,
+        **({"recipient_phone": recipient_phone} if recipient_phone else {}),
+    }
     lines = _load_quote_lines(db, quote.id)
     snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     quote.updated_at = _utcnow()
@@ -3422,13 +3502,30 @@ def resend_quote(
         allow_duplicate=True,
         template_ref=payload.template_ref,
     )
+    if payload.send_sms and recipient_phone:
+        _send_quote_sms(
+            db,
+            quote=quote,
+            lines=lines,
+            recipient_phone=recipient_phone,
+            kind="quote_resend",
+            usage_context=USAGE_CONTEXT_QUOTE_SEND,
+            actor_id=current_user.id,
+            template_ref=payload.sms_template_ref,
+        )
     db.add(
         QuoteEvent(
             quote_id=quote.id,
             event_type="quote_resent",
             actor_type="admin",
             actor_id=current_user.id,
-            payload={"recipient_email": recipient, "document_snapshot_id": str(snapshot.id), "document_hash": snapshot.document_hash},
+            payload={
+                "recipient_email": recipient,
+                "recipient_phone": recipient_phone,
+                "sent_sms": bool(payload.send_sms and recipient_phone),
+                "document_snapshot_id": str(snapshot.id),
+                "document_hash": snapshot.document_hash,
+            },
             created_at=_utcnow(),
         )
     )
@@ -3454,6 +3551,7 @@ def cancel_quote(
     quote.cancelled_at = now
     quote.updated_at = now
     recipient = _resolve_recipient_email(db, quote, explicit_email=payload.recipient_email)
+    recipient_phone = _resolve_recipient_phone(db, quote, explicit_phone=payload.recipient_phone) if payload.notify_recipient_sms else None
     lines = _load_quote_lines(db, quote.id)
 
     if payload.notify_recipient:
@@ -3477,6 +3575,26 @@ def cancel_quote(
             allow_duplicate=True,
             template_ref=payload.template_ref,
         )
+    if payload.notify_recipient_sms:
+        sms_error = sms_delivery_disabled_reason(db)
+        if sms_error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=sms_error)
+        if recipient_phone is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No recipient phone resolved for quote cancellation SMS",
+            )
+        quote.meta = {**(quote.meta or {}), "recipient_phone": recipient_phone}
+        _send_quote_sms(
+            db,
+            quote=quote,
+            lines=lines,
+            recipient_phone=recipient_phone,
+            kind="quote_cancel",
+            usage_context=USAGE_CONTEXT_QUOTE_CANCEL,
+            actor_id=current_user.id,
+            template_ref=payload.sms_template_ref,
+        )
 
     db.add(quote)
     db.add(
@@ -3487,8 +3605,11 @@ def cancel_quote(
             actor_id=current_user.id,
             payload={
                 "recipient_email": recipient,
+                "recipient_phone": recipient_phone,
                 "notified": bool(payload.notify_recipient and recipient),
+                "notified_sms": bool(payload.notify_recipient_sms and recipient_phone),
                 "template_ref": payload.template_ref,
+                "sms_template_ref": payload.sms_template_ref,
             },
             created_at=now,
         )

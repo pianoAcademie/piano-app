@@ -36,16 +36,24 @@ MESSAGING_SETTINGS_SMTP_PASSWORD_KEY = "config_messaging_smtp_password"
 MESSAGING_SETTINGS_SMTP_USE_TLS_KEY = "config_messaging_smtp_use_tls"
 MESSAGING_SETTINGS_SMTP_USE_SSL_KEY = "config_messaging_smtp_use_ssl"
 MESSAGING_SETTINGS_SMTP_TIMEOUT_SECONDS_KEY = "config_messaging_smtp_timeout_seconds"
+MESSAGING_SETTINGS_SMS_PROVIDER_KEY = "config_messaging_sms_provider"
+MESSAGING_SETTINGS_SMS_SENDER_KEY = "config_messaging_sms_sender"
+MESSAGING_SETTINGS_BREVO_SMS_API_KEY = "config_messaging_brevo_sms_api_key"
 MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY = "config_messaging_frontend_base_url"
 MESSAGING_SETTINGS_QUOTE_SEND_TEMPLATE_REF_KEY = "config_messaging_quote_send_template_ref"
+MESSAGING_SETTINGS_QUOTE_SEND_SMS_TEMPLATE_REF_KEY = "config_messaging_quote_send_sms_template_ref"
 MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY = "config_messaging_quote_reminder_template_ref"
+MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_TEMPLATE_REF_KEY = "config_messaging_quote_reminder_sms_template_ref"
 MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY = "config_messaging_quote_cancel_template_ref"
+MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY = "config_messaging_quote_cancel_sms_template_ref"
 MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY = "config_messaging_quote_reminder_enabled"
+MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY = "config_messaging_quote_reminder_sms_enabled"
 MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY = "config_messaging_quote_reminder_lead_hours"
 MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY = "config_messaging_quote_daily_job_local_time"
 MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY = "config_messaging_quote_auto_cancel_enabled"
 MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY = "config_messaging_quote_auto_cancel_delay_hours"
 MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_cancel_notification_enabled"
+MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_cancel_sms_notification_enabled"
 
 MESSAGING_PREDEFINED_TEMPLATES_KEY = "config_messaging_predefined_templates_v1"
 MESSAGING_CUSTOM_TEMPLATES_KEY = "config_messaging_custom_templates_v1"
@@ -59,14 +67,20 @@ PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD = "TEACHER_PORTAL_LOGIN_SETUP"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_DEFAULT"
+PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_SMS_DEFAULT"
+PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_SMS_DEFAULT"
+PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_SMS_DEFAULT"
 
 USAGE_CONTEXT_QUOTE_SEND = "QUOTE_SEND"
 USAGE_CONTEXT_QUOTE_REMINDER = "QUOTE_REMINDER"
 USAGE_CONTEXT_QUOTE_CANCEL = "QUOTE_CANCEL"
 
 QUOTE_SEND_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT}"
+QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT}"
 QUOTE_REMINDER_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT}"
+QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT}"
 QUOTE_CANCEL_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT}"
+QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT}"
 
 
 @dataclass(frozen=True)
@@ -106,9 +120,22 @@ class MessagingDeliveryConfig:
     frontend_base_url: str
 
 
+@dataclass(frozen=True)
+class MessagingSmsDeliveryConfig:
+    provider: str
+    sender: str
+    brevo_api_key: str
+    frontend_base_url: str
+
+
 def resolve_brevo_email_webhook_url(db: Session | None = None) -> str:
     base_url = resolve_frontend_base_url(db).rstrip("/")
     return f"{base_url}/api/v1/notifications/webhooks/brevo/email"
+
+
+def resolve_brevo_sms_webhook_url(db: Session | None = None) -> str:
+    base_url = resolve_frontend_base_url(db).rstrip("/")
+    return f"{base_url}/api/v1/notifications/webhooks/brevo/sms"
 
 
 def _utcnow() -> datetime:
@@ -161,6 +188,13 @@ def _normalize_email_provider(raw: str | None) -> str:
     candidate = (raw or "").strip().upper()
     if candidate in {"SMTP", "BREVO"}:
         return candidate
+    return "LOG"
+
+
+def _normalize_sms_provider(raw: str | None) -> str:
+    candidate = (raw or "").strip().upper()
+    if candidate == "BREVO":
+        return "BREVO"
     return "LOG"
 
 
@@ -333,6 +367,43 @@ def resolve_messaging_delivery_config(db: Session | None = None) -> MessagingDel
     )
 
 
+def resolve_messaging_sms_delivery_config(db: Session | None = None) -> MessagingSmsDeliveryConfig:
+    with _session_scope(db) as active_db:
+        provider = _normalize_sms_provider(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_SMS_PROVIDER_KEY, ""),
+                settings.sms_provider,
+            )
+        )
+        sender = _sanitize_text(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_SMS_SENDER_KEY, ""),
+                settings.sms_sender,
+            ),
+            max_length=60,
+        )
+        brevo_api_key = _db_or_env(
+            _get_setting_value(active_db, MESSAGING_SETTINGS_BREVO_SMS_API_KEY, ""),
+            settings.brevo_sms_api_key,
+        )
+        frontend_base_url = _sanitize_text(
+            _db_or_env(
+                _get_setting_value(active_db, MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY, ""),
+                settings.frontend_base_url,
+            ),
+            max_length=255,
+        ).rstrip("/")
+        if not frontend_base_url:
+            frontend_base_url = "http://localhost:3000"
+
+    return MessagingSmsDeliveryConfig(
+        provider=provider,
+        sender=sender,
+        brevo_api_key=brevo_api_key,
+        frontend_base_url=frontend_base_url,
+    )
+
+
 def messaging_delivery_disabled_reason(config: MessagingDeliveryConfig) -> str | None:
     if config.provider == "LOG":
         return "Envoi email reel desactive sur ce serveur (EMAIL_PROVIDER=LOG)."
@@ -340,6 +411,16 @@ def messaging_delivery_disabled_reason(config: MessagingDeliveryConfig) -> str |
         return "Configuration email incomplete: SMTP_HOST manquant."
     if not config.smtp_username.strip() or not config.smtp_password.strip():
         return "Configuration email incomplete: identifiants SMTP manquants."
+    return None
+
+
+def messaging_sms_delivery_disabled_reason(config: MessagingSmsDeliveryConfig) -> str | None:
+    if config.provider == "LOG":
+        return "Envoi SMS reel desactive sur ce serveur (SMS_PROVIDER=LOG)."
+    if not config.sender.strip():
+        return "Configuration SMS incomplete: expediteur SMS manquant."
+    if not config.brevo_api_key.strip():
+        return "Configuration SMS incomplete: cle API Brevo manquante."
     return None
 
 
@@ -486,6 +567,44 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         description="Notification d annulation manuelle ou automatique d un devis.",
         variables_hint="{quote_number} {recipient_name} {quote_status_label} {cancelled_at_local}",
         body_format="HTML",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_CANCEL,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT,
+        name="Devis - Envoi / renvoi (SMS)",
+        channel="SMS",
+        subject=None,
+        body=(
+            "Bonjour {recipient_name}, votre devis {quote_number} ({total_ttc} {currency}) est disponible: "
+            "{quote_public_url}"
+        ),
+        description="Envoi initial et renvoi manuel d un devis par SMS.",
+        variables_hint="{quote_number} {recipient_name} {total_ttc} {currency} {quote_public_url} {expires_at_local}",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_SEND,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT,
+        name="Devis - Rappel avant expiration (SMS)",
+        channel="SMS",
+        subject=None,
+        body=(
+            "Rappel Piano Academie: votre devis {quote_number} expire le {expires_at_local}. "
+            "Consulter: {quote_public_url}"
+        ),
+        description="Rappel automatique par SMS avant expiration d un devis.",
+        variables_hint="{quote_number} {expires_at_local} {quote_public_url} {recipient_name}",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_REMINDER,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT,
+        name="Devis - Annulation (SMS)",
+        channel="SMS",
+        subject=None,
+        body=(
+            "Votre devis {quote_number} a ete annule. Si besoin, Piano Academie peut vous preparer une nouvelle proposition."
+        ),
+        description="Notification SMS d annulation manuelle ou automatique d un devis.",
+        variables_hint="{quote_number} {quote_status_label} {cancelled_at_local} {recipient_name}",
         usage_contexts=(USAGE_CONTEXT_QUOTE_CANCEL,),
     ),
     MessagingTemplateDefinition(
@@ -736,16 +855,24 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         MESSAGING_SETTINGS_SMTP_USE_TLS_KEY,
         MESSAGING_SETTINGS_SMTP_USE_SSL_KEY,
         MESSAGING_SETTINGS_SMTP_TIMEOUT_SECONDS_KEY,
+        MESSAGING_SETTINGS_SMS_PROVIDER_KEY,
+        MESSAGING_SETTINGS_SMS_SENDER_KEY,
+        MESSAGING_SETTINGS_BREVO_SMS_API_KEY,
         MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY,
         MESSAGING_SETTINGS_QUOTE_SEND_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_SEND_SMS_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY,
         MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY,
         MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY,
+        MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY,
     ]
 
     updated_at: datetime | None = None
@@ -770,6 +897,8 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
     )
     delivery_config = resolve_messaging_delivery_config(db)
     delivery_error = messaging_delivery_disabled_reason(delivery_config)
+    sms_delivery_config = resolve_messaging_sms_delivery_config(db)
+    sms_delivery_error = messaging_sms_delivery_disabled_reason(sms_delivery_config)
 
     payload = {
         "studio_email": studio_email,
@@ -802,23 +931,52 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         "smtp_use_tls": delivery_config.smtp_use_tls,
         "smtp_use_ssl": delivery_config.smtp_use_ssl,
         "smtp_timeout_seconds": delivery_config.smtp_timeout_seconds,
+        "sms_provider": sms_delivery_config.provider,
+        "sms_sender": sms_delivery_config.sender,
+        "brevo_sms_api_key_configured": bool(sms_delivery_config.brevo_api_key.strip()),
+        "brevo_sms_api_key_masked": _mask_secret(sms_delivery_config.brevo_api_key),
         "frontend_base_url": delivery_config.frontend_base_url,
         "brevo_email_webhook_url": resolve_brevo_email_webhook_url(db),
+        "brevo_sms_webhook_url": resolve_brevo_sms_webhook_url(db),
         "quote_send_template_ref": _sanitize_template_ref(
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_SEND_TEMPLATE_REF_KEY, QUOTE_SEND_TEMPLATE_REF_DEFAULT),
             default=QUOTE_SEND_TEMPLATE_REF_DEFAULT,
+        ),
+        "quote_send_sms_template_ref": _sanitize_template_ref(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_SEND_SMS_TEMPLATE_REF_KEY, QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT),
+            default=QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT,
         ),
         "quote_reminder_template_ref": _sanitize_template_ref(
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY, QUOTE_REMINDER_TEMPLATE_REF_DEFAULT),
             default=QUOTE_REMINDER_TEMPLATE_REF_DEFAULT,
         ),
+        "quote_reminder_sms_template_ref": _sanitize_template_ref(
+            _get_setting_value(
+                db,
+                MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_TEMPLATE_REF_KEY,
+                QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT,
+            ),
+            default=QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT,
+        ),
         "quote_cancel_template_ref": _sanitize_template_ref(
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY, QUOTE_CANCEL_TEMPLATE_REF_DEFAULT),
             default=QUOTE_CANCEL_TEMPLATE_REF_DEFAULT,
         ),
+        "quote_cancel_sms_template_ref": _sanitize_template_ref(
+            _get_setting_value(
+                db,
+                MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY,
+                QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT,
+            ),
+            default=QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT,
+        ),
         "quote_reminder_enabled": _as_bool(
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY, "true"),
             True,
+        ),
+        "quote_reminder_sms_enabled": _as_bool(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY, "false"),
+            False,
         ),
         "quote_reminder_lead_hours": _sanitize_int(
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY, "24"),
@@ -844,8 +1002,14 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY, "true"),
             True,
         ),
+        "quote_cancel_sms_notification_enabled": _as_bool(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY, "false"),
+            False,
+        ),
         "delivery_enabled": delivery_error is None,
         "delivery_error_message": delivery_error,
+        "sms_delivery_enabled": sms_delivery_error is None,
+        "sms_delivery_error_message": sms_delivery_error,
         "updated_at": updated_at,
     }
     return payload, updated_at
@@ -871,16 +1035,24 @@ def save_messaging_settings(
     smtp_use_tls: bool,
     smtp_use_ssl: bool,
     smtp_timeout_seconds: int,
+    sms_provider: str,
+    sms_sender: str,
+    brevo_sms_api_key: str | None,
     frontend_base_url: str,
     quote_send_template_ref: str,
+    quote_send_sms_template_ref: str,
     quote_reminder_template_ref: str,
+    quote_reminder_sms_template_ref: str,
     quote_cancel_template_ref: str,
+    quote_cancel_sms_template_ref: str,
     quote_reminder_enabled: bool,
+    quote_reminder_sms_enabled: bool,
     quote_reminder_lead_hours: int,
     quote_daily_job_local_time: str,
     quote_auto_cancel_enabled: bool,
     quote_auto_cancel_delay_hours: int,
     quote_cancel_notification_enabled: bool,
+    quote_cancel_sms_notification_enabled: bool,
 ) -> dict[str, object]:
     _set_setting_value(db, MESSAGING_SETTINGS_STUDIO_EMAIL_KEY, _sanitize_text(studio_email, max_length=255))
     _set_setting_value(
@@ -967,6 +1139,23 @@ def save_messaging_settings(
     )
     _set_setting_value(
         db,
+        MESSAGING_SETTINGS_SMS_PROVIDER_KEY,
+        _normalize_sms_provider(sms_provider),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_SMS_SENDER_KEY,
+        _sanitize_text(sms_sender, max_length=60),
+    )
+    normalized_sms_api_key = _sanitize_text(brevo_sms_api_key, max_length=255)
+    if normalized_sms_api_key:
+        _set_setting_value(
+            db,
+            MESSAGING_SETTINGS_BREVO_SMS_API_KEY,
+            normalized_sms_api_key,
+        )
+    _set_setting_value(
+        db,
         MESSAGING_SETTINGS_FRONTEND_BASE_URL_KEY,
         _sanitize_text(frontend_base_url, max_length=255).rstrip("/"),
     )
@@ -977,8 +1166,18 @@ def save_messaging_settings(
     )
     _set_setting_value(
         db,
+        MESSAGING_SETTINGS_QUOTE_SEND_SMS_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_send_sms_template_ref, default=QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
         MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY,
         _sanitize_template_ref(quote_reminder_template_ref, default=QUOTE_REMINDER_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_reminder_sms_template_ref, default=QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT),
     )
     _set_setting_value(
         db,
@@ -987,8 +1186,18 @@ def save_messaging_settings(
     )
     _set_setting_value(
         db,
+        MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_cancel_sms_template_ref, default=QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
         MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY,
         "true" if quote_reminder_enabled else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY,
+        "true" if quote_reminder_sms_enabled else "false",
     )
     _set_setting_value(
         db,
@@ -1014,6 +1223,11 @@ def save_messaging_settings(
         db,
         MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY,
         "true" if quote_cancel_notification_enabled else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY,
+        "true" if quote_cancel_sms_notification_enabled else "false",
     )
     payload, _ = load_messaging_settings(db)
     return payload
