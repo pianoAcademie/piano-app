@@ -176,7 +176,19 @@ jobs:
               exit 1
             fi
 
-            docker compose up -d --build frontend
+            docker compose build frontend
+            docker compose up -d --no-deps frontend
+
+            for i in \$(seq 1 60); do
+              code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/login || true)
+              if [ \"\$code\" = \"200\" ]; then
+                break
+              fi
+              sleep 2
+            done
+            code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/login || true)
+            [ \"\$code\" = \"200\" ] || { echo \"Frontend failed during deploy step: \$code\"; docker compose ps frontend || true; docker compose logs --tail=200 frontend || true; exit 1; }
+
             docker compose ps
           "
 
