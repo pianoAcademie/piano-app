@@ -27,6 +27,7 @@ import {
   quickTransformQuoteAction,
   regenerateQuoteDocumentAction,
   resendQuoteAction,
+  rollbackQuoteTransformationAction,
   restoreQuotePublicResponseAction,
   selectQuoteFollowupSlotAction,
   sendQuoteAction,
@@ -698,6 +699,12 @@ function integrationStateFromQuote(
   const clientMatchStatus = String(meta.client_match_status ?? "").trim().toLowerCase();
   if (clientMatchStatus === "multiple" || clientMatchStatus === "ambiguous") return "a_verifier";
 
+  const followupPayload = readObject(followup?.payload);
+  const execution = readObject(followupPayload?.quote_to_enrollment_execution);
+  const executionStatus = String(execution?.status ?? "").trim().toLowerCase();
+  if (executionStatus === "executed") return "integre";
+  if (executionStatus === "failed") return "erreur_integration";
+  if (executionStatus === "rolled_back") return "a_preparer";
   if (followup?.status === "completed") return "pret_a_integrer";
   return "a_preparer";
 }
@@ -1062,6 +1069,25 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   }
   const planningSummary = planningVisualSummary(calendarSessions);
   const followupPayload = readObject(activeFollowup?.payload);
+  const followupTransformationPayload = readObject(followupPayload?.quote_to_enrollment);
+  const followupTransformationExecution = readObject(followupPayload?.quote_to_enrollment_execution);
+  const followupTransformationExecutionStatus = String(followupTransformationExecution?.status ?? "").trim().toLowerCase();
+  const followupTransformationFailedMessage = String(followupTransformationExecution?.error_message ?? "").trim();
+  const canRollbackTransformation = followupTransformationExecutionStatus === "executed";
+  const transformationExecutionSummary = {
+    bookings: Array.isArray(followupTransformationExecution?.created_booking_ids)
+      ? followupTransformationExecution.created_booking_ids.length
+      : 0,
+    transactions: Array.isArray(followupTransformationExecution?.created_transaction_ids)
+      ? followupTransformationExecution.created_transaction_ids.length
+      : 0,
+    subscriptions: Array.isArray(followupTransformationExecution?.created_subscription_ids)
+      ? followupTransformationExecution.created_subscription_ids.length
+      : 0,
+    users: Array.isArray(followupTransformationExecution?.created_user_ids)
+      ? followupTransformationExecution.created_user_ids.length
+      : 0,
+  };
   const followupSelectedSlot = readObject(followupPayload?.selected_solfege_slot)
     ?? readObject(detail.quote.selected_solfege_slot);
   const followupPaymentPlanId = String(followupPayload?.payment_plan_id ?? detail.quote.payment_plan_id ?? "").trim();
@@ -2164,6 +2190,53 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
         {activeSection === "integration" ? (
           <>
+            {followupTransformationExecutionStatus ? (
+              <section className="card">
+                <h3>Execution de la transformation</h3>
+                <p className="muted">
+                  Statut technique:{" "}
+                  <strong>
+                    {followupTransformationExecutionStatus === "executed"
+                      ? "integree"
+                      : followupTransformationExecutionStatus === "rolled_back"
+                      ? "rollback effectue"
+                      : followupTransformationExecutionStatus === "failed"
+                      ? "echec"
+                      : followupTransformationExecutionStatus}
+                  </strong>
+                  {followupTransformationExecution?.executed_at
+                    ? ` · Executee le ${formatDate(String(followupTransformationExecution.executed_at))}`
+                    : null}
+                  {followupTransformationExecution?.rolled_back_at
+                    ? ` · Rollback le ${formatDate(String(followupTransformationExecution.rolled_back_at))}`
+                    : null}
+                </p>
+                <div className="quote-quick-transform-summary top-gap-sm">
+                  <p><strong>Bookings crees:</strong> {transformationExecutionSummary.bookings}</p>
+                  <p><strong>Charges crees:</strong> {transformationExecutionSummary.transactions}</p>
+                  <p><strong>Abonnements crees:</strong> {transformationExecutionSummary.subscriptions}</p>
+                  <p><strong>Clients crees:</strong> {transformationExecutionSummary.users}</p>
+                </div>
+                {followupTransformationExecutionStatus === "failed" && followupTransformationFailedMessage ? (
+                  <p className="flash-err top-gap-sm">{followupTransformationFailedMessage}</p>
+                ) : null}
+                {canRollbackTransformation && activeFollowup ? (
+                  <form id={`followup-rollback-form-${activeFollowup.id}`} action={rollbackQuoteTransformationAction} className="top-gap-sm">
+                    <input type="hidden" name="quote_id" value={detail.quote.id} />
+                    <input type="hidden" name="followup_id" value={activeFollowup.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <ConfirmSubmitButton
+                      formId={`followup-rollback-form-${activeFollowup.id}`}
+                      label="Rollback de la transformation"
+                      title="Confirmer le rollback de l'integration ?"
+                      description="Les bookings, abonnements et charges crees par cette transformation seront supprimes et le devis reviendra a son etat precedent. Aucun email ne sera envoye au prospect."
+                      confirmLabel="Restaurer l'etat precedent"
+                    />
+                  </form>
+                ) : null}
+              </section>
+            ) : null}
+
             <QuoteQuickTransformPanel
               quoteId={detail.quote.id}
               currency={detail.quote.currency}
@@ -2266,10 +2339,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                     <input type="hidden" name="return_to" value={selfPath} />
                     <ConfirmSubmitButton
                       formId={`followup-finalize-form-${activeFollowup.id}`}
-                      label="Finaliser le parcours post-approbation"
-                      title="Confirmer la finalisation du parcours post-approbation ?"
-                      description="Le follow-up passera en statut complete. Le paiement et le creneau seront valides selon leur etat actuel."
-                      confirmLabel="Finaliser"
+                      label={followupTransformationPayload ? "Executer la transformation maintenant" : "Finaliser le parcours post-approbation"}
+                      title={followupTransformationPayload ? "Confirmer l'execution reelle de la transformation ?" : "Confirmer la finalisation du parcours post-approbation ?"}
+                      description={followupTransformationPayload
+                        ? "Le systeme reverifiera la capacite des creneaux, creera les bookings et les charges hors planning, puis mettra a jour le client. Un rollback admin restera possible ensuite."
+                        : "Le follow-up passera en statut complete. Le paiement et le creneau seront valides selon leur etat actuel."}
+                      confirmLabel={followupTransformationPayload ? "Executer la transformation" : "Finaliser"}
                     />
                   </form>
                 </>

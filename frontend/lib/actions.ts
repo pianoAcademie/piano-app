@@ -12908,6 +12908,37 @@ export async function finalizeQuoteFollowupAction(formData: FormData): Promise<v
   redirect(appendQueryMessage(returnTo, "ok", "Follow-up finalise"));
 }
 
+export async function rollbackQuoteTransformationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const followupId = String(formData.get("followup_id") ?? "").trim();
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${quoteId}?section=integration`));
+  if (!followupId) {
+    redirect(appendQueryMessage(returnTo, "error", "Follow-up introuvable"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}/rollback-transformation`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  if (quoteId) {
+    revalidatePath(`/admin/quotes/${quoteId}`);
+    revalidatePath(`/admin/quotes/${quoteId}/transform`);
+  }
+  redirect(appendQueryMessage(returnTo, "ok", "Transformation annulee et etat precedent restaure"));
+}
+
 function ensureRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -13288,17 +13319,19 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
 
   const currentPayload = ensureRecord(followupResult.data.payload);
   const existingTransformation = ensureRecord(currentPayload.quote_to_enrollment);
+  const existingExecution = ensureRecord(currentPayload.quote_to_enrollment_execution);
   const incomingIdempotencyKey = String(transformationRaw.idempotencyKey ?? "").trim();
   const existingIdempotencyKey = String(existingTransformation.idempotencyKey ?? "").trim();
   const existingFinalizedAt = String(existingTransformation.finalizedAt ?? "").trim();
+  const existingExecutionStatus = String(existingExecution.status ?? "").trim().toLowerCase();
 
   if (
-    followupResult.data.status === "completed"
+    existingExecutionStatus === "executed"
     && existingFinalizedAt
     && incomingIdempotencyKey
     && incomingIdempotencyKey === existingIdempotencyKey
   ) {
-    redirect(appendQueryMessage(returnTo, "ok", "Transformation deja finalisee (idempotence)"));
+    redirect(appendQueryMessage(returnTo, "ok", "Transformation deja executee (idempotence)"));
   }
 
   const finalizedAt = new Date().toISOString();
@@ -13316,7 +13349,7 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
     {
       method: "PATCH",
       body: JSON.stringify({
-        status: followupResult.data.status === "completed" ? "completed" : "partially_configured",
+        status: existingExecutionStatus === "executed" ? "completed" : "partially_configured",
         payload: nextPayload,
       }),
     },
@@ -13326,21 +13359,19 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
     redirect(appendQueryMessage(returnTo, "error", patchResult.message));
   }
 
-  if (followupResult.data.status !== "completed") {
-    const finalizeResult = await backendRequest<QuoteFollowupForTransformation>(
-      `/api/v1/quote-followups/${encodeURIComponent(followupId)}/finalize`,
-      { method: "POST" },
-      token,
-    );
-    if (!finalizeResult.ok) {
-      redirect(appendQueryMessage(returnTo, "error", finalizeResult.message));
-    }
+  const finalizeResult = await backendRequest<QuoteFollowupForTransformation>(
+    `/api/v1/quote-followups/${encodeURIComponent(followupId)}/finalize`,
+    { method: "POST" },
+    token,
+  );
+  if (!finalizeResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", finalizeResult.message));
   }
 
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
   revalidatePath(`/admin/quotes/${quoteId}/transform`);
-  redirect(appendQueryMessage(returnTo, "ok", "Transformation validee et journalisee"));
+  redirect(appendQueryMessage(returnTo, "ok", "Transformation executee et integree"));
 }
 
 export async function quickTransformQuoteAction(formData: FormData): Promise<void> {
@@ -13383,9 +13414,11 @@ export async function quickTransformQuoteAction(formData: FormData): Promise<voi
 
   const currentPayload = ensureRecord(followupResult.data.payload);
   const existingTransformation = ensureRecord(currentPayload.quote_to_enrollment);
+  const existingExecution = ensureRecord(currentPayload.quote_to_enrollment_execution);
   const existingFinalizedAt = String(existingTransformation.finalizedAt ?? "").trim();
-  if (followupResult.data.status === "completed" && existingFinalizedAt) {
-    redirect(appendQueryMessage(returnTo, "ok", "Transformation deja finalisee"));
+  const existingExecutionStatus = String(existingExecution.status ?? "").trim().toLowerCase();
+  if (existingExecutionStatus === "executed" && existingFinalizedAt) {
+    redirect(appendQueryMessage(returnTo, "ok", "Transformation deja executee"));
   }
 
   const quickDraft = {

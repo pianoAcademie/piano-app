@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import ConfirmSubmitButton from "../confirm-submit-button";
 import {
   buildActivityPricingRows,
   buildBillingExtraRows,
@@ -1333,13 +1334,20 @@ export default function QuoteToEnrollmentWizard({
                   <button type="submit" className="ghost" disabled={saveDisabled}>Sauvegarder brouillon</button>
                 </form>
 
-                <form action={finalizeAction}>
+                <form id={`quote-transform-finalize-${quote.id}`} action={finalizeAction}>
                   <input type="hidden" name="quote_id" value={quote.id} />
                   <input type="hidden" name="followup_id" value={followupId || ""} />
                   <input type="hidden" name="allow_force_finalize" value={unresolvedBlockingIssues.length > 0 ? "0" : "1"} />
                   <input type="hidden" name="return_to" value={`${returnTo}${returnTo.includes("?") ? "&" : "?"}scenario=${encodeURIComponent(scenario)}`} />
                   <input type="hidden" name="transformation_json" value={JSON.stringify(draftPayload)} />
-                  <button type="submit" disabled={finalizeDisabled}>Valider la transformation</button>
+                  <ConfirmSubmitButton
+                    formId={`quote-transform-finalize-${quote.id}`}
+                    label="Valider la transformation"
+                    title="Confirmer l'integration reelle du devis ?"
+                    description="Le systeme va reverifier en live la capacite des creneaux, creer les inscriptions et les charges hors planning, puis lier le client. Un rollback admin restera possible ensuite si une correction est necessaire."
+                    confirmLabel="Executer l'integration"
+                    disabled={finalizeDisabled}
+                  />
                 </form>
               </div>
             </div>

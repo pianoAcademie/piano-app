@@ -59,6 +59,7 @@ export default function QuoteQuickTransformPanel({
     `Activites: ${summary.activitiesCount}`,
     `Creneaux auto-assignables: ${summary.autoAssignableCount}/${summary.activitiesCount}`,
     `Totaux: devis ${formatAmount(summary.totalQuoteTtc, currency)} · systeme ${formatAmount(summary.totalSystemTtc, currency)}`,
+    "Le systeme reverifiera la capacite des creneaux juste avant execution et un rollback admin restera possible si une correction est necessaire.",
   ].join(" \n");
 
   return (
@@ -132,7 +133,7 @@ export default function QuoteQuickTransformPanel({
               label="Transformer directement"
               title="Confirmer la transformation rapide ?"
               description={quickDescription}
-              confirmLabel="Creer l'inscription"
+              confirmLabel="Executer l'integration"
             />
           </>
         ) : null}

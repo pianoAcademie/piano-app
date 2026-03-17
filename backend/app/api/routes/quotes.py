@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from copy import deepcopy
 import hashlib
 import io
 import json
 import re
 import secrets
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -17,9 +19,24 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
-from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
+from app.api.routes.admin_clients import (
+    _default_subscription_billing_method,
+    _effective_pack_credits_for_plan,
+    _forfait_period_bounds,
+)
+from app.api.routes.bookings import (
+    _count_booked,
+    _consume_pack_credit,
+    _enforce_plan_restrictions,
+    _mark_first_course_if_needed,
+    _resolve_booking_snapshot,
+    _restore_pack_credit,
+)
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, SessionStatus
+from app.models.client_record import ClientManualTransaction
+from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, LegalEntity
-from app.models.plan import Plan
+from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
 from app.models.product_catalog import CatalogKit, CatalogProduct
 from app.models.quote import (
     PaymentPlan,
@@ -42,7 +59,7 @@ from app.models.quote import (
     TermsTemplate,
     TermsTemplateVersion,
 )
-from app.models.user import ClientStatus, User, UserRole
+from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.quote import (
     PaymentPlanOut,
     PaymentPlanUpsertRequest,
@@ -100,6 +117,7 @@ from app.schemas.quote import (
 from app.services.email_delivery import email_delivery_disabled_reason
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.messaging_templates import resolve_frontend_base_url
+from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_booking_created_notifications
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.email_templates import (
     USAGE_CONTEXT_QUOTE_APPROVED,
@@ -125,8 +143,11 @@ from app.services.quotes.quote_documents import (
 from app.services.quotes.template_registry import (
     list_quote_template_variables,
 )
+from app.services.reminders import ensure_booking_reminder
 from app.services.providers.sms import sms_delivery_disabled_reason
+from app.services.family_billing import resolve_billing_profile
 from app.services.security import hash_password
+from app.services.subscriptions import add_months_utc, default_next_payment_at
 
 router = APIRouter()
 
@@ -141,6 +162,8 @@ QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY = "public_response_last_action"
 QUOTE_PUBLIC_RESPONSE_LAST_AT_META_KEY = "public_response_last_at"
 QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY = "public_response_last_message"
 QUOTE_PUBLIC_RESPONSE_LAST_RESTORED_FROM_META_KEY = "public_response_last_restored_from"
+QUOTE_TRANSFORMATION_PAYLOAD_KEY = "quote_to_enrollment"
+QUOTE_TRANSFORMATION_EXECUTION_KEY = "quote_to_enrollment_execution"
 
 
 def _utcnow() -> datetime:
@@ -3867,6 +3890,999 @@ def _ensure_pending_client_from_prospect(db: Session, quote: Quote) -> UUID | No
     return client.id
 
 
+def _json_object(value: object | None) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
+
+
+def _json_list(value: object | None) -> list[object]:
+    if isinstance(value, list):
+        return list(value)
+    return []
+
+
+def _parse_uuid_value(value: object | None) -> UUID | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except ValueError:
+        return None
+
+
+def _safe_zoneinfo(value: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo((value or "").strip() or "Europe/Paris")
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("Europe/Paris")
+
+
+def _normalized_email(value: object | None) -> str | None:
+    raw = str(value or "").strip().lower()
+    return raw or None
+
+
+def _normalized_phone(value: object | None) -> str | None:
+    raw = str(value or "").strip()
+    return raw or None
+
+
+def _synthetic_quote_client_email(*, prefix: str) -> str:
+    return f"{prefix}+{uuid4().hex[:16]}@piano-academie.invalid"
+
+
+def _quote_followup_payload(row: QuoteAcceptanceFollowup) -> dict[str, object]:
+    return _json_object(row.payload)
+
+
+def _quote_transformation_payload(row: QuoteAcceptanceFollowup) -> dict[str, object]:
+    return _json_object(_quote_followup_payload(row).get(QUOTE_TRANSFORMATION_PAYLOAD_KEY))
+
+
+def _quote_transformation_execution(row: QuoteAcceptanceFollowup) -> dict[str, object]:
+    return _json_object(_quote_followup_payload(row).get(QUOTE_TRANSFORMATION_EXECUTION_KEY))
+
+
+def _set_quote_followup_payload(row: QuoteAcceptanceFollowup, payload: dict[str, object]) -> None:
+    row.payload = payload
+    row.updated_at = _utcnow()
+
+
+def _set_quote_transformation_execution(
+    row: QuoteAcceptanceFollowup,
+    execution: dict[str, object],
+) -> None:
+    payload = _quote_followup_payload(row)
+    payload[QUOTE_TRANSFORMATION_EXECUTION_KEY] = execution
+    _set_quote_followup_payload(row, payload)
+
+
+def _snapshot_quote_followup(row: QuoteAcceptanceFollowup) -> dict[str, object]:
+    return {
+        "status": row.status,
+        "payment_method_status": row.payment_method_status,
+        "solfege_slot_status": row.solfege_slot_status,
+        "target_client_id": str(row.target_client_id) if row.target_client_id else None,
+        "payload": deepcopy(_quote_followup_payload(row)),
+    }
+
+
+def _restore_quote_followup_from_snapshot(
+    row: QuoteAcceptanceFollowup,
+    snapshot: dict[str, object],
+) -> None:
+    row.status = str(snapshot.get("status") or row.status)
+    row.payment_method_status = str(snapshot.get("payment_method_status") or row.payment_method_status)
+    row.solfege_slot_status = str(snapshot.get("solfege_slot_status") or row.solfege_slot_status)
+    row.target_client_id = _parse_uuid_value(snapshot.get("target_client_id"))
+    _set_quote_followup_payload(row, deepcopy(_json_object(snapshot.get("payload"))))
+
+
+def _snapshot_quote_state(quote: Quote) -> dict[str, object]:
+    return {
+        "client_id": str(quote.client_id) if quote.client_id else None,
+        "meta": deepcopy(_quote_meta_dict(quote)),
+    }
+
+
+def _restore_quote_state_from_snapshot(quote: Quote, snapshot: dict[str, object]) -> None:
+    quote.client_id = _parse_uuid_value(snapshot.get("client_id"))
+    quote.meta = deepcopy(_json_object(snapshot.get("meta")))
+    quote.updated_at = _utcnow()
+
+
+def _snapshot_user_state(user: User) -> dict[str, object]:
+    return {
+        "client_status": user.client_status.value if hasattr(user.client_status, "value") else str(user.client_status),
+        "is_active": bool(user.is_active),
+    }
+
+
+def _restore_user_state(user: User, snapshot: dict[str, object]) -> None:
+    raw_status = str(snapshot.get("client_status") or "").strip().upper()
+    try:
+        user.client_status = ClientStatus(raw_status)
+    except ValueError:
+        pass
+    user.is_active = bool(snapshot.get("is_active", user.is_active))
+    user.updated_at = _utcnow()
+
+
+def _remember_user_snapshot(store: dict[str, dict[str, object]], user: User) -> None:
+    key = str(user.id)
+    if key not in store:
+        store[key] = _snapshot_user_state(user)
+
+
+def _remember_prospect_snapshot(store: dict[str, dict[str, object]], prospect: Prospect) -> None:
+    key = str(prospect.id)
+    if key not in store:
+        store[key] = {
+            "linked_client_id": str(prospect.linked_client_id) if prospect.linked_client_id else None,
+            "status": prospect.status,
+        }
+
+
+def _restore_prospect_state(prospect: Prospect, snapshot: dict[str, object]) -> None:
+    prospect.linked_client_id = _parse_uuid_value(snapshot.get("linked_client_id"))
+    prospect.status = str(snapshot.get("status") or prospect.status)
+    prospect.updated_at = _utcnow()
+
+
+def _set_quote_integration_meta(
+    quote: Quote,
+    **fields: object,
+) -> None:
+    meta = _quote_meta_dict(quote)
+    for key, value in fields.items():
+        if value is None:
+            meta.pop(key, None)
+        else:
+            meta[key] = value
+    quote.meta = meta
+    quote.updated_at = _utcnow()
+
+
+def _load_prospect_for_update(db: Session, prospect_id: UUID | None) -> Prospect | None:
+    if prospect_id is None:
+        return None
+    return db.scalar(select(Prospect).where(Prospect.id == prospect_id).with_for_update())
+
+
+def _load_user_for_update(db: Session, user_id: UUID | None) -> User | None:
+    if user_id is None:
+        return None
+    return db.scalar(select(User).where(User.id == user_id).with_for_update())
+
+
+def _find_user_by_email_for_update(db: Session, email: str | None) -> User | None:
+    normalized = _normalized_email(email)
+    if normalized is None:
+        return None
+    return db.scalar(select(User).where(User.email == normalized).with_for_update().limit(1))
+
+
+def _find_family_link_for_update(
+    db: Session,
+    *,
+    adult_user_id: UUID,
+    child_user_id: UUID,
+) -> ClientFamilyLink | None:
+    return db.scalar(
+        select(ClientFamilyLink)
+        .where(
+            ClientFamilyLink.adult_user_id == adult_user_id,
+            ClientFamilyLink.child_user_id == child_user_id,
+        )
+        .with_for_update()
+        .limit(1)
+    )
+
+
+def _create_quote_client(
+    db: Session,
+    *,
+    email: str | None,
+    first_name: str | None,
+    last_name: str | None,
+    phone: str | None,
+    birth_date: date | None,
+    client_kind: ClientKind,
+    status: ClientStatus,
+) -> User:
+    client = User(
+        email=_normalized_email(email) or _synthetic_quote_client_email(prefix=client_kind.value.lower()),
+        hashed_password=hash_password(secrets.token_urlsafe(24)),
+        role=UserRole.CLIENT,
+        first_name=first_name,
+        last_name=last_name,
+        phone=phone,
+        mobile_phone_1=phone,
+        birth_date=birth_date,
+        client_kind=client_kind,
+        client_status=status,
+        is_active=True,
+        created_at=_utcnow(),
+        updated_at=_utcnow(),
+    )
+    db.add(client)
+    db.flush()
+    return client
+
+
+def _promote_client_active(user: User, user_snapshots: dict[str, dict[str, object]]) -> None:
+    _remember_user_snapshot(user_snapshots, user)
+    user.client_status = ClientStatus.ACTIVE
+    user.is_active = True
+    user.updated_at = _utcnow()
+
+
+def _resolve_quote_parent_prospect(
+    db: Session,
+    *,
+    quote_prospect: Prospect | None,
+) -> Prospect | None:
+    if quote_prospect is None or quote_prospect.parent_prospect_id is None:
+        return None
+    return _load_prospect_for_update(db, quote_prospect.parent_prospect_id)
+
+
+def _resolve_parent_contact_data(
+    *,
+    quote_prospect: Prospect | None,
+    parent_prospect: Prospect | None,
+) -> dict[str, object]:
+    if parent_prospect is not None:
+        return {
+            "first_name": parent_prospect.first_name,
+            "last_name": parent_prospect.last_name,
+            "email": parent_prospect.email,
+            "phone": parent_prospect.phone,
+        }
+    meta = _json_object(quote_prospect.meta) if quote_prospect is not None else {}
+    parent_referent = _json_object(meta.get("parent_referent"))
+    return {
+        "first_name": str(parent_referent.get("first_name") or "").strip() or None,
+        "last_name": str(parent_referent.get("last_name") or "").strip() or None,
+        "email": _normalized_email(parent_referent.get("email")),
+        "phone": _normalized_phone(parent_referent.get("phone")),
+    }
+
+
+def _expected_activity_dates_from_snapshot(
+    quote: Quote,
+    *,
+    activity_id: UUID,
+) -> list[date]:
+    snapshot = _json_object(quote.calendar_snapshot)
+    out: set[date] = set()
+    for raw in _json_list(snapshot.get("sessions")):
+        row = _json_object(raw)
+        if _parse_uuid_value(row.get("activity_id")) != activity_id:
+            continue
+        parsed = _parse_iso_date(str(row.get("date") or ""))
+        if parsed is not None:
+            out.add(parsed)
+    return sorted(out)
+
+
+def _load_live_series_sessions(
+    db: Session,
+    *,
+    selected_session: CourseSession,
+    expected_dates: list[date],
+) -> list[CourseSession]:
+    if selected_session.recurrence_group_id is None:
+        return [selected_session]
+
+    rows = db.scalars(
+        select(CourseSession)
+        .where(
+            CourseSession.recurrence_group_id == selected_session.recurrence_group_id,
+            CourseSession.status == SessionStatus.SCHEDULED,
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+        .with_for_update()
+    ).all()
+    if not expected_dates:
+        return rows
+
+    expected_date_set = set(expected_dates)
+    filtered: list[CourseSession] = []
+    for session_obj in rows:
+        zone = _safe_zoneinfo(session_obj.timezone)
+        local_date = session_obj.start_at_utc.astimezone(zone).date()
+        if local_date in expected_date_set:
+            filtered.append(session_obj)
+    return filtered
+
+
+def _serialize_uuid_list(values: list[UUID]) -> list[str]:
+    return [str(value) for value in values]
+
+
+def _serialize_snapshot_map(values: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+    return deepcopy(values)
+
+
+def _resolve_followup_clients(
+    db: Session,
+    *,
+    quote: Quote,
+    followup: QuoteAcceptanceFollowup,
+    transformation_payload: dict[str, object],
+    user_snapshots: dict[str, dict[str, object]],
+    prospect_snapshots: dict[str, dict[str, object]],
+    created_user_ids: list[UUID],
+    created_family_link_ids: list[UUID],
+) -> tuple[User, User]:
+    client_resolution = _json_object(transformation_payload.get("clientResolution"))
+    mode = str(client_resolution.get("mode") or "existing").strip().lower()
+    selected_client_id = _parse_uuid_value(client_resolution.get("selectedClientId"))
+    selected_parent_client_id = _parse_uuid_value(client_resolution.get("selectedParentClientId"))
+
+    quote_prospect = _load_prospect_for_update(db, quote.prospect_id)
+    parent_prospect = _resolve_quote_parent_prospect(db, quote_prospect=quote_prospect)
+    if quote_prospect is not None:
+        _remember_prospect_snapshot(prospect_snapshots, quote_prospect)
+    if parent_prospect is not None:
+        _remember_prospect_snapshot(prospect_snapshots, parent_prospect)
+
+    def ensure_existing_client(user_id: UUID | None) -> User:
+        client = _load_user_for_update(db, user_id)
+        if client is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client cible introuvable")
+        _promote_client_active(client, user_snapshots)
+        db.add(client)
+        return client
+
+    if mode == "existing":
+        student = ensure_existing_client(selected_client_id or followup.target_client_id or quote.client_id)
+        billing = ensure_existing_client(selected_parent_client_id) if selected_parent_client_id else resolve_billing_profile(db, student)
+        if billing is None:
+            billing = student
+        if student.client_kind == ClientKind.CHILD and billing.id != student.id:
+            link = _find_family_link_for_update(db, adult_user_id=billing.id, child_user_id=student.id)
+            if link is None:
+                link = ClientFamilyLink(
+                    adult_user_id=billing.id,
+                    child_user_id=student.id,
+                    relationship_label="Parent",
+                    is_billing_recipient=True,
+                    created_at=_utcnow(),
+                    updated_at=_utcnow(),
+                )
+                db.add(link)
+                db.flush()
+                created_family_link_ids.append(link.id)
+            else:
+                link.is_billing_recipient = True
+                link.updated_at = _utcnow()
+                db.add(link)
+        quote.client_id = student.id
+        followup.target_client_id = student.id
+        db.add_all([quote, followup])
+        return student, billing
+
+    if mode == "new_adult":
+        if quote_prospect is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect devis manquant pour creer le client")
+        student = _load_user_for_update(db, quote.client_id or quote_prospect.linked_client_id)
+        if student is None:
+            student = _find_user_by_email_for_update(db, quote_prospect.email)
+        if student is None:
+            student = _create_quote_client(
+                db,
+                email=quote_prospect.email,
+                first_name=quote_prospect.first_name,
+                last_name=quote_prospect.last_name,
+                phone=quote_prospect.phone,
+                birth_date=None,
+                client_kind=ClientKind.ADULT,
+                status=ClientStatus.ACTIVE,
+            )
+            created_user_ids.append(student.id)
+        else:
+            _promote_client_active(student, user_snapshots)
+            student.client_kind = ClientKind.ADULT
+        quote_prospect.linked_client_id = student.id
+        quote_prospect.status = "converted"
+        quote_prospect.updated_at = _utcnow()
+        quote.client_id = student.id
+        followup.target_client_id = student.id
+        db.add_all([student, quote_prospect, quote, followup])
+        return student, student
+
+    if mode != "new_parent_child":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Mode de transformation client non supporte")
+
+    if quote_prospect is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect enfant requis pour la transformation parent/enfant")
+
+    parent_contact = _resolve_parent_contact_data(quote_prospect=quote_prospect, parent_prospect=parent_prospect)
+    billing = _load_user_for_update(db, selected_parent_client_id)
+    if billing is None and parent_prospect is not None:
+        billing = _load_user_for_update(db, parent_prospect.linked_client_id)
+    if billing is None:
+        billing = _find_user_by_email_for_update(db, _normalized_email(parent_contact.get("email")))
+    if billing is None:
+        billing = _create_quote_client(
+            db,
+            email=_normalized_email(parent_contact.get("email")) or _synthetic_quote_client_email(prefix="parent"),
+            first_name=str(parent_contact.get("first_name") or "").strip() or None,
+            last_name=str(parent_contact.get("last_name") or "").strip() or None,
+            phone=_normalized_phone(parent_contact.get("phone")),
+            birth_date=None,
+            client_kind=ClientKind.ADULT,
+            status=ClientStatus.ACTIVE,
+        )
+        created_user_ids.append(billing.id)
+    else:
+        _promote_client_active(billing, user_snapshots)
+        billing.client_kind = ClientKind.ADULT
+
+    child_email = _normalized_email(quote_prospect.email)
+    if child_email == _normalized_email(parent_contact.get("email")):
+        child_email = None
+    student = _load_user_for_update(db, selected_client_id or quote.client_id or quote_prospect.linked_client_id)
+    if student is None and child_email:
+        student = _find_user_by_email_for_update(db, child_email)
+    if student is None:
+        student = _create_quote_client(
+            db,
+            email=child_email or _synthetic_quote_client_email(prefix="child"),
+            first_name=quote_prospect.first_name,
+            last_name=quote_prospect.last_name,
+            phone=quote_prospect.phone,
+            birth_date=None,
+            client_kind=ClientKind.CHILD,
+            status=ClientStatus.ACTIVE,
+        )
+        created_user_ids.append(student.id)
+    else:
+        _promote_client_active(student, user_snapshots)
+        student.client_kind = ClientKind.CHILD
+
+    if parent_prospect is not None:
+        parent_prospect.linked_client_id = billing.id
+        parent_prospect.status = "converted"
+        parent_prospect.updated_at = _utcnow()
+        db.add(parent_prospect)
+    quote_prospect.linked_client_id = student.id
+    quote_prospect.status = "converted"
+    quote_prospect.updated_at = _utcnow()
+    quote.client_id = student.id
+    followup.target_client_id = student.id
+
+    link = _find_family_link_for_update(db, adult_user_id=billing.id, child_user_id=student.id)
+    if link is None:
+        link = ClientFamilyLink(
+            adult_user_id=billing.id,
+            child_user_id=student.id,
+            relationship_label="Parent",
+            is_billing_recipient=True,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
+        )
+        db.add(link)
+        db.flush()
+        created_family_link_ids.append(link.id)
+    else:
+        link.is_billing_recipient = True
+        link.updated_at = _utcnow()
+        db.add(link)
+
+    db.add_all([billing, student, quote_prospect, quote, followup])
+    return student, billing
+
+
+def _resolve_followup_subscription(
+    db: Session,
+    *,
+    student: User,
+    billing: User,
+    followup: QuoteAcceptanceFollowup,
+    transformation_payload: dict[str, object],
+    created_subscription_ids: list[UUID],
+) -> tuple[ClientPlanSubscription | None, Plan | None]:
+    activity_resolution = _json_object(transformation_payload.get("activityResolution"))
+    plan_id = _parse_uuid_value(activity_resolution.get("planId"))
+    if plan_id is None:
+        return None, None
+
+    plan = db.scalar(select(Plan).where(Plan.id == plan_id).with_for_update())
+    if plan is None or not bool(plan.active):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Formule cible introuvable ou inactive")
+
+    existing = db.scalar(
+        select(ClientPlanSubscription)
+        .where(
+            ClientPlanSubscription.user_id == student.id,
+            ClientPlanSubscription.plan_id == plan.id,
+            ClientPlanSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.PENDING,
+                SubscriptionStatus.PAYMENT_ALERT,
+                SubscriptionStatus.PAUSED,
+            ]),
+        )
+        .order_by(ClientPlanSubscription.created_at.desc())
+        .with_for_update()
+        .limit(1)
+    )
+    if existing is not None:
+        existing.payer_contact_id = billing.id
+        if followup.payment_method_status != "validated":
+            existing.billing_method_code = existing.billing_method_code or _default_subscription_billing_method(plan)
+        existing.updated_at = _utcnow()
+        db.add(existing)
+        return existing, plan
+
+    now = _utcnow()
+    started_at = now
+    ends_at = None
+    current_period_start = None
+    current_period_end = None
+    credits_initial = None
+    credits_remaining = None
+    auto_renew = plan.kind == PlanKind.SUBSCRIPTION
+    if plan.kind == PlanKind.PACK:
+        credits_initial = _effective_pack_credits_for_plan(db, plan=plan)
+        credits_remaining = credits_initial
+        validity_months = max(int(plan.pack_validity_months or 0), 0)
+        ends_at = add_months_utc(started_at, validity_months) if validity_months > 0 else None
+    elif plan.kind == PlanKind.FORFAIT:
+        period_start, period_end = _forfait_period_bounds(plan)
+        started_at = datetime.combine(period_start, time.min, tzinfo=timezone.utc)
+        ends_at = datetime.combine(period_end, time.max, tzinfo=timezone.utc)
+        current_period_start = started_at
+        current_period_end = ends_at
+        auto_renew = False
+    elif plan.kind == PlanKind.SUBSCRIPTION:
+        current_period_start = started_at
+        current_period_end = add_months_utc(started_at, 1)
+
+    subscription = ClientPlanSubscription(
+        user_id=student.id,
+        plan_id=plan.id,
+        payer_contact_id=billing.id,
+        status=SubscriptionStatus.ACTIVE,
+        started_at=started_at,
+        ends_at=ends_at,
+        credits_initial=credits_initial,
+        credits_remaining=credits_remaining,
+        auto_renew=auto_renew,
+        bookings_blocked=False,
+        billing_method_code=_default_subscription_billing_method(plan),
+        next_payment_at=default_next_payment_at(started_at) if plan.kind == PlanKind.SUBSCRIPTION else None,
+        current_period_start=current_period_start,
+        current_period_end=current_period_end,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(subscription)
+    db.flush()
+    created_subscription_ids.append(subscription.id)
+    return subscription, plan
+
+
+def _assert_plan_entitlement(
+    db: Session,
+    *,
+    plan: Plan | None,
+    session_obj: CourseSession,
+) -> None:
+    if plan is None:
+        return
+    has_entitlement = db.scalar(
+        select(PlanEntitlement.id).where(
+            PlanEntitlement.plan_id == plan.id,
+            PlanEntitlement.course_type_id == session_obj.course_type_id,
+        )
+    )
+    if has_entitlement is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La formule cible n'autorise pas cette activite",
+        )
+
+
+def _create_followup_booking(
+    db: Session,
+    *,
+    session_obj: CourseSession,
+    student: User,
+    subscription: ClientPlanSubscription | None,
+    plan: Plan | None,
+    now: datetime,
+    created_booking_ids: list[UUID],
+) -> Booking | None:
+    existing = db.scalar(
+        select(Booking)
+        .where(
+            Booking.session_id == session_obj.id,
+            Booking.user_id == student.id,
+        )
+        .with_for_update()
+        .limit(1)
+    )
+    if existing is not None:
+        if existing.status == BookingStatus.BOOKED:
+            return None
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Une reservation existe deja sur un des creneaux cibles",
+        )
+
+    booked_count = _count_booked(db, session_obj.id)
+    if booked_count >= int(session_obj.capacity_max or 0):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un des creneaux vises est maintenant complet",
+        )
+
+    if subscription is not None and plan is not None:
+        _assert_plan_entitlement(db, plan=plan, session_obj=session_obj)
+        _enforce_plan_restrictions(db, subscription=subscription, plan=plan, session_obj=session_obj)
+        if plan.kind == PlanKind.PACK and not _consume_pack_credit(subscription, plan):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La formule cible n'a plus de credits disponibles",
+            )
+
+    amount_ht, vat_rate, vat_amount, total_ttc, currency = _resolve_booking_snapshot(
+        db,
+        session_obj=session_obj,
+        user=student,
+        now=now,
+        subscription=subscription,
+        plan=plan,
+    )
+    booking = Booking(
+        session_id=session_obj.id,
+        user_id=student.id,
+        client_plan_subscription_id=subscription.id if subscription is not None else None,
+        status=BookingStatus.BOOKED,
+        booked_at=now,
+        price_excl_vat_snapshot=amount_ht,
+        vat_rate_snapshot=vat_rate,
+        vat_amount_snapshot=vat_amount,
+        total_incl_vat_snapshot=total_ttc,
+        currency_snapshot=currency,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(booking)
+    db.flush()
+    created_booking_ids.append(booking.id)
+    _mark_first_course_if_needed(student, session_obj)
+    ensure_booking_reminder(db, booking=booking, session_obj=session_obj, now=now)
+    schedule_booking_created_notifications(
+        db,
+        booking=booking,
+        actor_user_id=student.id,
+        occurred_at=now,
+    )
+    return booking
+
+
+def _create_followup_manual_transactions(
+    db: Session,
+    *,
+    quote: Quote,
+    student: User,
+    billing: User,
+    transformation_payload: dict[str, object],
+    actor_user_id: UUID | None,
+    created_transaction_ids: list[UUID],
+) -> None:
+    billing_resolution = _json_object(transformation_payload.get("billingResolution"))
+    rows = _json_list(billing_resolution.get("rows"))
+    now = _utcnow()
+    for raw in rows:
+        row = _json_object(raw)
+        amount_ttc = _q2(_decimal_or_none(row.get("amountTtc")) or Decimal("0"))
+        amount_ht = _q2(_decimal_or_none(row.get("amountHt")) or amount_ttc)
+        vat_rate = _q3(_decimal_or_none(row.get("vatRate")) or Decimal("0"))
+        if amount_ttc <= Decimal("0"):
+            continue
+        transaction = ClientManualTransaction(
+            user_id=billing.id,
+            student_user_id=student.id,
+            actor_user_id=actor_user_id,
+            transaction_type="CHARGE",
+            status="PENDING",
+            label=str(row.get("label") or "Montant facture").strip() or "Montant facture",
+            description=f"Transformation devis {quote.quote_number}",
+            category=str(row.get("type") or "quote_transformation").strip() or "quote_transformation",
+            occurred_at=now,
+            amount_excl_vat=amount_ht,
+            vat_rate=vat_rate,
+            vat_amount=_q2(amount_ttc - amount_ht),
+            total_incl_vat=amount_ttc,
+            currency=(quote.currency or "EUR").upper(),
+            reference=f"QUOTE:{quote.id}:ROW:{str(row.get('rowId') or uuid4())}",
+            legal_entity_id=quote.legal_entity_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(transaction)
+        db.flush()
+        created_transaction_ids.append(transaction.id)
+
+
+def _execute_quote_followup_transformation(
+    db: Session,
+    *,
+    quote: Quote,
+    followup: QuoteAcceptanceFollowup,
+    current_user: User,
+) -> dict[str, object]:
+    transformation_payload = _quote_transformation_payload(followup)
+    if not transformation_payload:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucun payload de transformation a executer")
+
+    user_snapshots: dict[str, dict[str, object]] = {}
+    prospect_snapshots: dict[str, dict[str, object]] = {}
+    created_user_ids: list[UUID] = []
+    created_family_link_ids: list[UUID] = []
+    created_subscription_ids: list[UUID] = []
+    created_booking_ids: list[UUID] = []
+    created_transaction_ids: list[UUID] = []
+    quote_snapshot = _snapshot_quote_state(quote)
+    followup_snapshot = _snapshot_quote_followup(followup)
+
+    student, billing = _resolve_followup_clients(
+        db,
+        quote=quote,
+        followup=followup,
+        transformation_payload=transformation_payload,
+        user_snapshots=user_snapshots,
+        prospect_snapshots=prospect_snapshots,
+        created_user_ids=created_user_ids,
+        created_family_link_ids=created_family_link_ids,
+    )
+    subscription, plan = _resolve_followup_subscription(
+        db,
+        student=student,
+        billing=billing,
+        followup=followup,
+        transformation_payload=transformation_payload,
+        created_subscription_ids=created_subscription_ids,
+    )
+
+    schedule_resolution = _json_object(transformation_payload.get("scheduleResolution"))
+    assigned_session_by_activity = _json_object(schedule_resolution.get("assignedSessionByActivityId"))
+    activity_resolution = _json_object(transformation_payload.get("activityResolution"))
+    off_planning_activity_ids = {
+        str(item).strip()
+        for item in _json_list(activity_resolution.get("offPlanningActivityIds"))
+        if str(item).strip()
+    }
+
+    now = _utcnow()
+    for activity_id_str, session_id_raw in assigned_session_by_activity.items():
+        activity_id = _parse_uuid_value(activity_id_str)
+        session_id = _parse_uuid_value(session_id_raw)
+        if activity_id is None or session_id is None or activity_id_str in off_planning_activity_ids:
+            continue
+        selected_session = db.scalar(
+            select(CourseSession)
+            .where(CourseSession.id == session_id)
+            .with_for_update()
+        )
+        if selected_session is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
+        if selected_session.status != SessionStatus.SCHEDULED:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le creneau selectionne n'est plus reservable")
+
+        expected_dates = _expected_activity_dates_from_snapshot(quote, activity_id=activity_id)
+        live_sessions = _load_live_series_sessions(
+            db,
+            selected_session=selected_session,
+            expected_dates=expected_dates,
+        )
+        if expected_dates and len(live_sessions) < len(expected_dates):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Certains creneaux du devis n'ont plus de correspondance live",
+            )
+        for session_obj in live_sessions:
+            _create_followup_booking(
+                db,
+                session_obj=session_obj,
+                student=student,
+                subscription=subscription,
+                plan=plan,
+                now=now,
+                created_booking_ids=created_booking_ids,
+            )
+
+    _create_followup_manual_transactions(
+        db,
+        quote=quote,
+        student=student,
+        billing=billing,
+        transformation_payload=transformation_payload,
+        actor_user_id=current_user.id,
+        created_transaction_ids=created_transaction_ids,
+    )
+
+    followup.status = "completed"
+    if followup.payment_method_status in {"pending", "changed"}:
+        followup.payment_method_status = "validated"
+    if followup.solfege_slot_status == "chosen":
+        followup.solfege_slot_status = "validated"
+    followup.target_client_id = student.id
+    followup.updated_at = now
+
+    _set_quote_integration_meta(
+        quote,
+        integration_status="integre",
+        central_integration_status="integre",
+        integration_completed_at=now.isoformat(),
+        integration_by=current_user.email,
+        integration_client_result=f"{student.first_name or ''} {student.last_name or ''}".strip() or student.email,
+        integration_slots_result=f"{len(created_booking_ids)} reservation(s) creee(s)",
+        integration_target_mode=str(_json_object(transformation_payload.get("clientResolution")).get("mode") or ""),
+        integration_student_client_id=str(student.id),
+        integration_billing_client_id=str(billing.id),
+        integration_error=None,
+        integration_error_message=None,
+        integration_error_at=None,
+    )
+    quote.client_id = student.id
+
+    execution_payload = {
+        "status": "executed",
+        "executed_at": now.isoformat(),
+        "executed_by": str(current_user.id),
+        "student_client_id": str(student.id),
+        "billing_client_id": str(billing.id),
+        "subscription_id": str(subscription.id) if subscription is not None else None,
+        "created_user_ids": _serialize_uuid_list(created_user_ids),
+        "created_family_link_ids": _serialize_uuid_list(created_family_link_ids),
+        "created_subscription_ids": _serialize_uuid_list(created_subscription_ids),
+        "created_booking_ids": _serialize_uuid_list(created_booking_ids),
+        "created_transaction_ids": _serialize_uuid_list(created_transaction_ids),
+        "user_snapshots": _serialize_snapshot_map(user_snapshots),
+        "prospect_snapshots": _serialize_snapshot_map(prospect_snapshots),
+        "quote_snapshot": quote_snapshot,
+        "followup_snapshot": followup_snapshot,
+    }
+    _set_quote_transformation_execution(followup, execution_payload)
+    db.add_all([quote, followup])
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_transformation_executed",
+            actor_type="admin",
+            actor_id=current_user.id,
+            payload={
+                "student_client_id": str(student.id),
+                "billing_client_id": str(billing.id),
+                "booking_count": len(created_booking_ids),
+                "transaction_count": len(created_transaction_ids),
+            },
+            created_at=now,
+        )
+    )
+    return execution_payload
+
+
+def _rollback_quote_followup_transformation(
+    db: Session,
+    *,
+    quote: Quote,
+    followup: QuoteAcceptanceFollowup,
+    current_user: User,
+) -> dict[str, object]:
+    execution = _quote_transformation_execution(followup)
+    if str(execution.get("status") or "").strip().lower() != "executed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucune transformation executee a annuler")
+
+    created_booking_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_booking_ids"))]
+    created_transaction_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_transaction_ids"))]
+    created_subscription_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_subscription_ids"))]
+    created_family_link_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_family_link_ids"))]
+    created_user_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_user_ids"))]
+
+    subscription_map: dict[UUID, tuple[ClientPlanSubscription, Plan | None]] = {}
+    for subscription_id in created_subscription_ids:
+        if subscription_id is None:
+            continue
+        subscription = db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == subscription_id).with_for_update())
+        if subscription is None:
+            continue
+        plan = db.scalar(select(Plan).where(Plan.id == subscription.plan_id))
+        subscription_map[subscription.id] = (subscription, plan)
+
+    for booking_id in created_booking_ids:
+        if booking_id is None:
+            continue
+        booking = db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update())
+        if booking is None:
+            continue
+        if booking.client_plan_subscription_id in subscription_map:
+            subscription, plan = subscription_map[booking.client_plan_subscription_id]
+            if plan is not None and plan.kind == PlanKind.PACK:
+                _restore_pack_credit(subscription, plan)
+                db.add(subscription)
+        db.delete(booking)
+
+    for transaction_id in created_transaction_ids:
+        if transaction_id is None:
+            continue
+        transaction = db.scalar(select(ClientManualTransaction).where(ClientManualTransaction.id == transaction_id).with_for_update())
+        if transaction is not None:
+            db.delete(transaction)
+
+    for subscription_id in created_subscription_ids:
+        if subscription_id is None:
+            continue
+        subscription = db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == subscription_id).with_for_update())
+        if subscription is not None:
+            db.delete(subscription)
+
+    for link_id in created_family_link_ids:
+        if link_id is None:
+            continue
+        link = db.scalar(select(ClientFamilyLink).where(ClientFamilyLink.id == link_id).with_for_update())
+        if link is not None:
+            db.delete(link)
+
+    for user_id_str, snapshot in _json_object(execution.get("user_snapshots")).items():
+        user = _load_user_for_update(db, _parse_uuid_value(user_id_str))
+        if user is not None:
+            _restore_user_state(user, _json_object(snapshot))
+            db.add(user)
+
+    for prospect_id_str, snapshot in _json_object(execution.get("prospect_snapshots")).items():
+        prospect = _load_prospect_for_update(db, _parse_uuid_value(prospect_id_str))
+        if prospect is not None:
+            _restore_prospect_state(prospect, _json_object(snapshot))
+            db.add(prospect)
+
+    _restore_quote_state_from_snapshot(quote, _json_object(execution.get("quote_snapshot")))
+    _restore_quote_followup_from_snapshot(followup, _json_object(execution.get("followup_snapshot")))
+
+    for user_id in created_user_ids:
+        if user_id is None:
+            continue
+        user = _load_user_for_update(db, user_id)
+        if user is None:
+            continue
+        has_remaining_dependency = any([
+            db.scalar(select(Booking.id).where(Booking.user_id == user.id).limit(1)) is not None,
+            db.scalar(select(ClientManualTransaction.id).where(ClientManualTransaction.user_id == user.id).limit(1)) is not None,
+            db.scalar(select(ClientManualTransaction.id).where(ClientManualTransaction.student_user_id == user.id).limit(1)) is not None,
+            db.scalar(select(ClientPlanSubscription.id).where(ClientPlanSubscription.user_id == user.id).limit(1)) is not None,
+            db.scalar(select(ClientFamilyLink.id).where(or_(ClientFamilyLink.adult_user_id == user.id, ClientFamilyLink.child_user_id == user.id)).limit(1)) is not None,
+        ])
+        if not has_remaining_dependency:
+            db.delete(user)
+
+    rolled_back_at = _utcnow()
+    execution["status"] = "rolled_back"
+    execution["rolled_back_at"] = rolled_back_at.isoformat()
+    execution["rolled_back_by"] = str(current_user.id)
+    _set_quote_transformation_execution(followup, execution)
+    db.add_all([quote, followup])
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_transformation_rolled_back",
+            actor_type="admin",
+            actor_id=current_user.id,
+            payload={},
+            created_at=rolled_back_at,
+        )
+    )
+    return execution
+
+
 @router.post("/public/quotes/{quote_id}/approve", response_model=QuotePublicOut)
 def public_approve_quote(
     quote_id: UUID,
@@ -4263,13 +5279,102 @@ def finalize_quote_followup(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote follow-up not found")
 
-    row.status = "completed"
-    if row.payment_method_status in {"pending", "changed"}:
-        row.payment_method_status = "validated"
-    if row.solfege_slot_status == "chosen":
-        row.solfege_slot_status = "validated"
-    row.updated_at = _utcnow()
-    db.add(row)
+    quote = _load_quote(db, row.quote_id, lock=True)
+    transformation_payload = _quote_transformation_payload(row)
+    execution = _quote_transformation_execution(row)
+    execution_status = str(execution.get("status") or "").strip().lower()
+
+    if not transformation_payload:
+        row.status = "completed"
+        if row.payment_method_status in {"pending", "changed"}:
+            row.payment_method_status = "validated"
+        if row.solfege_slot_status == "chosen":
+            row.solfege_slot_status = "validated"
+        row.updated_at = _utcnow()
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _followup_out(row)
+
+    if execution_status == "executed":
+        db.refresh(row)
+        return _followup_out(row)
+
+    try:
+        _execute_quote_followup_transformation(db, quote=quote, followup=row)
+        db.commit()
+    except HTTPException as exc:
+        db.rollback()
+        row = db.scalar(select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.id == followup_id).with_for_update())
+        if row is None:
+            raise
+        quote = _load_quote(db, row.quote_id, lock=True)
+        row.status = "partially_configured"
+        row.updated_at = _utcnow()
+        _set_quote_transformation_execution(
+            row,
+            {
+                "status": "failed",
+                "failed_at": _utcnow().isoformat(),
+                "error_message": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+            },
+        )
+        _set_quote_integration_meta(
+            quote,
+            integration_status="erreur_integration",
+            central_integration_status="erreur_integration",
+            integration_error_message=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+            integration_completed_at=None,
+        )
+        db.add_all([quote, row])
+        db.commit()
+        raise
+    except Exception as exc:
+        db.rollback()
+        row = db.scalar(select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.id == followup_id).with_for_update())
+        if row is None:
+            raise
+        quote = _load_quote(db, row.quote_id, lock=True)
+        row.status = "partially_configured"
+        row.updated_at = _utcnow()
+        _set_quote_transformation_execution(
+            row,
+            {
+                "status": "failed",
+                "failed_at": _utcnow().isoformat(),
+                "error_message": str(exc),
+            },
+        )
+        _set_quote_integration_meta(
+            quote,
+            integration_status="erreur_integration",
+            central_integration_status="erreur_integration",
+            integration_error_message=str(exc),
+            integration_completed_at=None,
+        )
+        db.add_all([quote, row])
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Echec de la transformation en inscription",
+        ) from exc
+
+    db.refresh(row)
+    return _followup_out(row)
+
+
+@router.post("/quote-followups/{followup_id}/rollback-transformation", response_model=QuoteFollowupOut)
+def rollback_quote_followup_transformation(
+    followup_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteFollowupOut:
+    row = db.scalar(select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.id == followup_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote follow-up not found")
+
+    quote = _load_quote(db, row.quote_id, lock=True)
+    _rollback_quote_followup_transformation(db, quote=quote, followup=row)
     db.commit()
     db.refresh(row)
     return _followup_out(row)
