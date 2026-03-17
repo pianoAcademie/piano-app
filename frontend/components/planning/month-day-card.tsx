@@ -36,7 +36,13 @@ export default function MonthDayCard({
         <div className="month-day-card-body">
           <div className="month-day-card-events">
             {visibleEvents.map((event) => (
-              <MonthEventChip key={event.id} event={event} href={openSessionHref(event.id)} expanded={expanded} />
+              <MonthEventChip
+                key={event.id}
+                event={event}
+                href={openSessionHref(event.id)}
+                expanded={expanded}
+                compact={!expanded}
+              />
             ))}
           </div>
           {remainingCount > 0 ? (

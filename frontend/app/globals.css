@@ -434,8 +434,8 @@ button.danger:focus-visible {
 }
 
 .agenda-grid-month .month-day-card {
-  min-height: 108px;
-  max-height: 132px;
+  min-height: 188px;
+  max-height: 216px;
   padding: 10px;
   border: 1px solid #e6e8ee;
   border-radius: 12px;
@@ -483,13 +483,13 @@ button.danger:focus-visible {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   flex: 1;
 }
 
 .month-day-card-events {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-height: 0;
   flex: 1;
   align-content: start;
@@ -504,15 +504,15 @@ button.danger:focus-visible {
 }
 
 .month-day-card-more {
-  min-height: 20px;
+  min-height: 18px;
   border: 1px solid #d5dbe6;
   border-radius: 999px;
-  padding: 0 8px;
+  padding: 0 7px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   text-decoration: none;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: #425166;
   background: #f9fafc;
@@ -539,6 +539,12 @@ button.danger:focus-visible {
   text-decoration: none;
   color: inherit;
   min-width: 0;
+}
+
+.agenda-grid-month .month-event-chip.compact {
+  gap: 1px;
+  padding: 3px 5px;
+  border-radius: 8px;
 }
 
 .month-event-chip:hover {
@@ -588,6 +594,24 @@ button.danger:focus-visible {
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
+}
+
+.agenda-grid-month .month-event-chip.compact .month-event-chip-meta {
+  gap: 6px;
+}
+
+.agenda-grid-month .month-event-chip.compact .month-event-chip-time {
+  font-size: 11px;
+}
+
+.agenda-grid-month .month-event-chip.compact .month-event-chip-badges {
+  gap: 3px;
+}
+
+.agenda-grid-month .month-event-chip.compact .month-badge {
+  height: 16px;
+  padding: 0 6px;
+  font-size: 10px;
 }
 
 .month-badge-type {
@@ -646,6 +670,11 @@ button.danger:focus-visible {
   color: #1f2a38;
 }
 
+.agenda-grid-month .month-event-chip.compact .month-event-chip-title {
+  font-size: 11px;
+  line-height: 1.15;
+}
+
 .month-event-chip-sub {
   display: flex;
   align-items: center;
@@ -654,6 +683,10 @@ button.danger:focus-visible {
   font-size: 12px;
   line-height: 1.1;
   color: #566377;
+}
+
+.agenda-grid-month .month-event-chip.compact .month-event-chip-sub {
+  display: none;
 }
 
 .month-day-card.expanded {
