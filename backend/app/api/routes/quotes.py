@@ -5273,7 +5273,7 @@ def change_quote_followup_payment_method(
 def finalize_quote_followup(
     followup_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteFollowupOut:
     row = db.scalar(select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.id == followup_id).with_for_update())
     if row is None:
@@ -5301,7 +5301,12 @@ def finalize_quote_followup(
         return _followup_out(row)
 
     try:
-        _execute_quote_followup_transformation(db, quote=quote, followup=row)
+        _execute_quote_followup_transformation(
+            db,
+            quote=quote,
+            followup=row,
+            current_user=current_user,
+        )
         db.commit()
     except HTTPException as exc:
         db.rollback()
@@ -5367,14 +5372,19 @@ def finalize_quote_followup(
 def rollback_quote_followup_transformation(
     followup_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteFollowupOut:
     row = db.scalar(select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.id == followup_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote follow-up not found")
 
     quote = _load_quote(db, row.quote_id, lock=True)
-    _rollback_quote_followup_transformation(db, quote=quote, followup=row)
+    _rollback_quote_followup_transformation(
+        db,
+        quote=quote,
+        followup=row,
+        current_user=current_user,
+    )
     db.commit()
     db.refresh(row)
     return _followup_out(row)
