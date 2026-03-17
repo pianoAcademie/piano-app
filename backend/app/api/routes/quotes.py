@@ -4458,6 +4458,9 @@ def _resolve_followup_subscription(
         next_payment_at=default_next_payment_at(started_at) if plan.kind == PlanKind.SUBSCRIPTION else None,
         current_period_start=current_period_start,
         current_period_end=current_period_end,
+        forfait_loyalty_discount_per_hour_ttc=Decimal("0.00"),
+        forfait_family_discount_per_hour_ttc=Decimal("0.00"),
+        forfait_short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
         created_at=now,
     )
     db.add(subscription)
