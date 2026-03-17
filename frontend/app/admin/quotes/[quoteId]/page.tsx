@@ -218,6 +218,15 @@ type QuoteTemplateV2Out = {
   is_default: boolean;
 };
 
+type QuoteTransformationFailureUi = {
+  title: string;
+  summary: string;
+  guidance: string;
+  actionLabel: string | null;
+  actionHref: string | null;
+  technicalMessage: string;
+};
+
 type SolfegeLevelRuleOut = {
   id: string;
   level_code: string;
@@ -291,6 +300,50 @@ function appendQuickScenario(path: string, quickScenario: "live" | "A" | "B" | "
   }
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}quick_scenario=${encodeURIComponent(quickScenario)}`;
+}
+
+function buildQuoteTransformationFailureUi(
+  technicalMessage: string,
+  transformBasePath: string,
+): QuoteTransformationFailureUi {
+  const normalized = String(technicalMessage || "").trim().toLowerCase();
+  if (normalized.includes("correspondance live")) {
+    return {
+      title: "Blocage sur les creneaux live",
+      summary: "C'est un blocage reel, pas un simple warning.",
+      guidance:
+        "Le devis pointe encore vers au moins un creneau du snapshot qui n'a plus de correspondance exacte dans le planning live. Il faut reouvrir l'etape Planning / creneaux, reassigner le creneau, puis relancer la transformation.",
+      actionLabel: "Revoir les creneaux dans le wizard",
+      actionHref: `${transformBasePath}&step=3`,
+      technicalMessage,
+    };
+  }
+  if (
+    normalized.includes("n'est plus reservable")
+    || normalized.includes("selectionne introuvable")
+    || normalized.includes("aucun creneau")
+    || normalized.includes("capacity")
+    || normalized.includes("plein")
+  ) {
+    return {
+      title: "Blocage sur la reservation du creneau",
+      summary: "La transformation ne peut pas continuer tant que le creneau n'est pas de nouveau reservable.",
+      guidance:
+        "Reouvrez l'etape Planning / creneaux pour verifier la disponibilite live, choisir un autre creneau si besoin, puis relancer la transformation.",
+      actionLabel: "Verifier le planning live",
+      actionHref: `${transformBasePath}&step=3`,
+      technicalMessage,
+    };
+  }
+  return {
+    title: "Blocage de transformation",
+    summary: "La transformation a echoue et rien n'a ete cree.",
+    guidance:
+      "Corrigez le point bloquant indique ci-dessous, puis relancez la transformation. Si besoin, repassez par le wizard complet pour reverifier les etapes.",
+    actionLabel: "Reouvrir le wizard complet",
+    actionHref: transformBasePath,
+    technicalMessage,
+  };
 }
 
 function formatDate(value: string | null): string {
@@ -1165,6 +1218,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     `${quoteBasePath}?back=${encodeURIComponent(backPath)}&section=${section}`;
   const selfPath = appendQuickScenario(sectionHref(activeSection), quickScenario);
   const transformBasePath = `${quoteBasePath}/transform?back=${encodeURIComponent(selfPath)}${quickScenario === "live" ? "" : `&scenario=${quickScenario}`}`;
+  const followupTransformationFailureUi =
+    followupTransformationExecutionStatus === "failed" && followupTransformationFailedMessage
+      ? buildQuoteTransformationFailureUi(followupTransformationFailedMessage, transformBasePath)
+      : null;
   const quickScenarioLinks = [
     {
       key: "live" as const,
@@ -1205,7 +1262,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     integrationAlerts.push("Correspondance client a verifier.");
   }
   if (integrationState === "erreur_integration") {
-    integrationAlerts.push("Erreur d'integration detectee.");
+    integrationAlerts.push(
+      followupTransformationFailureUi?.summary
+        || "Erreur d'integration detectee.",
+    );
   }
   if (detail.quote.document_status === "stale") {
     integrationAlerts.push("Document modifie apres validation.");
@@ -2201,7 +2261,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       : followupTransformationExecutionStatus === "rolled_back"
                       ? "rollback effectue"
                       : followupTransformationExecutionStatus === "failed"
-                      ? "echec"
+                      ? "echec bloquant"
                       : followupTransformationExecutionStatus}
                   </strong>
                   {followupTransformationExecution?.executed_at
@@ -2217,8 +2277,24 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   <p><strong>Abonnements crees:</strong> {transformationExecutionSummary.subscriptions}</p>
                   <p><strong>Clients crees:</strong> {transformationExecutionSummary.users}</p>
                 </div>
-                {followupTransformationExecutionStatus === "failed" && followupTransformationFailedMessage ? (
-                  <p className="flash-err top-gap-sm">{followupTransformationFailedMessage}</p>
+                {followupTransformationFailureUi ? (
+                  <div className="quote-transform-issue-card blocked quote-transform-execution-alert top-gap-sm">
+                    <p className="quote-transform-execution-alert-title">
+                      <strong>{followupTransformationFailureUi.title}</strong>
+                    </p>
+                    <p>{followupTransformationFailureUi.summary}</p>
+                    <p>{followupTransformationFailureUi.guidance}</p>
+                    {followupTransformationFailureUi.actionHref && followupTransformationFailureUi.actionLabel ? (
+                      <div className="row wrap gap-sm">
+                        <Link className="ghost" href={followupTransformationFailureUi.actionHref}>
+                          {followupTransformationFailureUi.actionLabel}
+                        </Link>
+                      </div>
+                    ) : null}
+                    <p className="muted">
+                      <strong>Detail technique :</strong> {followupTransformationFailureUi.technicalMessage}
+                    </p>
+                  </div>
                 ) : null}
                 {canRollbackTransformation && activeFollowup ? (
                   <form id={`followup-rollback-form-${activeFollowup.id}`} action={rollbackQuoteTransformationAction} className="top-gap-sm">
