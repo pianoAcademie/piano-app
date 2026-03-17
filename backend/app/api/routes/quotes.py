@@ -4416,7 +4416,6 @@ def _resolve_followup_subscription(
         existing.payer_contact_id = billing.id
         if followup.payment_method_status != "validated":
             existing.billing_method_code = existing.billing_method_code or _default_subscription_billing_method(plan)
-        existing.updated_at = _utcnow()
         db.add(existing)
         return existing, plan
 
@@ -4460,7 +4459,6 @@ def _resolve_followup_subscription(
         current_period_start=current_period_start,
         current_period_end=current_period_end,
         created_at=now,
-        updated_at=now,
     )
     db.add(subscription)
     db.flush()
