@@ -140,6 +140,14 @@ function cgvLabel(snapshot: Record<string, unknown>): string {
   return "-";
 }
 
+function readStringMeta(meta: Record<string, unknown>, key: string, fallback = ""): string {
+  const value = meta[key];
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return fallback;
+}
+
 function prospectTypeLabelFromMeta(meta: Record<string, unknown>): "adult" | "child" | "-" {
   const value = typeof meta.prospect_type === "string" ? meta.prospect_type.trim().toLowerCase() : "";
   if (value === "adult" || value === "child") {
@@ -165,6 +173,7 @@ function prospectTypeLabelFromClient(client: AdminClientOut | undefined): "adult
 function quoteValidationState(row: QuoteOut): QuoteValidationUiState {
   const status = String(row.status || "").trim().toLowerCase();
   const meta = row.meta || {};
+  const publicResponseLastAction = readStringMeta(meta, "public_response_last_action", "").toLowerCase();
   if (status === "approved") {
     return "valide";
   }
@@ -181,8 +190,8 @@ function quoteValidationState(row: QuoteOut): QuoteValidationUiState {
     });
     return viewed ? "consulte" : "envoye";
   }
-  if (status === "change_requested") {
-    return "incomplet";
+  if (status === "change_requested" || publicResponseLastAction === "change_requested") {
+    return "modification_demandee";
   }
   if (status === "created") {
     const hasOwner = Boolean(row.prospect_id || row.client_id);
@@ -243,6 +252,9 @@ function quoteNextAction(
   if (commercialState === "pret_a_envoyer") {
     return "envoyer";
   }
+  if (commercialState === "modification_demandee") {
+    return "traiter_demande_client";
+  }
   if (commercialState === "envoye" || commercialState === "consulte") {
     return "relancer";
   }
@@ -252,6 +264,19 @@ function quoteNextAction(
     if (integrationState === "pret_a_integrer") return "integrer_dans_centrale";
   }
   return "aucune_action";
+}
+
+function quoteChangeRequestSummary(row: QuoteOut): { message: string; at: string } | null {
+  const meta = row.meta || {};
+  const publicResponseLastAction = readStringMeta(meta, "public_response_last_action", "").toLowerCase();
+  const status = String(row.status || "").trim().toLowerCase();
+  if (status !== "change_requested" && publicResponseLastAction !== "change_requested") {
+    return null;
+  }
+  return {
+    message: readStringMeta(meta, "public_response_last_message", ""),
+    at: readStringMeta(meta, "public_response_last_at", ""),
+  };
 }
 
 function buildQuotesListHref(params: {
@@ -707,6 +732,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                   const commercialState = quoteValidationState(row);
                   const integrationState = quoteIntegrationState(row, commercialState);
                   const nextAction = quoteNextAction(commercialState, integrationState);
+                  const changeRequest = quoteChangeRequestSummary(row);
 
                   return (
                     <tr key={row.id} className="quote-list-row">
@@ -726,9 +752,31 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                       </td>
                       <td>{labelForContext(row.context_type)}</td>
                       <td>{formatAmount(row.total_ttc, row.currency)}</td>
-                      <td><QuoteRowValidationState state={commercialState} /></td>
+                      <td>
+                        <div className="quote-list-status-cell">
+                          <QuoteRowValidationState state={commercialState} />
+                          {changeRequest ? (
+                            <div className="quote-list-change-request-note">
+                              <strong>Demande client</strong>
+                              {changeRequest.at ? (
+                                <span>Recue le {formatDate(changeRequest.at)}</span>
+                              ) : null}
+                              {changeRequest.message ? (
+                                <span className="quote-list-change-request-message">"{changeRequest.message}"</span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
                       <td><QuoteRowIntegrationState state={integrationState} /></td>
-                      <td><QuoteRowNextAction action={nextAction} /></td>
+                      <td>
+                        <div className="quote-list-status-cell">
+                          <QuoteRowNextAction action={nextAction} />
+                          {changeRequest ? (
+                            <span className="quote-list-inline-hint">Ouvrir le devis pour traiter la demande</span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td>{formatDate(row.created_at)}</td>
                       <td>{formatDate(row.expires_at)}</td>
                       <td>{getCalendarSessionsCount(row.calendar_snapshot)}</td>

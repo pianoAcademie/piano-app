@@ -151,9 +151,20 @@ class QuoteOut(BaseModel):
     updated_at: datetime
 
 
+class QuoteEventOut(BaseModel):
+    id: UUID
+    event_type: str
+    actor_type: str | None = None
+    actor_id: UUID | None = None
+    actor_label: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+
+
 class QuoteDetailOut(BaseModel):
     quote: QuoteOut
     lines: list[QuoteLineOut] = Field(default_factory=list)
+    events: list[QuoteEventOut] = Field(default_factory=list)
 
 
 class QuoteCreateRequest(BaseModel):

@@ -146,6 +146,17 @@ type QuoteOut = {
 type QuoteDetailOut = {
   quote: QuoteOut;
   lines: QuoteLineOut[];
+  events: QuoteEventOut[];
+};
+
+type QuoteEventOut = {
+  id: string;
+  event_type: string;
+  actor_type: string | null;
+  actor_id: string | null;
+  actor_label: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
 };
 
 type QuoteFollowupOut = {
@@ -705,7 +716,7 @@ function commercialStateFromQuote(quote: QuoteOut): QuoteValidationUiState {
     });
     return viewed ? "consulte" : "envoye";
   }
-  if (status === "change_requested") return "incomplet";
+  if (status === "change_requested") return "modification_demandee";
   if (status === "created") {
     const hasTemplate = Boolean(quote.quote_template_id);
     const hasRecipient = Boolean(quote.prospect_id || quote.client_id);
@@ -724,9 +735,157 @@ function commercialStateLabel(state: QuoteValidationUiState): string {
   if (state === "pret_a_envoyer") return "Pret a envoyer";
   if (state === "envoye") return "Envoye";
   if (state === "consulte") return "Consulte";
+  if (state === "modification_demandee") return "Modification demandee";
   if (state === "valide") return "Valide";
   if (state === "refuse") return "Refuse";
   return "Expire";
+}
+
+function validationClientLabelFromQuote(quote: QuoteOut): string {
+  const status = String(quote.status || "").trim().toLowerCase();
+  if (status === "approved") {
+    return "Valide";
+  }
+  if (status === "change_requested") {
+    return "Modification demandee";
+  }
+  if (status === "rejected") {
+    return "Refuse";
+  }
+  return "En attente";
+}
+
+function validationClientDateLabelFromQuote(quote: QuoteOut): string {
+  const status = String(quote.status || "").trim().toLowerCase();
+  const meta = quote.meta || {};
+  const lastPublicResponseAt = readStringMeta(meta, "public_response_last_at", "");
+  if (status === "approved") {
+    return formatDate(quote.approved_at);
+  }
+  if (status === "change_requested") {
+    return lastPublicResponseAt ? `Recue le ${formatDate(lastPublicResponseAt)}` : "Recue";
+  }
+  if (status === "rejected") {
+    return lastPublicResponseAt ? `Refuse le ${formatDate(lastPublicResponseAt)}` : "Refuse";
+  }
+  return "En attente";
+}
+
+const QUOTE_INTERACTION_EVENT_TYPES = new Set([
+  "quote_created",
+  "quote_document_regenerated",
+  "quote_email_sent",
+  "quote_sms_sent",
+  "quote_sent",
+  "quote_resent",
+  "quote_approved",
+  "quote_rejected",
+  "quote_change_requested",
+  "quote_public_confirmation_email_failed",
+  "quote_public_confirmation_email_skipped",
+  "quote_public_response_restored",
+  "quote_cancelled",
+  "quote_reminder_sent",
+  "quote_expired",
+  "quote_transformation_executed",
+  "quote_transformation_rolled_back",
+]);
+
+function quoteEventTitle(event: QuoteEventOut): string {
+  const type = String(event.event_type || "").trim().toLowerCase();
+  if (type === "quote_created") return "Devis cree";
+  if (type === "quote_document_regenerated") return "Document regenere";
+  if (type === "quote_email_sent") return "Email envoye";
+  if (type === "quote_sms_sent") return "SMS envoye";
+  if (type === "quote_sent") return "Devis envoye";
+  if (type === "quote_resent") return "Devis renvoye";
+  if (type === "quote_approved") return "Devis approuve";
+  if (type === "quote_rejected") return "Devis rejete";
+  if (type === "quote_change_requested") return "Demande de modification";
+  if (type === "quote_public_confirmation_email_failed") return "Confirmation client non envoyee";
+  if (type === "quote_public_confirmation_email_skipped") return "Confirmation client ignoree";
+  if (type === "quote_public_response_restored") return "Reponse client restauree";
+  if (type === "quote_cancelled") return "Devis annule";
+  if (type === "quote_reminder_sent") return "Relance envoyee";
+  if (type === "quote_expired") return "Devis expire";
+  if (type === "quote_transformation_executed") return "Transformation executee";
+  if (type === "quote_transformation_rolled_back") return "Transformation annulee";
+  return type || "Evenement";
+}
+
+function quoteEventTone(event: QuoteEventOut): "client" | "admin" | "system" {
+  const type = String(event.event_type || "").trim().toLowerCase();
+  if (["quote_approved", "quote_rejected", "quote_change_requested"].includes(type)) {
+    return "client";
+  }
+  if (
+    [
+      "quote_public_response_restored",
+      "quote_cancelled",
+      "quote_transformation_rolled_back",
+      "quote_document_regenerated",
+      "quote_email_sent",
+      "quote_sms_sent",
+      "quote_sent",
+      "quote_resent",
+    ].includes(type)
+  ) {
+    return "admin";
+  }
+  return "system";
+}
+
+function quoteEventDescription(event: QuoteEventOut): string {
+  const type = String(event.event_type || "").trim().toLowerCase();
+  const payload = event.payload || {};
+  const actorLabel = event.actor_label || (event.actor_type === "admin" ? "Admin" : event.actor_type === "prospect" ? "Client / prospect" : "Systeme");
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
+  const recipientEmail = typeof payload.recipient_email === "string" ? payload.recipient_email.trim() : "";
+  const recipientPhone = typeof payload.recipient_phone === "string" ? payload.recipient_phone.trim() : "";
+  const fromStatus = typeof payload.from_status === "string" ? payload.from_status.trim() : "";
+  const toStatus = typeof payload.to_status === "string" ? payload.to_status.trim() : "";
+  const error = typeof payload.error === "string" ? payload.error.trim() : "";
+  if (type === "quote_change_requested") {
+    return message || "Le client a demande une correction sans laisser de message detaille.";
+  }
+  if (type === "quote_public_response_restored") {
+    return `Action admin par ${actorLabel}${fromStatus || toStatus ? ` · ${labelForQuoteStatus(fromStatus)} -> ${labelForQuoteStatus(toStatus)}` : ""}`;
+  }
+  if (type === "quote_document_regenerated") {
+    return `Le document gele du devis a ete regenere par ${actorLabel.toLowerCase()}.`;
+  }
+  if (type === "quote_email_sent") {
+    return recipientEmail ? `Email operationnel envoye a ${recipientEmail}.` : `Email operationnel envoye par ${actorLabel.toLowerCase()}.`;
+  }
+  if (type === "quote_sms_sent") {
+    return recipientPhone ? `SMS envoye au ${recipientPhone}.` : `SMS envoye par ${actorLabel.toLowerCase()}.`;
+  }
+  if (type === "quote_sent" || type === "quote_resent") {
+    const channels = [recipientEmail ? `email ${recipientEmail}` : "", recipientPhone ? `SMS ${recipientPhone}` : ""].filter(Boolean).join(" · ");
+    return channels ? `Envoi au destinataire via ${channels}.` : `Action ${actorLabel.toLowerCase()}.`;
+  }
+  if (type === "quote_public_confirmation_email_failed") {
+    return error || "La confirmation automatique apres reponse client n a pas pu etre envoyee.";
+  }
+  if (type === "quote_public_confirmation_email_skipped") {
+    return "Aucune confirmation client n a ete envoyee pour cette action.";
+  }
+  if (type === "quote_cancelled") {
+    return `Action ${actorLabel.toLowerCase()}.`;
+  }
+  if (type === "quote_transformation_executed" || type === "quote_transformation_rolled_back") {
+    return `Action ${actorLabel.toLowerCase()}.`;
+  }
+  if (type === "quote_approved" || type === "quote_rejected") {
+    return `Reponse recue depuis la page publique.`;
+  }
+  if (type === "quote_reminder_sent") {
+    return "Relance automatique avant expiration.";
+  }
+  if (type === "quote_expired") {
+    return "Le devis a atteint sa date d'expiration.";
+  }
+  return `Action ${actorLabel.toLowerCase()}.`;
 }
 
 function integrationStateFromQuote(
@@ -1060,8 +1219,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       || inferredParentFromFamily?.adult.home_phone
       || "-";
   const quoteStatus = String(detail.quote.status || "").trim().toLowerCase();
+  const publicResponseLastAction = readStringMeta(detail.quote.meta || {}, "public_response_last_action", "")
+    .trim()
+    .toLowerCase();
+  const publicResponseLastMessage = readStringMeta(detail.quote.meta || {}, "public_response_last_message", "");
+  const publicResponseLastAt = readStringMeta(detail.quote.meta || {}, "public_response_last_at", "");
+  const hasPublicChangeRequest = quoteStatus === "change_requested" || publicResponseLastAction === "change_requested";
+  const publicChangeRequestReceivedLabel = publicResponseLastAt ? formatDate(publicResponseLastAt) : "Date non disponible";
+  const publicChangeRequestMessage = publicResponseLastMessage || "Le client a demande une modification sans laisser de message detaille.";
   const canSendQuote = quoteStatus === "created";
-  const canResendQuote = ["sent", "approved", "rejected", "expired"].includes(quoteStatus);
+  const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus);
   const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
   const canRestorePublicResponse = ["approved", "rejected", "change_requested"].includes(quoteStatus);
   const restoreTargetStatusRaw = readStringMeta(detail.quote.meta || {}, "public_response_previous_status", "").trim().toLowerCase();
@@ -1090,8 +1257,43 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const defaultCancelSmsTemplateRef =
     messagingSettings?.quote_cancel_sms_template_ref ||
     (quoteCancelSmsTemplates[0] ? messagingTemplateRef(quoteCancelSmsTemplates[0]) : "");
+  const validationClientStatusLabel = validationClientLabelFromQuote(detail.quote);
+  const validationClientStatusDetail = validationClientDateLabelFromQuote(detail.quote);
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
+  const interactionEvents = Array.isArray(detail.events)
+    ? detail.events.filter((event) => QUOTE_INTERACTION_EVENT_TYPES.has(String(event.event_type || "").trim().toLowerCase()))
+    : [];
+  const interactionHistorySection =
+    interactionEvents.length > 0 ? (
+      <section className="card quote-interactions-card">
+        <div className="row spread wrap gap-sm">
+          <div>
+            <h3>Historique des interactions</h3>
+            <p className="muted">Trace des actions client, BO et automatisations sur ce devis.</p>
+          </div>
+        </div>
+        <ol className="quote-interactions-timeline top-gap-sm">
+          {interactionEvents.map((event) => (
+            <li key={event.id} className={`quote-interaction-item is-${quoteEventTone(event)}`}>
+              <div className="quote-interaction-dot" aria-hidden="true" />
+              <div className="quote-interaction-body">
+                <div className="row spread wrap gap-sm">
+                  <div>
+                    <strong>{quoteEventTitle(event)}</strong>
+                    <div className="muted">
+                      {formatDate(event.created_at)}
+                      {event.actor_label ? ` · ${event.actor_label}` : ""}
+                    </div>
+                  </div>
+                </div>
+                <p className="top-gap-xs">{quoteEventDescription(event)}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+    ) : null;
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
@@ -1212,6 +1414,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     : null;
   const regenerateFormId = `quote-regenerate-form-${detail.quote.id}`;
   const restorePublicResponseFormId = `quote-restore-public-response-form-${detail.quote.id}`;
+  const sendPrimaryFormId = `quote-send-primary-form-${detail.quote.id}`;
+  const sendThirdPartyFormId = `quote-send-third-party-form-${detail.quote.id}`;
 
   const quoteBasePath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}`;
   const sectionHref = (section: QuoteWorkspaceSection): string =>
@@ -1473,7 +1677,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             statuses={[
               { label: "Commercial", value: commercialStateLabel(commercialState) },
               { label: "Document", value: detail.quote.document_status || "stale" },
-              { label: "Validation client", value: detail.quote.approved_at ? "Valide" : "En attente" },
+              {
+                label: "Validation client",
+                value: validationClientStatusLabel,
+                className: commercialState === "modification_demandee" ? "quote-header-status-info" : "",
+              },
               { label: "Integration", value: integrationStateLabel(integrationState) },
             ]}
           />
@@ -1486,7 +1694,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               { label: "Expiration", value: formatDate(detail.quote.expires_at) },
             ]}
             statuses={[
-              { label: "Validation client", value: detail.quote.approved_at ? formatDate(detail.quote.approved_at) : "En attente" },
+              { label: "Validation client", value: validationClientStatusDetail },
               { label: "Integration centrale", value: integrationStateLabel(integrationState) },
               { label: "Mode cible", value: integrationTargetMode },
               { label: "Creneaux prevus", value: String(calendarSessions.length) },
@@ -1497,6 +1705,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       >
         {ok ? <section className="flash-ok">{ok}</section> : null}
         {error ? <section className="flash-err">{error}</section> : null}
+        {hasPublicChangeRequest ? (
+          <section className="flash-warn quote-client-request-banner">
+            <strong>Demande de modification du client recue le {publicChangeRequestReceivedLabel}.</strong>
+            <p>{publicChangeRequestMessage}</p>
+          </section>
+        ) : null}
 
         {activeSection === "overview" ? (
           <>
@@ -1504,7 +1718,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               cards={[
                 { label: "Statut devis", value: commercialStateLabel(commercialState) },
                 { label: "Statut document", value: detail.quote.document_status || "stale" },
-                { label: "Validation client", value: detail.quote.approved_at ? formatDate(detail.quote.approved_at) : "En attente" },
+                { label: "Validation client", value: validationClientStatusDetail },
                 { label: "Integration centrale", value: integrationStateLabel(integrationState) },
                 { label: "Total TTC", value: formatAmount(detail.quote.total_ttc, detail.quote.currency) },
                 { label: "Expiration", value: formatDate(detail.quote.expires_at) },
@@ -1519,6 +1733,25 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                 </>
               )}
             />
+
+            {hasPublicChangeRequest ? (
+              <section className="card quote-public-feedback-card">
+                <div className="row spread wrap gap-sm">
+                  <div>
+                    <h3>Demande de modification du client</h3>
+                    <p className="muted">Recue le {publicChangeRequestReceivedLabel}. Le client attend un nouveau devis ou une correction.</p>
+                  </div>
+                  <div className="row wrap gap-sm">
+                    <Link className="ghost" href={sectionHref("document")}>Traiter dans Document et envoi</Link>
+                    <Link className="ghost" href={sectionHref("pricing")}>Verifier les lignes facturees</Link>
+                  </div>
+                </div>
+                <div className="quote-public-feedback-message top-gap-sm">
+                  <strong>Message du client</strong>
+                  <p>{publicChangeRequestMessage}</p>
+                </div>
+              </section>
+            ) : null}
 
             <section className="card" id="quote-contact-family">
               <div className="row spread wrap gap-sm">
@@ -1598,6 +1831,23 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
         {activeSection === "document" ? (
           <>
+            {hasPublicChangeRequest ? (
+              <section className="card quote-public-feedback-card">
+                <div className="row spread wrap gap-sm">
+                  <div>
+                    <h3>Demande de modification du client</h3>
+                    <p className="muted">Recue le {publicChangeRequestReceivedLabel}. Corrigez le devis puis renvoyez-le au client.</p>
+                  </div>
+                </div>
+                <div className="quote-public-feedback-message top-gap-sm">
+                  <strong>Message du client</strong>
+                  <p>{publicChangeRequestMessage}</p>
+                </div>
+              </section>
+            ) : null}
+
+            {interactionHistorySection}
+
             <section className="card" id="quote-document">
               <h3>Actions</h3>
               <div className="row wrap gap-sm top-gap-sm">
@@ -1610,7 +1860,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           ? `Cette action utilise l'email du ${primaryRecipientLabel} rattache au devis: ${ownerEmail}.`
                           : `Aucun email de ${primaryRecipientLabel} n'est disponible pour ce devis.`}
                       </p>
-                      <form action={canSendQuote ? sendQuoteAction : resendQuoteAction} className="top-gap-sm">
+                      <form
+                        id={sendPrimaryFormId}
+                        action={canSendQuote ? sendQuoteAction : resendQuoteAction}
+                        className="top-gap-sm"
+                      >
                         <input type="hidden" name="quote_id" value={detail.quote.id} />
                         <input type="hidden" name="return_to" value={selfPath} />
                         <input type="hidden" name="recipient_email" value={ownerEmail} />
@@ -1625,13 +1879,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           </select>
                         </label>
                         {defaultPrimaryPhone ? (
-                          <>
-                            <label className="checkline">
+                          <div className="quote-action-sms-group">
+                            <label className="checkline quote-action-checkline">
                               <input type="checkbox" name="send_sms" />
                               Envoyer aussi un SMS
                             </label>
                             <label>
-                              Numero de mobile
+                              N° de SMS
                               <input type="text" name="recipient_phone" defaultValue={defaultPrimaryPhone} maxLength={30} />
                             </label>
                             <label>
@@ -1648,13 +1902,20 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                                 ))}
                               </select>
                             </label>
-                          </>
+                          </div>
                         ) : (
                           <small className="muted top-gap-sm">Aucun numero mobile resolu pour proposer l envoi par SMS.</small>
                         )}
-                        <button type="submit" disabled={!ownerEmail}>
-                          {canSendQuote ? `Envoyer au ${primaryRecipientLabel}` : `Renvoyer au ${primaryRecipientLabel}`}
-                        </button>
+                        <div className="top-gap-sm">
+                          <ConfirmSubmitButton
+                            formId={sendPrimaryFormId}
+                            label={canSendQuote ? `Envoyer au ${primaryRecipientLabel}` : `Renvoyer au ${primaryRecipientLabel}`}
+                            title={canSendQuote ? "Confirmer l'envoi du devis ?" : "Confirmer le renvoi du devis ?"}
+                            description="Le devis sera envoye par email. Si l'option SMS est cochee, un SMS sera aussi envoye."
+                            confirmLabel={canSendQuote ? "Envoyer" : "Renvoyer"}
+                            disabled={!ownerEmail}
+                          />
+                        </div>
                       </form>
                       <small className="muted top-gap-sm">
                         Le contenu est choisi parmi les modeles BO "Envoi / renvoi du devis".
@@ -1666,7 +1927,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       <p className="muted top-gap-sm">
                         Saisissez une autre adresse email pour envoyer ce devis a un tiers.
                       </p>
-                      <form action={canSendQuote ? sendQuoteAction : resendQuoteAction} className="top-gap-sm">
+                      <form
+                        id={sendThirdPartyFormId}
+                        action={canSendQuote ? sendQuoteAction : resendQuoteAction}
+                        className="top-gap-sm"
+                      >
                         <input type="hidden" name="quote_id" value={detail.quote.id} />
                         <input type="hidden" name="return_to" value={selfPath} />
                         <label>
@@ -1690,9 +1955,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           </select>
                         </label>
                         <div className="row wrap gap-sm top-gap-sm">
-                          <button type="submit">
-                            {canSendQuote ? "Envoyer" : "Renvoyer"}
-                          </button>
+                          <ConfirmSubmitButton
+                            formId={sendThirdPartyFormId}
+                            label={canSendQuote ? "Envoyer" : "Renvoyer"}
+                            title={canSendQuote ? "Confirmer l'envoi au tiers ?" : "Confirmer le renvoi au tiers ?"}
+                            description="Le devis sera envoye a l'adresse email tiers renseignee ci-dessus."
+                            confirmLabel={canSendQuote ? "Envoyer" : "Renvoyer"}
+                          />
                         </div>
                       </form>
                       {lastRecipientEmail ? (
@@ -1742,13 +2011,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                         </select>
                       </label>
                       {defaultPrimaryPhone ? (
-                        <>
-                          <label className="checkline">
+                        <div className="quote-action-sms-group">
+                          <label className="checkline quote-action-checkline">
                             <input type="checkbox" name="notify_recipient_sms" defaultChecked />
                             Notifier aussi par SMS
                           </label>
                           <label>
-                            Numero SMS
+                            N° de SMS
                             <input type="text" name="recipient_phone" defaultValue={defaultPrimaryPhone} maxLength={30} />
                           </label>
                           <label>
@@ -1765,7 +2034,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                               ))}
                             </select>
                           </label>
-                        </>
+                        </div>
                       ) : null}
                       <div className="row wrap gap-sm top-gap-sm">
                         <button type="submit" className="danger">

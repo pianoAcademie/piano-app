@@ -79,6 +79,7 @@ from app.schemas.quote import (
     QuoteCancelRequest,
     QuoteCreateRequest,
     QuoteDetailOut,
+    QuoteEventOut,
     QuoteFollowupOut,
     QuoteFollowupPaymentMethodRequest,
     QuoteFollowupSlotRequest,
@@ -1886,9 +1887,62 @@ def _load_quote_lines(db: Session, quote_id: UUID) -> list[QuoteLine]:
     ).all()
 
 
+def _display_name(first_name: str | None, last_name: str | None, fallback: str) -> str:
+    full_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
+    return full_name or fallback
+
+
+def _quote_event_out(event: QuoteEvent, actor_label: str | None = None) -> QuoteEventOut:
+    return QuoteEventOut(
+        id=event.id,
+        event_type=event.event_type,
+        actor_type=event.actor_type,
+        actor_id=event.actor_id,
+        actor_label=actor_label,
+        payload=dict(event.payload) if isinstance(event.payload, dict) else {},
+        created_at=event.created_at,
+    )
+
+
+def _load_quote_events(db: Session, quote_id: UUID) -> list[QuoteEventOut]:
+    rows = db.scalars(
+        select(QuoteEvent)
+        .where(QuoteEvent.quote_id == quote_id)
+        .order_by(QuoteEvent.created_at.desc(), QuoteEvent.id.desc())
+    ).all()
+    actor_ids = [row.actor_id for row in rows if row.actor_type == "admin" and row.actor_id is not None]
+    users = (
+        db.scalars(select(User).where(User.id.in_(actor_ids))).all()
+        if actor_ids
+        else []
+    )
+    labels_by_id = {
+        user.id: _display_name(user.first_name, user.last_name, user.email)
+        for user in users
+    }
+    event_items: list[QuoteEventOut] = []
+    for row in rows:
+        actor_label: str | None = None
+        if row.actor_type == "admin" and row.actor_id is not None:
+            actor_label = labels_by_id.get(row.actor_id, "Admin")
+        elif row.actor_type == "prospect":
+            actor_label = "Client / prospect"
+        elif row.actor_type == "client":
+            actor_label = "Client"
+        elif row.actor_type == "system":
+            actor_label = "Systeme"
+        event_items.append(_quote_event_out(row, actor_label=actor_label))
+    return event_items
+
+
 def _quote_detail_out(db: Session, quote: Quote) -> QuoteDetailOut:
     lines = _load_quote_lines(db, quote.id)
-    return QuoteDetailOut(quote=_quote_out(quote), lines=[_line_out(row) for row in lines])
+    events = _load_quote_events(db, quote.id)
+    return QuoteDetailOut(
+        quote=_quote_out(quote),
+        lines=[_line_out(row) for row in lines],
+        events=events,
+    )
 
 
 def _resolve_recipient_email(db: Session, quote: Quote, explicit_email: str | None = None) -> str | None:
@@ -3611,7 +3665,7 @@ def resend_quote(
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteDetailOut:
     quote = _load_quote(db, quote_id, lock=True)
-    if quote.status not in {"sent", "approved", "rejected", "expired"}:
+    if quote.status not in {"sent", "approved", "rejected", "expired", "change_requested"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be resent in current status")
     _ensure_public_token(quote)
 

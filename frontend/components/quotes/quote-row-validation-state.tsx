@@ -6,6 +6,7 @@ export type QuoteValidationUiState =
   | "pret_a_envoyer"
   | "envoye"
   | "consulte"
+  | "modification_demandee"
   | "valide"
   | "refuse"
   | "expire";
@@ -16,6 +17,7 @@ const LABELS: Record<QuoteValidationUiState, string> = {
   pret_a_envoyer: "Pret a envoyer",
   envoye: "Envoye",
   consulte: "Consulte",
+  modification_demandee: "Modification demandee",
   valide: "Valide",
   refuse: "Refuse",
   expire: "Expire",
@@ -27,6 +29,7 @@ const CLASSES: Record<QuoteValidationUiState, string> = {
   pret_a_envoyer: "status-warn",
   envoye: "status-warn",
   consulte: "status-warn",
+  modification_demandee: "status-info",
   valide: "status-ok",
   refuse: "status-cancelled",
   expire: "status-cancelled",

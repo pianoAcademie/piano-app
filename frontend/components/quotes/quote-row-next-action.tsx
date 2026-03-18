@@ -4,6 +4,7 @@ export type QuoteNextAction =
   | "completer_le_devis"
   | "envoyer"
   | "relancer"
+  | "traiter_demande_client"
   | "regenerer"
   | "preparer_integration"
   | "verifier_correspondance_client"
@@ -14,6 +15,7 @@ const LABELS: Record<QuoteNextAction, string> = {
   completer_le_devis: "Completer le devis",
   envoyer: "Envoyer",
   relancer: "Relancer",
+  traiter_demande_client: "Traiter demande client",
   regenerer: "Regenerer",
   preparer_integration: "Preparer integration",
   verifier_correspondance_client: "Verifier correspondance client",
