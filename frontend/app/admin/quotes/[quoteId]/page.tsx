@@ -15,7 +15,7 @@ import type { QuoteValidationUiState } from "../../../../components/quotes/quote
 import QuoteValidationIntegrationSection from "../../../../components/quotes/quote-validation-integration-section";
 import QuoteWorkspaceHeader from "../../../../components/quotes/quote-workspace-header";
 import QuoteWorkspaceShell from "../../../../components/quotes/quote-workspace-shell";
-import QuoteWorkspaceSidebar from "../../../../components/quotes/quote-workspace-sidebar";
+import QuoteWorkspaceSidebar, { type SidebarItem } from "../../../../components/quotes/quote-workspace-sidebar";
 import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
@@ -62,7 +62,14 @@ import type {
 } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type QuoteWorkspaceSection = "overview" | "cadre" | "planning" | "pricing" | "document" | "integration";
+type QuoteWorkspaceSection =
+  | "overview"
+  | "cadre"
+  | "planning"
+  | "pricing"
+  | "document"
+  | "interactions"
+  | "integration";
 
 type RouteParams = {
   params: {
@@ -290,6 +297,7 @@ function parseWorkspaceSection(value: string): QuoteWorkspaceSection {
     || normalized === "planning"
     || normalized === "pricing"
     || normalized === "document"
+    || normalized === "interactions"
     || normalized === "integration"
   ) {
     return normalized;
@@ -1635,7 +1643,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     scenario: quickScenario,
   });
 
-  const sidebarItems = [
+  const sidebarItems: SidebarItem[] = [
     { id: "overview", label: "Vue d'ensemble", href: sectionHref("overview"), active: activeSection === "overview" },
     { id: "cadre", label: "Cadre du devis", href: sectionHref("cadre"), active: activeSection === "cadre" },
     {
@@ -1652,7 +1660,15 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       badge: `${detail.lines.length}`,
       active: activeSection === "pricing",
     },
-    { id: "document", label: "Document et envoi", href: sectionHref("document"), active: activeSection === "document" },
+    {
+      id: "interactions",
+      label: "Interactions client",
+      href: sectionHref("interactions"),
+      badge: hasPublicChangeRequest ? "!" : interactionEvents.length > 0 ? `${interactionEvents.length}` : undefined,
+      badgeTone: hasPublicChangeRequest ? "alert" : "default",
+      active: activeSection === "interactions",
+    },
+    { id: "document", label: "Envoi", href: sectionHref("document"), active: activeSection === "document" },
     {
       id: "integration",
       label: "Validation et integration",
@@ -1705,12 +1721,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       >
         {ok ? <section className="flash-ok">{ok}</section> : null}
         {error ? <section className="flash-err">{error}</section> : null}
-        {hasPublicChangeRequest ? (
-          <section className="flash-warn quote-client-request-banner">
-            <strong>Demande de modification du client recue le {publicChangeRequestReceivedLabel}.</strong>
-            <p>{publicChangeRequestMessage}</p>
-          </section>
-        ) : null}
 
         {activeSection === "overview" ? (
           <>
@@ -1726,32 +1736,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               alerts={integrationAlerts.map((message) => ({ level: message.toLowerCase().includes("erreur") ? "error" : "warn", message }))}
               quickActions={(
                 <>
-                  <Link className="ghost" href={sectionHref("document")}>Document et envoi</Link>
+                  <Link className="ghost" href={sectionHref("document")}>Envoi</Link>
+                  <Link className="ghost" href={sectionHref("interactions")}>Interactions client</Link>
                   <Link className="ghost" href={sectionHref("planning")}>Activites planifiees</Link>
                   <Link className="ghost" href={sectionHref("pricing")}>Lignes facturees</Link>
                   <Link className="ghost" href={sectionHref("integration")}>Validation et integration</Link>
                 </>
               )}
             />
-
-            {hasPublicChangeRequest ? (
-              <section className="card quote-public-feedback-card">
-                <div className="row spread wrap gap-sm">
-                  <div>
-                    <h3>Demande de modification du client</h3>
-                    <p className="muted">Recue le {publicChangeRequestReceivedLabel}. Le client attend un nouveau devis ou une correction.</p>
-                  </div>
-                  <div className="row wrap gap-sm">
-                    <Link className="ghost" href={sectionHref("document")}>Traiter dans Document et envoi</Link>
-                    <Link className="ghost" href={sectionHref("pricing")}>Verifier les lignes facturees</Link>
-                  </div>
-                </div>
-                <div className="quote-public-feedback-message top-gap-sm">
-                  <strong>Message du client</strong>
-                  <p>{publicChangeRequestMessage}</p>
-                </div>
-              </section>
-            ) : null}
 
             <section className="card" id="quote-contact-family">
               <div className="row spread wrap gap-sm">
@@ -1829,7 +1821,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           </>
         ) : null}
 
-        {activeSection === "document" ? (
+        {activeSection === "interactions" ? (
           <>
             {hasPublicChangeRequest ? (
               <section className="card quote-public-feedback-card">
@@ -1837,6 +1829,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   <div>
                     <h3>Demande de modification du client</h3>
                     <p className="muted">Recue le {publicChangeRequestReceivedLabel}. Corrigez le devis puis renvoyez-le au client.</p>
+                  </div>
+                  <div className="row wrap gap-sm">
+                    <Link className="ghost" href={sectionHref("document")}>Traiter dans Envoi</Link>
+                    <Link className="ghost" href={sectionHref("pricing")}>Verifier les lignes facturees</Link>
                   </div>
                 </div>
                 <div className="quote-public-feedback-message top-gap-sm">
@@ -1847,6 +1843,18 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             ) : null}
 
             {interactionHistorySection}
+
+            {!hasPublicChangeRequest && !interactionHistorySection ? (
+              <section className="card">
+                <h3>Interactions client</h3>
+                <p className="muted top-gap-sm">Aucune interaction client ou automatisation notable n'a encore ete enregistree pour ce devis.</p>
+              </section>
+            ) : null}
+          </>
+        ) : null}
+
+        {activeSection === "document" ? (
+          <>
 
             <section className="card" id="quote-document">
               <h3>Actions</h3>

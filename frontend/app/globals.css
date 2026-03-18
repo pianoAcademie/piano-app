@@ -11404,6 +11404,13 @@ button.danger:focus-visible {
   color: #1f3d70;
 }
 
+.quote-workspace-sidebar-badge-alert {
+  background: #b42318;
+  color: #fff;
+  border-color: #b42318;
+  box-shadow: 0 0 0 2px rgba(180, 35, 24, 0.12);
+}
+
 .quote-overview-section {
   display: grid;
   gap: 10px;

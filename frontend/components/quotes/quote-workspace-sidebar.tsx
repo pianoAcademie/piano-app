@@ -1,12 +1,13 @@
 import React from "react";
 import Link from "next/link";
 
-type SidebarItem = {
+export type SidebarItem = {
   id: string;
   label: string;
   href: string;
   active?: boolean;
   badge?: string;
+  badgeTone?: "default" | "alert";
 };
 
 export default function QuoteWorkspaceSidebar({ items }: { items: SidebarItem[] }): JSX.Element {
@@ -21,7 +22,11 @@ export default function QuoteWorkspaceSidebar({ items }: { items: SidebarItem[] 
             className={`quote-workspace-sidebar-link ${item.active ? "active" : ""}`.trim()}
           >
             <span>{item.label}</span>
-            {item.badge ? <span className="badge">{item.badge}</span> : null}
+            {item.badge ? (
+              <span className={`badge ${item.badgeTone === "alert" ? "quote-workspace-sidebar-badge-alert" : ""}`.trim()}>
+                {item.badge}
+              </span>
+            ) : null}
           </Link>
         ))}
       </nav>
