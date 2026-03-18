@@ -83,6 +83,35 @@ def _split_ttc_with_rate(total_ttc: Decimal, vat_rate: Decimal) -> tuple[Decimal
     return ht_amount, vat_amount
 
 
+def _resolve_display_vat_rate(
+    *,
+    quote: Quote,
+    lines: list[QuoteLine],
+    total_ht: Decimal,
+    total_vat: Decimal,
+) -> Decimal:
+    non_zero_line_rates = {
+        Decimal(getattr(line, "vat_rate", 0) or 0).quantize(Decimal("0.01"))
+        for line in lines
+        if Decimal(getattr(line, "amount_ttc", 0) or 0) != Decimal("0.00")
+    }
+    if len(non_zero_line_rates) == 1:
+        return next(iter(non_zero_line_rates))
+
+    explicit_quote_rate = _decimal_from_any(quote.vat_rate, default=Decimal("-1"))
+    if explicit_quote_rate >= Decimal("0.00"):
+        return explicit_quote_rate.quantize(Decimal("0.01"))
+
+    quote_meta = _json_object(quote.meta)
+    explicit_meta_rate = _decimal_from_any(quote_meta.get("tva_rate"), default=Decimal("-1"))
+    if explicit_meta_rate >= Decimal("0.00"):
+        return explicit_meta_rate.quantize(Decimal("0.01"))
+
+    if total_ht <= Decimal("0.00"):
+        return Decimal("0.00")
+    return ((total_vat / total_ht) * Decimal("100")).quantize(Decimal("0.01"))
+
+
 def _money(value: Decimal, currency: str) -> str:
     return f"{_decimal_str(value)} {currency}"
 
@@ -1479,10 +1508,12 @@ def _build_template_values(
         (Decimal(getattr(line, "amount_vat", Decimal("0")) or Decimal("0")) for line in lines),
         Decimal("0.00"),
     ).quantize(Decimal("0.01"))
-    if total_ht_before_from_lines <= Decimal("0.00"):
-        vat_rate = Decimal("0.00")
-    else:
-        vat_rate = ((vat_amount_before_from_lines / total_ht_before_from_lines) * Decimal("100")).quantize(Decimal("0.01"))
+    vat_rate = _resolve_display_vat_rate(
+        quote=quote,
+        lines=lines,
+        total_ht=total_ht_before_from_lines,
+        total_vat=vat_amount_before_from_lines,
+    )
 
     payment_terms_snapshot = _json_object(quote.payment_terms_snapshot)
     adjustment_data = _json_object(payment_terms_snapshot.get("adjustment"))
@@ -1541,8 +1572,13 @@ def _build_template_values(
     has_credit_adjustment = adjustment_type == "credit"
     has_debt_adjustment = adjustment_type == "debt"
 
-    total_ht_before_adjustment, vat_amount_before_adjustment = _split_ttc_with_rate(total_before_adjustment, vat_rate)
-    total_ht_after_adjustment, vat_amount_after_adjustment = _split_ttc_with_rate(total_after_adjustment, vat_rate)
+    total_ht_before_adjustment = total_ht_before_from_lines
+    vat_amount_before_adjustment = vat_amount_before_from_lines
+    if adjustment_type == "none":
+        total_ht_after_adjustment = total_ht_before_from_lines
+        vat_amount_after_adjustment = vat_amount_before_from_lines
+    else:
+        total_ht_after_adjustment, vat_amount_after_adjustment = _split_ttc_with_rate(total_after_adjustment, vat_rate)
     remaining_ht_after_deposit, remaining_vat_after_deposit = _split_ttc_with_rate(remaining_ttc_after_deposit, vat_rate)
     deposit_ht_amount, deposit_vat_amount = _split_ttc_with_rate(deposit_amount_ttc, vat_rate)
 
