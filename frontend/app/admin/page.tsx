@@ -178,12 +178,8 @@ function startOfWeekUtc(date: Date): Date {
   return addUtcDays(date, -offsetFromMonday);
 }
 
-function startOfWeekSundayUtc(date: Date): Date {
-  return addUtcDays(date, -date.getUTCDay());
-}
-
-function endOfWeekSaturdayUtc(date: Date): Date {
-  return addUtcDays(startOfWeekSundayUtc(date), 6);
+function endOfWeekSundayUtc(date: Date): Date {
+  return addUtcDays(startOfWeekUtc(date), 6);
 }
 
 function getDatePart(parts: Intl.DateTimeFormatPart[], type: "year" | "month" | "day"): string {
@@ -296,8 +292,8 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
   const monthStart = startOfMonthUtc(focusDate);
   const nextMonth = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
   const monthEnd = addUtcDays(nextMonth, -1);
-  const from = startOfWeekSundayUtc(monthStart);
-  const visibleLastDay = endOfWeekSaturdayUtc(monthEnd);
+  const from = startOfWeekUtc(monthStart);
+  const visibleLastDay = endOfWeekSundayUtc(monthEnd);
   const toExclusive = addUtcDays(visibleLastDay, 1);
   const to = new Date(toExclusive.getTime() - 1);
 
