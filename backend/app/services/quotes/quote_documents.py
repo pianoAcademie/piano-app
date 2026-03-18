@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape, unescape as html_unescape
 import io
+import logging
 import re
 from typing import Any
 
@@ -17,6 +18,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from xhtml2pdf import pisa
 
 from app.models.ops import AppSetting
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
@@ -29,6 +31,21 @@ AUDIENCE_PUBLIC_PAGE = "public_page"
 AUDIENCE_CLIENT_PDF = "client_pdf"
 DEFAULT_AUDIENCE = AUDIENCE_CLIENT_PDF
 ACCOUNT_LOGO_SETTING_KEY = "config_account_logo_data_url"
+logger = logging.getLogger(__name__)
+CSS_VAR_RE = re.compile(r"var\(\s*(--[a-zA-Z0-9_-]+)\s*(?:,\s*([^)]+?)\s*)?\)")
+CSS_VAR_DEFAULTS: dict[str, str] = {
+    "--line-soft": "#d6d9de",
+    "--line": "#cfd3da",
+    "--ink": "#1f1f1f",
+    "--text": "#1f1f1f",
+    "--text-muted": "#6b7280",
+    "--muted": "#6b7280",
+    "--bg": "#ffffff",
+    "--panel": "#ffffff",
+    "--panel-2": "#f9fafb",
+    "--accent": "#c9872a",
+    "--accent-ink": "#ffffff",
+}
 
 
 def _is_true(value: Any) -> bool:
@@ -1227,6 +1244,40 @@ def _enforce_family_page_break(content: str) -> str:
     if marker in prefix:
         return content
     return (content or "")[:match.start()] + "<div class='quote-page-break'></div>" + (content or "")[match.start():]
+
+
+def _ensure_full_html_document(content: str) -> str:
+    candidate = (content or "").strip()
+    if not candidate:
+        return "<html><body><p>Devis</p></body></html>"
+    if "<html" in candidate.lower():
+        return candidate
+    return f"<html><body>{candidate}</body></html>"
+
+
+def _normalize_css_vars_for_pdf(html_document: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        variable_name = (match.group(1) or "").strip().lower()
+        explicit_fallback = (match.group(2) or "").strip()
+        if explicit_fallback:
+            return explicit_fallback
+        return CSS_VAR_DEFAULTS.get(variable_name, "inherit")
+
+    return CSS_VAR_RE.sub(replace, html_document)
+
+
+def _render_html_pdf_with_xhtml2pdf(rendered_html: str) -> bytes | None:
+    html_document = _normalize_css_vars_for_pdf(_ensure_full_html_document(rendered_html))
+    output = io.BytesIO()
+    try:
+        status = pisa.CreatePDF(src=html_document, dest=output, encoding="utf-8")
+    except Exception:
+        logger.exception("Quote HTML PDF rendering crashed; falling back to block renderer")
+        return None
+    if status.err:
+        logger.warning("Quote HTML PDF rendering failed; falling back to block renderer")
+        return None
+    return output.getvalue()
 
 
 _INLINE_FOOTER_RE = re.compile(
@@ -2516,8 +2567,14 @@ def render_quote_pdf(
     lines: list[QuoteLine],
     audience: str = DEFAULT_AUDIENCE,
 ) -> bytes:
-    # Robust path: render from stable business blocks (no fragile HTML frame layout).
-    return _render_quote_pdf_blocks(db=db, quote=quote, lines=lines, audience=audience)
+    _, _, combined_html = render_quote_parts_html(db=db, quote=quote, lines=lines, audience=audience)
+    return render_quote_pdf_from_combined_html(
+        db=db,
+        quote=quote,
+        lines=lines,
+        combined_html=combined_html,
+        audience=audience,
+    )
 
 
 def _safe_logo_reader(data_url: str) -> ImageReader | None:
@@ -3183,8 +3240,7 @@ def render_quote_pdf_from_combined_html(
     combined_html: str,
     audience: str = DEFAULT_AUDIENCE,
 ) -> bytes:
-    # Keep signature for callers using stored combined_html snapshots.
-    # The PDF itself is intentionally rebuilt from stable blocks to avoid
-    # CSS/page-frame collisions that caused overlapping sections.
-    _ = combined_html
+    html_pdf = _render_html_pdf_with_xhtml2pdf(combined_html)
+    if html_pdf:
+        return html_pdf
     return _render_quote_pdf_blocks(db=db, quote=quote, lines=lines, audience=audience)
