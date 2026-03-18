@@ -1419,10 +1419,7 @@ def _build_quote_pdf_blocks_html(
         "{payment_method_block_html}"
         "<p>{payment_schedule_summary}</p>"
         "{payment_schedule_table_html}"
-        "<h2>Vos options</h2>"
-        "{solfege_block_html}"
-        "{masterclass_block_html}"
-        "{pass_recup_block_html}"
+        "{options_section_html}"
         "{page_break_html}"
         "<h2>Calendrier des cours</h2>"
         "<p><strong>Resume :</strong> {calendar_summary}</p>"
@@ -1999,8 +1996,7 @@ def _build_template_values(
         f"<i>{masterclass_detail_text}</i><br/>"
         f"<i>{escape(masterclass_common_text)}</i></p>"
         if display_flags["showMasterclassSection"]
-        else "<p><strong>Option Masterclass du samedi : non souscrite.</strong><br/>"
-        "<i>Aucune participation à la Masterclass du samedi n’est incluse dans cette formule.</i></p>"
+        else ""
     )
     pass_recup_common_text = (
         "Le Pass Récup’ permet de rattraper un cours collectif manqué, dans la limite de 4 rattrapages par année "
@@ -2014,8 +2010,15 @@ def _build_template_values(
         "<p><strong>Option Pass Récup : souscrite.</strong><br/>"
         f"<i>{escape(pass_recup_common_text)}</i></p>"
         if display_flags["showPassRecupSection"]
-        else "<p><strong>Option Pass Récup : non souscrite.</strong><br/>"
-        f"<i>{escape(pass_recup_common_text)}</i></p>"
+        else ""
+    )
+    options_section_html = _section_html(
+        "Vos options",
+        "".join(
+            fragment
+            for fragment in (solfege_block_html, masterclass_block_html, pass_recup_block_html)
+            if str(fragment or "").strip()
+        ),
     )
     payment_instruction = str(document_context.get("payment_instruction") or "").strip()
     payment_method_block_html = f"<p><strong>Mode de paiement :</strong> {escape(payment_method_label)}</p>"
@@ -2139,6 +2142,7 @@ def _build_template_values(
         "solfege_block_html": solfege_block_html,
         "masterclass_block_html": masterclass_block_html,
         "pass_recup_block_html": pass_recup_block_html,
+        "options_section_html": options_section_html,
         "payment_method_block_html": payment_method_block_html,
         "activities_planning_section_html": activities_planning_section_html,
         "services_section_html": services_section_html,
@@ -2174,6 +2178,7 @@ def _build_template_values(
         "solfege_block_html",
         "masterclass_block_html",
         "pass_recup_block_html",
+        "options_section_html",
         "payment_method_block_html",
         "activities_planning_section_html",
         "services_section_html",
@@ -2247,7 +2252,7 @@ def _default_quote_body_template() -> str:
         "{payment_method_block_html}"
         "{payment_schedule_section_html}"
         "{financial_adjustment_section_html}"
-        "{pass_recup_block_html}"
+        "{options_section_html}"
         "{calendar_section_html}"
         "{financial_recap_block_html}"
         "{footer_standard_html}"
@@ -2313,6 +2318,7 @@ def _render_quote_body_html(
             "solfege_block_html",
             "masterclass_block_html",
             "pass_recup_block_html",
+            "options_section_html",
             "payment_method_block_html",
             "activities_planning_section_html",
             "services_section_html",
@@ -2349,6 +2355,13 @@ def _render_quote_body_html(
     if not str(values.get("adjustments_section_html") or "").strip():
         rendered = re.sub(
             r"<h[1-6]\b[^>]*>\s*Remises\s+et\s+suppl(?:e|é)ments\s*</h[1-6]>\s*",
+            "",
+            rendered,
+            flags=re.IGNORECASE,
+        )
+    if not str(values.get("options_section_html") or "").strip():
+        rendered = re.sub(
+            r"<h[1-6]\b[^>]*>\s*Vos\s+options\s*</h[1-6]>\s*",
             "",
             rendered,
             flags=re.IGNORECASE,
@@ -3089,11 +3102,17 @@ def _render_quote_pdf_blocks(
                 col_widths=[0.29, 0.18, 0.31, 0.22],
             )
         )
-    story.append(Spacer(1, 6))
-    story.append(Paragraph("Vos options", styles["h2"]))
-    story.append(Paragraph(_apply_template("{solfege_block_html}", values=values, html_keys={"solfege_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""), styles["text"]))
-    story.append(Paragraph(_apply_template("{masterclass_block_html}", values=values, html_keys={"masterclass_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""), styles["text"]))
-    story.append(Paragraph(_apply_template("{pass_recup_block_html}", values=values, html_keys={"pass_recup_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""), styles["text"]))
+    option_blocks = [
+        _apply_template("{solfege_block_html}", values=values, html_keys={"solfege_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
+        _apply_template("{masterclass_block_html}", values=values, html_keys={"masterclass_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
+        _apply_template("{pass_recup_block_html}", values=values, html_keys={"pass_recup_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
+    ]
+    option_blocks = [block.strip() for block in option_blocks if str(block or "").strip()]
+    if option_blocks:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("Vos options", styles["h2"]))
+        for block_html in option_blocks:
+            story.append(Paragraph(block_html, styles["text"]))
 
     story.append(PageBreak())
     story.append(Paragraph("Calendrier des cours", styles["h1"]))

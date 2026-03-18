@@ -493,8 +493,14 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
     {
         "key": "pass_recup_block_html",
         "label": "Bloc Pass Recup (HTML)",
-        "description": "Bloc conditionnel: details Pass Recup ou mention non souscrit.",
-        "example": "<p>Option Pass Recup : non souscrite.</p>",
+        "description": "Bloc conditionnel: details Pass Recup, vide si non souscrit.",
+        "example": "<p>Option Pass Recup : souscrite.</p>",
+    },
+    {
+        "key": "options_section_html",
+        "label": "Section options (HTML)",
+        "description": "Section complete (titre + options souscrites) masquee automatiquement si vide.",
+        "example": "<h2>Vos options</h2><p>Option Pass Recup : souscrite.</p>",
     },
     {
         "key": "services_table_html",
