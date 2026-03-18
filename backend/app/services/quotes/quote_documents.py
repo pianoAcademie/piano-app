@@ -1414,7 +1414,6 @@ def _build_quote_pdf_blocks_html(
         "{kits_section_html}"
         "{other_fees_section_html}"
         "{financial_recap_block_html}"
-        "{page_break_html}"
         "<h2>Les modalites de paiement</h2>"
         "{payment_method_block_html}"
         "<p>{payment_schedule_summary}</p>"
