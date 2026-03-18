@@ -121,46 +121,6 @@ function readObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function modalityLabel(value: unknown): string {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  if (normalized === "ONLINE") {
-    return "En ligne";
-  }
-  if (normalized === "ONSITE") {
-    return "Presentiel";
-  }
-  return normalized || "-";
-}
-
-function weekdayLabelFromNumber(value: unknown): string {
-  const weekday = Number.parseInt(String(value ?? ""), 10);
-  if (weekday === 0) return "Lundi";
-  if (weekday === 1) return "Mardi";
-  if (weekday === 2) return "Mercredi";
-  if (weekday === 3) return "Jeudi";
-  if (weekday === 4) return "Vendredi";
-  if (weekday === 5) return "Samedi";
-  if (weekday === 6) return "Dimanche";
-  return "-";
-}
-
-function getCalendarSessions(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
-  const raw = snapshot.sessions;
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.filter((row): row is Record<string, unknown> => !!row && typeof row === "object");
-}
-
-function getSelectedSolfegeSlot(quote: QuoteOut): Record<string, unknown> | null {
-  const metaSlot = readObject(readObject(quote.calendar_snapshot)?.solfege);
-  const fromCalendar = metaSlot ? readObject(metaSlot.selected_slot) : null;
-  if (fromCalendar) {
-    return fromCalendar;
-  }
-  return null;
-}
-
 function buildSelfPath(quoteId: string, token: string): string {
   return `/q/${quoteId}?t=${encodeURIComponent(token)}`;
 }
@@ -226,18 +186,6 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                   <article>
                     <span>Expire le</span>
                     <strong>{formatDate(payload.quote.expires_at)}</strong>
-                  </article>
-                  <article>
-                    <span>Contexte</span>
-                    <strong>{payload.quote.context_type === "active_client" ? "Client actif" : "Acquisition"}</strong>
-                  </article>
-                  <article>
-                    <span>Solfege</span>
-                    <strong>
-                      {payload.quote.estimated_solfege_level
-                        ? `Niveau ${payload.quote.estimated_solfege_level} (${payload.quote.solfege_duration_minutes ?? "?"} min)`
-                        : "Non inclus"}
-                    </strong>
                   </article>
                 </div>
               </article>
