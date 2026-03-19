@@ -182,6 +182,18 @@ function scheduleOptionLinks(basePath: string, scenario: QuoteTransformScenario)
   });
 }
 
+function setDetailQueryParam(path: string, key: string, value: string | null): string {
+  const [pathname, rawSearch = ""] = path.split("?");
+  const params = new URLSearchParams(rawSearch);
+  if (value === null || value === "") {
+    params.delete(key);
+  } else {
+    params.set(key, value);
+  }
+  const nextSearch = params.toString();
+  return nextSearch ? `${pathname}?${nextSearch}` : pathname;
+}
+
 export default async function AdminQuoteTransformPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -403,11 +415,35 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
 
   const basePath = `/admin/quotes/${encodeURIComponent(quoteId)}/transform?back=${encodeURIComponent(backPath)}`;
   const scenarioLinks = scheduleOptionLinks(basePath, scenario);
+  const dismissErrorHref = setDetailQueryParam(basePath, "error", null);
+  const dismissOkHref = setDetailQueryParam(basePath, "ok", null);
 
   return (
     <section className="admin-page-grid">
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
+      {ok ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Confirmation transformation devis">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={dismissOkHref} aria-label="Fermer la confirmation">
+              ×
+            </Link>
+            <section className="flash-ok modal-flash" role="status">
+              {ok}
+            </section>
+          </article>
+        </section>
+      ) : null}
+      {error ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Erreur transformation devis">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={dismissErrorHref} aria-label="Fermer l'erreur">
+              ×
+            </Link>
+            <section className="flash-err modal-flash" role="alert">
+              {error}
+            </section>
+          </article>
+        </section>
+      ) : null}
 
       <QuoteToEnrollmentWizard
         quote={quote}
