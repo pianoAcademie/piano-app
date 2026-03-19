@@ -533,6 +533,25 @@ def _extract_answers(payload: dict[str, object]) -> list[dict[str, object]]:
     return [item for item in top_level_answers if isinstance(item, dict)]
 
 
+def _extract_field_labels_from_payload(payload: dict[str, object]) -> dict[str, str]:
+    form_response = _json_object(payload.get("form_response"))
+    definition = _json_object(form_response.get("definition"))
+    raw_fields = _json_list(definition.get("fields"))
+    labels: dict[str, str] = {}
+
+    for item in raw_fields:
+        if not isinstance(item, dict):
+            continue
+        field = _json_object(item)
+        title = _text(field.get("title"))
+        if not title:
+            continue
+        for candidate in (_text(field.get("ref")), _text(field.get("id"))):
+            if candidate and candidate not in labels:
+                labels[candidate] = title
+    return labels
+
+
 def _answer_keys(answer: dict[str, object], *, index: int) -> list[str]:
     field = _json_object(answer.get("field"))
     out: list[str] = []
@@ -552,6 +571,24 @@ def _answer_keys(answer: dict[str, object], *, index: int) -> list[str]:
 
 def _answer_key(answer: dict[str, object], *, index: int) -> str:
     return _answer_keys(answer, index=index)[0]
+
+
+def _answer_label(
+    answer: dict[str, object],
+    *,
+    index: int,
+    configured_labels: dict[str, object],
+    payload_labels: dict[str, str],
+) -> str:
+    field = _json_object(answer.get("field"))
+    for candidate in _answer_keys(answer, index=index):
+        configured = _text(configured_labels.get(candidate))
+        if configured:
+            return configured
+        payload_label = _text(payload_labels.get(candidate))
+        if payload_label:
+            return payload_label
+    return _text(field.get("title")) or _answer_key(answer, index=index)
 
 
 def _extract_answer_map(answers: list[dict[str, object]]) -> dict[str, object]:
@@ -656,6 +693,7 @@ def _normalize_payload(
     field_labels = _json_object(config_json.get("field_labels"))
 
     answers = _extract_answers(payload)
+    payload_field_labels = _extract_field_labels_from_payload(payload)
     answer_map = _extract_answer_map(answers)
     simplified_answers: list[dict[str, object]] = []
     for index, answer in enumerate(answers):
@@ -663,7 +701,12 @@ def _normalize_payload(
         simplified_answers.append(
             {
                 "key": key,
-                "label": _text(field_labels.get(key)) or key,
+                "label": _answer_label(
+                    answer,
+                    index=index,
+                    configured_labels=field_labels,
+                    payload_labels=payload_field_labels,
+                ),
                 "value": _answer_display_value(_answer_value(answer)),
             }
         )
@@ -1930,10 +1973,15 @@ def _analysis_for_intake(
 ) -> dict[str, object]:
     config = db.scalar(select(TypeformFormConfig).where(TypeformFormConfig.id == intake.form_config_id)) if intake.form_config_id else None
     normalized = _json_object(intake.normalized_payload_json)
+    raw_payload = _json_object(intake.raw_payload_json)
     if not normalized and config is not None:
-        normalized, simplified_answers = _normalize_payload(payload=_json_object(intake.raw_payload_json), config=config)
+        normalized, simplified_answers = _normalize_payload(payload=raw_payload, config=config)
         intake.normalized_payload_json = normalized
         intake.simplified_response_json = simplified_answers
+    elif raw_payload:
+        _, refreshed_simplified_answers = _normalize_payload(payload=raw_payload, config=config)
+        if refreshed_simplified_answers != _json_list(intake.simplified_response_json):
+            intake.simplified_response_json = refreshed_simplified_answers
 
     client_candidates = _collect_client_candidates(db, normalized)
     family_candidates = _collect_family_candidates(db, normalized)
