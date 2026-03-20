@@ -65,7 +65,11 @@ export default function ConfirmSubmitButton({
               ×
             </button>
             <h3 className="modal-title">{title}</h3>
-            {description ? <p className="muted">{description}</p> : null}
+            {description ? (
+              <p className="muted" style={{ whiteSpace: "pre-line" }}>
+                {description}
+              </p>
+            ) : null}
             {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
             <div className="row modal-actions-end">
               <button type="button" className="ghost" onClick={close}>
@@ -81,4 +85,3 @@ export default function ConfirmSubmitButton({
     </>
   );
 }
-

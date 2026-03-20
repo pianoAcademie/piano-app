@@ -396,6 +396,13 @@ function toNumber(value: string | number | null | undefined, fallback = 0): numb
   return parsed;
 }
 
+function isSolfegeActivityName(value: string | null | undefined): boolean {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .includes("solfege");
+}
+
 function paymentMethodLabel(methodCode: string): string {
   const normalized = String(methodCode || "").trim().toUpperCase();
   if (normalized === "CARD") return "Carte bancaire";
@@ -1330,6 +1337,54 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       planningByActivityId[activityId].pendingSelection = true;
     }
   }
+  const activityById = new Map(activities.map((activity) => [activity.id, activity]));
+  const sendQuantityMismatchWarnings = detail.lines
+    .filter((line) => Boolean(line.activity_id))
+    .filter((line) => {
+      const activity = activityById.get(String(line.activity_id || "").trim());
+      const haystack = [activity?.name, activity?.code, activity?.service_code, line.title]
+        .filter(Boolean)
+        .join(" ");
+      return !isSolfegeActivityName(haystack);
+    })
+    .map((line) => {
+      const activityId = String(line.activity_id || "").trim();
+      const planningSummaryForActivity = activityId ? planningByActivityId[activityId] : undefined;
+      const plannedQuantity = planningSummaryForActivity?.plannedQuantity ?? 0;
+      const billedQuantity = toNumber(line.quantity, 0);
+      return {
+        title: String(line.title || "Activite sans intitule").trim() || "Activite sans intitule",
+        billedQuantity,
+        plannedQuantity,
+        mismatch: Math.round(billedQuantity) !== plannedQuantity,
+      };
+    })
+    .filter((entry) => entry.mismatch);
+  const primarySendDescriptionLines = [
+    "Le devis sera envoye par email. Si l'option SMS est cochee, un SMS sera aussi envoye.",
+  ];
+  if (sendQuantityMismatchWarnings.length > 0) {
+    primarySendDescriptionLines.push(
+      "",
+      "Attention : certaines activites ont une quantite planifiee differente de la quantite facturee :",
+      ...sendQuantityMismatchWarnings.map(
+        (entry) =>
+          `- ${entry.title} : quantite facturee ${entry.billedQuantity}, quantite planifiee ${entry.plannedQuantity}`,
+      ),
+      "",
+      "Le solfege est exclu de ce controle.",
+      "Confirmez-vous l'envoi ?",
+    );
+  }
+  const primarySendDescription = primarySendDescriptionLines.join("\n");
+  const primarySendTitle =
+    sendQuantityMismatchWarnings.length > 0
+      ? canSendQuote
+        ? "Confirmer l'envoi du devis malgre des ecarts de quantite ?"
+        : "Confirmer le renvoi du devis malgre des ecarts de quantite ?"
+      : canSendQuote
+        ? "Confirmer l'envoi du devis ?"
+        : "Confirmer le renvoi du devis ?";
   const planningSummary = planningVisualSummary(calendarSessions);
   const followupPayload = readObject(activeFollowup?.payload);
   const followupTransformationPayload = readObject(followupPayload?.quote_to_enrollment);
@@ -1918,8 +1973,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           <ConfirmSubmitButton
                             formId={sendPrimaryFormId}
                             label={canSendQuote ? `Envoyer au ${primaryRecipientLabel}` : `Renvoyer au ${primaryRecipientLabel}`}
-                            title={canSendQuote ? "Confirmer l'envoi du devis ?" : "Confirmer le renvoi du devis ?"}
-                            description="Le devis sera envoye par email. Si l'option SMS est cochee, un SMS sera aussi envoye."
+                            title={primarySendTitle}
+                            description={primarySendDescription}
                             confirmLabel={canSendQuote ? "Envoyer" : "Renvoyer"}
                             disabled={!ownerEmail}
                           />
