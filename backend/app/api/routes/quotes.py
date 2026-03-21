@@ -3891,6 +3891,15 @@ def _ensure_followup(db: Session, quote: Quote) -> QuoteAcceptanceFollowup:
     return followup
 
 
+def _quote_should_auto_create_followup(quote: Quote) -> bool:
+    current_status = str(quote.status or "").strip().lower()
+    if current_status in {"approved", "change_requested", "rejected"}:
+        return True
+    meta = _quote_meta_dict(quote)
+    last_action = str(meta.get(QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY) or "").strip().lower()
+    return last_action in {"approved", "change_requested", "rejected"}
+
+
 def _ensure_pending_client_from_prospect(db: Session, quote: Quote) -> UUID | None:
     if quote.context_type != "acquisition":
         return quote.client_id
@@ -4995,7 +5004,7 @@ def public_approve_quote(
         quote=quote,
         lines=lines,
         usage_context=USAGE_CONTEXT_QUOTE_APPROVED,
-        kind="quote_public_approved_confirmation",
+        kind="quote_public_approved_ack",
     )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
@@ -5053,7 +5062,7 @@ def public_reject_quote(
         quote=quote,
         lines=lines,
         usage_context=USAGE_CONTEXT_QUOTE_REJECTED,
-        kind="quote_public_rejected_confirmation",
+        kind="quote_public_rejected_ack",
     )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
@@ -5105,6 +5114,10 @@ def public_change_request_quote(
             created_at=now,
         )
     )
+    followup = _ensure_followup(db, quote)
+    followup.status = "pending"
+    followup.updated_at = now
+    db.add(followup)
     db.commit()
     db.refresh(quote)
     lines = _load_quote_lines(db, quote.id)
@@ -5113,7 +5126,7 @@ def public_change_request_quote(
         quote=quote,
         lines=lines,
         usage_context=USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,
-        kind="quote_public_change_requested_confirmation",
+        kind="quote_public_change_ack",
     )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
@@ -5224,6 +5237,18 @@ def list_quote_followups(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[QuoteFollowupOut]:
+    normalized_status = status_filter.strip().lower() if isinstance(status_filter, str) and status_filter.strip() else None
+    if quote_id is not None:
+        existing_followup = db.scalar(
+            select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.quote_id == quote_id).limit(1)
+        )
+        if existing_followup is None:
+            quote = db.scalar(select(Quote).where(Quote.id == quote_id).limit(1))
+            if quote is not None and _quote_should_auto_create_followup(quote):
+                if normalized_status in {None, "pending"}:
+                    _ensure_followup(db, quote)
+                    db.commit()
+
     stmt = select(QuoteAcceptanceFollowup)
     if quote_id is not None:
         stmt = stmt.where(QuoteAcceptanceFollowup.quote_id == quote_id)

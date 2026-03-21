@@ -1,14 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import FontFamily from "@tiptap/extension-font-family";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import TextStyle from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, type Editor, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import {
+  type EditorCursorContext,
+  getEditorCursorContext,
+  getEditorTextStyleState,
+} from "./wysiwyg-cursor-context";
 
 type QuoteTemplateVariable = {
   key: string;
@@ -233,8 +238,24 @@ export default function QuoteTemplateEditor({
   const [fontFamily, setFontFamily] = useState<string>("");
   const [fontSize, setFontSize] = useState<string>("");
   const [editorPopupOpen, setEditorPopupOpen] = useState<boolean>(false);
+  const [cursorContext, setCursorContext] = useState<EditorCursorContext>({
+    tag: "<p>",
+    fontFamily: "Police par defaut",
+    fontSize: "Taille par defaut",
+  });
   const [selectedVariable, setSelectedVariable] = useState<string>(variables[0]?.key || "quote_number");
   const [selectedSnippet, setSelectedSnippet] = useState<string>(snippets[0]?.key || "page_break");
+
+  function syncEditorUi(editorInstance: Editor | null | undefined): void {
+    if (!editorInstance) {
+      return;
+    }
+    const nextTextStyle = getEditorTextStyleState(editorInstance);
+    setFontFamily(nextTextStyle.fontFamily);
+    setFontSize(nextTextStyle.fontSize);
+    setCursorContext(getEditorCursorContext(editorInstance));
+  }
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -261,8 +282,19 @@ export default function QuoteTemplateEditor({
     },
     onUpdate: ({ editor: editorInstance }) => {
       setBody(editorInstance.getHTML());
+      syncEditorUi(editorInstance);
+    },
+    onCreate: ({ editor: editorInstance }) => {
+      syncEditorUi(editorInstance);
+    },
+    onSelectionUpdate: ({ editor: editorInstance }) => {
+      syncEditorUi(editorInstance);
     },
   });
+
+  useEffect(() => {
+    syncEditorUi(editor);
+  }, [editor]);
 
   const selected = useMemo(
     () => variables.find((item) => item.key === selectedVariable) ?? variables[0] ?? null,
@@ -341,6 +373,7 @@ export default function QuoteTemplateEditor({
         break;
     }
     setBody(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function switchToWysiwyg(): void {
@@ -353,6 +386,7 @@ export default function QuoteTemplateEditor({
     }
     setBody(next);
     setEditorMode("wysiwyg");
+    syncEditorUi(editor);
   }
 
   function switchToHtml(): void {
@@ -372,6 +406,7 @@ export default function QuoteTemplateEditor({
     }
     editor.chain().focus().insertContent(html).run();
     setBody(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function insertToken(): void {
@@ -382,6 +417,7 @@ export default function QuoteTemplateEditor({
     if (editorMode === "wysiwyg" && editor) {
       editor.chain().focus().insertContent(token).run();
       setBody(editor.getHTML());
+      syncEditorUi(editor);
       return;
     }
     setBody((prev) => `${prev}${prev.endsWith("\n") || !prev ? "" : "\n"}${token}`);
@@ -409,6 +445,7 @@ export default function QuoteTemplateEditor({
     }
     editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
     setBody(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function applyFontFamily(next: string): void {
@@ -423,6 +460,7 @@ export default function QuoteTemplateEditor({
       chain.setFontFamily(next).run();
     }
     setBody(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function applyFontSize(next: string): void {
@@ -437,6 +475,7 @@ export default function QuoteTemplateEditor({
       chain.setMark("textStyle", { fontSize: next }).run();
     }
     setBody(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function insertImageUrl(): void {
@@ -449,6 +488,7 @@ export default function QuoteTemplateEditor({
     }
     editor.chain().focus().setImage({ src }).run();
     setBody(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function renderToolbar(showPopupButton = true): JSX.Element {
@@ -521,6 +561,28 @@ export default function QuoteTemplateEditor({
     );
   }
 
+  function renderCursorContext(): JSX.Element | null {
+    if (editorMode !== "wysiwyg") {
+      return null;
+    }
+    return (
+      <div className="quote-template-context-bar" aria-live="polite">
+        <span className="quote-template-context-pill">
+          <strong>Balise</strong>
+          {cursorContext.tag}
+        </span>
+        <span className="quote-template-context-pill">
+          <strong>Police</strong>
+          {cursorContext.fontFamily}
+        </span>
+        <span className="quote-template-context-pill">
+          <strong>Taille</strong>
+          {cursorContext.fontSize}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="grid config-form-grid">
       <label>
@@ -551,6 +613,7 @@ export default function QuoteTemplateEditor({
         {editorMode === "wysiwyg" ? (
           <div className="quote-template-editor-shell top-gap-sm">
             {renderToolbar()}
+            {renderCursorContext()}
             {editorPopupOpen ? (
               <div className="quote-template-inline-placeholder muted">
                 Edition en popup ouverte.
@@ -630,6 +693,7 @@ export default function QuoteTemplateEditor({
             <h3 className="modal-title">Editeur de modele de devis</h3>
             <div className="quote-template-editor-shell">
               {renderToolbar(false)}
+              {renderCursorContext()}
               <div className="quote-template-editor-scroll">
                 <EditorContent editor={editor} />
               </div>

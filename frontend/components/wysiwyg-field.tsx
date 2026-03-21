@@ -1,13 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import FontFamily from "@tiptap/extension-font-family";
 import Link from "@tiptap/extension-link";
 import TextStyle from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, type Editor, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import {
+  type EditorCursorContext,
+  getEditorCursorContext,
+  getEditorTextStyleState,
+} from "./wysiwyg-cursor-context";
 
 type WysiwygFieldProps = {
   name: string;
@@ -101,6 +106,22 @@ export default function WysiwygField({
   const [fontFamily, setFontFamily] = useState<string>("");
   const [fontSize, setFontSize] = useState<string>("");
   const [editorPopupOpen, setEditorPopupOpen] = useState<boolean>(false);
+  const [cursorContext, setCursorContext] = useState<EditorCursorContext>({
+    tag: "<p>",
+    fontFamily: "Police par defaut",
+    fontSize: "Taille par defaut",
+  });
+
+  function syncEditorUi(editorInstance: Editor | null | undefined): void {
+    if (!editorInstance) {
+      return;
+    }
+    const nextTextStyle = getEditorTextStyleState(editorInstance);
+    setFontFamily(nextTextStyle.fontFamily);
+    setFontSize(nextTextStyle.fontSize);
+    setCursorContext(getEditorCursorContext(editorInstance));
+  }
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -123,8 +144,19 @@ export default function WysiwygField({
     },
     onUpdate: ({ editor: editorInstance }) => {
       setValue(editorInstance.getHTML());
+      syncEditorUi(editorInstance);
+    },
+    onCreate: ({ editor: editorInstance }) => {
+      syncEditorUi(editorInstance);
+    },
+    onSelectionUpdate: ({ editor: editorInstance }) => {
+      syncEditorUi(editorInstance);
     },
   });
+
+  useEffect(() => {
+    syncEditorUi(editor);
+  }, [editor]);
 
   const toolbar = useMemo(
     () => [
@@ -214,6 +246,7 @@ export default function WysiwygField({
         break;
     }
     setValue(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function switchToWysiwyg(): void {
@@ -224,6 +257,7 @@ export default function WysiwygField({
       const next = normalizeInitialEditorValue(value);
       editor.commands.setContent(next, false);
       setValue(next);
+      syncEditorUi(editor);
     }
     setMode("wysiwyg");
   }
@@ -251,6 +285,7 @@ export default function WysiwygField({
       chain.setFontFamily(next).run();
     }
     setValue(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function applyFontSize(next: string): void {
@@ -265,6 +300,7 @@ export default function WysiwygField({
       chain.setMark("textStyle", { fontSize: next }).run();
     }
     setValue(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function insertLink(): void {
@@ -277,6 +313,7 @@ export default function WysiwygField({
     }
     editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
     setValue(editor.getHTML());
+    syncEditorUi(editor);
   }
 
   function renderToolbar(showPopupButton = true): JSX.Element {
@@ -338,6 +375,28 @@ export default function WysiwygField({
     );
   }
 
+  function renderCursorContext(): JSX.Element | null {
+    if (mode !== "wysiwyg") {
+      return null;
+    }
+    return (
+      <div className="quote-template-context-bar" aria-live="polite">
+        <span className="quote-template-context-pill">
+          <strong>Balise</strong>
+          {cursorContext.tag}
+        </span>
+        <span className="quote-template-context-pill">
+          <strong>Police</strong>
+          {cursorContext.fontFamily}
+        </span>
+        <span className="quote-template-context-pill">
+          <strong>Taille</strong>
+          {cursorContext.fontSize}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <label>
       {label}
@@ -362,6 +421,7 @@ export default function WysiwygField({
         <div className="top-gap-sm">
           <div className="quote-template-editor-shell">
             {renderToolbar()}
+            {renderCursorContext()}
             {editorPopupOpen ? (
               <div className="quote-template-inline-placeholder muted">
                 Edition en popup ouverte.
@@ -402,6 +462,7 @@ export default function WysiwygField({
             <h3 className="modal-title">Editeur WYSIWYG</h3>
             <div className="quote-template-editor-shell">
               {renderToolbar(false)}
+              {renderCursorContext()}
               <div className="quote-template-editor-scroll">
                 <EditorContent editor={editor} />
               </div>

@@ -9007,6 +9007,8 @@ function safeAdminIntakesPath(path: string, fallback = "/admin/intakes"): string
   return fallback;
 }
 
+const TYPEFORM_EMPTY_SESSION_SENTINEL = "__NONE__";
+
 function collectTypeformSelectedSessionIds(formData: FormData): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
@@ -9015,10 +9017,17 @@ function collectTypeformSelectedSessionIds(formData: FormData): Record<string, s
     }
     const activityId = key.slice("selected_session_for_".length).trim();
     const sessionId = String(value ?? "").trim();
-    if (!activityId || !sessionId) {
+    if (!activityId) {
       continue;
     }
-    out[activityId] = sessionId;
+    if (sessionId) {
+      out[activityId] = sessionId;
+      continue;
+    }
+    const initialSelectedSessionId = String(formData.get(`initial_selected_session_for_${activityId}`) ?? "").trim();
+    if (initialSelectedSessionId) {
+      out[activityId] = TYPEFORM_EMPTY_SESSION_SENTINEL;
+    }
   }
   return out;
 }

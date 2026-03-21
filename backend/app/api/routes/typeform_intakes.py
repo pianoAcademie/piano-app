@@ -71,6 +71,7 @@ CLIENT_MODE_EXISTING = "existing_client"
 CLIENT_MODE_EXISTING_FAMILY = "existing_family"
 CLIENT_MODE_NEW_ADULT = "new_adult_prospect"
 CLIENT_MODE_NEW_PARENT_CHILD = "new_parent_child_prospect"
+TYPEFORM_EMPTY_SESSION_SENTINEL = "__NONE__"
 
 DAY_ALIASES = {
     "lundi": 0,
@@ -631,6 +632,31 @@ def _mapped_scalar(answer_map: dict[str, object], field_mapping: dict[str, objec
     return None
 
 
+def _scalar_from_answer_map(answer_map: dict[str, object], candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        value = answer_map.get(candidate)
+        if isinstance(value, list):
+            for item in value:
+                text = _text(item)
+                if text:
+                    return text
+        else:
+            text = _text(value)
+            if text:
+                return text
+    return None
+
+
+def _mapped_scalar_with_fallbacks(
+    answer_map: dict[str, object],
+    field_mapping: dict[str, object],
+    field_name: str,
+    *,
+    fallbacks: list[str] | None = None,
+) -> str | None:
+    return _mapped_scalar(answer_map, field_mapping, field_name) or _scalar_from_answer_map(answer_map, fallbacks or [])
+
+
 def _mapped_list(answer_map: dict[str, object], field_mapping: dict[str, object], field_name: str) -> list[object]:
     out: list[object] = []
     for candidate in _mapping_candidates(field_mapping, field_name):
@@ -799,11 +825,76 @@ def _normalize_payload(
                     }
                 )
 
+    parent_address_line_1 = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_address_line_1",
+        fallbacks=["Address", "address", "Adresse", "adresse"],
+    )
+    parent_address_line_2 = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_address_line_2",
+        fallbacks=[
+            "Address line 2",
+            "address line 2",
+            "Adresse ligne 2",
+            "Complement d'adresse",
+            "Complément d'adresse",
+        ],
+    )
+    parent_city = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_city",
+        fallbacks=["City/Town", "city/town", "Ville", "ville"],
+    )
+    parent_postal_code = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_postal_code",
+        fallbacks=["Zip/Post Code", "zip/post code", "Code postal", "code postal"],
+    )
+    parent_country = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_country",
+        fallbacks=["Country", "country", "Pays", "pays"],
+    )
+    requested_payment_method = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "requested_payment_method",
+        fallbacks=[
+            "Mode de règlement souhaité pour l'année à venir",
+            "Mode de reglement souhaite pour l'annee a venir",
+            "Mode de règlement souhaité",
+            "Mode de reglement souhaite",
+        ],
+    )
+    parent_address_parts = [
+        part
+        for part in [
+            parent_address_line_1,
+            parent_address_line_2,
+            " ".join(part for part in [parent_postal_code, parent_city] if part).strip() or None,
+            parent_country,
+        ]
+        if part
+    ]
+    parent_address = ", ".join(parent_address_parts) if parent_address_parts else None
+
     normalized = {
         "parent_first_name": parent_first_name,
         "parent_last_name": parent_last_name,
         "parent_email": parent_email.lower() if parent_email else None,
         "parent_phone": parent_phone,
+        "parent_address_line_1": parent_address_line_1,
+        "parent_address_line_2": parent_address_line_2,
+        "parent_city": parent_city,
+        "parent_postal_code": parent_postal_code,
+        "parent_country": parent_country,
+        "parent_address": parent_address,
         "child_first_name": child_first_name,
         "child_last_name": child_last_name,
         "child_birth_date": child_birth_date,
@@ -814,6 +905,7 @@ def _normalize_payload(
         "requested_times": requested_times,
         "requested_slot_preferences": requested_slot_preferences,
         "requested_formula_type": requested_formula_type,
+        "requested_payment_method": requested_payment_method,
         "requested_products": requested_products,
         "notes": notes,
     }
@@ -1583,7 +1675,7 @@ def _effective_selected_session_ids(
     effective: dict[str, str] = {
         _text(key): _text(value)
         for key, value in stored_session_ids.items()
-        if _text(key) and _text(value)
+        if _text(key) and _text(value) and _text(value) != TYPEFORM_EMPTY_SESSION_SENTINEL
     }
     for recommendation in session_recommendations:
         activity_key = str(recommendation.activity_id)
@@ -1680,6 +1772,11 @@ def _build_session_recommendations(
         if item["day"] is not None or item["time"] is not None
     ]
     selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
+    explicitly_cleared_activity_ids = {
+        _text(key)
+        for key, value in selected_session_ids.items()
+        if _text(key) and _text(value) == TYPEFORM_EMPTY_SESSION_SENTINEL
+    }
 
     recommendations: list[TypeformSessionRecommendationOut] = []
     warnings: list[str] = []
@@ -1738,7 +1835,7 @@ def _build_session_recommendations(
                         best_bonus = 22
                         best_reason = "horaire acceptable"
                 if not slot_match_found:
-                    score -= 20
+                    continue
                 else:
                     score += best_bonus
                     reasons.append(best_reason)
@@ -1848,7 +1945,12 @@ def _build_session_recommendations(
             summary_label = "Demande complete mais alternative disponible"
             local_warnings.append(f"Le creneau le plus proche est complet pour {line.title}, une alternative est proposee.")
 
-        if selected_session_id is None and available_options and summary_status in {"ideal_available", "full_with_alternative"}:
+        if (
+            selected_session_id is None
+            and str(line.activity_id) not in explicitly_cleared_activity_ids
+            and available_options
+            and summary_status in {"ideal_available", "full_with_alternative"}
+        ):
             selected_session_id = available_options[0].session_id
 
         recommendations.append(
@@ -1979,7 +2081,10 @@ def _analysis_for_intake(
         intake.normalized_payload_json = normalized
         intake.simplified_response_json = simplified_answers
     elif raw_payload:
-        _, refreshed_simplified_answers = _normalize_payload(payload=raw_payload, config=config)
+        refreshed_normalized, refreshed_simplified_answers = _normalize_payload(payload=raw_payload, config=config)
+        if refreshed_normalized != normalized:
+            normalized = refreshed_normalized
+            intake.normalized_payload_json = refreshed_normalized
         if refreshed_simplified_answers != _json_list(intake.simplified_response_json):
             intake.simplified_response_json = refreshed_simplified_answers
 
@@ -2259,6 +2364,23 @@ def _ensure_demo_activity(
         db.add(row)
         db.flush()
         active_records.append(f"activite {code}")
+    else:
+        changed = False
+        if row.name != name:
+            row.name = name
+            changed = True
+        if int(row.duration_minutes or 0) != int(duration_minutes):
+            row.duration_minutes = duration_minutes
+            changed = True
+        normalized_price = _q2(default_price_ttc)
+        if row.default_course_rate_ttc != normalized_price:
+            row.default_course_rate_ttc = normalized_price
+            changed = True
+        if row.default_hourly_rate is not None:
+            row.default_hourly_rate = None
+            changed = True
+        if changed:
+            active_records.append(f"activite {code}")
     return row
 
 
@@ -2296,6 +2418,21 @@ def _ensure_demo_pricing(
             )
         )
         active_records.append(f"tarif {activity.code}/{location.code}")
+    else:
+        normalized_price = _q2(unit_price_ttc)
+        changed = False
+        if row.pricing_unit != "per_session":
+            row.pricing_unit = "per_session"
+            changed = True
+        if row.unit_price_ttc != normalized_price:
+            row.unit_price_ttc = normalized_price
+            changed = True
+        if not bool(row.is_active):
+            row.is_active = True
+            changed = True
+        if changed:
+            row.updated_at = _utcnow()
+            active_records.append(f"tarif {activity.code}/{location.code}")
 
 
 def _ensure_demo_client(
@@ -2421,6 +2558,31 @@ def _ensure_demo_session(
             )
         )
         active_records.append(f"session {marker}")
+    else:
+        changed = False
+        updates = {
+            "course_type_id": activity.id,
+            "billing_entity_snapshot": normalize_billing_entity(activity.billing_entity_code),
+            "snapshot_seller_legal_entity_id": activity.seller_legal_entity_id,
+            "snapshot_payor_legal_entity_id": activity.payor_legal_entity_id,
+            "location_id": location.id,
+            "title": activity.name,
+            "start_at_utc": start_at_utc,
+            "end_at_utc": end_at_utc,
+            "capacity_max": capacity_max,
+            "status": SessionStatus.SCHEDULED,
+            "auto_cancel_deadline_utc": start_at_utc - timedelta(hours=12),
+            "is_private": False,
+            "allow_online_booking": True,
+            "timezone": location.timezone,
+        }
+        for field, value in updates.items():
+            if getattr(row, field) != value:
+                setattr(row, field, value)
+                changed = True
+        if changed:
+            row.updated_at = _utcnow()
+            active_records.append(f"session {marker}")
 
 
 def _line_templates_for_activity(code: str) -> list[dict[str, object]]:
@@ -3219,9 +3381,9 @@ def seed_typeform_demo(
         db,
         code="TF_DEMO_EVEIL",
         name="Typeform Demo Eveil Musical",
-        default_price_ttc=Decimal("36.00"),
+        default_price_ttc=Decimal("22.00"),
         legal_entity=legal_entity,
-        duration_minutes=45,
+        duration_minutes=60,
         active_records=active_records,
     )
     teen_activity = _ensure_demo_activity(
@@ -3244,15 +3406,16 @@ def seed_typeform_demo(
     )
 
     _ensure_demo_pricing(db, catalog=catalog, activity=child_activity, location=location_by_code["RICHELIEU"], unit_price_ttc=Decimal("48.00"), active_records=active_records)
-    _ensure_demo_pricing(db, catalog=catalog, activity=eveil_activity, location=location_by_code["POMPE"], unit_price_ttc=Decimal("36.00"), active_records=active_records)
+    _ensure_demo_pricing(db, catalog=catalog, activity=eveil_activity, location=location_by_code["POMPE"], unit_price_ttc=Decimal("22.00"), active_records=active_records)
     _ensure_demo_pricing(db, catalog=catalog, activity=teen_activity, location=location_by_code["RICHELIEU"], unit_price_ttc=Decimal("52.00"), active_records=active_records)
     _ensure_demo_pricing(db, catalog=catalog, activity=adult_activity, location=location_by_code["BAR_LE_DUC"], unit_price_ttc=Decimal("44.00"), active_records=active_records)
     _ensure_demo_pricing(db, catalog=catalog, activity=child_activity, location=location_by_code["BAR_LE_DUC"], unit_price_ttc=Decimal("40.00"), active_records=active_records)
-    _ensure_demo_pricing(db, catalog=catalog, activity=eveil_activity, location=location_by_code["BAR_LE_DUC"], unit_price_ttc=Decimal("32.00"), active_records=active_records)
+    _ensure_demo_pricing(db, catalog=catalog, activity=eveil_activity, location=location_by_code["BAR_LE_DUC"], unit_price_ttc=Decimal("22.00"), active_records=active_records)
     db.commit()
 
     _ensure_demo_session(db, marker="TYPEFORM_DEMO|PARIS_CHILD_SINGLE", activity=child_activity, location=location_by_code["RICHELIEU"], weekday=1, hour=17, minute=30, capacity_max=6, active_records=active_records)
     _ensure_demo_session(db, marker="TYPEFORM_DEMO|PARIS_EVEIL_WED", activity=eveil_activity, location=location_by_code["POMPE"], weekday=2, hour=10, minute=0, capacity_max=6, active_records=active_records)
+    _ensure_demo_session(db, marker="TYPEFORM_DEMO|PARIS_EVEIL_WED_16", activity=eveil_activity, location=location_by_code["POMPE"], weekday=2, hour=16, minute=0, capacity_max=6, active_records=active_records)
     _ensure_demo_session(db, marker="TYPEFORM_DEMO|PARIS_EVEIL_SAT", activity=eveil_activity, location=location_by_code["POMPE"], weekday=5, hour=10, minute=0, capacity_max=6, active_records=active_records)
     _ensure_demo_session(db, marker="TYPEFORM_DEMO|BLD_ADULT", activity=adult_activity, location=location_by_code["BAR_LE_DUC"], weekday=3, hour=19, minute=0, capacity_max=4, active_records=active_records)
     db.commit()
@@ -3295,12 +3458,22 @@ def seed_typeform_demo(
         "parent_last_name": ["parent_last_name", "nom_parent"],
         "parent_email": ["parent_email", "email_parent"],
         "parent_phone": ["parent_phone", "telephone_parent"],
+        "parent_address_line_1": ["parent_address_line_1", "adresse_parent", "Address"],
+        "parent_address_line_2": ["parent_address_line_2", "adresse_parent_ligne_2", "Address line 2"],
+        "parent_city": ["parent_city", "ville_parent", "City/Town"],
+        "parent_postal_code": ["parent_postal_code", "code_postal_parent", "Zip/Post Code"],
+        "parent_country": ["parent_country", "pays_parent", "Country"],
         "child_first_name": ["child_first_name", "prenom_enfant"],
         "child_last_name": ["child_last_name", "nom_enfant"],
         "child_birth_date": ["child_birth_date", "date_naissance_enfant"],
         "requested_days": ["requested_days", "jours_souhaites"],
         "requested_times": ["requested_times", "horaires_souhaites"],
         "requested_formula_type": ["requested_formula_type", "formule_souhaitee"],
+        "requested_payment_method": [
+            "requested_payment_method",
+            "mode_reglement_souhaite",
+            "Mode de règlement souhaité pour l'année à venir",
+        ],
         "notes": ["notes", "commentaires"],
     }
     common_child_labels = {
@@ -3308,23 +3481,41 @@ def seed_typeform_demo(
         "parent_last_name": "Nom parent",
         "parent_email": "Email parent",
         "parent_phone": "Telephone parent",
+        "parent_address_line_1": "Adresse",
+        "parent_address_line_2": "Complement adresse",
+        "parent_city": "Ville",
+        "parent_postal_code": "Code postal",
+        "parent_country": "Pays",
         "child_first_name": "Prenom enfant",
         "child_last_name": "Nom enfant",
         "child_birth_date": "Date de naissance enfant",
         "requested_days": "Jours souhaites",
         "requested_times": "Horaires souhaites",
         "requested_formula_type": "Formule souhaitee",
+        "requested_payment_method": "Mode de reglement souhaite",
         "notes": "Commentaires",
         "prenom_parent": "Prenom parent",
         "nom_parent": "Nom parent",
         "email_parent": "Email parent",
         "telephone_parent": "Telephone parent",
+        "adresse_parent": "Adresse",
+        "adresse_parent_ligne_2": "Complement adresse",
+        "ville_parent": "Ville",
+        "code_postal_parent": "Code postal",
+        "pays_parent": "Pays",
+        "Address": "Adresse",
+        "Address line 2": "Complement adresse",
+        "City/Town": "Ville",
+        "Zip/Post Code": "Code postal",
+        "Country": "Pays",
         "prenom_enfant": "Prenom enfant",
         "nom_enfant": "Nom enfant",
         "date_naissance_enfant": "Date de naissance enfant",
         "jours_souhaites": "Jours souhaites",
         "horaires_souhaites": "Horaires souhaites",
         "formule_souhaitee": "Formule souhaitee",
+        "mode_reglement_souhaite": "Mode de reglement souhaite",
+        "Mode de règlement souhaité pour l'année à venir": "Mode de reglement souhaite",
         "commentaires": "Commentaires",
     }
     adult_mapping = {

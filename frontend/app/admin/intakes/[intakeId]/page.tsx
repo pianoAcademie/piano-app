@@ -200,9 +200,35 @@ function stringifyValue(value: unknown): string {
   return String(value);
 }
 
+const NORMALIZED_FIELD_LABELS: Record<string, string> = {
+  parent_first_name: "Prenom parent",
+  parent_last_name: "Nom parent",
+  parent_email: "Email parent",
+  parent_phone: "Telephone parent",
+  parent_address_line_1: "Adresse",
+  parent_address_line_2: "Complement adresse",
+  parent_city: "Ville",
+  parent_postal_code: "Code postal",
+  parent_country: "Pays",
+  parent_address: "Adresse complete",
+  child_first_name: "Prenom enfant",
+  child_last_name: "Nom enfant",
+  child_birth_date: "Date de naissance enfant",
+  customer_type: "Type client",
+  requested_course_mode: "Mode de cours",
+  requested_location: "Lieu souhaite",
+  requested_days: "Jours souhaites",
+  requested_times: "Horaires souhaites",
+  requested_slot_preferences: "Preferences de creneaux",
+  requested_formula_type: "Formule souhaitee",
+  requested_payment_method: "Mode de reglement souhaite",
+  requested_products: "Produits souhaites",
+  notes: "Commentaires",
+};
+
 function normalizedEntries(payload: Record<string, unknown>): Array<{ key: string; value: string }> {
   return Object.entries(payload).map(([key, value]) => ({
-    key,
+    key: NORMALIZED_FIELD_LABELS[key] || key,
     value: stringifyValue(value),
   }));
 }
@@ -748,6 +774,11 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     </div>
                     <label className="top-gap-sm">
                       Creneau retenu
+                      <input
+                        type="hidden"
+                        name={`initial_selected_session_for_${recommendation.activity_id}`}
+                        value={recommendation.selected_session_id || ""}
+                      />
                       <select name={`selected_session_for_${recommendation.activity_id}`} defaultValue={recommendation.selected_session_id || ""}>
                         <option value="">Aucune selection</option>
                         {recommendation.options.map((option, index) => (

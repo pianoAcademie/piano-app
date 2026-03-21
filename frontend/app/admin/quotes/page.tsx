@@ -12,6 +12,7 @@ import { backendRequest } from "../../../lib/backend";
 import type { AdminActivityOut, AdminClientOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
+type QuotePerPage = 25 | 50 | 100;
 
 type ProspectOut = {
   id: string;
@@ -51,6 +52,24 @@ function readParam(params: SearchParams, key: string): string {
     return raw[0] ?? "";
   }
   return raw ?? "";
+}
+
+function parsePage(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+  return parsed;
+}
+
+function parseQuotePerPage(value: string): QuotePerPage {
+  if (value === "50") {
+    return 50;
+  }
+  if (value === "100") {
+    return 100;
+  }
+  return 25;
 }
 
 function formatDate(value: string | null): string {
@@ -174,6 +193,9 @@ function quoteValidationState(row: QuoteOut): QuoteValidationUiState {
   const status = String(row.status || "").trim().toLowerCase();
   const meta = row.meta || {};
   const publicResponseLastAction = readStringMeta(meta, "public_response_last_action", "").toLowerCase();
+  if (status === "change_requested" || publicResponseLastAction === "change_requested") {
+    return "modification_demandee";
+  }
   if (status === "approved") {
     return "valide";
   }
@@ -189,9 +211,6 @@ function quoteValidationState(row: QuoteOut): QuoteValidationUiState {
       return typeof value === "string" && value.trim().length > 0;
     });
     return viewed ? "consulte" : "envoye";
-  }
-  if (status === "change_requested" || publicResponseLastAction === "change_requested") {
-    return "modification_demandee";
   }
   if (status === "created") {
     const hasOwner = Boolean(row.prospect_id || row.client_id);
@@ -266,6 +285,34 @@ function quoteNextAction(
   return "aucune_action";
 }
 
+function labelForNextAction(action: QuoteNextAction): string {
+  switch (action) {
+    case "completer_le_devis":
+      return "Completer";
+    case "envoyer":
+      return "Envoyer";
+    case "relancer":
+      return "Renvoyer";
+    case "traiter_demande_client":
+      return "Traiter la demande";
+    case "regenerer":
+      return "Regenerer";
+    case "preparer_integration":
+      return "Preparer integration";
+    case "verifier_correspondance_client":
+      return "Verifier";
+    case "integrer_dans_centrale":
+      return "Integrer";
+    case "aucune_action":
+    default:
+      return "Ouvrir";
+  }
+}
+
+function detailHrefForSection(detailHref: string, section: "document" | "integration" | "interactions"): string {
+  return `${detailHref}&section=${section}`;
+}
+
 function quoteChangeRequestSummary(row: QuoteOut): { message: string; at: string } | null {
   const meta = row.meta || {};
   const publicResponseLastAction = readStringMeta(meta, "public_response_last_action", "").toLowerCase();
@@ -299,6 +346,8 @@ function buildQuotesListHref(params: {
   createdTo: string;
   expiresFrom: string;
   expiresTo: string;
+  page: number;
+  perPage: QuotePerPage;
 }): string {
   const sp = new URLSearchParams();
   if (params.status) sp.set("status", params.status);
@@ -320,6 +369,8 @@ function buildQuotesListHref(params: {
   if (params.createdTo) sp.set("created_to", params.createdTo);
   if (params.expiresFrom) sp.set("expires_from", params.expiresFrom);
   if (params.expiresTo) sp.set("expires_to", params.expiresTo);
+  if (params.page > 1) sp.set("page", String(params.page));
+  if (params.perPage !== 25) sp.set("per_page", String(params.perPage));
   const value = sp.toString();
   return value ? `/admin/quotes?${value}` : "/admin/quotes";
 }
@@ -349,6 +400,8 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const createdToFilterRaw = readParam(searchParams, "created_to");
   const expiresFromFilterRaw = readParam(searchParams, "expires_from");
   const expiresToFilterRaw = readParam(searchParams, "expires_to");
+  const perPage = parseQuotePerPage(readParam(searchParams, "per_page"));
+  const requestedPage = parsePage(readParam(searchParams, "page"));
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
 
@@ -498,7 +551,13 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     return true;
   });
 
-  const currentListHref = buildQuotesListHref({
+  const totalFiltered = filteredQuotes.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / perPage));
+  const currentPage = Math.min(requestedPage, totalPages);
+  const pageStart = (currentPage - 1) * perPage;
+  const listedQuotes = filteredQuotes.slice(pageStart, pageStart + perPage);
+
+  const listHrefParams = {
     status: statusFilter,
     contextType: contextFilter,
     activityId: activityFilter,
@@ -518,6 +577,11 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     createdTo: createdToFilterRaw,
     expiresFrom: expiresFromFilterRaw,
     expiresTo: expiresToFilterRaw,
+    perPage,
+  };
+  const currentListHref = buildQuotesListHref({
+    ...listHrefParams,
+    page: currentPage,
   });
 
   const currencyValues = Array.from(new Set(quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean))).sort();
@@ -619,6 +683,14 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                 <option value="erreur_integration">Erreurs integration</option>
               </select>
             </label>
+            <label>
+              Lignes par page
+              <select name="per_page" defaultValue={String(perPage)}>
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
           </div>
 
           <details className="quote-advanced-filters top-gap-sm">
@@ -705,16 +777,16 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                 <th>Creation</th>
                 <th>Expiration</th>
                 <th>Activites</th>
-                <th>Action</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredQuotes.length === 0 ? (
+              {listedQuotes.length === 0 ? (
                 <tr>
                   <td colSpan={11}><p className="muted">Aucun devis sur ces filtres.</p></td>
                 </tr>
               ) : (
-                filteredQuotes.map((row) => {
+                listedQuotes.map((row) => {
                   const owner = row.context_type === "acquisition"
                     ? prospectById.get(row.prospect_id || "")
                     : clientById.get(row.client_id || "");
@@ -733,6 +805,19 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                   const integrationState = quoteIntegrationState(row, commercialState);
                   const nextAction = quoteNextAction(commercialState, integrationState);
                   const changeRequest = quoteChangeRequestSummary(row);
+                  const primaryActionLabel = labelForNextAction(nextAction);
+                  const openDetailLabel = row.status === "created" ? "Modifier" : "Ouvrir";
+                  const primaryActionHref = nextAction === "traiter_demande_client"
+                    ? detailHrefForSection(detailHref, "interactions")
+                    : nextAction === "relancer"
+                      ? detailHrefForSection(detailHref, "document")
+                      : nextAction === "preparer_integration" || nextAction === "verifier_correspondance_client" || nextAction === "integrer_dans_centrale"
+                        ? detailHrefForSection(detailHref, "integration")
+                        : nextAction === "completer_le_devis"
+                          ? detailHref
+                          : nextAction === "aucune_action"
+                            ? detailHref
+                            : null;
 
                   return (
                     <tr key={row.id} className="quote-list-row">
@@ -781,27 +866,57 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                       <td>{formatDate(row.expires_at)}</td>
                       <td>{getCalendarSessionsCount(row.calendar_snapshot)}</td>
                       <td>
-                        <div className="row wrap gap-xs">
-                          <Link className="ghost" href={detailHref}>{row.status === "created" ? "Modifier" : "Ouvrir"}</Link>
-                          {row.status === "created" ? (
-                            <form action={sendQuoteAction}>
-                              <input type="hidden" name="quote_id" value={row.id} />
-                              <input type="hidden" name="return_to" value={currentListHref} />
-                              <input type="hidden" name="recipient_email" value={ownerEmail} />
-                              <button type="submit" className="ghost">Envoyer</button>
-                            </form>
-                          ) : null}
-                          <form action={duplicateQuoteAction}>
-                            <input type="hidden" name="quote_id" value={row.id} />
-                            <input type="hidden" name="return_to" value={currentListHref} />
-                            <button type="submit" className="ghost">Dupliquer</button>
-                          </form>
-                          {publicHref ? (
-                            <a className="ghost" href={publicHref} target="_blank" rel="noreferrer">Page publique</a>
-                          ) : null}
-                          {publicAbsoluteHref ? (
-                            <CopyLinkButton value={publicAbsoluteHref} label="Copier lien" />
-                          ) : null}
+                        <div className="quote-list-actions">
+                          <div className="quote-list-actions-main">
+                            {nextAction === "envoyer" ? (
+                              <form action={sendQuoteAction} className="quote-list-action-form">
+                                <input type="hidden" name="quote_id" value={row.id} />
+                                <input type="hidden" name="return_to" value={currentListHref} />
+                                <input type="hidden" name="recipient_email" value={ownerEmail} />
+                                <button type="submit" className="quote-list-action-primary quote-list-action-primary-send">
+                                  {primaryActionLabel}
+                                </button>
+                              </form>
+                            ) : (
+                              <Link className="quote-list-action-primary" href={primaryActionHref ?? detailHref}>
+                                {primaryActionLabel}
+                              </Link>
+                            )}
+                          </div>
+                          <div className="quote-list-actions-groups">
+                            <div className="quote-list-actions-group">
+                              <span className="quote-list-actions-group-label">Gestion</span>
+                              <div className="quote-list-actions-shortcuts">
+                                <Link className="quote-list-action-chip quote-list-action-chip-neutral" href={detailHref}>
+                                  {openDetailLabel}
+                                </Link>
+                                <form action={duplicateQuoteAction} className="quote-list-action-form">
+                                  <input type="hidden" name="quote_id" value={row.id} />
+                                  <input type="hidden" name="return_to" value={currentListHref} />
+                                  <button type="submit" className="quote-list-action-chip quote-list-action-chip-neutral">Dupliquer</button>
+                                </form>
+                              </div>
+                            </div>
+                            {publicHref || publicAbsoluteHref ? (
+                              <div className="quote-list-actions-group">
+                                <span className="quote-list-actions-group-label">Partage</span>
+                                <div className="quote-list-actions-shortcuts">
+                                  {publicHref ? (
+                                    <a className="quote-list-action-chip quote-list-action-chip-share" href={publicHref} target="_blank" rel="noreferrer">
+                                      Page publique
+                                    </a>
+                                  ) : null}
+                                  {publicAbsoluteHref ? (
+                                    <CopyLinkButton
+                                      value={publicAbsoluteHref}
+                                      label="Copier lien"
+                                      className="quote-list-action-chip quote-list-action-chip-share"
+                                    />
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -811,6 +926,45 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
             </tbody>
           </table>
         </div>
+
+        {totalFiltered > 0 ? (
+          <div className="row spread clients-pagination top-gap-sm">
+            <small className="muted">
+              Affichage {pageStart + 1}-{Math.min(pageStart + listedQuotes.length, totalFiltered)} sur {totalFiltered} devis
+            </small>
+            <div className="row">
+              {currentPage > 1 ? (
+                <Link
+                  className="mode-link"
+                  href={buildQuotesListHref({
+                    ...listHrefParams,
+                    page: currentPage - 1,
+                  })}
+                >
+                  ← Precedent
+                </Link>
+              ) : (
+                <span className="mode-link disabled-link">← Precedent</span>
+              )}
+              <span className="badge">
+                Page {currentPage}/{totalPages}
+              </span>
+              {currentPage < totalPages ? (
+                <Link
+                  className="mode-link"
+                  href={buildQuotesListHref({
+                    ...listHrefParams,
+                    page: currentPage + 1,
+                  })}
+                >
+                  Suivant →
+                </Link>
+              ) : (
+                <span className="mode-link disabled-link">Suivant →</span>
+              )}
+            </div>
+          </div>
+        ) : null}
       </QuoteListPageRefine>
     </section>
   );

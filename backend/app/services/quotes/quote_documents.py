@@ -1687,17 +1687,14 @@ def _build_template_values(
             ]
         )
 
-    financial_recap_lines_html = "".join(
-        "<p>"
-        f"<strong>{escape(label)} :</strong> {escape(value)}"
-        "</p>"
-        for label, value in financial_recap_rows
+    financial_recap_table_html = _table_html(
+        ["", ""],
+        [[label, value] for label, value in financial_recap_rows],
+        empty_label="Aucun recapitulatif financier.",
     )
     financial_recap_block_html = (
-        "<div class='quote-block'>"
         "<h2>Recapitulatif financier</h2>"
-        f"{financial_recap_lines_html}"
-        "</div>"
+        f"{financial_recap_table_html}"
     )
     if has_deposit:
         deposit_block_html = (
@@ -2472,10 +2469,8 @@ def _render_quote_terms_html(
         "<section>"
         f"{header_html}"
         "<h2 class='quote-terms-title'>Conditions generales</h2>"
-        "<div class='quote-block'>"
         f"<p><strong>{escape(cgv_label or 'Version non precisee')}</strong></p>"
         f"{_as_html_fragment(rendered_terms or 'Aucune CGV snapshottee.')}"
-        "</div>"
         f"{footer_html}"
         "</section>"
     )
