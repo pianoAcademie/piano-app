@@ -6,8 +6,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from html import escape, unescape as html_unescape
 import io
 import logging
+import os
 import re
 from typing import Any
+from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -20,10 +23,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from xhtml2pdf import pisa
 
-from app.models.ops import AppSetting
+from app.models.ops import AppSetting, LegalEntity
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplateVersion, TermsTemplateVersion
+from app.models.typeform_intake import TypeformIntake
 from app.models.user import User
+from app.services.messaging_templates import (
+    QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_DEFAULT,
+    load_messaging_settings,
+)
 
 
 AUDIENCE_ADMIN_PREVIEW = "admin_preview"
@@ -66,6 +74,88 @@ def _json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     return []
+
+
+def _typeform_parent_address_from_normalized_payload(normalized: dict[str, Any]) -> str:
+    normalized = _json_object(normalized)
+    direct = str(normalized.get("parent_address") or "").strip()
+    if direct:
+        return direct
+    line_1 = str(normalized.get("parent_address_line_1") or "").strip()
+    line_2 = str(normalized.get("parent_address_line_2") or "").strip()
+    city = str(normalized.get("parent_city") or "").strip()
+    postal_code = str(normalized.get("parent_postal_code") or "").strip()
+    country = str(normalized.get("parent_country") or "").strip()
+    locality = " ".join(part for part in [postal_code, city] if part).strip()
+    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+    return ", ".join(parts)
+
+
+def _typeform_simplified_answer_value(simplified_answers: list[Any], *labels: str) -> str:
+    expected = {str(label or "").strip().lower() for label in labels if str(label or "").strip()}
+    if not expected:
+        return ""
+    for item in simplified_answers:
+        row = _json_object(item)
+        label = str(row.get("label") or row.get("field_label") or row.get("question") or "").strip().lower()
+        if label not in expected:
+            continue
+        value = str(row.get("value") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _typeform_parent_address_from_intake(intake: TypeformIntake | None) -> str:
+    if intake is None:
+        return ""
+    parent_address = _typeform_parent_address_from_normalized_payload(_json_object(intake.normalized_payload_json)).strip()
+    if parent_address:
+        return parent_address
+    simplified_answers = _json_list(intake.simplified_response_json)
+    line_1 = _typeform_simplified_answer_value(simplified_answers, "Address", "address", "Adresse", "adresse")
+    line_2 = _typeform_simplified_answer_value(
+        simplified_answers,
+        "Address line 2",
+        "address line 2",
+        "Adresse ligne 2",
+        "Complement d'adresse",
+        "Complément d'adresse",
+    )
+    city = _typeform_simplified_answer_value(simplified_answers, "City/Town", "city/town", "Ville", "ville")
+    postal_code = _typeform_simplified_answer_value(
+        simplified_answers,
+        "Zip/Post Code",
+        "zip/post code",
+        "Code postal",
+        "code postal",
+    )
+    country = _typeform_simplified_answer_value(simplified_answers, "Country", "country", "Pays", "pays")
+    locality = " ".join(part for part in [postal_code, city] if part).strip()
+    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+    return ", ".join(parts)
+
+
+def _typeform_parent_address_from_quote(*, db: Session | None, quote: Quote) -> str:
+    quote_meta = _json_object(quote.meta)
+    typeform_meta = _json_object(quote_meta.get("typeform_intake"))
+    parent_address = _typeform_parent_address_from_normalized_payload(_json_object(typeform_meta.get("normalized_payload"))).strip()
+    if parent_address:
+        return parent_address
+    intake_id = str(typeform_meta.get("intake_id") or "").strip()
+    if not intake_id and db is not None and quote.prospect_id is not None:
+        prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id))
+        if prospect is not None:
+            prospect_meta = _json_object(prospect.meta)
+            intake_id = str(prospect_meta.get("typeform_intake_id") or "").strip()
+    if db is None or not intake_id:
+        return ""
+    try:
+        intake_uuid = UUID(intake_id)
+    except ValueError:
+        return ""
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_uuid))
+    return _typeform_parent_address_from_intake(intake)
 
 
 def _utcnow() -> datetime:
@@ -146,6 +236,8 @@ def _schedule_due_label(item: dict[str, Any]) -> str:
     normalized = due_label.lower()
     if due_type == "on_registration":
         return "à réception de votre facture"
+    if due_type == "on_quote_validation_before_first_course":
+        return "à la validation du devis, avant votre 1er cours"
     if normalized in {
         "a reception",
         "a reception du dossier",
@@ -158,6 +250,11 @@ def _schedule_due_label(item: dict[str, Any]) -> str:
         "à réception de votre facture",
     }:
         return "à réception de votre facture"
+    if normalized in {
+        "a la validation du devis, avant votre 1er cours",
+        "à la validation du devis, avant votre 1er cours",
+    }:
+        return "à la validation du devis, avant votre 1er cours"
     if due_label:
         return due_label
     return due_type or "-"
@@ -180,6 +277,50 @@ def _datetime_label(value: datetime | None) -> str:
     return value.astimezone(timezone.utc).strftime("%d/%m/%Y %H:%M")
 
 
+def _paris_datetime_label(value: datetime | None) -> str:
+    if value is None:
+        return "-"
+    try:
+        paris_zone = ZoneInfo("Europe/Paris")
+    except Exception:
+        paris_zone = timezone.utc
+    return value.astimezone(paris_zone).strftime("%d/%m/%Y %H:%M")
+
+
+def _quote_status_date_display(quote: Quote) -> tuple[str, str, str]:
+    normalized_status = str(quote.status or "").strip().lower()
+    if normalized_status == "approved" and quote.approved_at is not None:
+        approval_value = _paris_datetime_label(quote.approved_at)
+        return ("Approuve le", approval_value, f"Approuve le {approval_value}")
+    expiry_value = _date_label(quote.expires_at)
+    return ("Validite", expiry_value, f"Valable jusqu au {expiry_value}")
+
+
+def _replace_expiration_mentions_for_approved_quote(content: str, quote: Quote) -> str:
+    normalized_status = str(quote.status or "").strip().lower()
+    if normalized_status != "approved" or quote.approved_at is None:
+        return content
+    rendered = str(content or "")
+    if not rendered:
+        return rendered
+    expiry_value = _date_label(quote.expires_at)
+    approval_value = _paris_datetime_label(quote.approved_at)
+    replacements = {
+        f"Validité : <strong>{expiry_value}</strong>": f"Approuve le : <strong>{approval_value}</strong>",
+        f"Validite : <strong>{expiry_value}</strong>": f"Approuve le : <strong>{approval_value}</strong>",
+        f"Validité : {expiry_value}": f"Approuve le : {approval_value}",
+        f"Validite : {expiry_value}": f"Approuve le : {approval_value}",
+        f"Expiration : <strong>{expiry_value}</strong>": f"Approuve le : <strong>{approval_value}</strong>",
+        f"Expiration: <strong>{expiry_value}</strong>": f"Approuve le : <strong>{approval_value}</strong>",
+        f"Expiration : {expiry_value}": f"Approuve le : {approval_value}",
+        f"Expiration: {expiry_value}": f"Approuve le : {approval_value}",
+        f"Valable jusqu au {expiry_value}": f"Approuve le {approval_value}",
+    }
+    for source, target in replacements.items():
+        rendered = rendered.replace(source, target)
+    return rendered
+
+
 def _birth_date_label(value: str | None) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -196,13 +337,17 @@ def _document_style_html() -> str:
     return (
         "<style>"
         "body{font-family:Arial,Helvetica,sans-serif;color:#1f1f1f;font-size:11px;line-height:1.4;}"
-        "h1,h2,h3{color:#111827;margin:0 0 8px 0;page-break-after:avoid;}"
+        "h1,h2,h3{color:#111827;margin:0 0 10px 0;page-break-after:avoid;}"
         "p{margin:0 0 8px 0;}"
         ".quote-muted{color:#5b6470;}"
         ".quote-page-break{page-break-before:always;}"
         ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:auto;}"
+        ".quote-section{margin:0 0 22px 0;page-break-inside:auto;}"
+        ".quote-section-title{margin:0 0 12px 0;}"
+        ".quote-section-body{margin:0;}"
         ".quote-identity-grid{display:block;width:100%;}"
         ".quote-identity-card{border:1px solid #d3dbe7;background:#ffffff;padding:10px 12px;margin:0 0 10px 0;page-break-inside:avoid;}"
+        ".quote-identity-card-gap{display:block;height:12px;line-height:12px;font-size:12px;}"
         ".quote-identity-card h3{margin:0 0 8px 0;font-size:13px;color:#111827;}"
         ".quote-identity-meta{width:100%;border-collapse:collapse;font-size:11px;}"
         ".quote-identity-meta td{padding:6px 8px;border-bottom:1px solid #edf2f7;vertical-align:top;}"
@@ -217,7 +362,7 @@ def _document_style_html() -> str:
         ".quote-cover-subtitle{font-size:14px;color:#4b5563;margin-bottom:9mm;}"
         ".quote-cover-name{font-size:22px;margin-bottom:4mm;}"
         ".quote-cover-meta{font-size:12px;color:#4b5563;line-height:1.6;}"
-        ".quote-table{width:100%;border-collapse:collapse;border-spacing:0;margin:6px 0 10px 0;font-size:11px;table-layout:auto;}"
+        ".quote-table{width:100%;border-collapse:collapse;border-spacing:0;margin:12px 0 0 0;font-size:11px;table-layout:auto;}"
         ".quote-table thead{display:table-header-group;}"
         ".quote-table tfoot{display:table-footer-group;}"
         ".quote-table tr{page-break-inside:avoid;}"
@@ -256,6 +401,46 @@ def _brand_logo_html(*, db: Session | None, variant: str = "header") -> str:
             "alt='Piano Academie'/>"
         )
     return "<div class='quote-brand-logo'>PIANO<br/>ACADEMIE</div>"
+
+
+def _format_legal_entity_address_lines(address_text: str | None) -> list[str]:
+    raw = str(address_text or "").replace("\r", "").strip()
+    if not raw:
+        return []
+    html_like = re.sub(r"(?i)<br\s*/?>", "\n", raw)
+    explicit_lines = [line.strip(" ,") for line in html_like.split("\n") if line.strip(" ,")]
+    if len(explicit_lines) > 1:
+        return explicit_lines
+    if "," in raw:
+        head, tail = raw.rsplit(",", 1)
+        if any(ch.isdigit() for ch in tail):
+            split_lines = [head.strip(" ,"), tail.strip(" ,")]
+            return [line for line in split_lines if line]
+    return [raw]
+
+
+def _resolve_quote_legal_entity_data(*, db: Session | None, quote: Quote) -> dict[str, Any]:
+    fallback_name = "PIANO ACADEMIE"
+    fallback_address_lines = ["1 rue de Richelieu", "75001 Paris"]
+    fallback_siret = "82805141700032"
+    fallback_vat = "FR74828051417"
+
+    entity: LegalEntity | None = None
+    if db is not None and quote.legal_entity_id is not None:
+        entity = db.scalar(select(LegalEntity).where(LegalEntity.id == quote.legal_entity_id))
+
+    name = str(entity.name or fallback_name).strip() if entity is not None else fallback_name
+    address_lines = _format_legal_entity_address_lines(entity.address_text if entity is not None else None) or fallback_address_lines
+    siret = str(entity.siret or fallback_siret).strip() if entity is not None else fallback_siret
+    vat_number = str(entity.vat_number or fallback_vat).strip() if entity is not None else fallback_vat
+    tax_lines = [line for line in [f"SIRET {siret}" if siret else "", vat_number] if line]
+    return {
+        "name": name,
+        "address_lines": address_lines,
+        "tax_lines": tax_lines,
+        "siret": siret,
+        "vat_number": vat_number,
+    }
 
 
 MONTH_LABELS_FR = (
@@ -300,29 +485,178 @@ def _calendar_semester_rows(month_map: dict[int, set[int]], *, semester: int) ->
     return rows
 
 
-def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
-    grouped: dict[str, dict[int, set[int]]] = {}
+def _normalized_modality(value: Any) -> str | None:
+    raw = str(value or "").strip().upper()
+    return raw or None
+
+
+def _calendar_group_base_title(*, activity_label: Any, location_label: Any) -> str:
+    activity = str(activity_label or "").strip() or "Activite"
+    location = str(location_label or "").strip()
+    return f"{activity} · {location}" if location else activity
+
+
+def _calendar_block_matches_session(block: dict[str, Any], session: dict[str, Any]) -> bool:
+    block_start = str(block.get("start_time") or "").strip()
+    session_start = str(session.get("start_time") or session.get("start_at") or "").strip()
+    if block_start and session_start and block_start != session_start:
+        return False
+    block_end = str(block.get("end_time") or "").strip()
+    session_end = str(session.get("end_time") or session.get("end_at") or "").strip()
+    if block_end and session_end and block_end != session_end:
+        return False
+    try:
+        block_weekday = int(block.get("weekday"))
+    except (TypeError, ValueError):
+        block_weekday = -1
+    try:
+        session_weekday = int(session.get("weekday"))
+    except (TypeError, ValueError):
+        session_weekday = -1
+    if block_weekday >= 0 and session_weekday >= 0 and block_weekday != session_weekday:
+        return False
+    block_location_id = str(block.get("location_id") or "").strip()
+    session_location_id = str(session.get("location_id") or "").strip()
+    if block_location_id and session_location_id and block_location_id != session_location_id:
+        return False
+    block_modality = _normalized_modality(block.get("modality"))
+    session_modality = _normalized_modality(session.get("modality"))
+    if block_modality == "ONLINE":
+        return session_modality == "ONLINE"
+    if block_modality in {None, "ONSITE"}:
+        return session_modality != "ONLINE"
+    if block_modality == "ANY":
+        return True
+    return session_modality == block_modality
+
+
+def _calendar_month_map_from_sessions(sessions: list[dict[str, Any]]) -> dict[int, set[int]]:
+    month_map: dict[int, set[int]] = {}
     for session in sessions:
         parsed = _session_month_day(session.get("date"))
         if parsed is None:
             continue
         month, day = parsed
-        activity_label = str(session.get("activity_label") or "").strip() or "Activite"
-        location_label = str(session.get("location_label") or "").strip()
-        title = f"{activity_label} · {location_label}" if location_label else activity_label
-        if title not in grouped:
-            grouped[title] = {}
-        if month not in grouped[title]:
-            grouped[title][month] = set()
-        grouped[title][month].add(day)
+        month_map.setdefault(month, set()).add(day)
+    return month_map
 
-    if not grouped:
+
+def _calendar_group_title_from_block(block: dict[str, Any], *, include_details: bool) -> str:
+    title = _calendar_group_base_title(
+        activity_label=block.get("activity_label"),
+        location_label=block.get("location_label"),
+    )
+    if not include_details:
+        return title
+    details: list[str] = []
+    weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"))
+    start_time = str(block.get("start_time") or "").strip()
+    end_time = str(block.get("end_time") or "").strip()
+    if weekday and weekday != "-":
+        if start_time and end_time:
+            details.append(f"{weekday} {start_time}-{end_time}")
+        else:
+            details.append(weekday)
+    modality = _normalized_modality(block.get("modality"))
+    if modality == "ONLINE":
+        details.append("En ligne")
+    elif modality == "ONSITE":
+        details.append("Presentiel")
+    return f"{title} · {' · '.join(details)}" if details else title
+
+
+def _calendar_display_groups(
+    *,
+    snapshot: dict[str, Any],
+    sessions: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    calendar_sessions = (
+        sessions
+        if sessions is not None
+        else [item for item in _json_list(snapshot.get("sessions")) if isinstance(item, dict)]
+    )
+    planning_blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
+    if not planning_blocks:
+        grouped: dict[str, dict[int, set[int]]] = {}
+        for session in calendar_sessions:
+            title = _calendar_group_base_title(
+                activity_label=session.get("activity_label"),
+                location_label=session.get("location_label"),
+            )
+            month_map = grouped.setdefault(title, {})
+            parsed = _session_month_day(session.get("date"))
+            if parsed is None:
+                continue
+            month, day = parsed
+            month_map.setdefault(month, set()).add(day)
+        return [
+            {"title": title, "month_map": grouped[title], "count": sum(len(values) for values in grouped[title].values())}
+            for title in sorted(grouped.keys())
+        ]
+
+    duplicate_counts: dict[str, int] = {}
+    for block in planning_blocks:
+        base_title = _calendar_group_base_title(
+            activity_label=block.get("activity_label"),
+            location_label=block.get("location_label"),
+        )
+        duplicate_counts[base_title] = duplicate_counts.get(base_title, 0) + 1
+
+    groups: list[dict[str, Any]] = []
+    used_indexes: set[int] = set()
+    for block in planning_blocks:
+        matched_sessions: list[dict[str, Any]] = []
+        for index, session in enumerate(calendar_sessions):
+            if index in used_indexes:
+                continue
+            if _calendar_block_matches_session(block, session):
+                matched_sessions.append(session)
+                used_indexes.add(index)
+        month_map = _calendar_month_map_from_sessions(matched_sessions)
+        base_title = _calendar_group_base_title(
+            activity_label=block.get("activity_label"),
+            location_label=block.get("location_label"),
+        )
+        groups.append(
+            {
+                "title": _calendar_group_title_from_block(
+                    block,
+                    include_details=duplicate_counts.get(base_title, 0) > 1,
+                ),
+                "month_map": month_map,
+                "count": sum(len(values) for values in month_map.values()),
+            }
+        )
+
+    for index, session in enumerate(calendar_sessions):
+        if index in used_indexes:
+            continue
+        title = _calendar_group_base_title(
+            activity_label=session.get("activity_label"),
+            location_label=session.get("location_label"),
+        )
+        month_map = _calendar_month_map_from_sessions([session])
+        groups.append(
+            {
+                "title": title,
+                "month_map": month_map,
+                "count": sum(len(values) for values in month_map.values()),
+            }
+        )
+    return groups
+
+
+def _calendar_visual_summary(snapshot: dict[str, Any], sessions: list[dict[str, Any]]) -> tuple[str, int]:
+    groups = _calendar_display_groups(snapshot=snapshot, sessions=sessions)
+
+    if not groups:
         return "<p>Aucune seance planifiee.</p>", 0
 
     blocks: list[str] = []
-    for index, title in enumerate(sorted(grouped.keys()), start=1):
-        month_map = grouped[title]
-        count = sum(len(values) for values in month_map.values())
+    for index, group in enumerate(groups, start=1):
+        title = str(group.get("title") or "").strip() or f"Activite {index}"
+        month_map = group.get("month_map") if isinstance(group.get("month_map"), dict) else {}
+        count = int(group.get("count") or 0)
         sem1 = _calendar_semester_rows(month_map, semester=1)
         sem2 = _calendar_semester_rows(month_map, semester=2)
 
@@ -384,7 +718,7 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
             "</div>"
         )
 
-    return "".join(blocks), len(grouped)
+    return "".join(blocks), len(groups)
 
 
 def _table_html(headers: list[str], rows: list[list[Any]], *, empty_label: str) -> str:
@@ -422,7 +756,7 @@ def _table_html(headers: list[str], rows: list[list[Any]], *, empty_label: str) 
     body = "".join(body_rows)
     return (
         "<table class='quote-table' border='1' cellspacing='0' cellpadding='10' width='100%' "
-        "style='width:100%;border-collapse:collapse;border-spacing:0;margin:6px 0 10px 0;font-size:11px;table-layout:auto;'>"
+        "style='width:100%;border-collapse:collapse;border-spacing:0;margin:12px 0 0 0;font-size:11px;table-layout:auto;'>"
         f"<thead><tr>{head}</tr></thead>"
         f"<tbody>{body}</tbody>"
         "</table>"
@@ -434,7 +768,12 @@ def _section_html(title: str, content_html: str, *, level: int = 2) -> str:
     if not content:
         return ""
     tag = "h3" if level == 3 else "h2"
-    return f"<{tag}>{escape(title)}</{tag}>{content}"
+    return (
+        f"<section class='quote-section quote-section-level-{level}'>"
+        f"<{tag} class='quote-section-title'>{escape(title)}</{tag}>"
+        f"<div class='quote-section-body'>{content}</div>"
+        "</section>"
+    )
 
 
 def _weekday_label(value: Any) -> str:
@@ -588,6 +927,21 @@ def _small_description_html(value: Any) -> str:
     )
 
 
+def _unique_text_parts(*parts: Any) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        text = str(part or "").strip()
+        if not text:
+            continue
+        normalized = " ".join(text.split()).casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(text)
+    return result
+
+
 def _product_long_descriptions_by_id(*, db: Session | None, products: list[QuoteLine]) -> dict[Any, str]:
     if db is None:
         return {}
@@ -712,6 +1066,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         return values
 
     meta = prospect.meta or {}
+    typeform_parent_address = _typeform_parent_address_from_quote(db=db, quote=quote).strip()
     prospect_type = "child" if str(meta.get("prospect_type") or "").strip().lower() == "child" else "adult"
     values["prospect_type"] = prospect_type
     values["prospect_type_label"] = "Enfant" if prospect_type == "child" else "Adulte"
@@ -741,6 +1096,8 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
                 if not parent_address:
                     parent_meta_data = parent.meta or {}
                     parent_address = str(parent_meta_data.get("adult_address") or "").strip()
+        if not parent_address:
+            parent_address = typeform_parent_address
 
         values["parent_first_name"] = parent_first_name
         values["parent_last_name"] = parent_last_name
@@ -754,7 +1111,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         values["adult_full_name"] = _name(prospect.first_name, prospect.last_name, fallback="")
         values["adult_email"] = (prospect.email or "").strip().lower()
         values["adult_phone"] = (prospect.phone or "").strip()
-        values["adult_address"] = str(meta.get("adult_address") or "").strip()
+        values["adult_address"] = str(meta.get("adult_address") or typeform_parent_address or "").strip()
 
     return values
 
@@ -1280,6 +1637,33 @@ def _render_html_pdf_with_xhtml2pdf(rendered_html: str) -> bytes | None:
     return output.getvalue()
 
 
+def _render_template_pdf_with_xhtml2pdf(
+    *,
+    db: Session | None,
+    quote: Quote,
+    lines: list[QuoteLine],
+    combined_html: str,
+    audience: str,
+) -> bytes | None:
+    body_inner = _extract_body_inner_html(combined_html)
+    header_html = _extract_first_inline_header(body_inner)
+    footer_html = _extract_first_inline_footer(body_inner)
+    if not header_html or not footer_html:
+        values, _, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
+        header_html = header_html or str(values.get("header_standard_html") or "")
+        footer_html = footer_html or str(values.get("footer_standard_html") or "")
+
+    content_html = _strip_inline_headers(_strip_inline_footers(body_inner))
+    content_html = _strip_overriding_page_styles(content_html)
+    content_html = _normalize_tables_for_pdf(content_html)
+    pdf_html = _pdf_shell_html(
+        content_html=content_html,
+        header_html=header_html,
+        footer_html=footer_html,
+    )
+    return _render_html_pdf_with_xhtml2pdf(pdf_html)
+
+
 _INLINE_FOOTER_RE = re.compile(
     r"<table[^>]*class=['\"][^'\"]*quote-footer[^'\"]*['\"][^>]*>.*?</table>",
     flags=re.IGNORECASE | re.DOTALL,
@@ -1303,6 +1687,22 @@ _INLINE_RUNNING_HEADER_RE = re.compile(
 
 
 _INLINE_STYLE_RE = re.compile(r"<style[^>]*>(.*?)</style>", flags=re.IGNORECASE | re.DOTALL)
+
+
+def _extract_first_inline_footer(content: str) -> str:
+    for pattern in (_INLINE_RUNNING_FOOTER_RE, _INLINE_FOOTER_RE):
+        match = pattern.search(content or "")
+        if match is not None:
+            return match.group(0)
+    return ""
+
+
+def _extract_first_inline_header(content: str) -> str:
+    for pattern in (_INLINE_RUNNING_HEADER_RE, _INLINE_HEADER_RE):
+        match = pattern.search(content or "")
+        if match is not None:
+            return match.group(0)
+    return ""
 
 
 def _strip_inline_footers(content: str) -> str:
@@ -1450,7 +1850,7 @@ def _build_quote_pdf_blocks_html(
         "<h1>Dossier d inscription</h1>"
         "<p><strong>Devis :</strong> {quote_number}</p>"
         "<p><strong>Annee scolaire :</strong> {school_year_label}</p>"
-        "<p><strong>Validite :</strong> {expires_at}</p>"
+        "<p><strong>{quote_status_date_label} :</strong> {quote_status_date_value}</p>"
         "<p><strong>Eleve :</strong> {child_full_name}</p>"
         "</section>"
         "{page_break_html}"
@@ -1500,15 +1900,18 @@ def _pdf_shell_html(*, content_html: str, header_html: str, footer_html: str) ->
         "  size: a4 portrait;"
         "  margin: 0;"
         "  @frame header_frame { -pdf-frame-content: header_content; left: 36pt; top: 14pt; width: 523pt; height: 44pt; }"
-        "  @frame content_frame { left: 36pt; top: 64pt; width: 523pt; height: 700pt; }"
-        "  @frame footer_frame { -pdf-frame-content: footer_content; left: 36pt; top: 770pt; width: 523pt; height: 58pt; }"
+        "  @frame content_frame { left: 36pt; top: 66pt; width: 523pt; height: 694pt; }"
+        "  @frame footer_frame { -pdf-frame-content: footer_content; left: 36pt; top: 766pt; width: 523pt; height: 62pt; }"
         "}"
         "body{font-family:Arial,Helvetica,sans-serif;color:#1f1f1f;font-size:11px;line-height:1.42;}"
-        "h1,h2,h3{color:#101828;margin:0 0 8px 0;}"
+        "h1,h2,h3{color:#101828;margin:0 0 10px 0;}"
         "p{margin:0 0 7px 0;}"
         ".quote-page-break{page-break-before:always;}"
         ".quote-block{border:1px solid #d4dae3;background:#fbfcfe;padding:10px;margin:0 0 10px 0;page-break-inside:auto;}"
-        ".quote-content table,.quote-table{width:100%;border-collapse:collapse;border-spacing:0;table-layout:auto;margin:8px 0 12px 0;font-size:10.9px;}"
+        ".quote-content .quote-section,.quote-section{margin:0 0 22px 0;page-break-inside:auto;}"
+        ".quote-content .quote-section-title,.quote-section-title{margin:0 0 12px 0;}"
+        ".quote-content .quote-section-body,.quote-section-body{margin:0;}"
+        ".quote-content table,.quote-table{width:100%;border-collapse:collapse;border-spacing:0;table-layout:auto;margin:12px 0 0 0;font-size:10.9px;}"
         ".quote-content th,.quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:middle !important;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;height:auto !important;min-height:30px;}"
         ".quote-content td,.quote-table td{border:1px solid #d3dbe7 !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;vertical-align:middle !important;color:#111827 !important;line-height:1.45 !important;word-break:break-word !important;white-space:normal !important;overflow-wrap:anywhere !important;height:auto !important;min-height:30px;}"
         ".quote-content td>*{margin-top:0 !important;margin-bottom:0 !important;}"
@@ -1732,7 +2135,12 @@ def _build_template_values(
                     "html": (
                         f"<div>{escape(line.title or '-')}</div>"
                         + _small_description_html(
-                            product_long_descriptions.get(line.product_id) or line.description
+                            "\n".join(
+                                _unique_text_parts(
+                                    line.description,
+                                    product_long_descriptions.get(line.product_id),
+                                )
+                            )
                         )
                     )
                 },
@@ -1755,7 +2163,12 @@ def _build_template_values(
                     "html": (
                         f"<div>{escape(line.title or '-')}</div>"
                         + _small_description_html(
-                            kit_long_descriptions.get(line.kit_id) or line.description
+                            "\n".join(
+                                _unique_text_parts(
+                                    line.description,
+                                    kit_long_descriptions.get(line.kit_id),
+                                )
+                            )
                         )
                         + _kit_composition_html(kit_composition.get(line.kit_id, []))
                     )
@@ -1852,8 +2265,9 @@ def _build_template_values(
         else:
             payment_schedule_table_html = ""
 
-    sessions = [item for item in _json_list(_json_object(quote.calendar_snapshot).get("sessions")) if isinstance(item, dict)]
-    planning_blocks_table_html, _ = _planning_blocks_table_html(_json_object(quote.calendar_snapshot))
+    calendar_snapshot = _json_object(quote.calendar_snapshot)
+    sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
+    planning_blocks_table_html, _ = _planning_blocks_table_html(calendar_snapshot)
     calendar_sessions_table_html = _table_html(
         ["Date", "Debut", "Fin", "Duree", "Modalite"],
         [
@@ -1868,7 +2282,7 @@ def _build_template_values(
         ],
         empty_label="Aucun cours planifie.",
     )
-    calendar_table_html, calendar_activities_count = _calendar_visual_summary(sessions)
+    calendar_table_html, calendar_activities_count = _calendar_visual_summary(calendar_snapshot, sessions)
     calendar_summary = (
         f"{len(sessions)} seances planifiees sur {calendar_activities_count} activites"
         if sessions
@@ -1962,7 +2376,7 @@ def _build_template_values(
             "</tr>"
         )
 
-    def _identity_card(title: str, rows: list[str], empty_label: str) -> str:
+    def _identity_card(title: str, rows: list[str], empty_label: str, *, spacer_before_title: bool = False) -> str:
         body = "".join(row for row in rows if row)
         if not body:
             body = (
@@ -1971,8 +2385,10 @@ def _build_template_values(
                 "<td>-</td>"
                 "</tr>"
             )
+        spacer_html = "<div class='quote-identity-card-gap'>&nbsp;</div>" if spacer_before_title else ""
         return (
             "<section class='quote-identity-card'>"
+            f"{spacer_html}"
             f"<h3>{escape(title)}</h3>"
             "<table class='quote-identity-meta' cellspacing='0' cellpadding='0'>"
             f"{body}"
@@ -2015,6 +2431,7 @@ def _build_template_values(
             _identity_row_cells("Adresse", responsible_address_value),
         ],
         "Adulte responsable",
+        spacer_before_title=True,
     )
     adult_identity_card_html = _identity_card(
         "Informations de l adulte responsable",
@@ -2059,11 +2476,37 @@ def _build_template_values(
         if display_flags["showPassRecupSection"]
         else ""
     )
+    pass_recup_non_subscribed_text = ""
+    if display_flags["showPassRecupCompactNotice"]:
+        pass_recup_non_subscribed_text = QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_DEFAULT
+        if db is not None:
+            messaging_settings, _ = load_messaging_settings(db)
+            pass_recup_non_subscribed_text = str(
+                messaging_settings.get("quote_pass_recup_non_subscribed_text")
+                or QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_DEFAULT
+            ).strip()
+    pass_recup_non_subscribed_text_html = escape(pass_recup_non_subscribed_text).replace("\n", "<br/>")
+    pass_recup_compact_notice_html = (
+        "<p><strong>Option Pass Récup : non souscrite.</strong>"
+        + (
+            f"<br/><font size='9' color='#6b7280'>{pass_recup_non_subscribed_text_html}</font>"
+            if pass_recup_non_subscribed_text_html
+            else ""
+        )
+        + "</p>"
+        if display_flags["showPassRecupCompactNotice"]
+        else ""
+    )
     options_section_html = _section_html(
         "Vos options",
         "".join(
             fragment
-            for fragment in (solfege_block_html, masterclass_block_html, pass_recup_block_html)
+            for fragment in (
+                solfege_block_html,
+                masterclass_block_html,
+                pass_recup_block_html,
+                pass_recup_compact_notice_html,
+            )
             if str(fragment or "").strip()
         ),
     )
@@ -2076,11 +2519,26 @@ def _build_template_values(
 
     brand_logo_html = _brand_logo_html(db=db, variant="header")
     cover_logo_html = _brand_logo_html(db=db, variant="cover")
+    legal_entity_data = _resolve_quote_legal_entity_data(db=db, quote=quote)
+    legal_entity_name = str(legal_entity_data.get("name") or "PIANO ACADEMIE")
+    legal_entity_address_lines = [
+        str(line).strip()
+        for line in legal_entity_data.get("address_lines") or []
+        if str(line).strip()
+    ]
+    legal_entity_tax_lines = [
+        str(line).strip()
+        for line in legal_entity_data.get("tax_lines") or []
+        if str(line).strip()
+    ]
+    footer_left_html = "<br/>".join(escape(line) for line in [legal_entity_name, *legal_entity_address_lines])
+    footer_center_html = "<br/>".join(escape(line) for line in legal_entity_tax_lines)
+    quote_status_date_label, quote_status_date_value, quote_status_cover_line = _quote_status_date_display(quote)
     header_standard_html = (
         "<table class='quote-running-header' width='100%' cellspacing='0' cellpadding='0'>"
         "<tr>"
         "<td width='68%' align='left' valign='middle'>"
-        "<span style='font-size:11px;font-weight:700;color:#111827;'>PIANO ACADEMIE</span>"
+        f"<span style='font-size:11px;font-weight:700;color:#111827;'>{escape(legal_entity_name)}</span>"
         "</td>"
         "<td width='32%' align='right' valign='middle' style='font-size:10px;color:#334155;'>"
         f"<strong>Devis {escape(quote.quote_number or '-')}</strong>"
@@ -2097,7 +2555,7 @@ def _build_template_values(
         "<div class='quote-cover-meta'>"
         f"<p>Type de prospect: {escape(str(prospect_data.get('prospect_type_label') or '-'))}</p>"
         f"<p>Document genere le {escape(_datetime_label(_utcnow()))}</p>"
-        f"<p>Valable jusqu au {escape(_date_label(quote.expires_at))}</p>"
+        f"<p>{escape(quote_status_cover_line)}</p>"
         "</div>"
         "</section>"
         "<div class='quote-page-break'></div>"
@@ -2119,6 +2577,8 @@ def _build_template_values(
         "vat_amount_after_adjustment": _decimal_str(vat_amount_after_adjustment),
         "currency": currency,
         "expires_at": _date_label(quote.expires_at),
+        "quote_status_date_label": quote_status_date_label,
+        "quote_status_date_value": quote_status_date_value,
         "sent_at": _datetime_label(quote.sent_at),
         "generated_at": _datetime_label(_utcnow()),
         "school_year_label": (quote.school_year_label or "-"),
@@ -2166,18 +2626,19 @@ def _build_template_values(
             "<table class='quote-running-footer' width='100%' cellspacing='0' cellpadding='0'>"
             "<tr>"
             "<td width='33%' align='left' valign='top'>"
-            "Piano Academie<br/>"
-            "1 rue de Richelieu<br/>"
-            "75001 Paris"
+            f"{footer_left_html or '-'}"
             "</td>"
             "<td width='34%' align='center' valign='top'>"
-            "SIRET 82805141700032<br/>"
-            "FR 74828051417"
+            f"{footer_center_html or '-'}"
             "</td>"
             f"<td width='33%' align='right' valign='top'>{escape(quote.quote_number or '-')}</td>"
             "</tr>"
             "</table>"
         ),
+        "legal_entity_name": legal_entity_name,
+        "legal_entity_address": ", ".join(legal_entity_address_lines),
+        "legal_entity_siret": str(legal_entity_data.get("siret") or ""),
+        "legal_entity_vat_number": str(legal_entity_data.get("vat_number") or ""),
         "cgv_version": cgv_label or "-",
         "services_count": str(len(services)),
         "products_count": str(len(products)),
@@ -2189,6 +2650,7 @@ def _build_template_values(
         "solfege_block_html": solfege_block_html,
         "masterclass_block_html": masterclass_block_html,
         "pass_recup_block_html": pass_recup_block_html,
+        "pass_recup_compact_notice_html": pass_recup_compact_notice_html,
         "options_section_html": options_section_html,
         "payment_method_block_html": payment_method_block_html,
         "activities_planning_section_html": activities_planning_section_html,
@@ -2225,6 +2687,7 @@ def _build_template_values(
         "solfege_block_html",
         "masterclass_block_html",
         "pass_recup_block_html",
+        "pass_recup_compact_notice_html",
         "options_section_html",
         "payment_method_block_html",
         "activities_planning_section_html",
@@ -2283,7 +2746,7 @@ def _default_quote_body_template() -> str:
         "<h1>Devis {quote_number}</h1>"
         "<p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p>"
         "<p><strong>Annee scolaire:</strong> {school_year_label}</p>"
-        "<p><strong>Expiration:</strong> {expires_at}</p>"
+        "<p><strong>{quote_status_date_label}:</strong> {quote_status_date_value}</p>"
         "{page_break_html}"
         "<h2>Informations famille</h2>"
         "<div class='quote-block'>"
@@ -2365,6 +2828,7 @@ def _render_quote_body_html(
             "solfege_block_html",
             "masterclass_block_html",
             "pass_recup_block_html",
+            "pass_recup_compact_notice_html",
             "options_section_html",
             "payment_method_block_html",
             "activities_planning_section_html",
@@ -2416,6 +2880,7 @@ def _render_quote_body_html(
     lowered_template = template.lower()
     if "{activities_planning_table_html}" not in lowered_template and "{activities_planning_section_html}" not in lowered_template:
         rendered += values.get("activities_planning_section_html", "")
+    rendered = _replace_expiration_mentions_for_approved_quote(rendered, quote)
     rendered = _enforce_family_page_break(rendered)
     return _as_html_fragment(rendered)
 
@@ -2440,6 +2905,11 @@ def _render_quote_terms_html(
             "page_break_html",
             "footer_standard_html",
             "prospect_identity_block_html",
+            "solfege_block_html",
+            "masterclass_block_html",
+            "pass_recup_block_html",
+            "pass_recup_compact_notice_html",
+            "options_section_html",
             "payment_method_block_html",
             "activities_planning_section_html",
             "services_section_html",
@@ -2783,6 +3253,9 @@ def _draw_quote_pdf_header_footer(
     doc: SimpleDocTemplate,
     *,
     quote_number: str,
+    legal_entity_name: str,
+    legal_entity_address_lines: list[str],
+    legal_entity_tax_lines: list[str],
     logo_reader: ImageReader | None,
 ) -> None:
     canvas_obj.saveState()
@@ -2816,7 +3289,7 @@ def _draw_quote_pdf_header_footer(
     canvas_obj.setFont("Helvetica-Bold", 11)
     canvas_obj.setFillColor(colors.HexColor("#0f172a"))
     if logo_reader is None:
-        canvas_obj.drawString(left_x, title_baseline_y, "PIANO ACADEMIE")
+        canvas_obj.drawString(left_x, title_baseline_y, legal_entity_name or "PIANO ACADEMIE")
     canvas_obj.drawRightString(right_x, title_baseline_y, f"Devis {quote_number or '-'}")
     canvas_obj.setStrokeColor(colors.HexColor("#cfd8e6"))
     canvas_obj.setLineWidth(0.8)
@@ -2828,11 +3301,14 @@ def _draw_quote_pdf_header_footer(
     canvas_obj.line(left_x, footer_y + 11 * mm, right_x, footer_y + 11 * mm)
     canvas_obj.setFont("Helvetica", 9.5)
     canvas_obj.setFillColor(colors.HexColor("#334155"))
-    canvas_obj.drawString(left_x, footer_y + 6 * mm, "Piano Academie")
-    canvas_obj.drawString(left_x, footer_y + 2 * mm, "1 rue de Richelieu")
-    canvas_obj.drawString(left_x, footer_y - 2 * mm, "75001 Paris")
-    canvas_obj.drawCentredString((left_x + right_x) / 2, footer_y + 6 * mm, "SIRET 82805141700032")
-    canvas_obj.drawCentredString((left_x + right_x) / 2, footer_y + 2 * mm, "FR 74828051417")
+    left_lines = [legal_entity_name or "PIANO ACADEMIE", *[line for line in legal_entity_address_lines if line]]
+    center_lines = [line for line in legal_entity_tax_lines if line]
+    left_line_y = footer_y + 6 * mm
+    for index, line in enumerate(left_lines[:3]):
+        canvas_obj.drawString(left_x, left_line_y - (index * 4 * mm), line)
+    center_line_y = footer_y + 6 * mm
+    for index, line in enumerate(center_lines[:3]):
+        canvas_obj.drawCentredString((left_x + right_x) / 2, center_line_y - (index * 4 * mm), line)
     canvas_obj.drawRightString(right_x, footer_y + 6 * mm, quote_number or "-")
     canvas_obj.restoreState()
 
@@ -2846,6 +3322,7 @@ def _render_quote_pdf_blocks(
 ) -> bytes:
     values, _, context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     prospect_data = context.get("prospect_data", {})
+    legal_entity_data = _resolve_quote_legal_entity_data(db=db, quote=quote)
     calendar_snapshot = _json_object(quote.calendar_snapshot)
     sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
     planning_blocks = [item for item in _json_list(calendar_snapshot.get("blocks")) if isinstance(item, dict)]
@@ -2877,7 +3354,12 @@ def _render_quote_pdf_blocks(
     story.append(Paragraph("Dossier d inscription", styles["cover_title"]))
     story.append(Paragraph(f"Devis : {escape(values.get('quote_number', '-'))}", styles["cover_subtitle"]))
     story.append(Paragraph(f"Annee scolaire : {escape(values.get('school_year_label', '-'))}", styles["cover_subtitle"]))
-    story.append(Paragraph(f"Validite : {escape(values.get('expires_at', '-'))}", styles["cover_subtitle"]))
+    story.append(
+        Paragraph(
+            f"{escape(values.get('quote_status_date_label', 'Validite'))} : {escape(values.get('quote_status_date_value', values.get('expires_at', '-')))}",
+            styles["cover_subtitle"],
+        )
+    )
     story.append(
         Paragraph(
             f"Eleve : {escape(prospect_data.get('child_full_name') or values.get('recipient_name', '-'))}",
@@ -2887,38 +3369,54 @@ def _render_quote_pdf_blocks(
     story.append(PageBreak())
 
     story.append(Paragraph("Informations famille", styles["h1"]))
-    identity_rows: list[list[str]] = []
     if str(prospect_data.get("prospect_type") or "").lower() == "child":
-        identity_rows.extend(
-            [
-                ["Eleve", str(prospect_data.get("child_full_name") or "-")],
-                ["Date de naissance", _birth_date_label(str(prospect_data.get("child_birth_date") or ""))],
-                ["Adulte responsable", str(prospect_data.get("parent_full_name") or "-")],
-                ["Email adulte responsable", str(prospect_data.get("parent_email") or values.get("recipient_email") or "-")],
-                ["Telephone adulte responsable", str(prospect_data.get("parent_phone") or "-")],
-                ["Adresse adulte responsable", str(prospect_data.get("parent_address") or "-")],
-            ]
+        child_identity_rows = [
+            ["Eleve", str(prospect_data.get("child_full_name") or "-")],
+            ["Date de naissance", _birth_date_label(str(prospect_data.get("child_birth_date") or ""))],
+        ]
+        responsible_identity_rows = [
+            ["Adulte responsable", str(prospect_data.get("parent_full_name") or "-")],
+            ["Email", str(prospect_data.get("parent_email") or values.get("recipient_email") or "-")],
+            ["Telephone", str(prospect_data.get("parent_phone") or "-")],
+            ["Adresse", str(prospect_data.get("parent_address") or "-")],
+        ]
+        story.append(Paragraph("Informations de l eleve", styles["h2"]))
+        story.append(
+            _table_for_pdf(
+                ["", ""],
+                child_identity_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.32, 0.68],
+            )
+        )
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("Informations de l adulte responsable", styles["h2"]))
+        story.append(
+            _table_for_pdf(
+                ["", ""],
+                responsible_identity_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.32, 0.68],
+            )
         )
     else:
-        identity_rows.extend(
-            [
-                ["Adulte responsable", str(prospect_data.get("adult_full_name") or values.get("recipient_name") or "-")],
-                ["Email", str(prospect_data.get("adult_email") or values.get("recipient_email") or "-")],
-                ["Telephone", str(prospect_data.get("adult_phone") or "-")],
-                ["Adresse", str(prospect_data.get("adult_address") or "-")],
-            ]
+        story.append(Paragraph("Informations de l adulte responsable", styles["h2"]))
+        story.append(
+            _table_for_pdf(
+                ["", ""],
+                [
+                    ["Adulte responsable", str(prospect_data.get("adult_full_name") or values.get("recipient_name") or "-")],
+                    ["Email", str(prospect_data.get("adult_email") or values.get("recipient_email") or "-")],
+                    ["Telephone", str(prospect_data.get("adult_phone") or "-")],
+                    ["Adresse", str(prospect_data.get("adult_address") or "-")],
+                ],
+                width=content_width,
+                styles=styles,
+                col_widths=[0.32, 0.68],
+            )
         )
-    story.append(
-        _table_for_pdf(
-            ["", ""],
-            identity_rows,
-            width=content_width,
-            styles=styles,
-            col_widths=[0.32, 0.68],
-        )
-    )
-    story.append(Spacer(1, 5))
-    story.append(Paragraph(f"Email contact : {escape(values.get('recipient_email', '-'))}", styles["text"]))
     story.append(PageBreak())
 
     story.append(Paragraph("Les Activites retenues", styles["h1"]))
@@ -3006,16 +3504,10 @@ def _render_quote_pdf_blocks(
             {
                 "text": line.title or "-",
                 "subtext": "\n".join(
-                    part
-                    for part in [
-                        str(line.description or "").strip(),
-                        (
-                            str(product_long_descriptions.get(line.product_id) or "").strip()
-                            if line.product_id is not None
-                            else ""
-                        ),
-                    ]
-                    if part
+                    _unique_text_parts(
+                        line.description,
+                        product_long_descriptions.get(line.product_id) if line.product_id is not None else "",
+                    )
                 ),
             },
             _decimal_str(Decimal(line.quantity or 0)),
@@ -3043,21 +3535,17 @@ def _render_quote_pdf_blocks(
             {
                 "text": line.title or "-",
                 "subtext": "\n".join(
-                    part
-                    for part in [
-                        str(line.description or "").strip(),
-                        (
-                            str(kit_long_descriptions.get(line.kit_id) or "").strip()
-                            if line.kit_id is not None
-                            else ""
-                        ),
+                    _unique_text_parts(
+                        line.description,
+                        str(kit_long_descriptions.get(line.kit_id) or "").strip()
+                        if line.kit_id is not None
+                        else "",
                         (
                             "Composition :\n" + "\n".join(kit_composition.get(line.kit_id, []))
                             if line.kit_id is not None and kit_composition.get(line.kit_id)
                             else ""
                         ),
-                    ]
-                    if part
+                    )
                 ),
             },
             _decimal_str(Decimal(line.quantity or 0)),
@@ -3104,6 +3592,29 @@ def _render_quote_pdf_blocks(
         )
 
     story.append(PageBreak())
+    story.append(Paragraph("Les modalites de paiement", styles["h1"]))
+    story.append(Paragraph(f"Mode de paiement : {escape(values.get('payment_method_label', '-'))}", styles["text"]))
+    story.append(Paragraph(escape(values.get("payment_schedule_summary", "Paiement non planifie")), styles["text"]))
+    if len(schedule) > 1:
+        schedule_rows = [
+            [
+                str(item.get("label") or "-"),
+                f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
+                _schedule_due_label(item),
+                str(item.get("payment_method") or "-"),
+            ]
+            for item in schedule
+        ]
+        story.append(
+            _table_for_pdf(
+                ["Echeance", "Montant", "Quand", "Type"],
+                schedule_rows,
+                width=content_width,
+                styles=styles,
+                col_widths=[0.29, 0.18, 0.31, 0.22],
+            )
+        )
+    story.append(Spacer(1, 8))
     story.append(Paragraph("Recapitulatif financier", styles["h2"]))
     financial_rows: list[list[str]] = []
     if values.get("has_financial_adjustment") == "true":
@@ -3129,34 +3640,11 @@ def _render_quote_pdf_blocks(
             col_widths=[0.58, 0.42],
         )
     )
-
-    story.append(PageBreak())
-    story.append(Paragraph("Les modalites de paiement", styles["h1"]))
-    story.append(Paragraph(f"Mode de paiement : {escape(values.get('payment_method_label', '-'))}", styles["text"]))
-    story.append(Paragraph(escape(values.get("payment_schedule_summary", "Paiement non planifie")), styles["text"]))
-    if len(schedule) > 1:
-        schedule_rows = [
-            [
-                str(item.get("label") or "-"),
-                f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
-                _schedule_due_label(item),
-                str(item.get("payment_method") or "-"),
-            ]
-            for item in schedule
-        ]
-        story.append(
-            _table_for_pdf(
-                ["Echeance", "Montant", "Quand", "Type"],
-                schedule_rows,
-                width=content_width,
-                styles=styles,
-                col_widths=[0.29, 0.18, 0.31, 0.22],
-            )
-        )
     option_blocks = [
         _apply_template("{solfege_block_html}", values=values, html_keys={"solfege_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
         _apply_template("{masterclass_block_html}", values=values, html_keys={"masterclass_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
         _apply_template("{pass_recup_block_html}", values=values, html_keys={"pass_recup_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
+        _apply_template("{pass_recup_compact_notice_html}", values=values, html_keys={"pass_recup_compact_notice_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
     ]
     option_blocks = [block.strip() for block in option_blocks if str(block or "").strip()]
     if option_blocks:
@@ -3168,19 +3656,11 @@ def _render_quote_pdf_blocks(
     story.append(PageBreak())
     story.append(Paragraph("Calendrier des cours", styles["h1"]))
     story.append(Paragraph(f"Resume : {escape(values.get('calendar_summary', '-'))}", styles["text"]))
-    grouped: dict[str, dict[int, set[int]]] = {}
-    for session in sessions:
-        parsed = _session_month_day(session.get("date"))
-        if parsed is None:
-            continue
-        month, day = parsed
-        activity_label = str(session.get("activity_label") or "").strip() or "Activite"
-        location_label = str(session.get("location_label") or "").strip()
-        title = f"{activity_label} · {location_label}" if location_label else activity_label
-        grouped.setdefault(title, {}).setdefault(month, set()).add(day)
-    for idx, title in enumerate(sorted(grouped.keys()), start=1):
-        month_map = grouped[title]
-        count = sum(len(days) for days in month_map.values())
+    calendar_groups = _calendar_display_groups(snapshot=calendar_snapshot, sessions=sessions)
+    for idx, group in enumerate(calendar_groups, start=1):
+        title = str(group.get("title") or "").strip() or f"Activite {idx}"
+        month_map = group.get("month_map") if isinstance(group.get("month_map"), dict) else {}
+        count = int(group.get("count") or 0)
         story.append(Spacer(1, 5))
         story.append(Paragraph(f"Activite {idx}", styles["h3"]))
         story.append(
@@ -3220,6 +3700,17 @@ def _render_quote_pdf_blocks(
             canvas_obj,
             document,
             quote_number=quote.quote_number or "-",
+            legal_entity_name=str(legal_entity_data.get("name") or "PIANO ACADEMIE"),
+            legal_entity_address_lines=[
+                str(line).strip()
+                for line in legal_entity_data.get("address_lines") or []
+                if str(line).strip()
+            ],
+            legal_entity_tax_lines=[
+                str(line).strip()
+                for line in legal_entity_data.get("tax_lines") or []
+                if str(line).strip()
+            ],
             logo_reader=logo_reader,
         )
 
@@ -3235,7 +3726,15 @@ def render_quote_pdf_from_combined_html(
     combined_html: str,
     audience: str = DEFAULT_AUDIENCE,
 ) -> bytes:
-    html_pdf = _render_html_pdf_with_xhtml2pdf(combined_html)
-    if html_pdf:
-        return html_pdf
+    renderer_mode = str(os.getenv("QUOTE_PDF_RENDERER", "reportlab") or "reportlab").strip().lower()
+    if renderer_mode in {"html", "xhtml2pdf"}:
+        html_pdf = _render_template_pdf_with_xhtml2pdf(
+            db=db,
+            quote=quote,
+            lines=lines,
+            combined_html=combined_html,
+            audience=audience,
+        )
+        if html_pdf is not None:
+            return html_pdf
     return _render_quote_pdf_blocks(db=db, quote=quote, lines=lines, audience=audience)

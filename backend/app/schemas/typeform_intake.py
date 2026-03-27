@@ -190,6 +190,7 @@ class TypeformDraftQuoteResultOut(BaseModel):
     intake_id: UUID
     quote_id: UUID
     intake_status: str
+    warning_message: str | None = None
 
 
 class TypeformDemoSeedOut(BaseModel):

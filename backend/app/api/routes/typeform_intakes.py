@@ -53,6 +53,7 @@ from app.schemas.typeform_intake import (
     TypeformWebhookOut,
 )
 from app.services.invoice_documents import normalize_billing_entity
+from app.services.client_email import visible_client_email
 from app.services.professor_activation import generate_temporary_password
 from app.services.security import hash_password
 
@@ -176,6 +177,112 @@ def _json_list(value: object | None) -> list[object]:
         return list(value)
     return []
 
+
+def _simplified_answer_value(simplified_answers: list[object], *labels: str) -> str | None:
+    expected = {_normalize_token(label) for label in labels if _text(label)}
+    if not expected:
+        return None
+    for item in simplified_answers:
+        row = _json_object(item)
+        label = _normalize_token(row.get("label") or row.get("field_label") or row.get("question"))
+        if label not in expected:
+            continue
+        value = _text(row.get("value"))
+        if value:
+            return value
+    return None
+
+
+def _normalized_parent_address_snapshot(
+    normalized: dict[str, object],
+    *,
+    intake: TypeformIntake | None = None,
+) -> dict[str, str | None]:
+    line_1 = _text(normalized.get("parent_address_line_1")) or None
+    line_2 = _text(normalized.get("parent_address_line_2")) or None
+    city = _text(normalized.get("parent_city")) or None
+    postal_code = _text(normalized.get("parent_postal_code")) or None
+    country = _text(normalized.get("parent_country")) or None
+    address = _text(normalized.get("parent_address")) or None
+    if intake is not None:
+        simplified_answers = _json_list(intake.simplified_response_json)
+        line_1 = line_1 or _simplified_answer_value(simplified_answers, "Address", "address", "Adresse", "adresse")
+        line_2 = line_2 or _simplified_answer_value(
+            simplified_answers,
+            "Address line 2",
+            "address line 2",
+            "Adresse ligne 2",
+            "Complement d'adresse",
+            "Complément d'adresse",
+        )
+        city = city or _simplified_answer_value(simplified_answers, "City/Town", "city/town", "Ville", "ville")
+        postal_code = postal_code or _simplified_answer_value(
+            simplified_answers,
+            "Zip/Post Code",
+            "zip/post code",
+            "Code postal",
+            "code postal",
+        )
+        country = country or _simplified_answer_value(simplified_answers, "Country", "country", "Pays", "pays")
+    if not address:
+        locality = " ".join(part for part in [postal_code, city] if part).strip() or None
+        parts = [part for part in [line_1, line_2, locality, country] if part]
+        address = ", ".join(parts) if parts else None
+    return {
+        "line_1": line_1,
+        "line_2": line_2,
+        "city": city,
+        "postal_code": postal_code,
+        "country": country,
+        "address": address,
+    }
+
+
+def _adult_prospect_meta_from_typeform(
+    *,
+    current_meta: dict[str, object] | None,
+    normalized: dict[str, object],
+    intake: TypeformIntake,
+) -> dict[str, object]:
+    next_meta = _json_object(current_meta)
+    address_snapshot = _normalized_parent_address_snapshot(normalized, intake=intake)
+    next_meta.setdefault("prospect_type", "adult")
+    next_meta.setdefault("typeform_intake_id", str(intake.id))
+    if _text(normalized.get("requested_location")) and not _text(next_meta.get("requested_location")):
+        next_meta["requested_location"] = normalized.get("requested_location")
+    if _text(normalized.get("requested_formula_type")) and not _text(next_meta.get("requested_formula_type")):
+        next_meta["requested_formula_type"] = normalized.get("requested_formula_type")
+    if address_snapshot["address"] and not _text(next_meta.get("adult_address")):
+        next_meta["adult_address"] = address_snapshot["address"]
+    return next_meta
+
+
+def _parent_referent_snapshot_from_typeform(
+    *,
+    normalized: dict[str, object],
+    intake: TypeformIntake | None = None,
+    parent: Prospect | None,
+    current_parent_referent: dict[str, object] | None = None,
+) -> dict[str, object]:
+    next_parent_referent = _json_object(current_parent_referent)
+    parent_meta = _json_object(parent.meta if parent is not None else {})
+    address_snapshot = _normalized_parent_address_snapshot(normalized, intake=intake)
+
+    def fill(key: str, value: object | None) -> None:
+        if value is None:
+            return
+        if _text(next_parent_referent.get(key)):
+            return
+        text_value = _text(value)
+        if text_value:
+            next_parent_referent[key] = text_value
+
+    fill("first_name", parent.first_name if parent is not None else normalized.get("parent_first_name"))
+    fill("last_name", parent.last_name if parent is not None else normalized.get("parent_last_name"))
+    fill("email", parent.email if parent is not None else _lower(normalized.get("parent_email")))
+    fill("phone", parent.phone if parent is not None else normalized.get("parent_phone"))
+    fill("address", parent_meta.get("adult_address") or address_snapshot["address"])
+    return next_parent_referent
 
 def _template_condition_tokens(value: object | None) -> list[str]:
     if value is None:
@@ -913,10 +1020,11 @@ def _normalize_payload(
 
 
 def _client_out_label(client: User) -> tuple[str, str]:
-    display = _display_name(client.first_name, client.last_name, client.email or "-")
+    contact_email = visible_client_email(client)
+    display = _display_name(client.first_name, client.last_name, contact_email or "-")
     phones = [client.mobile_phone_1, client.phone, client.mobile_phone_2, client.home_phone]
     phone = next((value for value in phones if _text(value)), "")
-    subtitle = " · ".join(part for part in [client.email or "", phone, _text(client.family_name if hasattr(client, "family_name") else None)] if part)
+    subtitle = " · ".join(part for part in [contact_email or "", phone, _text(client.family_name if hasattr(client, "family_name") else None)] if part)
     return display, subtitle or None
 
 
@@ -943,7 +1051,7 @@ def _collect_client_candidates(db: Session, normalized: dict[str, object]) -> li
     for client in clients:
         score = 0
         reasons: list[str] = []
-        if parent_email and _lower(client.email) == parent_email:
+        if parent_email and _lower(visible_client_email(client)) == parent_email:
             score += 85
             reasons.append("email exact")
 
@@ -1742,7 +1850,6 @@ def _build_session_recommendations(
         .where(
             CourseSession.course_type_id.in_(activity_ids),
             CourseSession.status == SessionStatus.SCHEDULED,
-            CourseSession.is_private.is_(False),
             CourseSession.start_at_utc >= _utcnow() - timedelta(hours=1),
         )
         .order_by(CourseSession.start_at_utc.asc())
@@ -1806,6 +1913,8 @@ def _build_session_recommendations(
             elif config is not None and config.default_location_id == location.id:
                 score += 10
                 reasons.append("site par defaut")
+            if session_obj.is_private:
+                reasons.append("creneau prive")
             if requested_location and requested_location in {_lower(config.location_code if config is not None else None), _lower(location.code), _lower(location.name)}:
                 score += 20
                 reasons.append("lieu prefere")
@@ -2696,6 +2805,12 @@ def _create_or_reuse_adult_prospect(
         .limit(1)
     )
     if existing is not None:
+        next_meta = _adult_prospect_meta_from_typeform(current_meta=existing.meta, normalized=normalized, intake=intake)
+        if next_meta != (existing.meta or {}):
+            existing.meta = next_meta
+            existing.updated_at = _utcnow()
+            db.add(existing)
+            db.flush()
         return existing
 
     row = Prospect(
@@ -2708,12 +2823,7 @@ def _create_or_reuse_adult_prospect(
         phone=_text(normalized.get("parent_phone")) or None,
         source=f"typeform:{config.source_code}",
         notes=_text(normalized.get("notes")) or None,
-        meta={
-            "prospect_type": "adult",
-            "typeform_intake_id": str(intake.id),
-            "requested_location": normalized.get("requested_location"),
-            "requested_formula_type": normalized.get("requested_formula_type"),
-        },
+        meta=_adult_prospect_meta_from_typeform(current_meta=None, normalized=normalized, intake=intake),
         created_at=_utcnow(),
         updated_at=_utcnow(),
     )
@@ -2750,6 +2860,20 @@ def _create_or_reuse_child_prospect(
             and _lower(child_meta.get("last_name")) == _lower(child_last_name)
             and _text(child_meta.get("birth_date")) == child_birth_date
         ):
+            existing_meta = _json_object(child.meta)
+            next_parent_referent = _parent_referent_snapshot_from_typeform(
+                normalized=normalized,
+                intake=intake,
+                parent=parent,
+                current_parent_referent=_json_object(existing_meta.get("parent_referent")),
+            )
+            if next_parent_referent != _json_object(existing_meta.get("parent_referent")):
+                existing_meta["parent_referent"] = next_parent_referent
+                existing_meta.setdefault("typeform_intake_id", str(intake.id))
+                child.meta = existing_meta
+                child.updated_at = _utcnow()
+                db.add(child)
+                db.flush()
             return child
 
     row = Prospect(
@@ -2770,12 +2894,7 @@ def _create_or_reuse_child_prospect(
                 "last_name": child_last_name,
                 "birth_date": child_birth_date or None,
             },
-            "parent_referent": {
-                "first_name": parent.first_name,
-                "last_name": parent.last_name,
-                "email": parent.email,
-                "phone": parent.phone,
-            },
+            "parent_referent": _parent_referent_snapshot_from_typeform(normalized=normalized, intake=intake, parent=parent),
             "typeform_intake_id": str(intake.id),
         },
         created_at=_utcnow(),
@@ -2800,6 +2919,20 @@ def _quote_meta_from_analysis(
         resolution=resolution,
         session_recommendations=session_recommendations,
     )
+    normalized_snapshot = dict(normalized)
+    address_snapshot = _normalized_parent_address_snapshot(normalized, intake=intake)
+    if address_snapshot["line_1"] and not _text(normalized_snapshot.get("parent_address_line_1")):
+        normalized_snapshot["parent_address_line_1"] = address_snapshot["line_1"]
+    if address_snapshot["line_2"] and not _text(normalized_snapshot.get("parent_address_line_2")):
+        normalized_snapshot["parent_address_line_2"] = address_snapshot["line_2"]
+    if address_snapshot["city"] and not _text(normalized_snapshot.get("parent_city")):
+        normalized_snapshot["parent_city"] = address_snapshot["city"]
+    if address_snapshot["postal_code"] and not _text(normalized_snapshot.get("parent_postal_code")):
+        normalized_snapshot["parent_postal_code"] = address_snapshot["postal_code"]
+    if address_snapshot["country"] and not _text(normalized_snapshot.get("parent_country")):
+        normalized_snapshot["parent_country"] = address_snapshot["country"]
+    if address_snapshot["address"] and not _text(normalized_snapshot.get("parent_address")):
+        normalized_snapshot["parent_address"] = address_snapshot["address"]
     return {
         "source": "typeform_intake",
         "language": config.default_language,
@@ -2813,7 +2946,7 @@ def _quote_meta_from_analysis(
             "location_id": str(_parse_uuid(runtime_context.get("location_id"))) if _parse_uuid(runtime_context.get("location_id")) else None,
             "audience_segment": config.audience_segment,
             "school_year_label": config.school_year_label,
-            "normalized_payload": normalized,
+            "normalized_payload": normalized_snapshot,
             "resolution": resolution,
             "selected_session_ids": selected_session_ids,
             "session_recommendations": [
@@ -3028,6 +3161,24 @@ def _calendar_snapshot_from_analysis(
     return snapshot
 
 
+def _is_no_relevant_slot_blockage_message(message: object | None) -> bool:
+    return _lower(message).startswith("aucun creneau pertinent trouve pour")
+
+
+def _can_create_draft_quote_without_activities(analysis: dict[str, object]) -> bool:
+    preview_lines_in = list(analysis.get("preview_quote_lines_in") or [])
+    blockages = [_text(message) for message in _json_list(analysis.get("blockages")) if _text(message)]
+    session_recommendations = list(analysis.get("session_recommendations") or [])
+    if not preview_lines_in or not blockages or not session_recommendations:
+        return False
+    if any(not _is_no_relevant_slot_blockage_message(message) for message in blockages):
+        return False
+    return all(
+        _text(getattr(recommendation, "summary_status", "")) == "no_relevant_slot"
+        for recommendation in session_recommendations
+    )
+
+
 @router.get("/form-configs", response_model=list[TypeformFormConfigOut])
 def list_typeform_form_configs(
     active_only: bool = Query(default=True),
@@ -3081,6 +3232,21 @@ def list_typeform_intakes(
 
 @router.get("/intakes/{intake_id}", response_model=TypeformIntakeDetailOut)
 def get_typeform_intake(
+    intake_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TypeformIntakeDetailOut:
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
+    if intake is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
+    analysis = _refresh_intake_analysis(db, intake)
+    db.commit()
+    db.refresh(intake)
+    return _intake_detail_out(intake, analysis)
+
+
+@router.post("/intakes/{intake_id}/reanalyze", response_model=TypeformIntakeDetailOut)
+def reanalyze_typeform_intake(
     intake_id: UUID,
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
@@ -3176,6 +3342,7 @@ def update_typeform_intake_normalized_payload(
 @router.post("/intakes/{intake_id}/draft-quote", response_model=TypeformDraftQuoteResultOut, status_code=status.HTTP_201_CREATED)
 def create_draft_quote_from_typeform_intake(
     intake_id: UUID,
+    allow_without_activities: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> TypeformDraftQuoteResultOut:
@@ -3190,17 +3357,26 @@ def create_draft_quote_from_typeform_intake(
         )
 
     analysis = _refresh_intake_analysis(db, intake)
+    manual_quote_without_activities = False
+    manual_quote_warning: str | None = None
     if intake.intake_status == INTAKE_STATUS_IGNORED:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Cette intake est ignoree. Reactivez-la avant de generer un devis.",
         )
     if intake.intake_status == INTAKE_STATUS_BLOCKED:
-        blocking_messages = [message for message in analysis["blockages"] if _text(message)]
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=" ; ".join(blocking_messages) or "Cette intake comporte encore des blocages.",
-        )
+        if allow_without_activities and _can_create_draft_quote_without_activities(analysis):
+            manual_quote_without_activities = True
+            manual_quote_warning = (
+                "Aucun creneau n a ete trouve. Le devis a ete cree sans activites; "
+                "vous pouvez maintenant ajouter les activites manuellement."
+            )
+        else:
+            blocking_messages = [message for message in analysis["blockages"] if _text(message)]
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=" ; ".join(blocking_messages) or "Cette intake comporte encore des blocages.",
+            )
     if intake.intake_status == INTAKE_STATUS_MATCHING_REQUIRED:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -3213,7 +3389,7 @@ def create_draft_quote_from_typeform_intake(
     resolution = _json_object(analysis["effective_resolution"])
     client_resolution = _json_object(resolution.get("client_resolution"))
     preview_lines_in = analysis["preview_quote_lines_in"]
-    if not preview_lines_in:
+    if not preview_lines_in and not manual_quote_without_activities:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Pre-devis vide")
 
     created_entities = _json_object(resolution.get("created_entities"))
@@ -3263,6 +3439,13 @@ def create_draft_quote_from_typeform_intake(
         session_recommendations=analysis["session_recommendations"],
         runtime_context=_json_object(analysis.get("runtime_context")),
     )
+    if manual_quote_without_activities:
+        quote_meta["typeform_quote_created_without_activities"] = True
+        quote_meta["typeform_manual_activity_completion_required"] = True
+        quote_meta["typeform_creation_warning"] = manual_quote_warning
+        quote_meta["typeform_blockages_at_creation"] = [
+            message for message in analysis["blockages"] if _text(message)
+        ]
     if mode == CLIENT_MODE_EXISTING_FAMILY:
         quote_meta["typeform_selected_family_adult_client_id"] = client_resolution.get("selected_family_adult_client_id")
         quote_meta["typeform_selected_family_child_client_id"] = client_resolution.get("selected_family_child_client_id")
@@ -3298,7 +3481,7 @@ def create_draft_quote_from_typeform_intake(
         selected_solfege_slot=selected_solfege_slot,
         calendar_snapshot=calendar_snapshot,
         meta=quote_meta,
-        lines=preview_lines_in,
+        lines=[] if manual_quote_without_activities else preview_lines_in,
     )
     quote_detail = create_quote_from_payload(db, payload=quote_payload, current_user=current_user)
 
@@ -3315,6 +3498,7 @@ def create_draft_quote_from_typeform_intake(
         intake_id=intake.id,
         quote_id=quote_detail.quote.id,
         intake_status=INTAKE_STATUS_PROCESSED,
+        warning_message=manual_quote_warning,
     )
 
 

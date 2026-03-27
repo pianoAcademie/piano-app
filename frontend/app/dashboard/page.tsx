@@ -33,6 +33,7 @@ import type {
   CourseTypeOut,
   LocationOut,
   PlanOut,
+  SessionAudienceScope,
   SessionOut,
   SubscriptionOut,
   UserOut,
@@ -100,6 +101,12 @@ type MemberLite = {
   display_name: string;
   email: string;
   kind: string;
+};
+
+type MemberOfferAccess = {
+  hasAnyActiveOffer: boolean;
+  hasVisibleOffer: boolean;
+  hasReservableOffer: boolean;
 };
 
 const SESSION_ACCENT_COLORS = [
@@ -222,6 +229,33 @@ function parseFinancePageSize(value: string): number {
     return parsed;
   }
   return FINANCE_PAGE_SIZES[0];
+}
+
+function normalizeSessionAudienceScope(raw: unknown, fallback: SessionAudienceScope): SessionAudienceScope {
+  const value = String(raw ?? "").trim().toUpperCase();
+  if (value === "EXTERNAL" || value === "SUBSCRIPTION" || value === "FORFAIT" || value === "PRIVATE") {
+    return value;
+  }
+  return fallback;
+}
+
+function normalizeSessionAudienceScopes(raw: unknown, fallback: SessionAudienceScope[]): SessionAudienceScope[] {
+  const source = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+  const seen = new Set<SessionAudienceScope>();
+  const normalized: SessionAudienceScope[] = [];
+  for (const value of source) {
+    const scope = normalizeSessionAudienceScope(value, "__INVALID__" as SessionAudienceScope);
+    if (scope === ("__INVALID__" as SessionAudienceScope) || seen.has(scope)) {
+      continue;
+    }
+    seen.add(scope);
+    normalized.push(scope);
+  }
+  if (seen.has("PRIVATE")) {
+    return ["PRIVATE"];
+  }
+  const ordered = (["EXTERNAL", "SUBSCRIPTION", "FORFAIT"] as const).filter((scope) => seen.has(scope));
+  return ordered.length > 0 ? [...ordered] : [...fallback];
 }
 
 function normalizeStatus(value: string): string {
@@ -419,7 +453,7 @@ function sourceLabel(value: string): string {
     return "Facture";
   }
   if (normalized === "BOOKING") {
-    return "Facture";
+    return "Reservation";
   }
   if (normalized === "INVOICE_RANGE") {
     return "Facture";
@@ -486,15 +520,20 @@ function paymentMethodLabel(value: string | null | undefined): string {
   return normalized;
 }
 
-function formatDate(value: string | null | undefined): string {
+function formatDate(value: string | null | undefined, timezoneName?: string): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "-";
   }
-  return parsed.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+  return parsed.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    ...(timezoneName ? { timeZone: resolveTimezone(timezoneName) } : {}),
+  });
 }
 
-function formatDateTime(value: string | null | undefined): string {
+function formatDateTime(value: string | null | undefined, timezoneName?: string): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "-";
@@ -502,10 +541,11 @@ function formatDateTime(value: string | null | undefined): string {
   return parsed.toLocaleString("fr-FR", {
     dateStyle: "medium",
     timeStyle: "short",
+    ...(timezoneName ? { timeZone: resolveTimezone(timezoneName) } : {}),
   });
 }
 
-function formatTime(value: string | null | undefined): string {
+function formatTime(value: string | null | undefined, timezoneName?: string): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "--:--";
@@ -513,6 +553,7 @@ function formatTime(value: string | null | undefined): string {
   return parsed.toLocaleTimeString("fr-FR", {
     hour: "2-digit",
     minute: "2-digit",
+    ...(timezoneName ? { timeZone: resolveTimezone(timezoneName) } : {}),
   });
 }
 
@@ -670,8 +711,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
   }
 
   if (view === "week") {
-    // Week view is anchored on the selected day for mobile UX consistency.
-    const from = focusDate;
+    const from = startOfWeekUtc(focusDate);
     const dayKeys: string[] = [];
 
     for (let i = 0; i < 7; i += 1) {
@@ -793,6 +833,11 @@ function accentColorForId(id: string): string {
   return SESSION_ACCENT_COLORS[Math.abs(hash) % SESSION_ACCENT_COLORS.length];
 }
 
+function isVacationCourseTypeCode(code: string | null | undefined): boolean {
+  const normalized = normalizeStatus(code ?? "");
+  return normalized === "VACATION_DAY" || normalized.startsWith("VACATION");
+}
+
 function memberDisplayName(member: { first_name: string | null; last_name: string | null; email: string }): string {
   const fullName = [member.first_name, member.last_name].filter(Boolean).join(" ");
   return fullName || member.email;
@@ -851,7 +896,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const reservationScope = readParam(searchParams, "reservation_scope") || "CURRENT";
   const reservationStatusFilter = readParam(searchParams, "reservation_status");
   const selectedMemberFilter = emptyAsAll(readParam(searchParams, "member_id"));
-  const selectedBookingOwner = readParam(searchParams, "booking_owner_id") || me.id;
+  const selectedBookingOwner = emptyAsAll(readParam(searchParams, "booking_owner_id"));
   const selectedSessionId = readParam(searchParams, "session_id");
   const selectedOfferDetailId = readParam(searchParams, "offer_detail_id");
   const messageScope = parseMessageScope(readParam(searchParams, "message_scope"));
@@ -952,19 +997,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         errors.push(`sessions: ${sessionsResult.message}`);
         return [] as SessionOut[];
       })();
-
-  const coachOptions = Array.from(
-    sessions
-      .reduce((acc, session) => {
-        if (!session.professor) {
-          return acc;
-        }
-        const name = sessionProfessorName(session);
-        acc.set(session.professor.id, { id: session.professor.id, name: name || session.professor.id });
-        return acc;
-      }, new Map<string, { id: string; name: string }>())
-      .values(),
-  ).sort((a, b) => a.name.localeCompare(b.name, "fr"));
 
   const plans = plansResult.ok
     ? plansResult.data
@@ -1079,8 +1111,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const members = [...memberMap.values()].sort((a, b) => a.display_name.localeCompare(b.display_name, "fr"));
   const linkedMembers = members.filter((member) => member.id !== me.id);
   const validMemberIds = new Set(members.map((member) => member.id));
-  const bookingOwnerId = validMemberIds.has(selectedBookingOwner) ? selectedBookingOwner : me.id;
-  const bookingOwnerMember = members.find((member) => member.id === bookingOwnerId) ?? members[0] ?? null;
+  const defaultPlanningOwnerSelection = members.length > 1 ? "ALL" : me.id;
+  const bookingOwnerSelection =
+    selectedBookingOwner === "ALL"
+      ? defaultPlanningOwnerSelection
+      : validMemberIds.has(selectedBookingOwner)
+        ? selectedBookingOwner
+        : defaultPlanningOwnerSelection;
+  const planningShowsAllMembers = bookingOwnerSelection === "ALL";
+  const visiblePlanningMembers = planningShowsAllMembers
+    ? members
+    : members.filter((member) => member.id === bookingOwnerSelection);
+  const visiblePlanningMemberIds = new Set(visiblePlanningMembers.map((member) => member.id));
+  const bookingOwnerId = planningShowsAllMembers ? null : bookingOwnerSelection;
+  const bookingOwnerMember = bookingOwnerId ? members.find((member) => member.id === bookingOwnerId) ?? null : null;
+  const planningOwnerLabel = planningShowsAllMembers ? "Toute la famille" : bookingOwnerMember?.display_name ?? "-";
 
   const allBookings: FamilyBookingRow[] = family
     ? [...family.bookings]
@@ -1109,6 +1154,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       }));
 
   allBookings.sort((a, b) => b.session.start_at_utc.localeCompare(a.session.start_at_utc));
+  const bookingByPaymentKey = new Map<string, FamilyBookingRow>();
+  for (const booking of allBookings) {
+    const key = normalizePaymentKey(`BOOKING:${booking.id}`);
+    if (!key) {
+      continue;
+    }
+    bookingByPaymentKey.set(key, booking);
+  }
 
   const now = new Date();
   const activeBookingStatuses = new Set(["BOOKED", "WAITLISTED"]);
@@ -1165,18 +1218,33 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
     .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc));
 
+  const paymentOwnerByKey = new Map<string, string>();
+  for (const row of payments) {
+    const paymentKey = paymentKeyFromPaymentRow(row);
+    if (!paymentKey) {
+      continue;
+    }
+    paymentOwnerByKey.set(paymentKey, row.owner_client_id);
+  }
+
   const basePaymentRows = payments
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
     .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
-  const paymentRows = basePaymentRows
-    .filter((row) => financeSourceFilter === "ALL" || normalizeStatus(row.source) === normalizeStatus(financeSourceFilter))
-    .filter((row) => statusMatchesFinanceFilter(row.status, financeStatusFilter))
-    .filter((row) => matchesFinancePeriod(row.occurred_at, financePeriodFilter, now))
-    .filter((row) => matchesFinanceAsOf(row.occurred_at, financeAsOfUtcEnd));
 
   const baseInvoiceRows = invoices
     .filter((row) => !isCancelledFinanceStatus(row.status))
-    .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
+    .filter((row) => {
+      if (selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter) {
+        return true;
+      }
+      return (row.included_payment_keys ?? []).some((rawKey) => {
+        const normalizedKey = normalizePaymentKey(rawKey);
+        if (!normalizedKey) {
+          return false;
+        }
+        return paymentOwnerByKey.get(normalizedKey) === selectedMemberFilter;
+      });
+    })
     .sort((a, b) => b.issued_at.localeCompare(a.issued_at));
   const invoiceRows = baseInvoiceRows
     .filter((row) => statusMatchesFinanceFilter(row.status, financeStatusFilter))
@@ -1211,11 +1279,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       paymentByInvoiceId.set(linkedById.id, row);
     }
   }
-  const financeTotalRows = financeView === "transactions" ? paymentRows.length : invoiceRows.length;
+  const paymentRowsWithFinance = basePaymentRows.map((row) => {
+    const paymentKey = paymentKeyFromPaymentRow(row);
+    const linkedInvoice =
+      invoiceByPaymentId.get(row.id) ??
+      (paymentKey ? invoiceByPaymentKey.get(paymentKey) : undefined);
+    const linkedBooking = paymentKey ? bookingByPaymentKey.get(paymentKey) : undefined;
+    const effectiveFinanceStatus = linkedInvoice?.status ?? row.status;
+    const occurredAtForDisplay = linkedBooking?.session.start_at_utc ?? row.occurred_at;
+    return {
+      row,
+      linkedInvoice,
+      effectiveFinanceStatus,
+      occurredAtForDisplay,
+    };
+  });
+  const filteredPaymentRows = paymentRowsWithFinance
+    .filter(({ row }) => financeSourceFilter === "ALL" || normalizeStatus(row.source) === normalizeStatus(financeSourceFilter))
+    .filter(({ effectiveFinanceStatus }) => statusMatchesFinanceFilter(effectiveFinanceStatus, financeStatusFilter))
+    .filter(({ occurredAtForDisplay }) => matchesFinancePeriod(occurredAtForDisplay, financePeriodFilter, now))
+    .filter(({ occurredAtForDisplay }) => matchesFinanceAsOf(occurredAtForDisplay, financeAsOfUtcEnd));
+  const financeTotalRows = financeView === "transactions" ? filteredPaymentRows.length : invoiceRows.length;
   const financePageCount = Math.max(1, Math.ceil(financeTotalRows / financePageSize));
   const financePage = Math.min(financePageRaw, financePageCount);
   const financeOffset = (financePage - 1) * financePageSize;
-  const pagedPaymentRows = paymentRows.slice(financeOffset, financeOffset + financePageSize);
+  const pagedPaymentRows = filteredPaymentRows.slice(financeOffset, financeOffset + financePageSize);
   const pagedInvoiceRows = invoiceRows.slice(financeOffset, financeOffset + financePageSize);
   const selectedInvoice = selectedInvoiceId
     ? baseInvoiceRows.find((row) => row.id === selectedInvoiceId || row.id === `invoice:${selectedInvoiceId}`) ?? null
@@ -1237,17 +1325,38 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
 
   const activeEntitlementsByOwner = new Map<string, Set<string>>();
-  const activeSubscriptionByOwner = new Set<string>();
+  const activeSubscriptionEntitlementsByOwner = new Map<string, Set<string>>();
+  const activeForfaitEntitlementsByOwner = new Map<string, Set<string>>();
+  const activeSubscriptionOfferByOwner = new Set<string>();
+  const activeForfaitOfferByOwner = new Set<string>();
   for (const sub of subscriptions) {
     if (!isSubscriptionActiveNow(sub, now)) {
       continue;
     }
-    activeSubscriptionByOwner.add(sub.owner_client_id);
     const entitlementSet = activeEntitlementsByOwner.get(sub.owner_client_id) ?? new Set<string>();
     for (const courseTypeId of sub.entitlement_course_type_ids ?? []) {
       entitlementSet.add(courseTypeId);
     }
     activeEntitlementsByOwner.set(sub.owner_client_id, entitlementSet);
+    const normalizedPlanKind = normalizeStatus(sub.plan.kind);
+    const isSubscriptionAudiencePlan =
+      normalizedPlanKind === "SUBSCRIPTION" || (normalizedPlanKind === "PACK" && (sub.credits_remaining ?? 0) > 0);
+    if (isSubscriptionAudiencePlan) {
+      activeSubscriptionOfferByOwner.add(sub.owner_client_id);
+      const reservableEntitlementSet = activeSubscriptionEntitlementsByOwner.get(sub.owner_client_id) ?? new Set<string>();
+      for (const courseTypeId of sub.entitlement_course_type_ids ?? []) {
+        reservableEntitlementSet.add(courseTypeId);
+      }
+      activeSubscriptionEntitlementsByOwner.set(sub.owner_client_id, reservableEntitlementSet);
+    }
+    if (normalizedPlanKind === "FORFAIT") {
+      activeForfaitOfferByOwner.add(sub.owner_client_id);
+      const forfaitEntitlementSet = activeForfaitEntitlementsByOwner.get(sub.owner_client_id) ?? new Set<string>();
+      for (const courseTypeId of sub.entitlement_course_type_ids ?? []) {
+        forfaitEntitlementSet.add(courseTypeId);
+      }
+      activeForfaitEntitlementsByOwner.set(sub.owner_client_id, forfaitEntitlementSet);
+    }
   }
 
   const selectedPurchaseOwner = validMemberIds.has(readParam(searchParams, "purchase_user_id"))
@@ -1339,15 +1448,45 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const firstHomeBooking = homeCalendarRows[0] ?? upcomingBookings14[0] ?? null;
   const homePlanningHref = withUpdatedQuery(rawParams, {
     tab: "planning",
-    agenda_view: "day",
+    agenda_view: "agenda",
     agenda_date: firstHomeBooking
       ? dateKeyInTimezone(firstHomeBooking.session.start_at_utc, timezone)
       : todayKeyInTimezone(timezone),
-    session_id: firstHomeBooking?.session.id ?? null,
-    booking_owner_id: firstHomeBooking?.owner_client_id ?? bookingOwnerId,
+    session_id: null,
+    booking_owner_id: defaultPlanningOwnerSelection,
   });
 
-  const filteredSessions = sessions.filter((session) => {
+  const planningUpcomingBookings = upcomingBookings.filter((booking) => visiblePlanningMemberIds.has(booking.owner_client_id));
+  const visiblePlanningCourseTypeIds = new Set<string>();
+  for (const member of visiblePlanningMembers) {
+    for (const courseTypeId of activeEntitlementsByOwner.get(member.id) ?? []) {
+      visiblePlanningCourseTypeIds.add(courseTypeId);
+    }
+  }
+  const visiblePlanningReservedSessionIds = new Set(planningUpcomingBookings.map((booking) => booking.session.id));
+  const planningCourseTypes = courseTypes.filter(
+    (courseType) => !isVacationCourseTypeCode(courseType.code) && visiblePlanningCourseTypeIds.has(courseType.id),
+  );
+  const planningSourceSessions = sessions.filter((session) => {
+    if (isVacationCourseTypeCode(session.course_type.code)) {
+      return false;
+    }
+    return visiblePlanningCourseTypeIds.has(session.course_type.id) || visiblePlanningReservedSessionIds.has(session.id);
+  });
+  const coachOptions = Array.from(
+    planningSourceSessions
+      .reduce((acc, session) => {
+        if (!session.professor) {
+          return acc;
+        }
+        const name = sessionProfessorName(session);
+        acc.set(session.professor.id, { id: session.professor.id, name: name || session.professor.id });
+        return acc;
+      }, new Map<string, { id: string; name: string }>())
+      .values(),
+  ).sort((a, b) => a.name.localeCompare(b.name, "fr"));
+
+  const filteredSessions = planningSourceSessions.filter((session) => {
     if (selectedCoachId && session.professor?.id !== selectedCoachId) {
       return false;
     }
@@ -1373,7 +1512,37 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     label: agendaDayLabel(key, agendaView),
     sessions: sessionsByDay.get(key) ?? [],
   }));
-  const selectedMemberUpcomingBookings = upcomingBookings.filter((booking) => booking.owner_client_id === bookingOwnerId);
+  const sessionVisibilityScopes = (session: SessionOut): SessionAudienceScope[] =>
+    normalizeSessionAudienceScopes(
+      session.visibility_scopes,
+      [session.visibility_scope || "EXTERNAL"],
+    );
+  const sessionBookingScopes = (session: SessionOut): SessionAudienceScope[] =>
+    normalizeSessionAudienceScopes(
+      session.booking_scopes,
+      session.online_booking_enabled ? ["EXTERNAL"] : ["PRIVATE"],
+    );
+  const memberOfferAccessForSession = (session: SessionOut, ownerId: string): MemberOfferAccess => {
+    const bookingScopes = sessionBookingScopes(session);
+    const visibilityScopes = sessionVisibilityScopes(session);
+    const hasSubscriptionEntitlement = activeSubscriptionEntitlementsByOwner.get(ownerId)?.has(session.course_type.id) ?? false;
+    const hasForfaitEntitlement = activeForfaitEntitlementsByOwner.get(ownerId)?.has(session.course_type.id) ?? false;
+    const hasAnyActiveOffer =
+      activeSubscriptionOfferByOwner.has(ownerId) || activeForfaitOfferByOwner.has(ownerId);
+    const hasVisibleOffer =
+      visibilityScopes.includes("EXTERNAL") ||
+      (visibilityScopes.includes("SUBSCRIPTION") && hasSubscriptionEntitlement) ||
+      (visibilityScopes.includes("FORFAIT") && hasForfaitEntitlement);
+    const hasReservableOffer =
+      bookingScopes.includes("EXTERNAL") ||
+      (bookingScopes.includes("SUBSCRIPTION") && hasSubscriptionEntitlement) ||
+      (bookingScopes.includes("FORFAIT") && hasForfaitEntitlement);
+    return {
+      hasAnyActiveOffer,
+      hasVisibleOffer,
+      hasReservableOffer,
+    };
+  };
   const isAlreadyReservedByMember = (status: string): boolean => {
     const normalized = normalizeStatus(status);
     return (
@@ -1384,9 +1553,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       || normalized === "EXCUSED_ABSENCE"
     );
   };
-  const canReserveSessionNow = (session: SessionOut, memberBooking: FamilyBookingRow | undefined): boolean => {
+  const canReserveSessionNowForOwner = (session: SessionOut, ownerId: string): boolean => {
+    const memberBooking = bookingsBySessionAndMember.get(`${session.id}:${ownerId}`);
     const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
-    const eligibleByPlan = activeEntitlementsByOwner.get(bookingOwnerId)?.has(session.course_type.id) ?? false;
+    const eligibleByPlan = memberOfferAccessForSession(session, ownerId).hasReservableOffer;
     const isFull = session.booked_count >= session.capacity_max;
     return (
       normalizeStatus(session.status) === "SCHEDULED"
@@ -1397,22 +1567,173 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       && eligibleByPlan
     );
   };
+  const visibleReservedBookingsForSession = (sessionId: string): FamilyBookingRow[] =>
+    visiblePlanningMembers.flatMap((member) => {
+      const booking = bookingsBySessionAndMember.get(`${sessionId}:${member.id}`);
+      return booking && isAlreadyReservedByMember(booking.status) ? [booking] : [];
+    });
+  const visibleCoveredMembersForSession = (session: SessionOut): MemberLite[] =>
+    visiblePlanningMembers.filter((member) => memberOfferAccessForSession(session, member.id).hasVisibleOffer);
+  const visibleReservableMembersForSession = (session: SessionOut): MemberLite[] =>
+    visiblePlanningMembers.filter((member) => canReserveSessionNowForOwner(session, member.id));
+  const filteredPlanningSessions = (sessions: SessionOut[]): SessionOut[] =>
+    sessions.filter((session) => {
+      const reservedBookings = visibleReservedBookingsForSession(session.id);
+      const alreadyReserved = reservedBookings.length > 0;
+      const availableNow = visibleReservableMembersForSession(session).length > 0;
+      if (planningSlotFilter === "AVAILABLE") {
+        return availableNow;
+      }
+      if (planningSlotFilter === "ALREADY_BOOKED") {
+        return alreadyReserved;
+      }
+      return true;
+    });
+  const sessionPlanningState = (session: SessionOut) => {
+    const booking = bookingOwnerId ? bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`) : undefined;
+    const reservedBookings = visibleReservedBookingsForSession(session.id);
+    const reservedMemberNames = reservedBookings.map((item) => item.owner_display_name);
+    const isReservedByMember = reservedBookings.length > 0;
+    const coveredMembers = visibleCoveredMembersForSession(session);
+    const reservableMembers = visibleReservableMembersForSession(session);
+    const reservableMemberNames = reservableMembers.map((member) => member.display_name);
+    const coveredOnlyMembers = coveredMembers.filter(
+      (member) => !reservableMembers.some((reservableMember) => reservableMember.id === member.id),
+    );
+    const coveredOnlyMemberNames = coveredOnlyMembers.map((member) => member.display_name);
+    const eligibleByPlan = bookingOwnerId != null
+      ? memberOfferAccessForSession(session, bookingOwnerId).hasReservableOffer
+      : reservableMembers.length > 0;
+    const accentColor = accentColorForId(session.course_type.id);
+    const durationMinutes = Math.max(
+      1,
+      Math.round((new Date(session.end_at_utc).getTime() - new Date(session.start_at_utc).getTime()) / 60000),
+    );
+    const openDetailsHref = withUpdatedQuery(rawParams, {
+      tab: "planning",
+      session_id: session.id,
+      ok: null,
+      error: null,
+      session_ok: null,
+      session_error: null,
+    });
+    const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
+    const canReserveNow =
+      normalizeStatus(session.status) === "SCHEDULED" &&
+      session.online_booking_enabled &&
+      !sessionIsPastOrStarted &&
+      !booking &&
+      eligibleByPlan &&
+      session.booked_count < session.capacity_max;
+    const isFull = session.booked_count >= session.capacity_max;
+    const canReserveForFamily =
+      planningShowsAllMembers &&
+      normalizeStatus(session.status) === "SCHEDULED" &&
+      session.online_booking_enabled &&
+      !sessionIsPastOrStarted &&
+      !isReservedByMember &&
+      reservableMembers.length > 0 &&
+      !isFull;
+    const canOpenBookingFlow = canReserveNow || canReserveForFamily;
+    const coveredByFamilyOffer =
+      !isReservedByMember &&
+      !canOpenBookingFlow &&
+      !isFull &&
+      !sessionIsPastOrStarted &&
+      coveredOnlyMemberNames.length > 0;
+    const sessionCtaLabel = isReservedByMember
+      ? planningShowsAllMembers
+        ? "Voir membres"
+        : "Voir la reservation"
+      : canOpenBookingFlow
+        ? "Reserver ce creneau"
+        : isFull
+          ? "Complet"
+          : "Voir details";
+    const contextLine = isReservedByMember
+      ? `Reserve pour ${reservedMemberNames.join(", ")}`
+      : canOpenBookingFlow
+        ? planningShowsAllMembers
+          ? `Reservation possible pour ${reservableMemberNames.join(", ")}`
+          : "Reservation en ligne disponible"
+        : isFull
+          ? "Creneau complet"
+          : sessionIsPastOrStarted
+            ? "Creneau deja passe"
+          : coveredOnlyMemberNames.length > 0
+            ? "Reservation geree hors portail."
+          : planningShowsAllMembers
+            ? "Aucun membre visible n'a une formule compatible avec ce creneau."
+            : `Aucune formule compatible pour ${bookingOwnerMember?.display_name ?? "ce membre"}`;
+    const familyHighlightLine = planningShowsAllMembers
+      ? isReservedByMember
+        ? `Reserve: ${reservedMemberNames.join(", ")}`
+        : reservableMemberNames.length > 0
+          ? `Reservable pour: ${reservableMemberNames.join(", ")}`
+          : coveredOnlyMemberNames.length > 0
+            ? `Inclus pour: ${coveredOnlyMemberNames.join(", ")}`
+            : null
+      : null;
+    const bookingStatus = booking ? normalizeStatus(booking.status) : "";
+    const showSemanticBadge = isReservedByMember || canOpenBookingFlow || isFull;
+    const semanticBadgeLabel = isReservedByMember
+      ? planningShowsAllMembers
+        ? "Reserve famille"
+        : bookingStatus === "WAITLISTED"
+          ? "En attente"
+          : "Deja reserve"
+      : canOpenBookingFlow
+        ? "Reservable"
+        : isFull
+          ? "Complet"
+          : "Indisponible";
+    const semanticBadgeClass = isReservedByMember
+      ? bookingStatus === "WAITLISTED" && !planningShowsAllMembers
+        ? "status-waitlist"
+        : "status-booked"
+      : canOpenBookingFlow
+        ? "status-scheduled"
+        : "status-waitlist";
+
+    return {
+      booking,
+      reservedBookings,
+      reservedMemberNames,
+      isReservedByMember,
+      reservableMemberNames,
+      coveredOnlyMemberNames,
+      accentColor,
+      durationMinutes,
+      openDetailsHref,
+      sessionIsPastOrStarted,
+      canOpenBookingFlow,
+      coveredByFamilyOffer,
+      sessionCtaLabel,
+      contextLine,
+      familyHighlightLine,
+      showSemanticBadge,
+      semanticBadgeLabel,
+      semanticBadgeClass,
+      isFull,
+    };
+  };
   const agendaDaySummary = new Map<string, { reservedCount: number; availableCount: number }>();
   for (const day of agendaDays) {
     let reservedCount = 0;
     let availableCount = 0;
     for (const session of day.sessions) {
-      const memberBooking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
-      if (memberBooking && isAlreadyReservedByMember(memberBooking.status)) {
+      const reservedBookings = visibleReservedBookingsForSession(session.id);
+      const reservableMembers = visibleReservableMembersForSession(session);
+      if (reservedBookings.length > 0) {
         reservedCount += 1;
-      } else if (canReserveSessionNow(session, memberBooking)) {
+      } else if (reservableMembers.length > 0) {
         availableCount += 1;
       }
     }
     agendaDaySummary.set(day.key, { reservedCount, availableCount });
   }
   const availableSlotsCount = Array.from(agendaDaySummary.values()).reduce((sum, row) => sum + row.availableCount, 0);
-  const activeReservationsCount = selectedMemberUpcomingBookings.filter((booking) => isAlreadyReservedByMember(booking.status)).length;
+  const activeReservationsCount = planningUpcomingBookings.filter((booking) => isAlreadyReservedByMember(booking.status)).length;
   const selectedAgendaDateLabel = new Intl.DateTimeFormat("fr-FR", {
     weekday: "long",
     day: "2-digit",
@@ -1423,19 +1744,44 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
   const selectedSessionStart = selectedSession ? safeDate(selectedSession.start_at_utc) : null;
   const selectedSessionIsPastOrStarted = selectedSessionStart ? selectedSessionStart.getTime() <= now.getTime() : false;
+  const selectedSessionVisibleBookings = selectedSession ? visibleReservedBookingsForSession(selectedSession.id) : [];
+  const selectedSessionAvailableMembers = selectedSession ? visibleReservableMembersForSession(selectedSession) : [];
   const selectedSessionBooking =
-    selectedSession ? bookingsBySessionAndMember.get(`${selectedSession.id}:${bookingOwnerId}`) : null;
+    selectedSession && bookingOwnerId ? bookingsBySessionAndMember.get(`${selectedSession.id}:${bookingOwnerId}`) : null;
   const selectedSessionOnlineBookingEnabled = selectedSession ? selectedSession.online_booking_enabled : false;
+  const selectedSessionCoveredMembers = selectedSession ? visibleCoveredMembersForSession(selectedSession) : [];
+  const selectedSessionAccess = selectedSession && bookingOwnerId
+    ? memberOfferAccessForSession(selectedSession, bookingOwnerId)
+    : null;
   const selectedSessionEligibleByPlan = selectedSession
-    ? (activeEntitlementsByOwner.get(bookingOwnerId)?.has(selectedSession.course_type.id) ?? false)
+    ? bookingOwnerId != null
+      ? Boolean(selectedSessionAccess?.hasReservableOffer)
+      : false
     : false;
+  const selectedSessionCoveredByVisibleOffer = selectedSessionCoveredMembers.length > 0;
   const selectedSessionIneligibleReason = !selectedSession
     ? ""
     : !selectedSessionOnlineBookingEnabled
       ? "La reservation en ligne est desactivee pour ce creneau."
-    : activeSubscriptionByOwner.has(bookingOwnerId)
-      ? "Aucune formule active compatible avec ce type de cours."
-      : "Aucun abonnement/carnet actif pour ce membre.";
+      : bookingOwnerId != null && (activeEntitlementsByOwner.get(bookingOwnerId)?.has(selectedSession.course_type.id) ?? false)
+        ? "Ce creneau est bien couvert, mais la reservation en ligne n'est pas ouverte pour ce type d'offre."
+      : bookingOwnerId != null && Boolean(selectedSessionAccess?.hasAnyActiveOffer)
+        ? "Aucune offre active compatible avec ce type de cours."
+        : "Aucune offre active pour ce membre.";
+  const visiblePlanningMemberHasAnyActiveOffer = visiblePlanningMembers.some(
+    (member) => activeSubscriptionOfferByOwner.has(member.id) || activeForfaitOfferByOwner.has(member.id),
+  );
+  const selectedSessionFamilyIneligibleReason = !selectedSession
+    ? ""
+    : !selectedSessionOnlineBookingEnabled
+      ? "La reservation en ligne est desactivee pour ce creneau."
+      : selectedSession.booked_count >= selectedSession.capacity_max
+        ? "Creneau complet."
+        : selectedSessionCoveredByVisibleOffer
+          ? "Ce creneau est visible pour la famille, mais aucun membre n'a ici de droit de reservation en ligne."
+          : visiblePlanningMemberHasAnyActiveOffer
+            ? "Aucun membre visible n'a une offre compatible avec ce cours."
+            : "Aucune offre active pour les membres visibles.";
   const selectedSessionBookingStatus = selectedSessionBooking ? normalizeStatus(selectedSessionBooking.status) : "";
   const selectedSessionCanCancel =
     !!selectedSessionBooking &&
@@ -1443,6 +1789,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     !selectedSessionIsPastOrStarted;
   const selectedSessionCanBook =
     !!selectedSession &&
+    bookingOwnerId != null &&
     normalizeStatus(selectedSession.status) === "SCHEDULED" &&
     selectedSessionOnlineBookingEnabled &&
     !selectedSessionIsPastOrStarted &&
@@ -1450,15 +1797,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     selectedSessionEligibleByPlan &&
     selectedSession.booked_count < selectedSession.capacity_max;
   const agendaSessionCount = agendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
-  const stripStart = addUtcDays(keyToUtcDate(agendaDate), -2);
-  const stripDayKeys = Array.from({ length: 7 }, (_, index) => utcDateToKey(addUtcDays(stripStart, index)));
+  const agendaNavigationStep = agendaView === "week" ? 7 : 1;
+  const stripDayKeys =
+    agendaView === "week"
+      ? agendaRange.dayKeys
+      : Array.from({ length: 7 }, (_, index) => utcDateToKey(addUtcDays(addUtcDays(keyToUtcDate(agendaDate), -2), index)));
+  const planningSectionTitle = planningShowsAllMembers
+    ? "Creneaux proposes"
+    : members.length > 1
+      ? `Creneaux pour ${planningOwnerLabel}`
+      : "Mes creneaux";
+  const planningSectionSubtitle = planningShowsAllMembers
+    ? "Creneaux publics compatibles avec les offres actives de la famille. Les creneaux passes sont grises et les reservations deja prises sont mises en evidence."
+    : "Creneaux publics compatibles avec les offres actives du membre selectionne.";
   const advancedFiltersOpen =
     Boolean(selectedCourseType) ||
     Boolean(selectedCoachId) ||
     selectedTimeBucket !== "ALL" ||
-    planningSlotFilter !== "ALL" ||
-    timezone !== (me.timezone || DEFAULT_TIMEZONE) ||
-    bookingOwnerId !== me.id;
+    timezone !== (me.timezone || DEFAULT_TIMEZONE);
 
   const allBookingStatuses = Array.from(new Set(allBookings.map((row) => normalizeStatus(row.status)))).sort();
   const allPaymentSources = Array.from(new Set(payments.map((row) => normalizeStatus(row.source)))).sort();
@@ -1482,12 +1838,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
   const membersWithPositiveCredits = members.filter((member) => (totalCreditsByMember.get(member.id) ?? 0) > 0);
 
-  const paidTotal = paymentRows
-    .filter((row) => normalizeStatus(row.status) === "PAID")
-    .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
-  const pendingTransactionsTotal = paymentRows
-    .filter((row) => FINANCE_PENDING_STATUSES.has(normalizeStatus(row.status)))
-    .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
+  const paidTotal = invoiceRows
+    .filter((invoice) => normalizeStatus(invoice.status) === "PAID")
+    .reduce((sum, invoice) => sum + parseMoneyValue(invoice.total_incl_vat), 0);
+  const pendingTransactionsTotal = filteredPaymentRows
+    .filter(({ row, linkedInvoice }) => !linkedInvoice && FINANCE_PENDING_STATUSES.has(normalizeStatus(row.status)))
+    .reduce((sum, { row }) => sum + Number(row.total_incl_vat || "0"), 0);
   const financePendingInvoices = invoiceRows
     .filter((invoice) => statusMatchesFinanceFilter(invoice.status, "TO_PAY"))
     .filter((invoice) => parseMoneyValue(invoice.total_incl_vat) > 0);
@@ -1677,7 +2033,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <div className="client-home-due-list">
                         {homeDueInvoicePreview.map((invoice) => {
                           const linkedPayment = paymentByInvoiceId.get(invoice.id);
-                          const canPayInvoice = (linkedPayment ? canPayNowForPayment(linkedPayment) : false) || Boolean(invoice.payment_url);
+                          const invoiceIsPaid = normalizeStatus(invoice.status) === "PAID";
+                          const canPayInvoice =
+                            !invoiceIsPaid &&
+                            ((linkedPayment ? canPayNowForPayment(linkedPayment) : false) || Boolean(invoice.payment_url));
                           return (
                             <CompactInvoiceRow
                               key={`home-due-${invoice.id}`}
@@ -1687,7 +2046,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               subline={invoice.label}
                               actions={
                                 <div className="row client-home-due-actions">
-                                  {canPayInvoice ? (
+                                  {invoiceIsPaid ? (
+                                    <span className="mode-link client-card-primary-action disabled" aria-disabled="true">
+                                      Payer
+                                    </span>
+                                  ) : canPayInvoice ? (
                                     <form action={openClientPaymentCheckoutAction}>
                                       {linkedPayment ? <input type="hidden" name="payment_id" value={linkedPayment.id} /> : null}
                                       {invoice.payment_url ? <input type="hidden" name="payment_url" value={invoice.payment_url} /> : null}
@@ -1739,9 +2102,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {upcomingBookings14.slice(0, 3).map((booking) => (
                           <UpcomingLessonRow
                             key={`home-upcoming-${booking.id}`}
-                            timeLabel={formatTime(booking.session.start_at_utc)}
+                            timeLabel={formatTime(booking.session.start_at_utc, timezone)}
                             title={booking.session.title}
-                            subtitle={`${formatDate(booking.session.start_at_utc)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
+                            subtitle={`${formatDate(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
                             action={
                               <a
                                 className="mode-link"
@@ -1862,9 +2225,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {rows.slice(0, 3).map((booking) => (
                             <UpcomingLessonRow
                               key={`home-booking-group-${booking.id}`}
-                              timeLabel={formatTime(booking.session.start_at_utc)}
+                              timeLabel={formatTime(booking.session.start_at_utc, timezone)}
                               title={booking.session.title}
-                              subtitle={`${formatDate(booking.session.start_at_utc)} · ${statusLabel(booking.status)}`}
+                              subtitle={`${formatDate(booking.session.start_at_utc, timezone)} · ${statusLabel(booking.status)}`}
                               action={
                                 <a
                                   className="mode-link"
@@ -1890,9 +2253,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {homeCalendarRows.slice(0, 6).map((booking) => (
                       <UpcomingLessonRow
                         key={`home-booking-${booking.id}`}
-                        timeLabel={formatTime(booking.session.start_at_utc)}
+                        timeLabel={formatTime(booking.session.start_at_utc, timezone)}
                         title={booking.session.title}
-                        subtitle={`${formatDate(booking.session.start_at_utc)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
+                        subtitle={`${formatDate(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
                         action={
                           <a
                             className="mode-link"
@@ -1987,8 +2350,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <button className="client-planning-apply" type="submit" title="Appliquer les filtres">
                         ✅ Appliquer
                       </button>
-                      <a
+                      <Link
                         className="client-planning-reset"
+                        scroll={false}
                         href={withUpdatedQuery(rawParams, {
                           tab: "planning",
                           course_type_id: null,
@@ -1999,12 +2363,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           timezone: me.timezone || DEFAULT_TIMEZONE,
                           agenda_view: "agenda",
                           agenda_date: todayKeyInTimezone(timezone),
-                          booking_owner_id: me.id,
+                          booking_owner_id: defaultPlanningOwnerSelection,
+                          session_id: null,
+                          session_ok: null,
+                          session_error: null,
                         })}
                         title="Reinitialiser"
                       >
                         ↺
-                      </a>
+                      </Link>
                     </div>
                   </div>
 
@@ -2014,7 +2381,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         Activite
                         <select name="course_type_id" defaultValue={selectedCourseType}>
                           <option value="">Toutes</option>
-                          {courseTypes.map((courseType) => (
+                          {planningCourseTypes.map((courseType) => (
                             <option key={courseType.id} value={courseType.id}>
                               {courseType.name}
                             </option>
@@ -2065,8 +2432,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </label>
 
                       <label>
-                        Reservation pour
-                        <select name="booking_owner_id" defaultValue={bookingOwnerId}>
+                        Membre
+                        <select name="booking_owner_id" defaultValue={bookingOwnerSelection}>
+                          {members.length > 1 ? <option value="ALL">Toute la famille</option> : null}
                           {members.map((member) => (
                             <option key={member.id} value={member.id}>
                               {member.display_name}
@@ -2087,10 +2455,44 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </DrawerFilters>
                 </form>
 
+                {members.length > 1 ? (
+                  <FilterChipsBar className="client-planning-member-chips">
+                    <Link
+                      className={`badge ${planningShowsAllMembers ? "active" : ""}`}
+                      scroll={false}
+                      href={withUpdatedQuery(rawParams, {
+                        tab: "planning",
+                        booking_owner_id: "ALL",
+                        session_id: null,
+                        session_ok: null,
+                        session_error: null,
+                      })}
+                    >
+                      Toute la famille
+                    </Link>
+                    {members.map((member) => (
+                      <Link
+                        key={`planning-member-${member.id}`}
+                        className={`badge ${bookingOwnerSelection === member.id ? "active" : ""}`}
+                        scroll={false}
+                        href={withUpdatedQuery(rawParams, {
+                          tab: "planning",
+                          booking_owner_id: member.id,
+                          session_id: null,
+                          session_ok: null,
+                          session_error: null,
+                        })}
+                      >
+                        {member.display_name}
+                      </Link>
+                    ))}
+                  </FilterChipsBar>
+                ) : null}
+
                 <section className="client-planning-summary-banner">
                   <article className="client-planning-summary-item">
-                    <small>Reservation pour</small>
-                    <strong>{bookingOwnerMember?.display_name ?? "-"}</strong>
+                    <small>Vue planning</small>
+                    <strong>{planningOwnerLabel}</strong>
                   </article>
                   <article className="client-planning-summary-item">
                     <small>Reservations actives</small>
@@ -2107,148 +2509,202 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </section>
 
                 <div className="client-planning-date-nav">
-                  <a
+                  <Link
                     className="client-date-nav-btn"
-                    href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, -1) })}
-                    aria-label="Jour precedent"
+                    scroll={false}
+                    href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, -agendaNavigationStep) })}
+                    aria-label={agendaView === "week" ? "Semaine precedente" : "Jour precedent"}
                   >
                     ←
-                  </a>
+                  </Link>
                   <div className="client-date-strip">
                     {stripDayKeys.map((dayKey) => {
                       const token = agendaStripToken(dayKey);
                       const active = dayKey === agendaDate;
                       const daySummary = agendaDaySummary.get(dayKey) ?? { reservedCount: 0, availableCount: 0 };
                       return (
-                        <a
+                        <Link
                           key={dayKey}
                           className={`client-date-pill ${active ? "active" : ""}`}
+                          scroll={false}
                           href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: dayKey })}
                         >
                           <span>{token.weekday}</span>
                           <strong>{token.day}</strong>
                           <small>{token.month}</small>
                           <small className="client-date-pill-meta">
-                            R {daySummary.reservedCount} · D {daySummary.availableCount}
+                            Res {daySummary.reservedCount} · Dispo {daySummary.availableCount}
                           </small>
-                        </a>
+                        </Link>
                       );
                     })}
                   </div>
-                  <a
+                  <Link
                     className="client-date-nav-btn"
-                    href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, 1) })}
-                    aria-label="Jour suivant"
+                    scroll={false}
+                    href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, agendaNavigationStep) })}
+                    aria-label={agendaView === "week" ? "Semaine suivante" : "Jour suivant"}
                   >
                     →
-                  </a>
+                  </Link>
                 </div>
 
                 <div className="row spread client-planning-modes">
                   <div className="row">
-                    <a className={`mode-link ${agendaView === "day" ? "mode-active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "day" })}>
+                    <Link className={`mode-link ${agendaView === "day" ? "mode-active" : ""}`} scroll={false} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "day" })}>
                       Jour
-                    </a>
-                    <a className={`mode-link ${agendaView === "week" ? "mode-active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "week" })}>
+                    </Link>
+                    <Link className={`mode-link ${agendaView === "week" ? "mode-active" : ""}`} scroll={false} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "week" })}>
                       Semaine
-                    </a>
-                    <a className={`mode-link ${agendaView === "agenda" ? "mode-active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "agenda" })}>
+                    </Link>
+                    <Link className={`mode-link ${agendaView === "agenda" ? "mode-active" : ""}`} scroll={false} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "agenda" })}>
                       Agenda
-                    </a>
+                    </Link>
                   </div>
                   <div className="row">
                     <span className="badge">{agendaRange.title}</span>
-                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: todayKeyInTimezone(timezone) })}>
+                    <Link className="mode-link" scroll={false} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: todayKeyInTimezone(timezone) })}>
                       Aujourd'hui
-                    </a>
+                    </Link>
                   </div>
                 </div>
-              </Card>
-
-              <Card className="client-reserved-section">
-                <div className="row spread">
-                  <h2>Mes creneaux reserves</h2>
-                  <span className="badge">{selectedMemberUpcomingBookings.length}</span>
-                </div>
-                <p className="muted">Creneaux deja reserves pour le membre selectionne.</p>
-                {selectedMemberUpcomingBookings.length === 0 ? (
-                  <p className="muted">Aucune reservation active pour ce membre.</p>
-                ) : (
-                  <div className="list client-mobile-list client-planning-reserved-list">
-                    {selectedMemberUpcomingBookings.map((booking) => (
-                      <article key={`reserved-${booking.id}`} className="item client-mobile-card client-planning-reserved-card">
-                        <div className="row spread">
-                          <strong>{booking.owner_display_name}</strong>
-                          <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
-                        </div>
-                        <p className="muted">{booking.session.title}</p>
-                        <p className="muted">{formatDateTime(booking.session.start_at_utc)}</p>
-                        <div className="row spread">
-                          <span className="badge">Deja reserve</span>
-                          <a
-                            className="mode-link"
-                            href={withUpdatedQuery(rawParams, {
-                              tab: "planning",
-                              agenda_view: "day",
-                              agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
-                              session_id: booking.session.id,
-                              booking_owner_id: booking.owner_client_id,
-                            })}
-                          >
-                            Voir la reservation
-                          </a>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
               </Card>
 
               <Card className="client-available-section">
                 <div className="row spread">
-                  <h2>Creneaux disponibles a reserver</h2>
-                  <span className="badge">{agendaSessionCount}</span>
-                </div>
-                <p className="muted">Statuts explicites: Disponible, Deja reserve, Complet.</p>
+                  <h2>{planningSectionTitle}</h2>
+                    <span className="badge">{agendaSessionCount}</span>
+                  </div>
+                <p className="muted">{planningSectionSubtitle}</p>
                 <div className="row client-planning-quick-filters">
-                  <a
+                  <Link
                     className={`mode-link ${planningSlotFilter === "ALL" ? "mode-active" : ""}`}
+                    scroll={false}
                     href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "ALL" })}
                   >
                     Tous
-                  </a>
-                  <a
+                  </Link>
+                  <Link
                     className={`mode-link ${planningSlotFilter === "AVAILABLE" ? "mode-active" : ""}`}
+                    scroll={false}
                     href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "AVAILABLE" })}
                   >
                     Disponibles uniquement
-                  </a>
-                  <a
+                  </Link>
+                  <Link
                     className={`mode-link ${planningSlotFilter === "ALREADY_BOOKED" ? "mode-active" : ""}`}
+                    scroll={false}
                     href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "ALREADY_BOOKED" })}
                   >
-                    Deja reserves
-                  </a>
+                    {planningShowsAllMembers ? "Reserves famille" : "Deja reserves"}
+                  </Link>
                 </div>
+                <div className="client-planning-phone-surface">
+                  {agendaDays.map((day) => {
+                    const daySessions = filteredPlanningSessions(day.sessions);
+
+                    return (
+                      <article
+                        key={`planning-phone-${day.key}`}
+                        className={`client-planning-phone-day ${day.key === agendaDate ? "is-selected" : ""}`}
+                      >
+                        <div className="row spread agenda-day-header">
+                          <h3>{day.label}</h3>
+                          <span className="badge">{daySessions.length}</span>
+                        </div>
+
+                        {daySessions.length === 0 ? <p className="muted agenda-empty">Aucun cours</p> : null}
+
+                        <div className="client-planning-phone-list">
+                          {daySessions.map((session) => {
+                            const sessionState = sessionPlanningState(session);
+                            const {
+                              accentColor,
+                              canOpenBookingFlow,
+                              contextLine,
+                              coveredByFamilyOffer,
+                              durationMinutes,
+                              familyHighlightLine,
+                              isReservedByMember,
+                              openDetailsHref,
+                              sessionIsPastOrStarted,
+                            } = sessionState;
+                            const primaryActionLabel = canOpenBookingFlow
+                              ? "Reserver ce creneau"
+                              : isReservedByMember
+                                ? planningShowsAllMembers
+                                  ? "Voir les membres"
+                                  : "Voir la reservation"
+                                : "Voir details";
+                            const contextClass = isReservedByMember
+                              ? "is-booked"
+                              : coveredByFamilyOffer
+                                ? "is-covered"
+                                : sessionIsPastOrStarted
+                                  ? "is-muted"
+                                  : canOpenBookingFlow
+                                    ? "is-open"
+                                    : "is-muted";
+
+                            return (
+                              <article
+                                key={`planning-phone-card-${session.id}`}
+                                className={`client-planning-phone-card ${sessionIsPastOrStarted ? "is-past" : ""} ${isReservedByMember ? "is-booked" : ""}`}
+                              >
+                                <div className="client-planning-phone-card-head">
+                                  <div className="client-planning-phone-card-copy">
+                                    <h4 className="client-planning-phone-card-title">{session.title}</h4>
+                                    <small className="client-planning-phone-card-line">
+                                      🕒 {formatTime(session.start_at_utc, timezone)} - {formatTime(session.end_at_utc, timezone)}
+                                    </small>
+                                  </div>
+                                  <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
+                                </div>
+
+                                <small className="client-planning-phone-card-line">🎵 {session.course_type.name}</small>
+
+                                <div className="client-planning-phone-card-stats">
+                                  <span className="occ-badge">
+                                    {session.booked_count}/{session.capacity_max}
+                                  </span>
+                                  <small className="client-planning-phone-card-stat">⏱ {durationMinutes} min</small>
+                                </div>
+
+                                {familyHighlightLine ? (
+                                  <small className={`client-planning-phone-card-line ${isReservedByMember ? "is-booked" : coveredByFamilyOffer ? "is-covered" : "is-open"}`}>
+                                    {familyHighlightLine}
+                                  </small>
+                                ) : null}
+
+                                <small className="client-planning-phone-card-line">👨‍🏫 {sessionProfessorName(session)}</small>
+                                <small className="client-planning-phone-card-line">📍 {session.location.name}</small>
+                                <small className={`client-planning-phone-card-line ${contextClass}`}>{contextLine}</small>
+
+                                <div className="client-planning-phone-card-actions">
+                                  <Link className={`client-planning-phone-action ${canOpenBookingFlow ? "is-primary" : ""}`} scroll={false} href={openDetailsHref}>
+                                    {primaryActionLabel}
+                                  </Link>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="client-planning-desktop-surface">
                 <div className={`agenda-grid client-agenda-grid agenda-grid-${agendaView}`}>
                   {agendaDays.map((day) => {
-                    const daySessions = day.sessions.filter((session) => {
-                      const memberBooking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
-                      const alreadyReserved = Boolean(memberBooking && isAlreadyReservedByMember(memberBooking.status));
-                      const availableNow = canReserveSessionNow(session, memberBooking);
-                      if (planningSlotFilter === "AVAILABLE") {
-                        return availableNow;
-                      }
-                      if (planningSlotFilter === "ALREADY_BOOKED") {
-                        return alreadyReserved;
-                      }
-                      return true;
-                    });
+                    const daySessions = filteredPlanningSessions(day.sessions);
                     const visibleSessions = agendaView === "day" ? daySessions : daySessions.slice(0, 4);
                     const hiddenSessions = agendaView === "day" ? [] : daySessions.slice(4);
 
                     return (
-                      <article key={day.key} className={`agenda-day client-agenda-day client-agenda-day-${agendaView}`}>
+                      <article
+                        key={day.key}
+                        className={`agenda-day client-agenda-day client-agenda-day-${agendaView} ${agendaView === "week" && day.key === agendaDate ? "client-agenda-day-selected" : ""}`}
+                      >
                         <div className="row spread agenda-day-header">
                           <h3>{day.label}</h3>
                           <span className="badge">{daySessions.length}</span>
@@ -2258,97 +2714,118 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                         <div className="agenda-events">
                           {visibleSessions.map((session) => {
-                            const booking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
-                            const isReservedByMember = Boolean(booking && isAlreadyReservedByMember(booking.status));
-                            const eligibleByPlan = activeEntitlementsByOwner.get(bookingOwnerId)?.has(session.course_type.id) ?? false;
+                            const sessionState = sessionPlanningState(session);
                             const compactAgendaCard = agendaView !== "day";
-                            const accentColor = accentColorForId(session.course_type.id);
-                            const durationMinutes = Math.max(
-                              1,
-                              Math.round((new Date(session.end_at_utc).getTime() - new Date(session.start_at_utc).getTime()) / 60000),
-                            );
-                            const openDetailsHref = withUpdatedQuery(rawParams, {
-                              tab: "planning",
-                              session_id: session.id,
-                              ok: null,
-                              error: null,
-                              session_ok: null,
-                              session_error: null,
-                            });
-                            const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
-                            const canReserveNow =
-                              normalizeStatus(session.status) === "SCHEDULED" &&
-                              session.online_booking_enabled &&
-                              !sessionIsPastOrStarted &&
-                              !booking &&
-                              eligibleByPlan &&
-                              session.booked_count < session.capacity_max;
-                            const isFull = session.booked_count >= session.capacity_max;
-                            const cardStatusLabel = isReservedByMember ? "Deja reserve" : isFull ? "Complet" : canReserveNow ? "Disponible" : "Indisponible";
-                            const sessionCtaLabel = isReservedByMember
-                              ? "Voir la reservation"
-                              : canReserveNow
-                                ? "Reserver"
-                                : isFull
-                                  ? "Complet"
-                                  : "Voir details";
-                            const contextLine = isReservedByMember
-                              ? "Vous etes deja inscrit sur ce creneau"
-                              : canReserveNow
-                                ? "Disponible pour reservation"
-                                : isFull
-                                  ? "Creneau complet"
-                                  : `Reserve pour ${bookingOwnerMember?.display_name ?? "ce membre"}`;
+                            const {
+                              accentColor,
+                              canOpenBookingFlow,
+                              contextLine,
+                              coveredByFamilyOffer,
+                              durationMinutes,
+                              familyHighlightLine,
+                              isReservedByMember,
+                              openDetailsHref,
+                              semanticBadgeClass,
+                              semanticBadgeLabel,
+                              sessionCtaLabel,
+                              sessionIsPastOrStarted,
+                              showSemanticBadge,
+                            } = sessionState;
 
                             return (
-                              <a
+                              <Link
                                 key={session.id}
                                 className="client-session-link"
+                                scroll={false}
                                 href={openDetailsHref}
                                 aria-label={`Ouvrir le detail du creneau ${session.title}`}
                               >
                                 <article
-                                  className={`client-session-card ${compactAgendaCard ? "client-session-card-compact" : ""} ${isReservedByMember ? "client-session-card-booked" : ""} ${statusClass(session.status)}`}
+                                  className={`client-session-card ${compactAgendaCard ? "client-session-card-compact" : ""} ${isReservedByMember ? "client-session-card-booked" : ""} ${sessionIsPastOrStarted ? "client-session-card-past" : "client-session-card-upcoming"} ${statusClass(session.status)}`}
                                 >
                                   {!compactAgendaCard ? (
                                     <div className="client-session-timebox">
                                       <span aria-hidden="true">🕒</span>
-                                      <strong>{formatTime(session.start_at_local)}</strong>
-                                      <small>{formatTime(session.end_at_local)}</small>
+                                      <strong>{formatTime(session.start_at_utc, timezone)}</strong>
+                                      <small>{formatTime(session.end_at_utc, timezone)}</small>
                                     </div>
                                   ) : null}
 
-                                  <div className={`agenda-event client-agenda-event ${statusClass(session.status)}`}>
+                                  {compactAgendaCard ? (
+                                    <div className="client-session-card-mobile">
+                                      <div className="client-session-card-mobile-head">
+                                        <div className="client-session-card-mobile-head-copy">
+                                          <h3 className="client-session-card-mobile-title">{session.title}</h3>
+                                          <small className="client-session-card-mobile-time">
+                                            🕒 {formatTime(session.start_at_utc, timezone)} - {formatTime(session.end_at_utc, timezone)}
+                                          </small>
+                                        </div>
+                                        <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
+                                      </div>
+
+                                      <small className="client-session-card-mobile-meta">🎵 {session.course_type.name}</small>
+
+                                      <div className="client-session-card-mobile-stats">
+                                        <span className="occ-badge">
+                                          {session.booked_count}/{session.capacity_max}
+                                        </span>
+                                        <small className="client-session-card-mobile-stat-text">⏱ {durationMinutes} min</small>
+                                      </div>
+
+                                      {familyHighlightLine ? (
+                                        <small className={`client-session-card-mobile-note ${isReservedByMember ? "is-booked" : "is-open"}`}>
+                                          {familyHighlightLine}
+                                        </small>
+                                      ) : null}
+
+                                      <small className="client-session-card-mobile-meta">👨‍🏫 {sessionProfessorName(session)}</small>
+                                      <small className="client-session-card-mobile-meta">📍 {session.location.name}</small>
+                                      <small
+                                        className={`client-session-card-mobile-note ${
+                                          sessionIsPastOrStarted ? "is-past" : coveredByFamilyOffer ? "is-covered" : ""
+                                        }`}
+                                      >
+                                        {contextLine}
+                                      </small>
+
+                                      <div className="client-session-card-mobile-footer">
+                                        {showSemanticBadge ? <span className={`status-badge ${semanticBadgeClass}`}>{semanticBadgeLabel}</span> : null}
+                                        <span className={`client-session-cta ${canOpenBookingFlow ? "ready" : ""}`}>{sessionCtaLabel}</span>
+                                      </div>
+                                    </div>
+                                  ) : null}
+
+                                  <div
+                                    className={`agenda-event client-agenda-event ${compactAgendaCard ? "client-session-card-desktop" : ""} ${statusClass(session.status)}`}
+                                  >
                                     <div className="row spread client-event-head">
                                       <h3 className="event-title">{session.title}</h3>
-                                      <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
+                                      <div className="client-event-head-right">
+                                        <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
+                                      </div>
                                     </div>
-                                    {compactAgendaCard ? <small className="event-meta">🕒 {formatTime(session.start_at_local)} - {formatTime(session.end_at_local)}</small> : null}
+                                    {compactAgendaCard ? <small className="event-meta">🕒 {formatTime(session.start_at_utc, timezone)} - {formatTime(session.end_at_utc, timezone)}</small> : null}
                                     <small className="event-meta">🎵 {session.course_type.name}</small>
                                     <div className="row">
                                       <span className="occ-badge">{session.booked_count}/{session.capacity_max}</span>
                                       <small className="event-meta">⏱ {durationMinutes} min</small>
                                     </div>
+                                    {familyHighlightLine ? (
+                                      <small className={`event-meta client-planning-family-line ${isReservedByMember ? "is-booked" : "is-open"}`}>
+                                        {familyHighlightLine}
+                                      </small>
+                                    ) : null}
                                     <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small>
                                     <small className="event-meta event-meta-secondary">📍 {session.location.name}</small>
                                     <small className="event-meta event-meta-secondary">{contextLine}</small>
 
                                     <div className="row client-event-footer">
-                                      <span className={`status-badge ${statusClass(session.status)}`}>{statusLabel(session.status)}</span>
-                                      {booking ? (
-                                        <span className={`status-badge ${statusClass(booking.status)}`}>
-                                          {isReservedByMember ? "Reserve" : statusLabel(booking.status)}
-                                        </span>
-                                      ) : null}
-                                      {!booking && sessionIsPastOrStarted ? <span className="status-badge status-completed">Passe</span> : null}
-                                      <span className={`status-badge ${isReservedByMember ? "status-booked" : canReserveNow ? "status-scheduled" : "status-waitlist"}`}>
-                                        {cardStatusLabel}
-                                      </span>
-                                      <span className={`client-session-cta ${canReserveNow ? "ready" : ""}`}>{sessionCtaLabel}</span>
+                                      {showSemanticBadge ? <span className={`status-badge ${semanticBadgeClass}`}>{semanticBadgeLabel}</span> : null}
+                                      <span className={`client-session-cta ${canOpenBookingFlow ? "ready" : ""}`}>{sessionCtaLabel}</span>
                                     </div>
                                   </div>
                                 </article>
-                              </a>
+                              </Link>
                             );
                           })}
 
@@ -2366,16 +2843,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     session_error: null,
                                   });
                                   return (
-                                    <a key={`${day.key}-${session.id}`} className="client-session-link client-session-link-compact" href={href}>
+                                    <Link key={`${day.key}-${session.id}`} className="client-session-link client-session-link-compact" scroll={false} href={href}>
                                       <article className={`agenda-event client-agenda-event ${statusClass(session.status)}`}>
                                         <p className="muted">
-                                          {formatTime(session.start_at_local)} - {formatTime(session.end_at_local)}
+                                          {formatTime(session.start_at_utc, timezone)} - {formatTime(session.end_at_utc, timezone)}
                                         </p>
                                         <h3 className="event-title">{session.title}</h3>
                                         <small className="event-meta">🎵 {session.course_type.name}</small>
                                         <small className="event-meta">📍 {session.location.name}</small>
                                       </article>
-                                    </a>
+                                    </Link>
                                   );
                                 })}
                               </div>
@@ -2386,13 +2863,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     );
                   })}
                 </div>
+                </div>
               </Card>
 
               {selectedSession ? (
                 <section className="modal-overlay">
                   <article className="modal-panel modal-client-session-details">
-                    <a
+                    <Link
                       className="close-link"
+                      scroll={false}
                       href={withUpdatedQuery(rawParams, {
                         tab: "planning",
                         session_id: null,
@@ -2402,12 +2881,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       aria-label="Fermer le detail du creneau"
                     >
                       ✕
-                    </a>
+                    </Link>
 
                     <header className="client-session-modal-header">
                       <h2>{selectedSession.title}</h2>
                       <p className="muted">
-                        {formatDateTime(selectedSession.start_at_local)} - {formatTime(selectedSession.end_at_local)}
+                        {formatDateTime(selectedSession.start_at_utc, timezone)} - {formatTime(selectedSession.end_at_utc, timezone)}
                       </p>
                       <div className="row">
                         <span className="occ-badge">
@@ -2472,8 +2951,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {sessionErrorMessage ? <section className="flash-err modal-card">{sessionErrorMessage}</section> : null}
 
                     <footer className="row spread modal-card">
-                      <a
+                      <Link
                         className="reset-link"
+                        scroll={false}
                         href={withUpdatedQuery(rawParams, {
                           tab: "planning",
                           session_id: null,
@@ -2482,7 +2962,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         })}
                       >
                         Retour au planning
-                      </a>
+                      </Link>
                       <div className="row">
                         {selectedSessionCanCancel && selectedSessionBooking ? (
                           <form action={cancelBookingAction}>
@@ -2500,7 +2980,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {selectedSessionCanBook ? (
                           <form action={bookSessionAction}>
                             <input type="hidden" name="session_id" value={selectedSession.id} />
-                            <input type="hidden" name="booking_user_id" value={bookingOwnerId} />
+                            <input type="hidden" name="booking_user_id" value={bookingOwnerId ?? ""} />
                             <input
                               type="hidden"
                               name="return_to"
@@ -2508,6 +2988,79 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             />
                             <button type="submit">Reserver maintenant</button>
                           </form>
+                        ) : planningShowsAllMembers ? (
+                          <div className="stack-sm">
+                            {selectedSessionVisibleBookings.length > 0 ? (
+                              <>
+                                <span className="badge">
+                                  Deja reserve pour {selectedSessionVisibleBookings.map((booking) => booking.owner_display_name).join(", ")}
+                                </span>
+                                <div className="row client-planning-member-actions">
+                                  {selectedSessionVisibleBookings.map((booking) => (
+                                    <Link
+                                      key={`session-member-${booking.id}`}
+                                      className="mode-link"
+                                      scroll={false}
+                                      href={withUpdatedQuery(rawParams, {
+                                        tab: "planning",
+                                        booking_owner_id: booking.owner_client_id,
+                                        session_id: selectedSession.id,
+                                        session_ok: null,
+                                        session_error: null,
+                                      })}
+                                    >
+                                      Voir {booking.owner_display_name}
+                                    </Link>
+                                  ))}
+                                </div>
+                              </>
+                            ) : selectedSessionAvailableMembers.length > 0 ? (
+                              <>
+                                <span className="badge">Reserver ce creneau pour :</span>
+                                <div className="row client-planning-member-actions">
+                                  {selectedSessionAvailableMembers.map((member) => (
+                                    <Link
+                                      key={`session-available-member-${member.id}`}
+                                      className="mode-link"
+                                      scroll={false}
+                                      href={withUpdatedQuery(rawParams, {
+                                        tab: "planning",
+                                        booking_owner_id: member.id,
+                                        session_id: selectedSession.id,
+                                        session_ok: null,
+                                        session_error: null,
+                                      })}
+                                    >
+                                      {member.display_name}
+                                    </Link>
+                                  ))}
+                                </div>
+                              </>
+                            ) : selectedSessionCoveredMembers.length > 0 ? (
+                              <>
+                                <span className="badge">
+                                  Couvert par forfait pour {selectedSessionCoveredMembers.map((member) => member.display_name).join(", ")}
+                                </span>
+                                <span className="muted">La reservation se fait hors portail pour ce type d'offre.</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="badge">
+                                  {selectedSessionIsPastOrStarted
+                                    ? "Creneau passe: reservation fermee"
+                                    : selectedSessionFamilyIneligibleReason || "Reservation indisponible"}
+                                </span>
+                                {!selectedSessionIsPastOrStarted &&
+                                selectedSessionOnlineBookingEnabled &&
+                                selectedSessionVisibleBookings.length === 0 &&
+                                selectedSessionAvailableMembers.length === 0 ? (
+                                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
+                                    Voir les offres compatibles
+                                  </a>
+                                ) : null}
+                              </>
+                            )}
+                          </div>
                         ) : (
                           <div className="stack-sm">
                             <span className="badge">
@@ -2520,7 +3073,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             {!selectedSessionIsPastOrStarted &&
                             !selectedSessionBooking &&
                             selectedSessionOnlineBookingEnabled &&
-                            !selectedSessionEligibleByPlan ? (
+                            !selectedSessionEligibleByPlan &&
+                            selectedSessionCoveredMembers.length === 0 ? (
                               <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
                                 Voir les offres compatibles
                               </a>
@@ -2608,7 +3162,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <tr key={booking.id}>
                             <td>{booking.owner_display_name}</td>
                             <td>{booking.session.title}</td>
-                            <td>{formatDateTime(booking.session.start_at_utc)}</td>
+                            <td>{formatDateTime(booking.session.start_at_utc, timezone)}</td>
                             <td>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot)}</td>
                             <td>
                               <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
@@ -2642,7 +3196,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
                         </div>
                         <p className="muted">{booking.session.title}</p>
-                        <p className="muted">{formatDateTime(booking.session.start_at_utc)}</p>
+                        <p className="muted">{formatDateTime(booking.session.start_at_utc, timezone)}</p>
                         <div className="row spread">
                           <strong>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot)}</strong>
                           {canCancel ? (
@@ -3071,16 +3625,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </SectionCard>
 
               {financeView === "transactions" ? (
-                <SectionCard title="Transactions" className="client-finance-list-card" action={<span className="badge">{paymentRows.length}</span>}>
-                  {paymentRows.length === 0 ? (
+                <SectionCard title="Transactions" className="client-finance-list-card" action={<span className="badge">{filteredPaymentRows.length}</span>}>
+                  {filteredPaymentRows.length === 0 ? (
                     <p className="muted">Aucune transaction sur cette selection.</p>
                   ) : (
                     <div className="client-finance-list">
-                      {pagedPaymentRows.map((row) => {
-                        const paymentKey = paymentKeyFromPaymentRow(row);
-                        const linkedInvoice =
-                          invoiceByPaymentId.get(row.id) ??
-                          (paymentKey ? invoiceByPaymentKey.get(paymentKey) : undefined);
+                      {pagedPaymentRows.map(({ row, linkedInvoice, effectiveFinanceStatus, occurredAtForDisplay }) => {
                         const canPayNow = canPayNowForPayment(row);
                         const isBilled = Boolean(linkedInvoice);
                         return (
@@ -3088,9 +3638,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             key={`tx-${row.id}`}
                             typeBadge={<span className={`status-pill ${isBilled ? "status-ok" : "status-off"}`}>{isBilled ? "Facturé" : "Non facturé"}</span>}
                             label={row.label}
-                            meta={`${formatDateTime(row.occurred_at)} · ${row.owner_display_name} · ${sourceLabel(row.source)}`}
+                            meta={`${formatDateTime(occurredAtForDisplay)} · ${row.owner_display_name} · ${sourceLabel(row.source)}`}
                             amount={toMoney(row.total_incl_vat, row.currency)}
-                            statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status)}</span>}
+                            statusBadge={
+                              <span className={`status-pill ${statusClass(effectiveFinanceStatus)}`}>
+                                {financeStatusLabel(effectiveFinanceStatus)}
+                              </span>
+                            }
                             actions={
                               <div className="row client-finance-card-actions">
                                 {linkedInvoice ? (
@@ -3129,7 +3683,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-finance-list">
                       {pagedInvoiceRows.map((row) => {
                         const linkedPayment = paymentByInvoiceId.get(row.id);
-                        const canPayInvoice = (linkedPayment ? canPayNowForPayment(linkedPayment) : false) || Boolean(row.payment_url);
+                        const invoiceIsPaid = normalizeStatus(row.status) === "PAID";
+                        const canPayInvoice =
+                          !invoiceIsPaid &&
+                          ((linkedPayment ? canPayNowForPayment(linkedPayment) : false) || Boolean(row.payment_url));
                         return (
                           <CompactInvoiceRow
                             key={`inv-${row.id}`}
@@ -3139,7 +3696,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             subline={row.label}
                             actions={
                               <div className="row client-finance-card-actions">
-                                {canPayInvoice ? (
+                                {invoiceIsPaid ? (
+                                  <span className="mode-link client-card-primary-action disabled" aria-disabled="true">
+                                    Payer
+                                  </span>
+                                ) : canPayInvoice ? (
                                   <form action={openClientPaymentCheckoutAction}>
                                     {linkedPayment ? <input type="hidden" name="payment_id" value={linkedPayment.id} /> : null}
                                     {row.payment_url ? <input type="hidden" name="payment_url" value={row.payment_url} /> : null}

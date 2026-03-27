@@ -33,12 +33,15 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
   const resetToken = readParam(searchParams, "reset_token");
   const emailHint = readParam(searchParams, "email");
   const purchaseContext = readParam(searchParams, "purchase_context");
+  const returnTo = readParam(searchParams, "return_to");
   const mode = resolveMode(readParam(searchParams, "mode").trim().toLowerCase(), resetToken);
   const preservedPurchaseContext = purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : "";
+  const preservedReturnTo = returnTo ? `&return_to=${encodeURIComponent(returnTo)}` : "";
   const preservedEmail = emailHint ? `&email=${encodeURIComponent(emailHint)}` : "";
-  const loginHref = `/login?mode=login${preservedEmail}${preservedPurchaseContext}`;
-  const signupHref = `/login?mode=signup${preservedEmail}${preservedPurchaseContext}`;
-  const forgotHref = `/login?mode=forgot${preservedEmail}${preservedPurchaseContext}`;
+  const loginHref = `/login?mode=login${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}`;
+  const signupHref = `/login?mode=signup${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}`;
+  const forgotHref = `/login?mode=forgot${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}`;
+  const isEmbedReturn = returnTo.startsWith("/embed/");
 
   return (
     <main className="page auth-page">
@@ -68,6 +71,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
               <form action={loginAction} className="grid auth-form">
                 <input type="hidden" name="auth_mode" value="login" />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
+                <input type="hidden" name="return_to" value={returnTo} />
                 <label>
                   Email
                   <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
@@ -111,6 +115,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                   <form action={forgotPasswordAction} className="grid auth-form">
                     <input type="hidden" name="auth_mode" value="forgot" />
                     <input type="hidden" name="purchase_context" value={purchaseContext} />
+                    <input type="hidden" name="return_to" value={returnTo} />
                     <label>
                       Email
                       <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
@@ -128,17 +133,22 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
           {mode === "signup" ? (
             <section className="auth-section">
               <h2>Creer un compte</h2>
-              <p className="muted">Renseignez les informations de base, ajoutez la photo eleve et validez les consentements.</p>
+              <p className="muted">
+                {isEmbedReturn
+                  ? "Renseignez les informations de base pour finaliser votre reservation."
+                  : "Renseignez les informations de base, ajoutez la photo eleve et validez les consentements."}
+              </p>
 
               <ol className="auth-step-indicator">
                 <li>Etape 1 - Informations obligatoires</li>
-                <li>Etape 2 - Photo de l eleve</li>
-                <li>Etape 3 - Consentements et validation</li>
+                {!isEmbedReturn ? <li>Etape 2 - Photo de l eleve</li> : null}
+                <li>{isEmbedReturn ? "Etape 2 - Consentements et validation" : "Etape 3 - Consentements et validation"}</li>
               </ol>
 
               <form action={registerAction} className="grid auth-form" encType="multipart/form-data">
                 <input type="hidden" name="auth_mode" value="signup" />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
+                <input type="hidden" name="return_to" value={returnTo} />
 
                 <section className="auth-step-card">
                   <h3>Etape 1 - Informations obligatoires</h3>
@@ -179,21 +189,27 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                     Mot de passe
                     <input type="password" name="password" required minLength={8} autoComplete="new-password" />
                   </label>
-                  <p className="muted">Une photo de l eleve sera demandee a l etape suivante pour faciliter l identification pendant les cours en ligne.</p>
+                  <p className="muted">
+                    {isEmbedReturn
+                      ? "Vous pourrez ensuite revenir directement sur le planning externe pour confirmer votre reservation."
+                      : "Une photo de l eleve sera demandee a l etape suivante pour faciliter l identification pendant les cours en ligne."}
+                  </p>
                 </section>
 
-                <section className="auth-step-card">
-                  <h3>Etape 2 - Photo de l eleve</h3>
-                  <p className="muted">Cette photo est obligatoire pour finaliser la creation du compte.</p>
-                  <label>
-                    Prendre une photo (mobile) ou choisir une image
-                    <input type="file" name="student_photo" accept="image/jpeg,image/jpg,image/png,image/webp" capture="user" required />
-                  </label>
-                  <p className="muted">Si la camera est indisponible, choisissez une photo existante depuis votre galerie.</p>
-                </section>
+                {!isEmbedReturn ? (
+                  <section className="auth-step-card">
+                    <h3>Etape 2 - Photo de l eleve</h3>
+                    <p className="muted">Cette photo est obligatoire pour finaliser la creation du compte.</p>
+                    <label>
+                      Prendre une photo (mobile) ou choisir une image
+                      <input type="file" name="student_photo" accept="image/jpeg,image/jpg,image/png,image/webp" capture="user" required />
+                    </label>
+                    <p className="muted">Si la camera est indisponible, choisissez une photo existante depuis votre galerie.</p>
+                  </section>
+                ) : null}
 
                 <section className="auth-step-card">
-                  <h3>Etape 3 - Consentements et validation</h3>
+                  <h3>{isEmbedReturn ? "Etape 2 - Consentements et validation" : "Etape 3 - Consentements et validation"}</h3>
                   <p>
                     En creant votre compte, vous autorisez Piano Academie a vous envoyer des emails et SMS lies a la gestion de votre compte, de vos reservations, de vos cours et au fonctionnement du service.
                   </p>

@@ -59,6 +59,7 @@ from app.models.quote import (
     TermsTemplate,
     TermsTemplateVersion,
 )
+from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.quote import (
     PaymentPlanOut,
@@ -115,9 +116,9 @@ from app.schemas.quote import (
     TermsTemplateVersionOut,
     TermsTemplateVersionPublishRequest,
 )
-from app.services.email_delivery import email_delivery_disabled_reason
+from app.services.email_delivery import email_delivery_disabled_reason, send_email
 from app.services.invoice_documents import normalize_billing_entity
-from app.services.messaging_templates import resolve_frontend_base_url
+from app.services.messaging_templates import load_messaging_settings, resolve_frontend_base_url, resolve_sender_profile
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_booking_created_notifications
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.email_templates import (
@@ -371,6 +372,289 @@ def _payment_method_label_from_code(method_code: str) -> str:
     return normalized or "Paiement"
 
 
+def _payment_schedule_type_label(schedule_type: str) -> str:
+    normalized = (schedule_type or "").strip().lower()
+    if normalized == "single":
+        return "Paiement en 1 fois"
+    if normalized == "split_2":
+        return "Paiement en 2 fois"
+    if normalized == "split_3":
+        return "Paiement en 3 fois"
+    if normalized == "split_4":
+        return "Paiement en 4 fois"
+    if normalized == "monthly":
+        return "Paiement mensuel"
+    return normalized or "Paiement"
+
+
+def _canonical_payment_plan_name(payment_method: str, schedule_type: str) -> str:
+    normalized_method = (payment_method or "").strip().upper()
+    normalized_schedule = (schedule_type or "").strip().lower()
+    if normalized_method == "CARD_4X_FEES":
+        return "4 fois avec frais"
+    if normalized_method == "BANK_TRANSFER":
+        return "Virement bancaire"
+    if normalized_method == "CASH":
+        return "Especes"
+    if normalized_method == "CHECK":
+        if normalized_schedule == "split_2":
+            return "Cheque en 2 fois"
+        if normalized_schedule == "split_3":
+            return "Cheque en 3 fois"
+        if normalized_schedule == "split_4":
+            return "Cheque en 4 fois"
+        return "Cheque en 1 fois"
+    if normalized_method == "CARD_MONTHLY" or normalized_schedule == "monthly":
+        return "Carte bancaire mensuelle"
+    if normalized_method == "CARD":
+        return "Carte bancaire"
+    method_label = _payment_method_label_from_code(normalized_method)
+    schedule_label = _payment_schedule_type_label(normalized_schedule)
+    if normalized_schedule in {"", "single"}:
+        return method_label
+    return f"{method_label} - {schedule_label.lower()}"
+
+
+def _normalized_payment_plan_name(name: str, payment_method: str, schedule_type: str) -> str:
+    raw_name = (name or "").strip()
+    canonical_name = _canonical_payment_plan_name(payment_method, schedule_type)
+    if not raw_name:
+        return canonical_name
+    builtin_names = {
+        "Carte bancaire",
+        "Carte bancaire mensuelle",
+        "Cheque en 1 fois",
+        "Cheque en 2 fois",
+        "Cheque en 3 fois",
+        "Cheque en 4 fois",
+        "Virement bancaire",
+        "Especes",
+        "4 fois avec frais",
+    }
+    if raw_name in builtin_names:
+        return canonical_name
+    return raw_name
+
+
+def _quote_lines_for_payment_schedule(db: Session, *, quote_id: UUID) -> list[QuoteLine]:
+    return db.scalars(
+        select(QuoteLine)
+        .where(QuoteLine.quote_id == quote_id)
+        .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc(), QuoteLine.id.asc())
+    ).all()
+
+
+def _engagement_month_key(*, quote: Quote, registration_date: date) -> tuple[int, int]:
+    snapshot = _json_object(quote.calendar_snapshot)
+    candidates: list[date] = []
+    for raw in _json_list(snapshot.get("sessions")):
+        if not isinstance(raw, dict):
+            continue
+        parsed = _parse_iso_date(str(raw.get("date") or ""))
+        if parsed is not None:
+            candidates.append(parsed)
+    if not candidates:
+        for raw in _json_list(snapshot.get("blocks")):
+            if not isinstance(raw, dict):
+                continue
+            parsed = _parse_iso_date(str(raw.get("start_date") or ""))
+            if parsed is not None:
+                candidates.append(parsed)
+    if not candidates:
+        parsed = _parse_iso_date(str(snapshot.get("start_date") or ""))
+        if parsed is not None:
+            candidates.append(parsed)
+    anchor = min(candidates) if candidates else registration_date
+    return (anchor.year, anchor.month)
+
+
+def _calendar_session_counts_by_activity_month(quote: Quote) -> dict[UUID, dict[tuple[int, int], int]]:
+    snapshot = _json_object(quote.calendar_snapshot)
+    counts: dict[UUID, dict[tuple[int, int], int]] = {}
+    for raw in _json_list(snapshot.get("sessions")):
+        if not isinstance(raw, dict):
+            continue
+        activity_id = _parse_uuid_value(raw.get("activity_id"))
+        parsed_date = _parse_iso_date(str(raw.get("date") or ""))
+        if activity_id is None or parsed_date is None:
+            continue
+        month_key = (parsed_date.year, parsed_date.month)
+        month_counts = counts.setdefault(activity_id, {})
+        month_counts[month_key] = month_counts.get(month_key, 0) + 1
+    return counts
+
+
+def _allocate_amount_by_month_weights(
+    amount_ttc: Decimal,
+    month_counts: dict[tuple[int, int], int],
+) -> list[tuple[tuple[int, int], Decimal]]:
+    weighted_months = [
+        (month_key, int(weight))
+        for month_key, weight in sorted(month_counts.items())
+        if int(weight) > 0
+    ]
+    if not weighted_months:
+        return []
+    total_weight = sum(weight for _, weight in weighted_months)
+    if total_weight <= 0:
+        return []
+    allocations: list[tuple[tuple[int, int], Decimal]] = []
+    running_total = Decimal("0.00")
+    for index, (month_key, weight) in enumerate(weighted_months):
+        if index == len(weighted_months) - 1:
+            allocated = _q2(amount_ttc - running_total)
+        else:
+            allocated = _q2(amount_ttc * Decimal(weight) / Decimal(total_weight))
+            running_total = _q2(running_total + allocated)
+        allocations.append((month_key, allocated))
+    return allocations
+
+
+def _apply_credit_to_month_amounts(
+    month_amounts: dict[tuple[int, int], Decimal],
+    credit_ttc: Decimal,
+) -> None:
+    remaining_credit = _q2(abs(credit_ttc))
+    if remaining_credit <= Decimal("0.00"):
+        return
+    for month_key in sorted(month_amounts.keys()):
+        current_amount = _q2(month_amounts.get(month_key, Decimal("0.00")))
+        if current_amount <= Decimal("0.00"):
+            continue
+        consumed = min(current_amount, remaining_credit)
+        month_amounts[month_key] = _q2(current_amount - consumed)
+        remaining_credit = _q2(remaining_credit - consumed)
+        if remaining_credit <= Decimal("0.00"):
+            break
+
+
+def _payment_month_label(month: int) -> str:
+    labels = {
+        1: "janvier",
+        2: "fevrier",
+        3: "mars",
+        4: "avril",
+        5: "mai",
+        6: "juin",
+        7: "juillet",
+        8: "aout",
+        9: "septembre",
+        10: "octobre",
+        11: "novembre",
+        12: "decembre",
+    }
+    return labels.get(month, f"mois {month}")
+
+
+def _monthly_due_label(year: int, month: int) -> str:
+    return f"1er {_payment_month_label(month)} {year}"
+
+
+def _monthly_schedule_item_label(year: int, month: int) -> str:
+    month_name = _payment_month_label(month).capitalize()
+    return f"Facture {month_name} {year}"
+
+
+def _monthly_first_due_label() -> str:
+    return "a la validation du devis, avant votre 1er cours"
+
+
+def _build_monthly_payment_schedule_for_quote(
+    db: Session,
+    *,
+    quote: Quote,
+    payment_method_label: str,
+    currency: str,
+    registration_date: date,
+    deposit_amount_ttc: Decimal,
+    adjustment_signed: Decimal,
+    target_total_ttc: Decimal,
+) -> list[dict[str, object]]:
+    lines = _quote_lines_for_payment_schedule(db, quote_id=quote.id)
+    counts_by_activity_month = _calendar_session_counts_by_activity_month(quote)
+    first_month_key = _engagement_month_key(quote=quote, registration_date=registration_date)
+
+    month_amounts: dict[tuple[int, int], Decimal] = {}
+    fixed_first_month_amount = Decimal("0.00")
+    credit_pool = Decimal("0.00")
+
+    for line in lines:
+        amount_ttc = _q2(Decimal(line.amount_ttc or 0))
+        if amount_ttc == Decimal("0.00"):
+            continue
+        line_category = str(line.line_category or "").strip().lower()
+        line_type = str(line.line_type or "").strip().lower()
+        if line_category == "service" and line_type == "item" and line.activity_id is not None:
+            month_counts = counts_by_activity_month.get(line.activity_id, {})
+            allocations = _allocate_amount_by_month_weights(amount_ttc, month_counts)
+            if allocations:
+                for month_key, allocated_amount in allocations:
+                    month_amounts[month_key] = _q2(month_amounts.get(month_key, Decimal("0.00")) + allocated_amount)
+                continue
+        if amount_ttc >= Decimal("0.00"):
+            fixed_first_month_amount = _q2(fixed_first_month_amount + amount_ttc)
+        else:
+            credit_pool = _q2(credit_pool + abs(amount_ttc))
+
+    if fixed_first_month_amount > Decimal("0.00"):
+        month_amounts[first_month_key] = _q2(month_amounts.get(first_month_key, Decimal("0.00")) + fixed_first_month_amount)
+
+    if adjustment_signed > Decimal("0.00"):
+        month_amounts[first_month_key] = _q2(month_amounts.get(first_month_key, Decimal("0.00")) + adjustment_signed)
+    elif adjustment_signed < Decimal("0.00"):
+        credit_pool = _q2(credit_pool + abs(adjustment_signed))
+
+    _apply_credit_to_month_amounts(month_amounts, credit_pool)
+    _apply_credit_to_month_amounts(month_amounts, deposit_amount_ttc)
+
+    schedule_rows = [
+        (month_key, _q2(amount_ttc))
+        for month_key, amount_ttc in sorted(month_amounts.items())
+        if _q2(amount_ttc) > Decimal("0.00")
+    ]
+    current_total = _q2(sum((amount for _, amount in schedule_rows), Decimal("0.00")))
+    target_total = _q2(target_total_ttc)
+    delta = _q2(target_total - current_total)
+    if schedule_rows and delta != Decimal("0.00"):
+        last_month_key, last_amount = schedule_rows[-1]
+        schedule_rows[-1] = (last_month_key, _q2(last_amount + delta))
+    elif not schedule_rows and target_total > Decimal("0.00"):
+        schedule_rows = [(first_month_key, target_total)]
+
+    items: list[dict[str, object]] = []
+    for index, ((year, month), amount_ttc) in enumerate(schedule_rows):
+        if amount_ttc <= Decimal("0.00"):
+            continue
+        if index == 0:
+            items.append(
+                {
+                    "label": _monthly_schedule_item_label(year, month),
+                    "due_type": "on_quote_validation_before_first_course",
+                    "due_label": _monthly_first_due_label(),
+                    "due_year": year,
+                    "due_month": month,
+                    "amount_ttc": str(amount_ttc),
+                    "currency": currency,
+                    "payment_method": payment_method_label,
+                }
+            )
+            continue
+        items.append(
+            {
+                "label": _monthly_schedule_item_label(year, month),
+                "due_type": "first_of_month",
+                "due_label": _monthly_due_label(year, month),
+                "due_year": year,
+                "due_month": month,
+                "due_day": 1,
+                "amount_ttc": str(amount_ttc),
+                "currency": currency,
+                "payment_method": payment_method_label,
+            }
+        )
+    return items
+
+
 def _bool_or_default(value: object, default: bool) -> bool:
     if value is None:
         return default
@@ -385,6 +669,7 @@ def _bool_or_default(value: object, default: bool) -> bool:
 
 
 def _build_payment_terms_snapshot_from_plan(
+    db: Session,
     *,
     quote: Quote,
     plan: PaymentPlan,
@@ -392,6 +677,7 @@ def _build_payment_terms_snapshot_from_plan(
     registration_date: date,
 ) -> dict[str, object]:
     rules = dict(plan.schedule_rules or {})
+    payment_plan_name = _normalized_payment_plan_name(plan.name, plan.payment_method, plan.schedule_type)
     normalized_adjustment = _normalize_quote_adjustment(quote.meta or {})
     normalized_deposit = _normalize_quote_deposit(quote.meta or {})
     adjustment_signed = _quote_adjustment_signed_amount(quote.meta or {})
@@ -410,6 +696,17 @@ def _build_payment_terms_snapshot_from_plan(
     payment_method_label = _payment_method_label_from_code(plan.payment_method)
     if remaining_ttc_after_deposit <= Decimal("0.00"):
         schedule: list[dict[str, object]] = []
+    elif (plan.schedule_type or "").strip().lower() == "monthly":
+        schedule = _build_monthly_payment_schedule_for_quote(
+            db,
+            quote=quote,
+            payment_method_label=payment_method_label,
+            currency=(quote.currency or "EUR").upper(),
+            registration_date=registration_date,
+            deposit_amount_ttc=deposit_amount_ttc,
+            adjustment_signed=adjustment_signed,
+            target_total_ttc=remaining_ttc_after_deposit,
+        )
     else:
         schedule = build_payment_schedule(
             PaymentPlanScheduleInput(
@@ -469,8 +766,8 @@ def _build_payment_terms_snapshot_from_plan(
         "schedule": schedule,
         "currency": (quote.currency or "EUR").upper(),
         "payment_plan_code": plan.code,
-        "payment_plan_name": plan.name,
-        "plan_name": plan.name,
+        "payment_plan_name": payment_plan_name,
+        "plan_name": payment_plan_name,
         "payment_method": plan.payment_method,
         "payment_method_label": payment_method_label,
         "schedule_type": plan.schedule_type,
@@ -865,6 +1162,83 @@ def _calendar_source_hash_for_row(row: dict[str, object]) -> str:
         closure_days=closures,
         is_active=bool(row.get("is_active", True)),
     )
+
+
+def _calendar_matches_school_year(item: QuoteSchoolCalendarOut, normalized_year: str) -> bool:
+    if not normalized_year:
+        return True
+    return item.school_year_label.strip().lower() == normalized_year
+
+
+def _list_active_quote_school_calendars_for_location(
+    rows: list[dict[str, object]],
+    *,
+    location_id: UUID,
+    school_year_label: str | None,
+) -> list[QuoteSchoolCalendarOut]:
+    normalized_year = (school_year_label or "").strip().lower()
+    out: list[QuoteSchoolCalendarOut] = []
+    for raw in rows:
+        try:
+            item = _calendar_out(raw)
+        except Exception:
+            continue
+        if not item.is_active:
+            continue
+        if item.location_id != location_id:
+            continue
+        if not _calendar_matches_school_year(item, normalized_year):
+            continue
+        out.append(item)
+    out.sort(key=lambda item: item.updated_at, reverse=True)
+    return out
+
+
+def _resolve_online_quote_school_calendar_location_id(db: Session, *, fallback_location_id: UUID) -> UUID:
+    fallback_location = db.scalar(select(Location).where(Location.id == fallback_location_id).limit(1))
+    fallback_code = (fallback_location.code if fallback_location is not None else "").strip().upper()
+    if fallback_location is not None and (fallback_location.is_online or fallback_code == "ONLINE"):
+        return fallback_location_id
+    online_location = db.scalar(
+        select(Location)
+        .where(
+            Location.active.is_(True),
+            or_(Location.is_online.is_(True), func.upper(Location.code) == "ONLINE"),
+        )
+        .order_by(
+            case((Location.is_online.is_(True), 0), else_=1),
+            Location.name.asc(),
+        )
+        .limit(1)
+    )
+    if online_location is not None:
+        return online_location.id
+    return fallback_location_id
+
+
+def _resolved_quote_school_calendar_days(
+    db: Session,
+    *,
+    calendar: QuoteSchoolCalendarOut,
+) -> tuple[set[date], set[date]]:
+    holiday_days = set(calendar.holiday_dates)
+    closure_days = set(calendar.closure_dates)
+    deployment_slots = _list_calendar_generated_slots(db, calendar_id=calendar.id, location_id=calendar.location_id)
+    if deployment_slots:
+        generated_holidays: set[date] = set()
+        generated_closures: set[date] = set()
+        for slot in deployment_slots:
+            if slot.status.upper() == "CANCELLED":
+                continue
+            if CALENDAR_DEPLOYMENT_REASON_HOLIDAY in slot.reason_types:
+                generated_holidays.add(slot.date)
+            if CALENDAR_DEPLOYMENT_REASON_VACATION in slot.reason_types or CALENDAR_DEPLOYMENT_REASON_CLOSURE in slot.reason_types:
+                generated_closures.add(slot.date)
+        if generated_holidays or generated_closures:
+            holiday_days = generated_holidays
+            closure_days = generated_closures
+    closure_days.update(_expand_vacation_periods(calendar.vacation_periods))
+    return (holiday_days, closure_days)
 
 
 def _calendar_preview_for_row(db: Session, *, row: dict[str, object]) -> QuoteSchoolCalendarDeploymentPreviewOut:
@@ -1288,7 +1662,103 @@ def _time_from_hhmm(value: str, *, field: str) -> time:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"{field} must be HH:MM") from exc
 
 
-def _prospect_out(row: Prospect) -> ProspectOut:
+def _normalize_activity_mode(value: str | None) -> str | None:
+    raw_value = getattr(value, "value", value)
+    normalized = str(raw_value or "").strip().upper()
+    if normalized in {"ONLINE", "ONSITE", "ANY"}:
+        return normalized
+    return None
+
+
+def _time_with_duration(start_time: time, duration_minutes: int) -> time:
+    anchor = datetime.combine(date.today(), start_time) + timedelta(minutes=max(1, duration_minutes))
+    return anchor.time()
+
+
+def _typeform_parent_address_from_normalized_payload(normalized: dict[str, object]) -> str | None:
+    direct = str(normalized.get("parent_address") or "").strip()
+    if direct:
+        return direct
+    line_1 = str(normalized.get("parent_address_line_1") or "").strip()
+    line_2 = str(normalized.get("parent_address_line_2") or "").strip()
+    city = str(normalized.get("parent_city") or "").strip()
+    postal_code = str(normalized.get("parent_postal_code") or "").strip()
+    country = str(normalized.get("parent_country") or "").strip()
+    locality = " ".join(part for part in [postal_code, city] if part).strip()
+    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+    return ", ".join(parts) if parts else None
+
+
+def _typeform_simplified_answer_value(simplified_answers: list[object], *labels: str) -> str | None:
+    expected = {str(label or "").strip().lower() for label in labels if str(label or "").strip()}
+    if not expected:
+        return None
+    for item in simplified_answers:
+        row = _json_object(item)
+        label = str(row.get("label") or row.get("field_label") or row.get("question") or "").strip().lower()
+        if label not in expected:
+            continue
+        value = str(row.get("value") or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _typeform_parent_address_from_intake(intake: TypeformIntake | None) -> str | None:
+    if intake is None:
+        return None
+    parent_address = _typeform_parent_address_from_normalized_payload(_json_object(intake.normalized_payload_json))
+    if parent_address:
+        return parent_address
+    simplified_answers = _json_list(intake.simplified_response_json)
+    line_1 = _typeform_simplified_answer_value(simplified_answers, "Address", "address", "Adresse", "adresse")
+    line_2 = _typeform_simplified_answer_value(
+        simplified_answers,
+        "Address line 2",
+        "address line 2",
+        "Adresse ligne 2",
+        "Complement d'adresse",
+        "Complément d'adresse",
+    )
+    city = _typeform_simplified_answer_value(simplified_answers, "City/Town", "city/town", "Ville", "ville")
+    postal_code = _typeform_simplified_answer_value(
+        simplified_answers,
+        "Zip/Post Code",
+        "zip/post code",
+        "Code postal",
+        "code postal",
+    )
+    country = _typeform_simplified_answer_value(simplified_answers, "Country", "country", "Pays", "pays")
+    locality = " ".join(part for part in [postal_code, city] if part).strip()
+    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+    return ", ".join(parts) if parts else None
+
+
+def _prospect_meta_with_typeform_fallback(db: Session, row: Prospect) -> dict[str, object]:
+    meta = _json_object(row.meta)
+    intake_id = _parse_uuid_value(meta.get("typeform_intake_id"))
+    if intake_id is None:
+        return meta
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).limit(1))
+    parent_address = _typeform_parent_address_from_intake(intake)
+    if not parent_address:
+        return meta
+    prospect_type = str(meta.get("prospect_type") or "").strip().lower()
+    if prospect_type == "child":
+        parent_referent = _json_object(meta.get("parent_referent"))
+        if not str(parent_referent.get("address") or "").strip():
+            parent_referent["address"] = parent_address
+            meta["parent_referent"] = parent_referent
+        return meta
+    if not str(meta.get("adult_address") or "").strip():
+        meta["adult_address"] = parent_address
+    return meta
+
+
+def _prospect_out(row: Prospect, *, db: Session | None = None, enrich_typeform_meta: bool = False) -> ProspectOut:
+    meta = row.meta or {}
+    if enrich_typeform_meta and db is not None:
+        meta = _prospect_meta_with_typeform_fallback(db, row)
     return ProspectOut(
         id=row.id,
         linked_client_id=row.linked_client_id,
@@ -1300,7 +1770,7 @@ def _prospect_out(row: Prospect) -> ProspectOut:
         phone=row.phone,
         source=row.source,
         notes=row.notes,
-        meta=row.meta or {},
+        meta=meta,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -2068,6 +2538,154 @@ def _try_send_public_quote_confirmation_email(
         db.commit()
 
 
+def _resolve_quote_admin_alert_contact_label(db: Session, quote: Quote) -> str:
+    if quote.prospect_id is not None:
+        prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id).limit(1))
+        if prospect is not None:
+            fallback = (prospect.email or prospect.phone or "Prospect").strip() or "Prospect"
+            return _display_name(prospect.first_name, prospect.last_name, fallback)
+    if quote.client_id is not None:
+        client = db.scalar(select(User).where(User.id == quote.client_id).limit(1))
+        if client is not None:
+            fallback = (client.email or client.phone or "Client").strip() or "Client"
+            return _display_name(client.first_name, client.last_name, fallback)
+    recipient_email = _resolve_recipient_email(db, quote)
+    if recipient_email:
+        return recipient_email
+    return "Client"
+
+
+def _build_quote_admin_url(db: Session, quote: Quote) -> str | None:
+    frontend_base = resolve_frontend_base_url(db).rstrip("/")
+    if not frontend_base:
+        return None
+    return f"{frontend_base}/admin/quotes/{quote.id}"
+
+
+def _try_send_public_quote_admin_alert_email(
+    db: Session,
+    *,
+    quote: Quote,
+) -> None:
+    settings_payload, _ = load_messaging_settings(db)
+    studio_email = str(settings_payload.get("studio_email") or "").strip().lower()
+    now = _utcnow()
+    if not studio_email:
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_admin_alert_email_skipped",
+                actor_type="system",
+                payload={"kind": "quote_approved_admin_alert", "reason": "missing_studio_email"},
+                created_at=now,
+            )
+        )
+        db.commit()
+        return
+    delivery_error = email_delivery_disabled_reason()
+    if delivery_error:
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_admin_alert_email_skipped",
+                actor_type="system",
+                payload={
+                    "kind": "quote_approved_admin_alert",
+                    "reason": "delivery_disabled",
+                    "detail": delivery_error,
+                    "recipient_email": studio_email,
+                },
+                created_at=now,
+            )
+        )
+        db.commit()
+        return
+
+    message_key = f"quote_approved_admin_alert:{quote.id}:{studio_email}"
+    existing = db.scalar(select(QuoteEmailOutbox).where(QuoteEmailOutbox.message_key == message_key).limit(1))
+    if existing is not None:
+        return
+
+    contact_label = _resolve_quote_admin_alert_contact_label(db, quote)
+    recipient_email = _resolve_recipient_email(db, quote) or "-"
+    approved_at_value = quote.approved_at.astimezone(ZoneInfo("Europe/Paris")).strftime("%d/%m/%Y %H:%M") if quote.approved_at else "-"
+    admin_url = _build_quote_admin_url(db, quote)
+    subject = f"Devis approuve : {quote.quote_number}"
+    body_lines = [
+        f"Le client a approuve le devis {quote.quote_number}.",
+        "",
+        f"Date d'approbation : {approved_at_value}",
+        f"Destinataire : {contact_label}",
+        f"Email client : {recipient_email}",
+    ]
+    if admin_url:
+        body_lines.extend(["", f"Fiche admin : {admin_url}"])
+    body = "\n".join(body_lines)
+
+    try:
+        sender = resolve_sender_profile(db, sender_kind="STUDIO")
+        outbox_row = QuoteEmailOutbox(
+            quote_id=quote.id,
+            kind="quote_approved_admin_alert",
+            message_key=message_key,
+            recipient_email=studio_email,
+            subject=subject,
+            status="queued",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(outbox_row)
+        db.flush()
+
+        provider_message_id = send_email(
+            to_email=studio_email,
+            subject=subject,
+            body=body,
+            body_format="TEXT",
+            context="QUOTE_APPROVED_ADMIN_ALERT",
+            from_email=sender.from_email,
+            from_name=sender.from_name,
+            reply_to=sender.reply_to,
+            subject_prefix=sender.subject_prefix,
+        )
+        outbox_row.provider_message_id = provider_message_id
+        outbox_row.status = "sent" if provider_message_id else "failed"
+        outbox_row.sent_at = now if provider_message_id else None
+        outbox_row.updated_at = now
+        db.add(outbox_row)
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_email_sent",
+                actor_type="system",
+                payload={
+                    "kind": "quote_approved_admin_alert",
+                    "recipient_email": studio_email,
+                    "usage_context": "QUOTE_APPROVED_ADMIN_ALERT",
+                    "recipient_scope": "studio_email",
+                },
+                created_at=now,
+            )
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_admin_alert_email_failed",
+                actor_type="system",
+                payload={
+                    "kind": "quote_approved_admin_alert",
+                    "recipient_email": studio_email,
+                    "error": str(exc),
+                },
+                created_at=_utcnow(),
+            )
+        )
+        db.commit()
+
+
 def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: Decimal) -> list[dict[str, object]]:
     if quote.payment_plan_id is None:
         return []
@@ -2075,6 +2693,7 @@ def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: D
     if plan is None:
         return []
     snapshot = _build_payment_terms_snapshot_from_plan(
+        db,
         quote=quote,
         plan=plan,
         total_ttc=total_ttc,
@@ -2118,6 +2737,7 @@ def _build_payment_terms_snapshot_for_quote(db: Session, quote: Quote, *, total_
             "total_ttc_after_adjustment": str(total_ttc_after_adjustment),
         }
     return _build_payment_terms_snapshot_from_plan(
+        db,
         quote=quote,
         plan=plan,
         total_ttc=total_ttc,
@@ -2537,7 +3157,7 @@ def create_prospect(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _prospect_out(row)
+    return _prospect_out(row, db=db, enrich_typeform_meta=True)
 
 
 @router.get("/prospects/{prospect_id}", response_model=ProspectOut)
@@ -2549,7 +3169,7 @@ def get_prospect(
     row = db.scalar(select(Prospect).where(Prospect.id == prospect_id))
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prospect not found")
-    return _prospect_out(row)
+    return _prospect_out(row, db=db, enrich_typeform_meta=True)
 
 
 @router.patch("/prospects/{prospect_id}", response_model=ProspectOut)
@@ -2605,7 +3225,7 @@ def update_prospect(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _prospect_out(row)
+    return _prospect_out(row, db=db, enrich_typeform_meta=True)
 
 
 @router.post("/prospects/from-client/{client_id}", response_model=ProspectOut)
@@ -2619,7 +3239,7 @@ def create_prospect_from_client(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
     existing = db.scalar(select(Prospect).where(Prospect.linked_client_id == client_id).limit(1))
     if existing is not None:
-        return _prospect_out(existing)
+        return _prospect_out(existing, db=db, enrich_typeform_meta=True)
 
     existing_by_email = db.scalar(
         select(Prospect).where(
@@ -2633,7 +3253,7 @@ def create_prospect_from_client(
         db.add(existing_by_email)
         db.commit()
         db.refresh(existing_by_email)
-        return _prospect_out(existing_by_email)
+        return _prospect_out(existing_by_email, db=db, enrich_typeform_meta=True)
 
     now = _utcnow()
     row = Prospect(
@@ -2651,7 +3271,7 @@ def create_prospect_from_client(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _prospect_out(row)
+    return _prospect_out(row, db=db, enrich_typeform_meta=True)
 
 
 @router.get("/quotes", response_model=list[QuoteOut])
@@ -2694,23 +3314,53 @@ def list_quotes(
 @router.post("/quotes/calendar/preview")
 def preview_quote_calendar(
     payload: QuoteCalendarPreviewRequest,
+    db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> dict[str, object]:
+    start_time = _time_from_hhmm(payload.start_time, field="start_time")
+    end_time = _time_from_hhmm(payload.end_time, field="end_time")
+    effective_modality = _normalize_activity_mode(payload.modality)
+    if payload.activity_id is not None:
+        activity = db.scalar(select(CourseType).where(CourseType.id == payload.activity_id, CourseType.active.is_(True)))
+        if activity is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown activity_id")
+        activity_mode = _normalize_activity_mode(activity.mode)
+        if activity_mode == "ONLINE":
+            if effective_modality == "ONSITE":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Cette activite est uniquement disponible en ligne",
+                )
+            effective_modality = "ONLINE"
+        elif activity_mode == "ONSITE":
+            if effective_modality == "ONLINE":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Cette activite est uniquement disponible en presentiel",
+                )
+            effective_modality = "ONSITE"
+        elif activity_mode == "ANY":
+            effective_modality = effective_modality
+        duration_minutes = int(activity.duration_minutes or 0)
+        if duration_minutes > 0:
+            end_time = _time_with_duration(start_time, duration_minutes)
+
     snapshot = generate_calendar_snapshot(
         CalendarGenerationInput(
             start_date=payload.start_date,
             end_date=payload.end_date,
             weekdays=payload.weekdays,
             recurrence_frequency=payload.recurrence_frequency,
-            start_time=_time_from_hhmm(payload.start_time, field="start_time"),
-            end_time=_time_from_hhmm(payload.end_time, field="end_time"),
+            start_time=start_time,
+            end_time=end_time,
             activity_id=payload.activity_id,
             location_id=payload.location_id,
-            modality=payload.modality,
+            modality=effective_modality,
             holiday_dates=payload.holiday_dates,
             closure_dates=payload.closure_dates,
         )
     )
+    snapshot["modality"] = effective_modality
     return snapshot
 
 
@@ -2983,6 +3633,7 @@ def update_quote(
     adjustment_changed = False
     deposit_changed = False
     computed_total: Decimal | None = None
+    calendar_snapshot_changed = False
     previous_adjustment_signature = _quote_adjustment_signature(row.meta or {})
     previous_deposit_signature = _quote_deposit_signature(row.meta or {})
 
@@ -3100,6 +3751,7 @@ def update_quote(
         document_dirty = True
     if payload.calendar_snapshot is not None:
         row.calendar_snapshot = payload.calendar_snapshot
+        calendar_snapshot_changed = True
         document_dirty = True
     if payload.payment_terms_snapshot is not None:
         row.payment_terms_snapshot = payload.payment_terms_snapshot
@@ -3129,7 +3781,11 @@ def update_quote(
         document_dirty = True
 
     if payload.payment_terms_snapshot is None and (
-        payment_plan_changed or payload.lines is not None or adjustment_changed or deposit_changed
+        payment_plan_changed
+        or payload.lines is not None
+        or adjustment_changed
+        or deposit_changed
+        or calendar_snapshot_changed
     ):
         total_for_schedule = computed_total if computed_total is not None else _q2(Decimal(row.total_ttc or 0))
         row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total_for_schedule)
@@ -3911,10 +4567,18 @@ def _ensure_pending_client_from_prospect(db: Session, quote: Quote) -> UUID | No
     prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id).with_for_update())
     if prospect is None:
         return None
+    prospect_type = _normalized_prospect_type(prospect.meta or {})
     if prospect.linked_client_id is not None:
         quote.client_id = prospect.linked_client_id
         db.add(quote)
         return prospect.linked_client_id
+
+    if prospect_type == "child":
+        # Child acquisition quotes should not auto-create a client from the child's
+        # prospect email because Typeform child flows commonly reuse the parent's
+        # contact details. The follow-up transformation will create/link the proper
+        # parent + child pair.
+        return None
 
     if not prospect.email:
         return None
@@ -4152,6 +4816,10 @@ def _create_quote_client(
     last_name: str | None,
     phone: str | None,
     birth_date: date | None,
+    address_line: str | None = None,
+    postal_code: str | None = None,
+    city: str | None = None,
+    address_country: str | None = None,
     client_kind: ClientKind,
     status: ClientStatus,
 ) -> User:
@@ -4164,6 +4832,10 @@ def _create_quote_client(
         phone=phone,
         mobile_phone_1=phone,
         birth_date=birth_date,
+        address_line=address_line,
+        postal_code=postal_code,
+        city=city,
+        address_country=address_country or "FR",
         client_kind=client_kind,
         client_status=status,
         is_active=True,
@@ -4212,6 +4884,82 @@ def _resolve_parent_contact_data(
         "email": _normalized_email(parent_referent.get("email")),
         "phone": _normalized_phone(parent_referent.get("phone")),
     }
+
+
+def _typeform_quote_normalized_payload(quote: Quote) -> dict[str, object]:
+    meta = _quote_meta_dict(quote)
+    typeform_meta = _json_object(meta.get("typeform_intake"))
+    return _json_object(typeform_meta.get("normalized_payload"))
+
+
+def _normalized_country_code(value: object | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw.upper()
+    if len(normalized) == 2 and normalized.isalpha():
+        return normalized
+    return {
+        "france": "FR",
+        "belgique": "BE",
+        "suisse": "CH",
+        "luxembourg": "LU",
+        "espagne": "ES",
+    }.get(raw.casefold())
+
+
+def _quote_parent_address_fields(quote: Quote) -> dict[str, str | None]:
+    normalized = _typeform_quote_normalized_payload(quote)
+    address_line = str(normalized.get("parent_address_line_1") or "").strip()
+    line_2 = str(normalized.get("parent_address_line_2") or "").strip()
+    if line_2:
+        address_line = " - ".join(part for part in [address_line, line_2] if part).strip()
+    if not address_line:
+        address_line = str(normalized.get("parent_address") or "").strip()
+    return {
+        "address_line": address_line or None,
+        "postal_code": str(normalized.get("parent_postal_code") or "").strip() or None,
+        "city": str(normalized.get("parent_city") or "").strip() or None,
+        "country_code": _normalized_country_code(normalized.get("parent_country")) or "FR",
+    }
+
+
+def _quote_child_birth_date(quote: Quote) -> date | None:
+    normalized = _typeform_quote_normalized_payload(quote)
+    raw = str(normalized.get("child_birth_date") or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _apply_quote_client_contact_defaults(
+    user: User,
+    *,
+    phone: str | None = None,
+    birth_date: date | None = None,
+    address_line: str | None = None,
+    postal_code: str | None = None,
+    city: str | None = None,
+    address_country: str | None = None,
+) -> None:
+    if phone and not str(user.phone or "").strip():
+        user.phone = phone
+    if phone and not str(user.mobile_phone_1 or "").strip():
+        user.mobile_phone_1 = phone
+    if birth_date is not None and user.birth_date is None:
+        user.birth_date = birth_date
+    if address_line and not str(user.address_line or "").strip():
+        user.address_line = address_line
+    if postal_code and not str(user.postal_code or "").strip():
+        user.postal_code = postal_code
+    if city and not str(user.city or "").strip():
+        user.city = city
+    if address_country and not str(user.address_country or "").strip():
+        user.address_country = address_country
+    user.updated_at = _utcnow()
 
 
 def _expected_activity_dates_from_snapshot(
@@ -4365,6 +5113,8 @@ def _resolve_followup_clients(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect enfant requis pour la transformation parent/enfant")
 
     parent_contact = _resolve_parent_contact_data(quote_prospect=quote_prospect, parent_prospect=parent_prospect)
+    parent_address_fields = _quote_parent_address_fields(quote)
+    child_birth_date = _quote_child_birth_date(quote)
     billing = _load_user_for_update(db, selected_parent_client_id)
     if billing is None and parent_prospect is not None:
         billing = _load_user_for_update(db, parent_prospect.linked_client_id)
@@ -4378,6 +5128,10 @@ def _resolve_followup_clients(
             last_name=str(parent_contact.get("last_name") or "").strip() or None,
             phone=_normalized_phone(parent_contact.get("phone")),
             birth_date=None,
+            address_line=parent_address_fields.get("address_line"),
+            postal_code=parent_address_fields.get("postal_code"),
+            city=parent_address_fields.get("city"),
+            address_country=parent_address_fields.get("country_code"),
             client_kind=ClientKind.ADULT,
             status=ClientStatus.ACTIVE,
         )
@@ -4385,10 +5139,21 @@ def _resolve_followup_clients(
     else:
         _promote_client_active(billing, user_snapshots)
         billing.client_kind = ClientKind.ADULT
+        _apply_quote_client_contact_defaults(
+            billing,
+            phone=_normalized_phone(parent_contact.get("phone")),
+            address_line=parent_address_fields.get("address_line"),
+            postal_code=parent_address_fields.get("postal_code"),
+            city=parent_address_fields.get("city"),
+            address_country=parent_address_fields.get("country_code"),
+        )
 
     child_email = _normalized_email(quote_prospect.email)
     if child_email == _normalized_email(parent_contact.get("email")):
         child_email = None
+    child_phone = _normalized_phone(quote_prospect.phone)
+    if child_phone == _normalized_phone(parent_contact.get("phone")):
+        child_phone = None
     student = _load_user_for_update(db, selected_client_id or quote.client_id or quote_prospect.linked_client_id)
     if student is None and child_email:
         student = _find_user_by_email_for_update(db, child_email)
@@ -4398,8 +5163,8 @@ def _resolve_followup_clients(
             email=child_email or _synthetic_quote_client_email(prefix="child"),
             first_name=quote_prospect.first_name,
             last_name=quote_prospect.last_name,
-            phone=quote_prospect.phone,
-            birth_date=None,
+            phone=child_phone,
+            birth_date=child_birth_date,
             client_kind=ClientKind.CHILD,
             status=ClientStatus.ACTIVE,
         )
@@ -4407,6 +5172,11 @@ def _resolve_followup_clients(
     else:
         _promote_client_active(student, user_snapshots)
         student.client_kind = ClientKind.CHILD
+        _apply_quote_client_contact_defaults(
+            student,
+            phone=child_phone,
+            birth_date=child_birth_date,
+        )
 
     if parent_prospect is not None:
         parent_prospect.linked_client_id = billing.id
@@ -4615,8 +5385,6 @@ def _create_followup_booking(
         vat_amount_snapshot=vat_amount,
         total_incl_vat_snapshot=total_ttc,
         currency_snapshot=currency,
-        created_at=now,
-        updated_at=now,
     )
     db.add(booking)
     db.flush()
@@ -4660,7 +5428,9 @@ def _create_followup_manual_transactions(
             status="PENDING",
             label=str(row.get("label") or "Montant facture").strip() or "Montant facture",
             description=f"Transformation devis {quote.quote_number}",
-            category=str(row.get("type") or "quote_transformation").strip() or "quote_transformation",
+            # A quote line can represent a mixed kit, so the technical row type
+            # ("product", "service", etc.) must not be reused as an accounting category.
+            category=str(row.get("category") or "").strip() or None,
             occurred_at=now,
             amount_excl_vat=amount_ht,
             vat_rate=vat_rate,
@@ -5006,6 +5776,7 @@ def public_approve_quote(
         usage_context=USAGE_CONTEXT_QUOTE_APPROVED,
         kind="quote_public_approved_ack",
     )
+    _try_send_public_quote_admin_alert_email(db, quote=quote)
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
         list((quote.payment_terms_snapshot or {}).get("schedule", []))
@@ -5336,6 +6107,7 @@ def change_quote_followup_payment_method(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment plan not found")
         quote.payment_plan_id = plan.id
         quote.payment_terms_snapshot = _build_payment_terms_snapshot_from_plan(
+            db,
             quote=quote,
             plan=plan,
             total_ttc=_q2(Decimal(quote.total_ttc or 0)),
@@ -6966,49 +7738,41 @@ def list_quote_school_calendar_generated_slots(
 def resolve_quote_school_calendar_for_location(
     location_id: UUID,
     school_year_label: str | None = Query(default=None),
+    modality: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteSchoolCalendarResolveOut:
     rows = _load_quote_school_calendars(db)
-    normalized_year = (school_year_label or "").strip().lower()
-    selected: QuoteSchoolCalendarOut | None = None
-    for raw in rows:
-        try:
-            item = _calendar_out(raw)
-        except Exception:
-            continue
-        if not item.is_active:
-            continue
-        if item.location_id != location_id:
-            continue
-        if normalized_year and item.school_year_label.strip().lower() != normalized_year:
-            continue
-        if selected is None or item.updated_at > selected.updated_at:
-            selected = item
-    if selected is None:
+    normalized_modality = _normalize_activity_mode(modality)
+    effective_location_id = (
+        _resolve_online_quote_school_calendar_location_id(db, fallback_location_id=location_id)
+        if normalized_modality == "ONLINE"
+        else location_id
+    )
+    selected = _list_active_quote_school_calendars_for_location(
+        rows,
+        location_id=effective_location_id,
+        school_year_label=school_year_label,
+    )
+    if not selected and effective_location_id != location_id:
+        selected = _list_active_quote_school_calendars_for_location(
+            rows,
+            location_id=location_id,
+            school_year_label=school_year_label,
+        )
+    if not selected:
         return QuoteSchoolCalendarResolveOut(calendar=None, holiday_dates=[], closure_dates=[])
-    holiday_days = set(selected.holiday_dates)
-    closure_days = set(selected.closure_dates)
-    deployment_slots = _list_calendar_generated_slots(db, calendar_id=selected.id, location_id=selected.location_id)
-    if deployment_slots:
-        generated_holidays: set[date] = set()
-        generated_closures: set[date] = set()
-        for slot in deployment_slots:
-            if slot.status.upper() == "CANCELLED":
-                continue
-            if CALENDAR_DEPLOYMENT_REASON_HOLIDAY in slot.reason_types:
-                generated_holidays.add(slot.date)
-            if CALENDAR_DEPLOYMENT_REASON_VACATION in slot.reason_types or CALENDAR_DEPLOYMENT_REASON_CLOSURE in slot.reason_types:
-                generated_closures.add(slot.date)
-        if generated_holidays or generated_closures:
-            holiday_days = generated_holidays
-            closure_days = generated_closures
-    vacation_days = _expand_vacation_periods(selected.vacation_periods)
-    merged_closure_days = sorted({*closure_days, *vacation_days})
+    representative = selected[0]
+    holiday_days: set[date] = set()
+    closure_days: set[date] = set()
+    for calendar in selected:
+        resolved_holidays, resolved_closures = _resolved_quote_school_calendar_days(db, calendar=calendar)
+        holiday_days.update(resolved_holidays)
+        closure_days.update(resolved_closures)
     return QuoteSchoolCalendarResolveOut(
-        calendar=selected,
+        calendar=representative,
         holiday_dates=sorted(holiday_days),
-        closure_dates=merged_closure_days,
+        closure_dates=sorted(closure_days),
     )
 
 
@@ -7032,12 +7796,13 @@ def create_payment_plan(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> PaymentPlanOut:
     now = _utcnow()
+    normalized_name = _normalized_payment_plan_name(payload.name, payload.payment_method, payload.schedule_type)
     requested_code = (payload.code or "").strip()
-    base_code = requested_code or _payment_plan_code_from_name(payload.name)
+    base_code = requested_code or _payment_plan_code_from_name(normalized_name)
     generated_code = _next_available_payment_plan_code(db, base_code=base_code)
     row = PaymentPlan(
         code=generated_code,
-        name=payload.name.strip(),
+        name=normalized_name,
         payment_method=payload.payment_method.strip().upper(),
         schedule_type=payload.schedule_type.strip().lower(),
         schedule_rules=payload.schedule_rules,
@@ -7065,10 +7830,11 @@ def update_payment_plan(
     row = db.scalar(select(PaymentPlan).where(PaymentPlan.id == plan_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment plan not found")
+    normalized_name = _normalized_payment_plan_name(payload.name, payload.payment_method, payload.schedule_type)
     requested_code = (payload.code or "").strip()
-    base_code = requested_code or _payment_plan_code_from_name(payload.name)
+    base_code = requested_code or _payment_plan_code_from_name(normalized_name)
     row.code = _next_available_payment_plan_code(db, base_code=base_code, exclude_id=row.id)
-    row.name = payload.name.strip()
+    row.name = normalized_name
     row.payment_method = payload.payment_method.strip().upper()
     row.schedule_type = payload.schedule_type.strip().lower()
     row.schedule_rules = payload.schedule_rules

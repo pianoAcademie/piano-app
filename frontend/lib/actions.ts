@@ -87,6 +87,7 @@ import type {
 
 type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
 type BookingScope = "OCCURRENCE" | "SERIES_FUTURE";
+type SessionAudienceScope = "EXTERNAL" | "SUBSCRIPTION" | "FORFAIT" | "PRIVATE";
 
 function currentToken(): string | null {
   const referer = headers().get("referer") ?? "";
@@ -166,13 +167,60 @@ function checkboxFieldWithDefault(formData: FormData, fieldName: string, default
   return normalized === "on" || normalized === "true" || normalized === "1";
 }
 
-function parseSessionVisibility(formData: FormData): { isPrivate: boolean; allowOnlineBooking: boolean } {
-  const raw = String(formData.get("session_visibility") ?? "")
-    .trim()
-    .toUpperCase();
-  const isPrivate = raw === "PRIVATE" || (raw !== "PUBLIC" && checkboxField(formData, "is_private"));
-  const allowOnlineBooking = !isPrivate && checkboxFieldWithDefault(formData, "allow_online_booking", true);
-  return { isPrivate, allowOnlineBooking };
+function normalizeSessionAudienceScope(raw: string, fallback: SessionAudienceScope = "EXTERNAL"): SessionAudienceScope {
+  const value = raw.trim().toUpperCase();
+  if (value === "SUBSCRIPTION" || value === "FORFAIT" || value === "PRIVATE" || value === "EXTERNAL") {
+    return value;
+  }
+  return fallback;
+}
+
+function normalizeSessionAudienceScopes(
+  rawValues: Iterable<unknown>,
+  fallback: SessionAudienceScope[] = ["EXTERNAL"],
+): SessionAudienceScope[] {
+  const seen = new Set<SessionAudienceScope>();
+  const values: SessionAudienceScope[] = [];
+  for (const raw of rawValues) {
+    const scope = normalizeSessionAudienceScope(String(raw ?? ""), "__INVALID__" as SessionAudienceScope);
+    if (scope === ("__INVALID__" as SessionAudienceScope) || seen.has(scope)) {
+      continue;
+    }
+    seen.add(scope);
+    values.push(scope);
+  }
+  if (seen.has("PRIVATE")) {
+    return ["PRIVATE"];
+  }
+  const ordered = (["EXTERNAL", "SUBSCRIPTION", "FORFAIT"] as const).filter((scope) => seen.has(scope));
+  if (ordered.length > 0) {
+    return [...ordered];
+  }
+  return [...fallback];
+}
+
+function parseSessionAudience(formData: FormData): {
+  visibilityScopes: SessionAudienceScope[];
+  bookingScopes: SessionAudienceScope[];
+  isPrivate: boolean;
+  allowOnlineBooking: boolean;
+} {
+  const visibilityScopes: SessionAudienceScope[] = normalizeSessionAudienceScopes(
+    formData.getAll("visibility_scopes"),
+    checkboxField(formData, "is_private") ? ["PRIVATE"] : ["EXTERNAL"],
+  );
+  const bookingScopes: SessionAudienceScope[] = visibilityScopes.includes("PRIVATE")
+    ? ["PRIVATE"]
+    : normalizeSessionAudienceScopes(
+        formData.getAll("booking_scopes"),
+        checkboxFieldWithDefault(formData, "allow_online_booking", true) ? ["EXTERNAL"] : ["PRIVATE"],
+      );
+  return {
+    visibilityScopes,
+    bookingScopes,
+    isPrivate: visibilityScopes.length === 1 && visibilityScopes[0] === "PRIVATE",
+    allowOnlineBooking: !(bookingScopes.length === 1 && bookingScopes[0] === "PRIVATE"),
+  };
 }
 
 function parseApplyScope(raw: string): ApplyScope {
@@ -383,6 +431,14 @@ function safePublicBuyPath(raw: string, fallback: string): string {
   return fallback;
 }
 
+function safePublicReturnPath(raw: string, fallback: string): string {
+  const value = raw.trim();
+  if (value.startsWith("/buy/") || value.startsWith("/login") || value.startsWith("/embed/")) {
+    return value;
+  }
+  return fallback;
+}
+
 function appendQueryMessage(path: string, key: string, message: string): string {
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}${key}=${encodeURIComponent(message)}`;
@@ -406,8 +462,9 @@ type CreateSessionDraftPayload = {
   recurrence_interval: string;
   recurrence_until_date: string;
   recurrence_time_basis: string;
-  session_visibility: "PRIVATE" | "PUBLIC";
-  allow_online_booking: "1" | "0";
+  visibility_scopes: SessionAudienceScope[];
+  booking_scopes: SessionAudienceScope[];
+  external_booking_price_ttc: string;
   public_description: string;
   private_description: string;
   professor_reminder_note: string;
@@ -927,9 +984,10 @@ export async function loginAction(formData: FormData): Promise<void> {
   const password = String(formData.get("password") ?? "");
   const mode = String(formData.get("auth_mode") ?? "login").trim().toLowerCase() || "login";
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
   const loginPathBase = `/login?mode=${encodeURIComponent(mode)}${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
 
   const result = await backendRequest<AuthLoginResponse>("/api/v1/auth/login", {
     method: "POST",
@@ -959,6 +1017,9 @@ export async function loginAction(formData: FormData): Promise<void> {
     if (purchaseContext) {
       redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Connexion%20reussie`);
     }
+    if (publicReturnTo) {
+      redirect(appendQueryMessage(publicReturnTo, "ok", "Connexion reussie"));
+    }
     redirect("/client?tab=home&ok=Connexion%20reussie");
   }
 
@@ -969,6 +1030,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
   const first_name = String(formData.get("first_name") ?? "").trim();
   const last_name = String(formData.get("last_name") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -979,6 +1041,7 @@ export async function registerAction(formData: FormData): Promise<void> {
     typeof File !== "undefined" && studentPhoto instanceof File && studentPhoto.size > 0
       ? studentPhoto
       : null;
+  const isEmbedBookingSignup = publicReturnTo.startsWith("/embed/");
   const confirmAccuracy = parseCheckboxFlag(formData, "confirm_accuracy", false);
   const acceptAccountTerms = parseCheckboxFlag(formData, "accept_account_terms", false);
   const marketingEmail = parseCheckboxFlag(formData, "marketing_email_opt_in", false);
@@ -988,7 +1051,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   const timezone = "Europe/Paris";
   const signupPathBase = `/login?mode=signup${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
 
   if (!first_name) {
     redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20prenom.`);
@@ -1008,7 +1071,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   if (password.length < 8) {
     redirect(`${signupPathBase}&error=Veuillez%20choisir%20un%20mot%20de%20passe%20de%208%20caracteres%20minimum.`);
   }
-  if (!studentPhotoFile) {
+  if (!studentPhotoFile && !isEmbedBookingSignup) {
     redirect(`${signupPathBase}&error=Veuillez%20ajouter%20une%20photo%20de%20l%27eleve.`);
   }
   if (!confirmAccuracy) {
@@ -1031,8 +1094,8 @@ export async function registerAction(formData: FormData): Promise<void> {
       transactional_sms_opt_in: true,
       marketing_email_opt_in: marketingEmail,
       marketing_sms_opt_in: marketingSms,
-      student_photo_filename: studentPhotoFile.name || null,
-      student_photo_mime_type: studentPhotoFile.type || null,
+      student_photo_filename: studentPhotoFile?.name || null,
+      student_photo_mime_type: studentPhotoFile?.type || null,
       residence_country,
       preferred_currency,
       timezone,
@@ -1052,7 +1115,7 @@ export async function registerAction(formData: FormData): Promise<void> {
     redirect(
       `/login?mode=login${email ? `&email=${encodeURIComponent(email)}` : ""}${
         purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-      }&error=${encodeURIComponent(loginResult.message)}`,
+      }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&error=${encodeURIComponent(loginResult.message)}`,
     );
   }
 
@@ -1060,15 +1123,19 @@ export async function registerAction(formData: FormData): Promise<void> {
   if (purchaseContext) {
     redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Compte%20cree`);
   }
+  if (publicReturnTo) {
+    redirect(appendQueryMessage(publicReturnTo, "ok", "Compte cree"));
+  }
   redirect("/client?tab=home&ok=Compte%20cree");
 }
 
 export async function forgotPasswordAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
   const forgotPathBase = `/login?mode=forgot${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
   if (!email) {
     redirect(`${forgotPathBase}&error=Email%20obligatoire`);
   }
@@ -1378,6 +1445,51 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
     successPath = removeQueryParam(successPath, "session_ok");
     successPath = appendQueryMessage(successPath, "session_ok", "Reservation confirmee");
   }
+  redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
+}
+
+export async function reservePublicPlanningSessionAction(formData: FormData): Promise<void> {
+  const fallbackReturnTo = "/embed/planning";
+  const returnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), fallbackReturnTo);
+  const token = currentPortalToken();
+  if (!token) {
+    redirect(`/login?mode=login&return_to=${encodeURIComponent(returnTo)}&error=Connexion%20requise`);
+  }
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  if (!sessionId) {
+    redirect(appendQueryMessage(returnTo, "session_error", "Creneau invalide"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/sessions/${sessionId}/book`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    const userMessage =
+      result.status === 403 && result.message === "No eligible active plan for this session"
+        ? "Aucune formule active compatible avec ce type de cours."
+        : result.status === 403 && result.message === "No remaining credits on selected pack"
+          ? "Plus de credits disponibles sur le carnet selectionne."
+          : result.message;
+    let failurePath = removeQueryParam(returnTo, "ok");
+    failurePath = removeQueryParam(failurePath, "error");
+    failurePath = removeQueryParam(failurePath, "session_ok");
+    failurePath = removeQueryParam(failurePath, "session_error");
+    failurePath = appendQueryMessage(failurePath, "session_error", userMessage);
+    redirect(appendQueryMessage(failurePath, "error", userMessage));
+  }
+
+  revalidatePath("/embed/planning");
+  let successPath = removeQueryParam(returnTo, "error");
+  successPath = removeQueryParam(successPath, "session_error");
+  successPath = removeQueryParam(successPath, "session_ok");
+  successPath = appendQueryMessage(successPath, "session_ok", "Reservation confirmee");
   redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
 }
 
@@ -1862,10 +1974,14 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const public_description = optionalField(formData, "public_description");
   const private_description = optionalField(formData, "private_description");
   const professor_reminder_note = optionalField(formData, "professor_reminder_note");
+  const externalBookingPriceRaw = String(formData.get("external_booking_price_ttc") ?? "").trim();
+  const externalBookingPrice = externalBookingPriceRaw ? parseNonNegativeDecimal(externalBookingPriceRaw.replace(",", ".")) : null;
   const zoom_link = optionalField(formData, "zoom_link");
-  const sessionVisibility = parseSessionVisibility(formData);
-  const is_private = sessionVisibility.isPrivate;
-  const allow_online_booking = sessionVisibility.allowOnlineBooking;
+  const sessionAudience = parseSessionAudience(formData);
+  const visibility_scopes = sessionAudience.visibilityScopes;
+  const booking_scopes = sessionAudience.bookingScopes;
+  const is_private = sessionAudience.isPrivate;
+  const allow_online_booking = sessionAudience.allowOnlineBooking;
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const recurrence_mode = String(formData.get("recurrence_mode") ?? "NONE").trim().toUpperCase();
@@ -1917,8 +2033,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     recurrence_interval: recurrence_interval_raw || "1",
     recurrence_until_date: recurrence_until_date || "",
     recurrence_time_basis,
-    session_visibility: is_private ? "PRIVATE" : "PUBLIC",
-    allow_online_booking: allow_online_booking ? "1" : "0",
+    visibility_scopes,
+    booking_scopes,
+    external_booking_price_ttc: externalBookingPriceRaw,
     public_description: clampDraftValue(public_description ?? "", 1200),
     private_description: clampDraftValue(private_description ?? "", 1200),
     professor_reminder_note: clampDraftValue(professor_reminder_note ?? "", 1200),
@@ -1955,6 +2072,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   if (!capacity_raw.trim() || parsed_capacity_max === null || capacity_max < 0) {
     redirect(createSessionErrorPath(returnTo, createDraftPayload, "Capacite max obligatoire (>= 0; vacances = 0)"));
   }
+  if (externalBookingPriceRaw && externalBookingPrice === null) {
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Tarif externe invalide"));
+  }
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
   if (recurrenceEnabled) {
@@ -1976,6 +2096,8 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     start_at_utc,
     is_all_day,
     capacity_max,
+    visibility_scopes,
+    booking_scopes,
     is_private,
     allow_online_booking,
     timezone: session_timezone,
@@ -1993,6 +2115,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   }
   if (zoom_link !== null) {
     payload.zoom_link = zoom_link;
+  }
+  if (externalBookingPriceRaw) {
+    payload.external_booking_price_ttc = externalBookingPrice;
   }
   if (end_at_utc !== null) {
     payload.end_at_utc = end_at_utc;
@@ -2039,6 +2164,8 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const public_description = optionalField(formData, "public_description");
   const private_description = optionalField(formData, "private_description");
   const professor_reminder_note = optionalField(formData, "professor_reminder_note");
+  const externalBookingPriceRaw = String(formData.get("external_booking_price_ttc") ?? "").trim();
+  const externalBookingPrice = externalBookingPriceRaw ? parseNonNegativeDecimal(externalBookingPriceRaw.replace(",", ".")) : null;
   const course_type_id = String(formData.get("course_type_id") ?? "").trim();
   const location_id = String(formData.get("location_id") ?? "").trim();
   const professor_id = String(formData.get("professor_id") ?? "").trim();
@@ -2046,9 +2173,11 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const substitute_note = optionalField(formData, "substitute_note");
   const zoom_link = optionalField(formData, "zoom_link");
   const status = String(formData.get("status") ?? "").trim();
-  const sessionVisibility = parseSessionVisibility(formData);
-  const is_private = sessionVisibility.isPrivate;
-  const allow_online_booking = sessionVisibility.allowOnlineBooking;
+  const sessionAudience = parseSessionAudience(formData);
+  const visibility_scopes = sessionAudience.visibilityScopes;
+  const booking_scopes = sessionAudience.bookingScopes;
+  const is_private = sessionAudience.isPrivate;
+  const allow_online_booking = sessionAudience.allowOnlineBooking;
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
@@ -2107,6 +2236,9 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   if (capacity_raw.trim() && capacity_max === null) {
     redirect(appendQueryMessage(returnTo, "error", "Capacite max invalide"));
   }
+  if (externalBookingPriceRaw && externalBookingPrice === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Tarif externe invalide"));
+  }
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
   if (recurrenceEnabled) {
@@ -2136,8 +2268,11 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     location_id,
     start_at_utc,
     is_all_day,
+    visibility_scopes,
+    booking_scopes,
     is_private,
     allow_online_booking,
+    external_booking_price_ttc: externalBookingPriceRaw ? externalBookingPrice : null,
     timezone: session_timezone,
   };
   payload.professor_id = professor_id || null;
@@ -8410,6 +8545,9 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
     quote_reminder_sms_enabled: checkboxField(formData, "quote_reminder_sms_enabled"),
     quote_reminder_lead_hours: Number.parseInt(String(formData.get("quote_reminder_lead_hours") ?? "").trim() || "24", 10),
     quote_daily_job_local_time: String(formData.get("quote_daily_job_local_time") ?? "").trim() || "07:00",
+    quote_pass_recup_non_subscribed_text: String(
+      formData.get("quote_pass_recup_non_subscribed_text") ?? "",
+    ).trim(),
     quote_auto_cancel_enabled: checkboxField(formData, "quote_auto_cancel_enabled"),
     quote_auto_cancel_delay_hours: Number.parseInt(String(formData.get("quote_auto_cancel_delay_hours") ?? "").trim() || "24", 10),
     quote_cancel_notification_enabled: checkboxField(formData, "quote_cancel_notification_enabled"),
@@ -9108,6 +9246,45 @@ export async function saveTypeformIntakeResolutionAction(formData: FormData): Pr
   );
 }
 
+export async function reanalyzeTypeformIntakeAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  const cleanReturnTo = setQueryParam(
+    setQueryParam(
+      setQueryParam(returnTo, "error", null),
+      "ok",
+      null,
+    ),
+    "success_modal",
+    null,
+  );
+  if (!intakeId) {
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Intake introuvable"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/reanalyze`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(cleanReturnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(appendQueryMessage(cleanReturnTo, "ok", "Analyse des propositions mise a jour"));
+}
+
 export async function saveTypeformIntakeNormalizedDataAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -9274,12 +9451,20 @@ export async function generateTypeformDraftQuoteAction(formData: FormData): Prom
 
   const intakeId = String(formData.get("intake_id") ?? "").trim();
   const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  const allowWithoutActivitiesRaw = String(formData.get("allow_without_activities") ?? "").trim().toLowerCase();
+  const allowWithoutActivities =
+    allowWithoutActivitiesRaw === "1"
+    || allowWithoutActivitiesRaw === "true"
+    || allowWithoutActivitiesRaw === "on";
   if (!intakeId) {
     redirect(setQueryParam(returnTo, "error", "Intake introuvable"));
   }
 
-  const result = await backendRequest<{ quote_id: string }>(
-    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/draft-quote`,
+  const path = allowWithoutActivities
+    ? `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/draft-quote?allow_without_activities=true`
+    : `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/draft-quote`;
+  const result = await backendRequest<{ quote_id: string; warning_message?: string | null }>(
+    path,
     {
       method: "POST",
     },
@@ -9292,7 +9477,8 @@ export async function generateTypeformDraftQuoteAction(formData: FormData): Prom
 
   revalidatePath("/admin/intakes");
   revalidatePath("/admin/quotes");
-  redirect(`/admin/quotes/${encodeURIComponent(result.data.quote_id)}?back=${encodeURIComponent("/admin/intakes")}&ok=${encodeURIComponent("Devis brouillon cree depuis intake")}`);
+  const okMessage = result.data.warning_message || "Devis brouillon cree depuis intake";
+  redirect(`/admin/quotes/${encodeURIComponent(result.data.quote_id)}?back=${encodeURIComponent("/admin/intakes")}&ok=${encodeURIComponent(okMessage)}`);
 }
 
 export async function seedTypeformDemoAction(formData: FormData): Promise<void> {
@@ -10040,7 +10226,7 @@ type QuotePlanningBlockInput = {
   end_date: string;
   start_time: string;
   end_time: string;
-  modality: string | null;
+  modality: "ONLINE" | "ONSITE" | null;
   selection_pending?: boolean;
   pending_solfege_level?: string | null;
   pending_slot_options?: Array<Record<string, unknown>>;
@@ -10057,8 +10243,16 @@ type QuoteSolfegeSlotInput = {
   duration_minutes: number;
   location_id: string | null;
   location_label: string | null;
-  modality: string | null;
+  modality: "ONLINE" | "ONSITE" | null;
 };
+
+function normalizePlanningModality(value: unknown): "ONLINE" | "ONSITE" | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "ONLINE" || normalized === "ONSITE") {
+    return normalized;
+  }
+  return null;
+}
 
 function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null {
   const value = raw.trim();
@@ -10086,7 +10280,7 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const activityLabel = String(item.activity_label ?? "").trim();
       const locationIdRaw = String(item.location_id ?? "").trim();
       const locationLabel = String(item.location_label ?? "").trim();
-      const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
+      const modalityRaw = normalizePlanningModality(item.modality);
       const recurrenceRaw = String(item.recurrence_frequency ?? "").trim().toLowerCase();
       const recurrenceFrequency: QuotePlanningBlockInput["recurrence_frequency"] =
         recurrenceRaw === "biweekly" || recurrenceRaw === "monthly" ? recurrenceRaw : "weekly";
@@ -10149,7 +10343,7 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         end_date: endDate,
         start_time: selectionPending ? "" : startTime,
         end_time: selectionPending ? "" : endTime,
-        modality: modalityRaw === "ONLINE" || modalityRaw === "ONSITE" ? modalityRaw : null,
+        modality: modalityRaw,
         selection_pending: selectionPending,
         pending_solfege_level: selectionPending && pendingSolfegeLevel ? pendingSolfegeLevel : null,
         pending_slot_options: selectionPending ? pendingSlotOptions : [],
@@ -10239,6 +10433,7 @@ async function buildCalendarSnapshotFromBlocks({
   async function resolveLocationCalendar(
     locationId: string | null,
     requestedSchoolYearLabel: string | null,
+    modality: "ONLINE" | "ONSITE" | null,
   ): Promise<{
     calendar: Record<string, unknown> | null;
     holiday_dates: string[];
@@ -10247,12 +10442,19 @@ async function buildCalendarSnapshotFromBlocks({
     if (!locationId) {
       return { calendar: null, holiday_dates: [], closure_dates: [] };
     }
-    const cacheKey = `${locationId}|${requestedSchoolYearLabel || "*"}`;
+    const cacheKey = `${locationId}|${requestedSchoolYearLabel || "*"}|${modality || "*"}`;
     const cached = calendarByLocation.get(cacheKey);
     if (cached) {
       return cached;
     }
-    const query = requestedSchoolYearLabel ? `?school_year_label=${encodeURIComponent(requestedSchoolYearLabel)}` : "";
+    const searchParams = new URLSearchParams();
+    if (requestedSchoolYearLabel) {
+      searchParams.set("school_year_label", requestedSchoolYearLabel);
+    }
+    if (modality) {
+      searchParams.set("modality", modality);
+    }
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : "";
     const result = await backendRequest<{
       calendar: Record<string, unknown> | null;
       holiday_dates: string[];
@@ -10276,7 +10478,7 @@ async function buildCalendarSnapshotFromBlocks({
         holiday_dates: string[];
         closure_dates: string[];
       }>(
-        `/api/v1/quote-school-calendars/active/by-location/${encodeURIComponent(locationId)}`,
+        `/api/v1/quote-school-calendars/active/by-location/${encodeURIComponent(locationId)}${modality ? `?modality=${encodeURIComponent(modality)}` : ""}`,
         {},
         token,
       );
@@ -10305,7 +10507,7 @@ async function buildCalendarSnapshotFromBlocks({
 
   for (const block of normalizedBlocks) {
     const inferredSchoolYearLabel = schoolYearLabel || deriveSchoolYearLabelFromDate(block.start_date) || null;
-    const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel);
+    const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel, block.modality);
     const holidayDates = block.exclude_holidays_in_recurrence === false ? [] : resolvedCalendar.holiday_dates;
     const closureDates = block.exclude_school_vacations_in_recurrence === false ? [] : resolvedCalendar.closure_dates;
     if (block.selection_pending) {
@@ -10345,6 +10547,9 @@ async function buildCalendarSnapshotFromBlocks({
     if (!preview.ok) {
       redirect(appendQueryMessage(returnTo, "error", preview.message));
     }
+    const previewStartTime = String(preview.data.start_time ?? block.start_time).trim() || block.start_time;
+    const previewEndTime = String(preview.data.end_time ?? block.end_time).trim() || block.end_time;
+    const previewModality = normalizePlanningModality(preview.data.modality ?? block.modality);
     const rows = Array.isArray(preview.data.sessions) ? (preview.data.sessions as Array<Record<string, unknown>>) : [];
     for (const row of rows) {
       sessions.push({
@@ -10358,6 +10563,9 @@ async function buildCalendarSnapshotFromBlocks({
       });
     }
     Object.assign(block, {
+      start_time: previewStartTime,
+      end_time: previewEndTime,
+      modality: previewModality,
       calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
       calendar_name: String(resolvedCalendar.calendar?.name ?? ""),
       calendar_school_year: String(resolvedCalendar.calendar?.school_year_label ?? ""),

@@ -7,8 +7,8 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 import re
 import unicodedata
-from urllib.parse import urlsplit
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -279,6 +279,8 @@ class InvoicePeriodLine:
     vat_amount: Decimal
     total_incl_vat: Decimal
     currency: str
+    unit_price_ttc: Decimal | None = None
+    detail_lines: tuple[str, ...] = ()
     is_section_header: bool = False
 
 
@@ -543,6 +545,14 @@ def _wrap_text(value: str, max_chars: int) -> list[str]:
     return lines
 
 
+def _invoice_local_datetime(value: datetime) -> datetime:
+    candidate = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    try:
+        return candidate.astimezone(ZoneInfo("Europe/Paris"))
+    except ZoneInfoNotFoundError:
+        return candidate.astimezone(timezone.utc)
+
+
 def _truncate_text(value: str, max_chars: int) -> str:
     safe = _ascii_safe(value)
     if len(safe) <= max_chars:
@@ -765,6 +775,7 @@ def render_invoice_period_pdf(
     billing_entity: str | None = None,
 ) -> bytes:
     identity = _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
+    issued_at_local = _invoice_local_datetime(issued_at)
     pdf = _SimplePdfDocument()
     logo_resource_name: str | None = None
     logo_width = 0.0
@@ -791,11 +802,13 @@ def render_invoice_period_pdf(
     row_top = table_top + 22.0
 
     col_date_x = left + 6
-    col_label_x = left + 86
-    col_qty_right = left + 361
-    col_ht_right = left + 406
-    col_vat_rate_right = left + 446
-    col_vat_right = left + 486
+    col_label_x = left + 78
+    # Keep enough room between right-aligned numeric columns so values do not overlap.
+    col_qty_right = right - 236
+    col_unit_ttc_right = right - 181
+    col_ht_right = right - 129
+    col_vat_rate_right = right - 82
+    col_vat_right = right - 47
     col_ttc_right = right - 6
     totals_col_ht_right = right - 166
     totals_col_vat_right = right - 86
@@ -835,20 +848,26 @@ def render_invoice_period_pdf(
         pdf.text_right(
             right_x=right - 2.0,
             top_y=48.0,
-            value=f"Date: {issued_at.strftime('%d/%m/%Y')}",
+            value=f"Date: {issued_at_local.strftime('%d/%m/%Y %H:%M')}",
             size=10,
             color=(0.92, 0.93, 0.96),
         )
 
         # Bloc identite emetteur
-        pdf.text(x=left, top_y=116.0, value=identity.company_name, size=10, bold=True)
-        pdf.text(x=left, top_y=132.0, value=f"SIREN: {identity.company_siren}", size=10)
-        pdf.text(x=left, top_y=148.0, value=f"SIRET: {identity.company_siret}", size=10)
-        pdf.text(x=left, top_y=164.0, value=f"TVA intracom: {identity.company_vat_number}", size=10)
-        pdf.text(x=left, top_y=180.0, value=f"Telephone: {identity.company_phone}", size=10)
-        pdf.text(x=left, top_y=196.0, value=f"Email: {identity.company_email}", size=10)
+        company_lines = [identity.company_name]
+        if (identity.company_siret or "").strip() not in {"", "-"}:
+            company_lines.append(f"SIRET: {identity.company_siret}")
+        elif (identity.company_siren or "").strip() not in {"", "-"}:
+            company_lines.append(f"SIREN: {identity.company_siren}")
+        if (identity.company_vat_number or "").strip() not in {"", "-"}:
+            company_lines.append(f"TVA intracom: {identity.company_vat_number}")
+        company_lines.append(f"Telephone: {identity.company_phone}")
+        company_lines.append(f"Email: {identity.company_email}")
+        for index, line in enumerate(company_lines):
+            pdf.text(x=left, top_y=116.0 + (index * 16.0), value=line, size=10, bold=(index == 0))
+        company_address_top = 116.0 + (len(company_lines) * 16.0)
         for index, chunk in enumerate(_wrap_text(identity.company_address, 48)):
-            pdf.text(x=left, top_y=212.0 + (index * 14.0), value=chunk, size=10)
+            pdf.text(x=left, top_y=company_address_top + (index * 14.0), value=chunk, size=10)
 
         # Bloc client facture
         billing_address = _ascii_safe((client_billing_address or "").strip()) or "-"
@@ -856,7 +875,13 @@ def render_invoice_period_pdf(
         pdf.text(x=330.0, top_y=134.0, value=client_name, size=10, bold=True)
         for index, chunk in enumerate(_wrap_text(billing_address, 34)):
             pdf.text(x=330.0, top_y=150.0 + (index * 14.0), value=chunk, size=10)
-        pdf.text(x=330.0, top_y=196.0, value=f"Date de la facture: {issued_at.strftime('%d/%m/%Y')}", size=10, bold=True)
+        pdf.text(
+            x=330.0,
+            top_y=196.0,
+            value=f"Date de la facture: {issued_at_local.strftime('%d/%m/%Y %H:%M')}",
+            size=10,
+            bold=True,
+        )
         pdf.text(
             x=330.0,
             top_y=212.0,
@@ -876,6 +901,7 @@ def render_invoice_period_pdf(
         pdf.text(x=col_date_x, top_y=282.0, value="Date", size=9, bold=True)
         pdf.text(x=col_label_x, top_y=282.0, value="Prestation", size=9, bold=True)
         pdf.text_right(right_x=col_qty_right, top_y=282.0, value="Qt", size=9, bold=True)
+        pdf.text_right(right_x=col_unit_ttc_right, top_y=282.0, value="PU TTC", size=9, bold=True)
         pdf.text_right(right_x=col_ht_right, top_y=282.0, value="HT", size=9, bold=True)
         pdf.text_right(right_x=col_vat_rate_right, top_y=282.0, value="TVA%", size=9, bold=True)
         pdf.text_right(right_x=col_vat_right, top_y=282.0, value="TVA", size=9, bold=True)
@@ -905,9 +931,11 @@ def render_invoice_period_pdf(
             continue
 
         date_lines = _wrap_text(row.date_label, 18)
-        label_lines = _wrap_text(row.label, 44)
-        max_lines = max(len(date_lines), len(label_lines))
-        row_height = max(20.0, (max_lines * 12.0) + 8.0)
+        label_lines = _wrap_text(row.label, 32)
+        detail_lines = [chunk for detail in row.detail_lines for chunk in _wrap_text(detail, 36)]
+        max_label_height = (len(label_lines) * 12.0) + (len(detail_lines) * 10.0)
+        max_lines_height = max(len(date_lines) * 12.0, max_label_height)
+        row_height = max(20.0, max_lines_height + 8.0)
         if current_row_top + row_height > 760.0:
             pdf.new_page()
             current_row_top = draw_table_header_for_new_page()
@@ -917,7 +945,25 @@ def render_invoice_period_pdf(
             pdf.text(x=col_date_x, top_y=current_row_top + 14 + (idx * 12), value=chunk, size=9)
         for idx, chunk in enumerate(label_lines):
             pdf.text(x=col_label_x, top_y=current_row_top + 14 + (idx * 12), value=chunk, size=9)
+        detail_top = current_row_top + 14 + (len(label_lines) * 12.0)
+        for idx, chunk in enumerate(detail_lines):
+            pdf.text(
+                x=col_label_x + 6,
+                top_y=detail_top + (idx * 10.0),
+                value=chunk,
+                size=7.5,
+                color=(0.33, 0.39, 0.47),
+            )
         pdf.text_right(right_x=col_qty_right, top_y=current_row_top + 14, value=str(row.quantity), size=9)
+        unit_price_ttc = row.unit_price_ttc
+        if unit_price_ttc is None and row.quantity > 0:
+            unit_price_ttc = Decimal(row.total_incl_vat / Decimal(row.quantity)).quantize(Decimal("0.01"))
+        pdf.text_right(
+            right_x=col_unit_ttc_right,
+            top_y=current_row_top + 14,
+            value=_format_amount(unit_price_ttc) if unit_price_ttc is not None else "-",
+            size=9,
+        )
         pdf.text_right(right_x=col_ht_right, top_y=current_row_top + 14, value=_format_amount(row.amount_excl_vat), size=9)
         pdf.text_right(right_x=col_vat_rate_right, top_y=current_row_top + 14, value=f"{Decimal(row.vat_rate).quantize(Decimal('0.01'))}%", size=9)
         pdf.text_right(right_x=col_vat_right, top_y=current_row_top + 14, value=_format_amount(row.vat_amount), size=9)
@@ -965,14 +1011,7 @@ def render_invoice_period_pdf(
         set(totals_by_currency.keys()) | set(normalized_opening_balance_by_currency.keys()) | set(normalized_total_to_pay_by_currency.keys())
     )
     payment_link_text = _ascii_safe((payment_link_url or "").strip())
-    payment_link_preview = ""
-    if payment_link_text:
-        parsed_link = urlsplit(payment_link_text)
-        if parsed_link.scheme and parsed_link.netloc:
-            truncated_path = _truncate_text(parsed_link.path or "/", 28)
-            payment_link_preview = f"{parsed_link.scheme}://{parsed_link.netloc}{truncated_path}"
-        else:
-            payment_link_preview = _truncate_text(payment_link_text, 64)
+    payment_link_preview = payment_link_text
     reserved_adjustment_space = (len(normalized_adjustments) * 18.0) + 34.0 if normalized_adjustments else 0.0
     reserved_balance_space = 0.0
     if summary_currencies:
@@ -1102,6 +1141,14 @@ def render_invoice_period_pdf(
         current_row_top += button_height + 8.0
         if payment_link_preview:
             pdf.text(x=col_label_x, top_y=current_row_top, value=payment_link_preview, size=8, color=(0.18, 0.59, 0.82))
+            preview_width = _text_width_estimate(payment_link_preview, size=8)
+            pdf.add_link(
+                x=col_label_x,
+                top_y=current_row_top - 7.0,
+                width=preview_width + 6.0,
+                height=12.0,
+                url=payment_link_text,
+            )
             current_row_top += 12.0
 
     if normalized_adjustments:

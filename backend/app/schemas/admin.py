@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.models.catalog import DeliveryMode, SessionStatus
+from app.models.catalog import DeliveryMode, SessionAudienceScope, SessionStatus
 from app.models.ops import ReminderStatus
 from app.models.payout import PayoutStatus, SalaryPaymentMethod
 from app.models.plan import PlanCreditGrantsRelation, PlanKind, PlanPriceTaxMode, PlanRestrictionPeriod, SubscriptionStatus
@@ -212,6 +212,7 @@ class AdminMessagingSettingsOut(BaseModel):
     quote_auto_cancel_delay_hours: int
     quote_cancel_notification_enabled: bool
     quote_cancel_sms_notification_enabled: bool
+    quote_pass_recup_non_subscribed_text: str
     delivery_enabled: bool
     delivery_error_message: str | None = None
     sms_delivery_enabled: bool
@@ -258,6 +259,7 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
     quote_auto_cancel_delay_hours: int = Field(default=24, ge=0, le=720)
     quote_cancel_notification_enabled: bool = True
     quote_cancel_sms_notification_enabled: bool = False
+    quote_pass_recup_non_subscribed_text: str = Field(default="", max_length=4000)
 
 
 class AdminMessagingChannel(str, enum.Enum):
@@ -652,8 +654,11 @@ class AdminActivityUpdateRequest(BaseModel):
 class AdminClientOut(BaseModel):
     id: UUID
     email: str
+    email_is_generated: bool = False
+    creation_source: str = "MANUAL"
     role: UserRole
     client_kind: ClientKind
+    photo_url: str | None = None
     first_name: str | None
     last_name: str | None
     address_line: str | None
@@ -853,6 +858,47 @@ class AdminClientBulkOut(BaseModel):
     processed_count: int
     skipped_count: int = 0
     message: str
+
+
+class AdminMyMusicStaffImportSampleRowOut(BaseModel):
+    student_external_id: str
+    family_external_id: str | None = None
+    display_name: str
+    client_kind: ClientKind
+    action: Literal["CREATE", "UPDATE"]
+    parent_contacts_count: int
+    warning_messages: list[str] = Field(default_factory=list)
+
+
+class AdminMyMusicStaffImportPreviewOut(BaseModel):
+    source_system: str
+    file_name: str | None = None
+    rows_total: int
+    students_detected: int
+    adult_students_detected: int
+    child_students_detected: int
+    parent_contacts_detected: int
+    families_detected: int
+    would_create_clients: int
+    would_update_clients: int
+    would_create_family_links: int
+    warnings: list[str] = Field(default_factory=list)
+    sample_rows: list[AdminMyMusicStaffImportSampleRowOut] = Field(default_factory=list)
+
+
+class AdminMyMusicStaffImportExecuteOut(BaseModel):
+    source_system: str
+    file_name: str | None = None
+    rows_total: int
+    processed_students: int
+    parents_created: int
+    parents_updated: int
+    students_created: int
+    students_updated: int
+    family_links_created: int
+    family_links_updated: int
+    warnings: list[str] = Field(default_factory=list)
+    summary: str
 
 
 class AdminFamilyMemberOut(BaseModel):
@@ -1725,8 +1771,13 @@ class AdminSessionCreateRequest(BaseModel):
     capacity_max: int = Field(default=1, ge=0)
     auto_cancel_deadline_utc: datetime | None = None
     zoom_link: str | None = None
-    is_private: bool = False
-    allow_online_booking: bool = True
+    visibility_scopes: list[SessionAudienceScope] = Field(default_factory=lambda: [SessionAudienceScope.EXTERNAL])
+    booking_scopes: list[SessionAudienceScope] = Field(default_factory=lambda: [SessionAudienceScope.EXTERNAL])
+    visibility_scope: SessionAudienceScope | None = None
+    booking_scope: SessionAudienceScope | None = None
+    is_private: bool | None = None
+    allow_online_booking: bool | None = None
+    external_booking_price_ttc: Decimal | None = Field(default=None, ge=0)
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
 
@@ -1750,8 +1801,13 @@ class AdminSessionUpdateRequest(BaseModel):
     zoom_link: str | None = None
     status: SessionStatus | None = None
     cancel_reason: str | None = None
+    visibility_scopes: list[SessionAudienceScope] | None = None
+    booking_scopes: list[SessionAudienceScope] | None = None
+    visibility_scope: SessionAudienceScope | None = None
+    booking_scope: SessionAudienceScope | None = None
     is_private: bool | None = None
     allow_online_booking: bool | None = None
+    external_booking_price_ttc: Decimal | None = Field(default=None, ge=0)
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
 
@@ -1792,8 +1848,13 @@ class AdminSessionOut(BaseModel):
     auto_cancel_deadline_utc: datetime
     cancel_reason: str | None
     zoom_link: str | None
+    visibility_scopes: list[SessionAudienceScope] = Field(default_factory=list)
+    booking_scopes: list[SessionAudienceScope] = Field(default_factory=list)
+    visibility_scope: SessionAudienceScope
+    booking_scope: SessionAudienceScope
     is_private: bool
     allow_online_booking: bool
+    external_booking_price_ttc: Decimal | None
     timezone: str
     recurrence_group_id: UUID | None
     recurrence_rule: str | None

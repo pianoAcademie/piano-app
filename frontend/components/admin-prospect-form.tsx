@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import SearchMultiSelect from "./search-multi-select";
 
 type ProspectStatus = "active" | "converted" | "archived" | "lost" | "new";
@@ -34,6 +34,7 @@ type AdminProspectFormProps = {
   submitAction: (formData: FormData) => Promise<void>;
   initial?: ProspectInitial;
   parentCandidates: ParentCandidate[];
+  focusTarget?: "child" | "parent" | null;
 };
 
 function stringFromUnknown(value: unknown): string {
@@ -45,7 +46,14 @@ function displayName(firstName: string | null, lastName: string | null, fallback
   return value || fallback;
 }
 
-export default function AdminProspectForm({ mode, returnTo, submitAction, initial, parentCandidates }: AdminProspectFormProps): JSX.Element {
+export default function AdminProspectForm({
+  mode,
+  returnTo,
+  submitAction,
+  initial,
+  parentCandidates,
+  focusTarget = null,
+}: AdminProspectFormProps): JSX.Element {
   const initialMeta = (initial?.meta ?? {}) as Record<string, unknown>;
   const initialType = String(initialMeta.prospect_type || "").trim().toLowerCase() === "child" ? "child" : "adult";
   const [prospectType, setProspectType] = useState<"adult" | "child">(initialType);
@@ -78,6 +86,10 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
   );
 
   const defaultAdultAddress = stringFromUnknown(initialMeta.adult_address);
+  const adultFirstNameRef = useRef<HTMLInputElement | null>(null);
+  const childFirstNameRef = useRef<HTMLInputElement | null>(null);
+  const parentFirstNameRef = useRef<HTMLInputElement | null>(null);
+  const parentSectionRef = useRef<HTMLElement | null>(null);
 
   const defaultStatus = (() => {
     const status = String(initial?.status || "active").trim().toLowerCase();
@@ -87,10 +99,49 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
     return "active";
   })();
 
+  useEffect(() => {
+    const scrollAndMaybeFocus = (target: HTMLElement | null): void => {
+      if (!target) {
+        return;
+      }
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      if ("focus" in target) {
+        target.focus();
+      }
+    };
+
+    if (prospectType === "adult") {
+      scrollAndMaybeFocus(adultFirstNameRef.current);
+      return;
+    }
+    if (focusTarget === "child") {
+      scrollAndMaybeFocus(childFirstNameRef.current);
+      return;
+    }
+    if (focusTarget === "parent") {
+      if (parentMode === "new_parent") {
+        scrollAndMaybeFocus(parentFirstNameRef.current);
+        return;
+      }
+      scrollAndMaybeFocus(parentSectionRef.current);
+    }
+  }, [focusTarget, parentMode, prospectType]);
+
   return (
     <form action={submitAction} className="grid cols-2 config-form-grid">
       <input type="hidden" name="return_to" value={returnTo} />
       {initial?.id ? <input type="hidden" name="prospect_id" value={initial.id} /> : null}
+
+      {prospectType === "child" && focusTarget === "child" ? (
+        <section className="flash-ok span-2">
+          Corrige ici les informations de l&apos;enfant, puis enregistre et reviens au devis.
+        </section>
+      ) : null}
+      {prospectType === "child" && focusTarget === "parent" ? (
+        <section className="flash-ok span-2">
+          Corrige ici le parent referent, puis enregistre et reviens au devis.
+        </section>
+      ) : null}
 
       <label>
         Type de prospect
@@ -119,7 +170,7 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
         <>
           <label>
             Prenom
-            <input type="text" name="adult_first_name" required defaultValue={initial?.first_name ?? ""} />
+            <input ref={adultFirstNameRef} type="text" name="adult_first_name" required defaultValue={initial?.first_name ?? ""} />
           </label>
           <label>
             Nom
@@ -140,12 +191,18 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
         </>
       ) : (
         <>
-          <section className="card span-2">
+          <section className="card span-2" id="prospect-child-section">
             <h4>Eleve (enfant)</h4>
             <div className="grid cols-3 top-gap-sm">
               <label>
                 Prenom enfant
-                <input type="text" name="child_first_name" required defaultValue={stringFromUnknown(childMeta.first_name) || (initial?.first_name ?? "")} />
+                <input
+                  ref={childFirstNameRef}
+                  type="text"
+                  name="child_first_name"
+                  required
+                  defaultValue={stringFromUnknown(childMeta.first_name) || (initial?.first_name ?? "")}
+                />
               </label>
               <label>
                 Nom enfant
@@ -158,7 +215,7 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
             </div>
           </section>
 
-          <section className="card span-2">
+          <section ref={parentSectionRef} className="card span-2" id="prospect-parent-section" tabIndex={-1}>
             <h4>Parent referent</h4>
             <fieldset className="top-gap-sm">
               <legend>Mode parent referent</legend>
@@ -236,7 +293,13 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
                 </label>
                 <label>
                   Prenom parent
-                  <input type="text" name="parent_first_name" required={parentMode === "new_parent"} defaultValue={stringFromUnknown(parentMeta.first_name)} />
+                  <input
+                    ref={parentFirstNameRef}
+                    type="text"
+                    name="parent_first_name"
+                    required={parentMode === "new_parent"}
+                    defaultValue={stringFromUnknown(parentMeta.first_name)}
+                  />
                 </label>
                 <label>
                   Nom parent

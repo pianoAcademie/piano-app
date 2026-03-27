@@ -64,6 +64,7 @@ MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY = "config_messaging_quote_auto_
 MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY = "config_messaging_quote_auto_cancel_delay_hours"
 MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_cancel_notification_enabled"
 MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_cancel_sms_notification_enabled"
+MESSAGING_SETTINGS_QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_KEY = "config_messaging_quote_pass_recup_non_subscribed_text"
 
 MESSAGING_PREDEFINED_TEMPLATES_KEY = "config_messaging_predefined_templates_v1"
 MESSAGING_CUSTOM_TEMPLATES_KEY = "config_messaging_custom_templates_v1"
@@ -100,6 +101,13 @@ QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QU
 QUOTE_APPROVED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT}"
 QUOTE_REJECTED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT}"
 QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT}"
+QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_DEFAULT = (
+    "Ce pass permet de rattraper un cours collectif manque, dans la limite de 4 rattrapages par an. "
+    "Le rattrapage peut se faire : sur un cours collectif en presentiel, si un creneau est disponible, "
+    "ou sur un cours collectif en ligne, sur des creneaux dedies. Le pass est utilisable uniquement "
+    "en cas d'absence signalee. Il est valable pour l'annee scolaire en cours et non remboursable. "
+    "Sans ce pass, aucun rattrapage ne peut etre propose, quelle que soit la raison de l'absence."
+)
 
 
 @dataclass(frozen=True)
@@ -953,6 +961,7 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY,
+        MESSAGING_SETTINGS_QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_KEY,
     ]
 
     updated_at: datetime | None = None
@@ -979,6 +988,7 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
     delivery_error = messaging_delivery_disabled_reason(delivery_config)
     sms_delivery_config = resolve_messaging_sms_delivery_config(db)
     sms_delivery_error = messaging_sms_delivery_disabled_reason(sms_delivery_config)
+    pass_recup_non_subscribed_setting = _get_setting(db, MESSAGING_SETTINGS_QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_KEY)
 
     payload = {
         "studio_email": studio_email,
@@ -1102,6 +1112,14 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY, "false"),
             False,
         ),
+        "quote_pass_recup_non_subscribed_text": _sanitize_text(
+            (
+                pass_recup_non_subscribed_setting.value
+                if pass_recup_non_subscribed_setting is not None
+                else QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_DEFAULT
+            ),
+            max_length=4000,
+        ),
         "delivery_enabled": delivery_error is None,
         "delivery_error_message": delivery_error,
         "sms_delivery_enabled": sms_delivery_error is None,
@@ -1152,6 +1170,7 @@ def save_messaging_settings(
     quote_auto_cancel_delay_hours: int,
     quote_cancel_notification_enabled: bool,
     quote_cancel_sms_notification_enabled: bool,
+    quote_pass_recup_non_subscribed_text: str,
 ) -> dict[str, object]:
     _set_setting_value(db, MESSAGING_SETTINGS_STUDIO_EMAIL_KEY, _sanitize_text(studio_email, max_length=255))
     _set_setting_value(
@@ -1345,6 +1364,11 @@ def save_messaging_settings(
         db,
         MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY,
         "true" if quote_cancel_sms_notification_enabled else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_PASS_RECUP_NON_SUBSCRIBED_TEXT_KEY,
+        _sanitize_text(quote_pass_recup_non_subscribed_text, max_length=4000),
     )
     payload, _ = load_messaging_settings(db)
     return payload

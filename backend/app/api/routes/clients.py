@@ -16,11 +16,12 @@ from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionAudienceScope, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
-from app.models.ops import EmailReminder, LegalEntity
+from app.models.notification_engine import ContactDeliveryStatus
+from app.models.ops import AppSetting, EmailReminder, LegalEntity
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.user import (
@@ -42,6 +43,8 @@ from app.schemas.user import (
 )
 from app.services.family_billing import resolve_billing_profile
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
+from app.services.client_email import deliverable_client_email, visible_client_email
+from app.services.contacts.delivery_status.service import get_contact_delivery_status_for_user
 from app.services.invoice_documents import (
     InvoicePeriodLine,
     render_invoice_period_pdf,
@@ -50,6 +53,13 @@ from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
+from app.services.session_audience import (
+    primary_session_audience_scope,
+    resolve_session_booking_scopes,
+    resolve_session_visibility_scopes,
+    scopes_allow_external_visibility,
+    scopes_allow_plan_kind,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -86,6 +96,7 @@ COUNTRY_NAME_BY_CODE = {
     "CA": "Canada",
     "DE": "Allemagne",
 }
+ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
 
 
 def _utcnow() -> datetime:
@@ -112,6 +123,12 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _account_default_currency(db: Session) -> str:
+    raw = db.scalar(select(AppSetting.value).where(AppSetting.key == ACCOUNT_DEFAULT_CURRENCY_KEY))
+    candidate = str(raw or "").strip().upper()
+    return candidate if len(candidate) == 3 else "EUR"
 
 
 def _billing_entity_text(value: str | None) -> str | None:
@@ -179,7 +196,7 @@ def _normalize_optout_channel(value: str) -> str:
 def _member_out(user: User) -> FamilyMemberOut:
     return FamilyMemberOut(
         id=user.id,
-        email=user.email,
+        email=visible_client_email(user),
         first_name=user.first_name,
         last_name=user.last_name,
         phone=user.mobile_phone_1 or user.phone,
@@ -197,7 +214,49 @@ def _member_out(user: User) -> FamilyMemberOut:
 
 def _display_name(user: User) -> str:
     full_name = " ".join(part for part in [user.first_name, user.last_name] if part)
-    return full_name or user.email
+    return full_name or visible_client_email(user) or "Client"
+
+
+def _user_out(user: User, *, delivery_status: ContactDeliveryStatus | None = None) -> UserOut:
+    return UserOut(
+        id=user.id,
+        email=visible_client_email(user),
+        first_name=user.first_name,
+        last_name=user.last_name,
+        role=user.role,
+        phone=user.phone,
+        mobile_phone_1=user.mobile_phone_1,
+        mobile_phone_2=user.mobile_phone_2,
+        home_phone=user.home_phone,
+        address_line=user.address_line,
+        postal_code=user.postal_code,
+        city=user.city,
+        address_country=user.address_country,
+        client_kind=user.client_kind,
+        birth_date=user.birth_date,
+        important_info=user.important_info,
+        private_note=user.private_note,
+        residence_country=user.residence_country,
+        preferred_currency=user.preferred_currency,
+        timezone=user.timezone,
+        portal_contact_visible=user.portal_contact_visible,
+        email_opt_in=user.email_opt_in,
+        sms_opt_in=user.sms_opt_in,
+        lesson_reminder_email_opt_in=user.lesson_reminder_email_opt_in,
+        lesson_reminder_sms_opt_in=user.lesson_reminder_sms_opt_in,
+        communication_optout_token=user.communication_optout_token,
+        email_delivery_status=(delivery_status.email_status if delivery_status is not None else "active"),
+        phone_delivery_status=(delivery_status.phone_status if delivery_status is not None else "active"),
+        email_suspended_at=(delivery_status.email_suspended_at if delivery_status is not None else None),
+        phone_suspended_at=(delivery_status.phone_suspended_at if delivery_status is not None else None),
+        email_suspension_reason=(delivery_status.email_suspension_reason if delivery_status is not None else None),
+        phone_suspension_reason=(delivery_status.phone_suspension_reason if delivery_status is not None else None),
+        first_course_at=user.first_course_at,
+        client_status=user.client_status,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        is_active=user.is_active,
+    )
 
 
 def _country_display_name(raw: str | None) -> str:
@@ -805,8 +864,12 @@ def _plan_amount_due_and_currency(
 
 
 @router.get("/clients/me", response_model=UserOut)
-def get_client_me(current_user: User = Depends(require_roles(UserRole.CLIENT))) -> UserOut:
-    return current_user
+def get_client_me(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> UserOut:
+    delivery_status = get_contact_delivery_status_for_user(db, user_id=current_user.id)
+    return _user_out(current_user, delivery_status=delivery_status)
 
 
 @router.get("/clients/me/sessions", response_model=list[SessionOut])
@@ -834,7 +897,7 @@ def list_client_visible_sessions(
         ) from exc
 
     managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
-    private_visible_session_ids_stmt = (
+    visible_booked_session_ids_stmt = (
         select(Booking.session_id)
         .where(
             Booking.user_id.in_(managed_client_ids),
@@ -842,6 +905,38 @@ def list_client_visible_sessions(
         )
         .distinct()
     )
+    visible_booked_session_ids = {
+        row[0]
+        for row in db.execute(visible_booked_session_ids_stmt).all()
+    }
+    now = _utcnow()
+    active_entitlement_rows = db.execute(
+        select(
+            ClientPlanSubscription.user_id,
+            Plan.kind,
+            PlanEntitlement.course_type_id,
+        )
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .join(PlanEntitlement, PlanEntitlement.plan_id == ClientPlanSubscription.plan_id)
+        .where(
+            ClientPlanSubscription.user_id.in_(managed_client_ids),
+            ClientPlanSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.PAYMENT_ALERT,
+                SubscriptionStatus.PAUSED,
+            ]),
+            ClientPlanSubscription.started_at <= now,
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
+            Plan.active.is_(True),
+        )
+    ).all()
+    subscription_entitlements_by_user: dict[UUID, set[UUID]] = defaultdict(set)
+    forfait_entitlements_by_user: dict[UUID, set[UUID]] = defaultdict(set)
+    for owner_id, plan_kind, entitlement_course_type_id in active_entitlement_rows:
+        if plan_kind in {PlanKind.SUBSCRIPTION, PlanKind.PACK}:
+            subscription_entitlements_by_user[owner_id].add(entitlement_course_type_id)
+        elif plan_kind == PlanKind.FORFAIT:
+            forfait_entitlements_by_user[owner_id].add(entitlement_course_type_id)
 
     booked_counts = (
         select(
@@ -872,7 +967,7 @@ def list_client_visible_sessions(
             CourseSession.status == SessionStatus.SCHEDULED,
             (
                 CourseSession.is_private.is_(False)
-                | CourseSession.id.in_(private_visible_session_ids_stmt)
+                | CourseSession.id.in_(visible_booked_session_ids_stmt)
             ),
         )
     )
@@ -888,9 +983,36 @@ def list_client_visible_sessions(
 
     stmt = stmt.order_by(CourseSession.start_at_utc.asc())
     rows = db.execute(stmt).all()
+    external_booking_currency = _account_default_currency(db)
 
     payload: list[SessionOut] = []
     for session, course_type, location, professor, substitute, booked_count in rows:
+        visibility_scopes = resolve_session_visibility_scopes(session)
+        booking_scopes = resolve_session_booking_scopes(
+            session,
+            allows_student_bookings=bool(course_type.allows_student_bookings),
+        )
+        visibility_scope = primary_session_audience_scope(visibility_scopes)
+        booking_scope = primary_session_audience_scope(booking_scopes, fallback=SessionAudienceScope.PRIVATE)
+        if session.id not in visible_booked_session_ids:
+            if visibility_scopes == [SessionAudienceScope.PRIVATE]:
+                continue
+            if scopes_allow_external_visibility(visibility_scopes):
+                pass
+            elif scopes_allow_plan_kind(visibility_scopes, plan_kind=PlanKind.SUBSCRIPTION) or scopes_allow_plan_kind(visibility_scopes, plan_kind=PlanKind.PACK):
+                if not any(
+                    session.course_type_id in subscription_entitlements_by_user.get(owner_id, set())
+                    for owner_id in managed_client_ids
+                ):
+                    continue
+            elif scopes_allow_plan_kind(visibility_scopes, plan_kind=PlanKind.FORFAIT):
+                if not any(
+                    session.course_type_id in forfait_entitlements_by_user.get(owner_id, set())
+                    for owner_id in managed_client_ids
+                ):
+                    continue
+            else:
+                continue
         effective_professor = substitute or professor
         substitute_display_name = (
             f"{(substitute.first_name or '').strip()} {(substitute.last_name or '').strip()}".strip()
@@ -919,7 +1041,13 @@ def list_client_visible_sessions(
                 capacity_max=session.capacity_max,
                 booked_count=booked,
                 seats_remaining=seats_remaining,
-                online_booking_enabled=(not session.is_private) and bool(session.allow_online_booking),
+                visibility_scopes=visibility_scopes,
+                booking_scopes=booking_scopes,
+                visibility_scope=visibility_scope,
+                booking_scope=booking_scope,
+                online_booking_enabled=booking_scopes != [SessionAudienceScope.PRIVATE],
+                external_booking_price_ttc=session.external_booking_price_ttc,
+                external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
                 zoom_link=session.zoom_link,
                 substitute_teacher_id=session.substitute_teacher_id,
                 substitute_teacher_display_name=substitute_display_name,
@@ -959,7 +1087,8 @@ def patch_client_me(
 ) -> UserOut:
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
-        return current_user
+        delivery_status = get_contact_delivery_status_for_user(db, user_id=current_user.id)
+        return _user_out(current_user, delivery_status=delivery_status)
 
     if "first_name" in changes:
         current_user.first_name = _normalize_optional(changes["first_name"])
@@ -1027,7 +1156,8 @@ def patch_client_me(
     db.add(current_user)
     db.commit()
     db.refresh(current_user)
-    return current_user
+    delivery_status = get_contact_delivery_status_for_user(db, user_id=current_user.id)
+    return _user_out(current_user, delivery_status=delivery_status)
 
 
 @router.get("/clients/communication/optout")
@@ -1140,7 +1270,7 @@ def get_client_family_overview(
                 id=sub.id,
                 owner_client_id=owner.id,
                 owner_display_name=_display_name(owner),
-                owner_email=owner.email,
+                owner_email=visible_client_email(owner),
                 status=sub.status,
                 started_at=sub.started_at,
                 ends_at=sub.ends_at,
@@ -1176,7 +1306,7 @@ def get_client_family_overview(
                 id=booking.id,
                 owner_client_id=owner.id,
                 owner_display_name=_display_name(owner),
-                owner_email=owner.email,
+                owner_email=visible_client_email(owner),
                 client_plan_subscription_id=booking.client_plan_subscription_id,
                 status=booking.status,
                 booked_at=booking.booked_at,
@@ -1469,14 +1599,18 @@ def create_client_payment_checkout(
     if amount_due <= Decimal("0.00"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun montant a regler pour ce paiement")
 
+    owner_email = deliverable_client_email(owner)
+    if not owner_email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email client manquant")
+
     success_url, cancel_url, webhook_url = _checkout_urls(owner_id=owner.id, subscription_id=subscription.id)
     checkout = create_checkout_session(
         db,
         CheckoutCreateRequest(
             amount=amount_due,
             currency=currency_code,
-            description=f"{plan.name} ({owner.email})",
-            customer_email=owner.email,
+            description=f"{plan.name} ({owner_email})",
+            customer_email=owner_email,
             success_return_url=success_url,
             cancel_return_url=cancel_url,
             webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
@@ -1622,7 +1756,8 @@ def confirm_client_payment(
 
     if lookup.paid and not was_paid_before:
         owner = db.scalar(select(User).where(User.id == subscription.user_id))
-        if owner is not None and owner.email:
+        owner_email = deliverable_client_email(owner)
+        if owner is not None and owner_email:
             try:
                 amount_due, currency_code = _plan_amount_due_and_currency(
                     db,
@@ -1633,7 +1768,7 @@ def confirm_client_payment(
                 )
                 send_client_payment_success_notifications(
                     db,
-                    to_email=owner.email,
+                    to_email=owner_email,
                     first_name=owner.first_name,
                     last_name=owner.last_name,
                     plan_name=plan.name,

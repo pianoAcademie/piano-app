@@ -26,6 +26,7 @@ type QuoteOut = {
   currency: string;
   total_ttc: string;
   expires_at: string | null;
+  approved_at: string | null;
   estimated_solfege_level: string | null;
   solfege_duration_minutes: number | null;
   calendar_snapshot: Record<string, unknown>;
@@ -79,7 +80,15 @@ function formatDate(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "full", timeStyle: "short" });
+  return parsed.toLocaleString("fr-FR", { dateStyle: "full", timeStyle: "short", timeZone: "Europe/Paris" });
+}
+
+function quoteMetaDateLabel(quote: QuoteOut): string {
+  return quote.status === "approved" ? "Approuve le" : "Expire le";
+}
+
+function quoteMetaDateValue(quote: QuoteOut): string {
+  return quote.status === "approved" ? formatDate(quote.approved_at) : formatDate(quote.expires_at);
 }
 
 function formatAmount(value: string, currency: string): string {
@@ -184,8 +193,8 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                     <strong>{formatAmount(payload.quote.total_ttc, payload.quote.currency)}</strong>
                   </article>
                   <article>
-                    <span>Expire le</span>
-                    <strong>{formatDate(payload.quote.expires_at)}</strong>
+                    <span>{quoteMetaDateLabel(payload.quote)}</span>
+                    <strong>{quoteMetaDateValue(payload.quote)}</strong>
                   </article>
                 </div>
               </article>

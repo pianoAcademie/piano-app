@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
 import csv
+import hashlib
+import hmac
 import io
 import json
 import re
@@ -11,7 +14,7 @@ from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 import jwt
 from jwt import PyJWTError
@@ -21,6 +24,7 @@ from sqlalchemy.orm import Session, aliased
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
+from app.models.client_import_reference import ClientImportReference
 from app.models.client_record import (
     ClientAutoInvoiceRule,
     ClientInvoiceLine,
@@ -52,8 +56,9 @@ from app.models.plan import (
     PlanPriceTaxMode,
     SubscriptionStatus,
 )
-from app.models.product_catalog import ProductCategory
+from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
 from app.models.notification_engine import ContactDeliveryStatus
+from app.models.quote import Prospect
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.admin import (
     AdminClientBulkAction,
@@ -109,12 +114,20 @@ from app.schemas.admin import (
     AdminClientGroupCreateRequest,
     AdminClientGroupOut,
     AdminClientGroupUpdateRequest,
+    AdminMyMusicStaffImportExecuteOut,
+    AdminMyMusicStaffImportPreviewOut,
 )
 from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut
 from app.services.client_password_email import (
     generate_temporary_password,
     render_client_password_email,
     send_client_password_email,
+)
+from app.services.client_email import (
+    deliverable_client_email,
+    is_generated_client_email,
+    normalize_contact_email,
+    visible_client_email,
 )
 from app.services.client_payment_email import (
     render_client_payment_email,
@@ -136,6 +149,12 @@ from app.services.messaging_templates import (
     resolve_predefined_template,
     resolve_sender_profile,
     upsert_predefined_template,
+)
+from app.services.mymusicstaff_import import (
+    NO_EMAIL_DOMAIN as MYMUSICSTAFF_NO_EMAIL_DOMAIN,
+    SOURCE_SYSTEM as MYMUSICSTAFF_SOURCE_SYSTEM,
+    execute_mymusicstaff_import,
+    preview_mymusicstaff_import,
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider
@@ -211,6 +230,7 @@ PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 INVOICE_RANGE_PUBLIC_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
 INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_PAY"
 WEEKDAY_LABELS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+INVOICE_RENDER_TIMEZONE_NAME = "Europe/Paris"
 
 COUNTRY_NAME_BY_CODE = {
     "FR": "France",
@@ -792,9 +812,10 @@ def _safe_sort_text(value: str | None) -> str:
     return (value or "").strip().casefold()
 
 
-def _display_name(first_name: str | None, last_name: str | None, email: str) -> str:
+def _display_name(first_name: str | None, last_name: str | None, email: str | None) -> str:
     full_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
-    return full_name or email
+    fallback = (email or "").strip()
+    return full_name or fallback or "Client"
 
 
 def _country_display_name(raw: str | None) -> str:
@@ -813,6 +834,75 @@ def _billing_address_label(user: User) -> str:
     country = _country_display_name(user.address_country or user.residence_country)
     parts = [line_1, city_line, country]
     return ", ".join(part for part in parts if part) or "-"
+
+
+def _invoice_render_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(INVOICE_RENDER_TIMEZONE_NAME)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
+def _invoice_issued_at_for_date(*, issued_date: date, now: datetime | None = None) -> datetime:
+    reference = (now or _utcnow()).astimezone(_invoice_render_timezone())
+    local_time = reference.timetz().replace(tzinfo=None)
+    return datetime.combine(issued_date, local_time, tzinfo=_invoice_render_timezone()).astimezone(timezone.utc)
+
+
+def _kit_component_lines_by_title(
+    db: Session,
+    *,
+    titles: set[str],
+) -> dict[str, tuple[str, ...]]:
+    normalized_titles: set[str] = set()
+    for raw_title in titles:
+        normalized = str(raw_title or "").strip()
+        if not normalized:
+            continue
+        normalized_titles.add(normalized)
+        if " - " in normalized:
+            normalized_titles.add(normalized.split(" - ", 1)[0].strip())
+    if not normalized_titles:
+        return {}
+    rows = db.execute(
+        select(CatalogKit.title, CatalogProduct.title, CatalogKitItem.quantity)
+        .join(CatalogKitItem, CatalogKitItem.kit_id == CatalogKit.id)
+        .join(CatalogProduct, CatalogProduct.id == CatalogKitItem.product_id)
+        .where(
+            CatalogKit.active.is_(True),
+            CatalogKit.title.in_(normalized_titles),
+        )
+        .order_by(CatalogKit.title.asc(), CatalogProduct.title.asc())
+    ).all()
+    out: dict[str, list[str]] = {}
+    for kit_title, product_title, quantity in rows:
+        normalized_kit_title = str(kit_title or "").strip()
+        normalized_product_title = str(product_title or "").strip()
+        if not normalized_kit_title or not normalized_product_title:
+            continue
+        quantity_value = max(1, int(quantity or 1))
+        item_label = f"{normalized_product_title} x{quantity_value}" if quantity_value != 1 else normalized_product_title
+        out.setdefault(normalized_kit_title, []).append(item_label)
+    return {
+        title: tuple((["Composition :"] + values) if values else [])
+        for title, values in out.items()
+    }
+
+
+def _kit_component_lines_for_label(
+    *,
+    label: str,
+    mapping: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    normalized = str(label or "").strip()
+    if not normalized:
+        return ()
+    if normalized in mapping:
+        return mapping[normalized]
+    if " - " in normalized:
+        prefix = normalized.split(" - ", 1)[0].strip()
+        return mapping.get(prefix, ())
+    return ()
 
 
 def _note_author_display_name(author: User | None) -> str:
@@ -1024,14 +1114,24 @@ def _create_invoice_range_public_payment_token(
     note_id: UUID,
     metadata: dict[str, object],
 ) -> str:
-    payload = {
-        "scope": INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE,
-        "client_id": str(client_id),
-        "note_id": str(note_id),
-        "invoice_number": str(metadata.get("invoice_number") or ""),
-        "exp": int((_utcnow() + timedelta(days=365)).timestamp()),
-    }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    exp = int((_utcnow() + timedelta(days=365)).timestamp())
+    exp_token = format(exp, "x")
+    payload = "|".join(
+        [
+            INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE,
+            str(client_id),
+            str(note_id),
+            str(metadata.get("invoice_number") or ""),
+            exp_token,
+        ]
+    )
+    digest = hmac.new(
+        settings.jwt_secret_key.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    signature = base64.urlsafe_b64encode(digest[:18]).decode("ascii").rstrip("=")
+    return f"v2.{exp_token}.{signature}"
 
 
 def _assert_invoice_range_public_payment_token(
@@ -1041,9 +1141,39 @@ def _assert_invoice_range_public_payment_token(
     note_id: UUID,
     metadata: dict[str, object],
 ) -> None:
+    normalized_token = (token or "").strip()
+    if normalized_token.startswith("v2."):
+        try:
+            _, exp_token, provided_signature = normalized_token.split(".", 2)
+            exp = int(exp_token, 16)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de paiement invalide") from exc
+
+        if exp < int(_utcnow().timestamp()):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de paiement invalide ou expire")
+
+        payload = "|".join(
+            [
+                INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE,
+                str(client_id),
+                str(note_id),
+                str(metadata.get("invoice_number") or ""),
+                exp_token,
+            ]
+        )
+        expected_digest = hmac.new(
+            settings.jwt_secret_key.encode("utf-8"),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        expected_signature = base64.urlsafe_b64encode(expected_digest[:18]).decode("ascii").rstrip("=")
+        if not hmac.compare_digest(provided_signature, expected_signature):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lien de paiement invalide")
+        return
+
     try:
         payload = jwt.decode(
-            token,
+            normalized_token,
             settings.jwt_secret_key,
             algorithms=[settings.jwt_algorithm],
         )
@@ -1078,6 +1208,13 @@ def _invoice_range_primary_total(metadata: dict[str, object]) -> tuple[Decimal, 
     return Decimal("0.00"), "EUR"
 
 
+def _coalesce_public_payment_token(*, token: str | None = None, t: str | None = None) -> str:
+    candidate = _normalize_optional(t) or _normalize_optional(token)
+    if candidate is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Token de paiement manquant")
+    return candidate
+
+
 def _invoice_range_payment_url(
     *,
     client_id: UUID | None,
@@ -1090,8 +1227,8 @@ def _invoice_range_payment_url(
             note_id=note_id,
             metadata=metadata,
         )
-        query = urlencode({"token": token})
-        return f"{_frontend_base_url()}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay?{query}"
+        query = urlencode({"t": token})
+        return f"{_frontend_base_url()}/pay/i/{note_id}?{query}"
 
     amount, currency = _invoice_range_primary_total(metadata)
     params = urlencode(
@@ -1303,7 +1440,9 @@ def _build_range_invoice_email_defaults(
     kind: str,
 ) -> tuple[list[str], str, str, str]:
     billing_profile = resolve_billing_profile(db, client)
-    default_recipients = _normalize_email_recipients([billing_profile.email, client.email])
+    billing_email = deliverable_client_email(billing_profile) if billing_profile is not None else None
+    client_email = deliverable_client_email(client)
+    default_recipients = _normalize_email_recipients([billing_email, client_email])
     if not default_recipients:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
 
@@ -1330,11 +1469,12 @@ def _build_range_invoice_email_defaults(
     totals_by_currency = dict(metadata.get("totals_by_currency") or {})
     first_currency = next(iter(sorted(totals_by_currency.keys())), "EUR")
     amount_due = str(totals_by_currency.get(first_currency) or "0.00")
+    display_email = client_email or billing_email or ""
     context = {
-        "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email,
+        "first_name": (billing_profile.first_name or client.first_name or "").strip() or display_email or "Client",
         "last_name": (billing_profile.last_name or client.last_name or "").strip(),
-        "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
-        "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, display_email),
+        "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, display_email),
         "invoice_number": str(metadata.get("invoice_number") or ""),
         "invoice_url": invoice_url,
         "payment_url": payment_url,
@@ -1552,16 +1692,45 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
     status_value = str(payload.get("invoice_status") or "ISSUED").strip().upper()
     normalized["invoice_status"] = status_value if status_value in INVOICE_RANGE_STATUSES else "ISSUED"
 
+    issued_at = _parse_iso_datetime(payload.get("issued_at"))
+    if issued_at is not None:
+        normalized["issued_at"] = issued_at.isoformat()
+
     included_payment_keys = _normalize_invoice_range_payment_keys(payload.get("included_payment_keys"))
     if included_payment_keys:
         normalized["included_payment_keys"] = included_payment_keys
 
     emailed_at = _parse_iso_datetime(payload.get("emailed_at"))
     reminded_at = _parse_iso_datetime(payload.get("reminded_at"))
+    payment_last_attempt_at = _parse_iso_datetime(payload.get("payment_last_attempt_at"))
+    payment_last_lookup_at = _parse_iso_datetime(payload.get("payment_last_lookup_at"))
+    paid_at = _parse_iso_datetime(payload.get("paid_at"))
     if emailed_at is not None:
         normalized["emailed_at"] = emailed_at.isoformat()
     if reminded_at is not None:
         normalized["reminded_at"] = reminded_at.isoformat()
+    if payment_last_attempt_at is not None:
+        normalized["payment_last_attempt_at"] = payment_last_attempt_at.isoformat()
+    if payment_last_lookup_at is not None:
+        normalized["payment_last_lookup_at"] = payment_last_lookup_at.isoformat()
+    if paid_at is not None:
+        normalized["paid_at"] = paid_at.isoformat()
+
+    payment_provider = _normalize_optional(str(payload.get("payment_provider") or ""))
+    payment_provider_reference = _normalize_optional(str(payload.get("payment_provider_reference") or ""))
+    payment_checkout_status = _normalize_optional(str(payload.get("payment_checkout_status") or ""))
+    payment_lookup_status = _normalize_optional(str(payload.get("payment_lookup_status") or ""))
+    payment_transaction_id = _normalize_optional(str(payload.get("payment_transaction_id") or ""))
+    if payment_provider:
+        normalized["payment_provider"] = payment_provider
+    if payment_provider_reference:
+        normalized["payment_provider_reference"] = payment_provider_reference
+    if payment_checkout_status:
+        normalized["payment_checkout_status"] = payment_checkout_status
+    if payment_lookup_status:
+        normalized["payment_lookup_status"] = payment_lookup_status
+    if payment_transaction_id:
+        normalized["payment_transaction_id"] = payment_transaction_id
 
     reconciled_payment_ids_raw = payload.get("reconciled_manual_payment_ids")
     if isinstance(reconciled_payment_ids_raw, list):
@@ -1750,6 +1919,24 @@ def _load_range_invoice_note(
     if metadata is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture de plage introuvable")
     return note, metadata
+
+
+def _load_range_invoice_note_by_id(
+    db: Session,
+    *,
+    note_id: UUID,
+    for_update: bool = False,
+) -> tuple[ClientNoteEntry, dict[str, object], UUID]:
+    stmt = select(ClientNoteEntry).where(ClientNoteEntry.id == note_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    note = db.scalar(stmt)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture introuvable")
+    metadata = _parse_invoice_range_note_entry(note)
+    if metadata is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture de plage introuvable")
+    return note, metadata, note.user_id
 
 
 def _range_invoice_metadatas_for_client(db: Session, *, client_id: UUID) -> list[dict[str, object]]:
@@ -2522,14 +2709,18 @@ def _create_checkout_for_subscription(
     if amount_due <= Decimal("0.00"):
         return None
 
+    visible_email = deliverable_client_email(client)
+    if not visible_email:
+        return None
+
     success_url, cancel_url, webhook_url = _checkout_urls(raw_website, client_id=client.id, subscription_id=subscription.id)
     checkout = create_checkout_session(
         db,
         CheckoutCreateRequest(
             amount=amount_due.quantize(Decimal("0.01")),
             currency=(currency_code or "EUR").upper(),
-            description=f"{plan.name} ({client.email})",
-            customer_email=client.email,
+            description=f"{plan.name} ({visible_email})",
+            customer_email=visible_email,
             success_return_url=success_url,
             cancel_return_url=cancel_url,
             webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
@@ -2578,12 +2769,13 @@ def _send_admin_subscription_immediate_cancellation_email(
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     actor_name = _display_name(actor.first_name, actor.last_name, actor.email)
-    client_name = _display_name(client.first_name, client.last_name, client.email)
+    client_visible_email = visible_client_email(client)
+    client_name = _display_name(client.first_name, client.last_name, client_visible_email)
 
     subject = f"Resiliation immediate - {plan.name} - {client_name}"
     body = (
         "Une resiliation immediate de produit a ete executee depuis le BackOffice.\n\n"
-        f"Client: {client_name} ({client.email})\n"
+        f"Client: {client_name} ({client_visible_email or 'email non renseigne'})\n"
         f"Produit: {plan.name}\n"
         f"Reference contrat: {subscription.id}\n"
         f"Date de demande: {requested_at.isoformat()}\n"
@@ -2733,12 +2925,18 @@ def _client_out(
     group_ids: list[UUID] | None = None,
     group_names: list[str] | None = None,
     delivery_status: ContactDeliveryStatus | None = None,
+    creation_source: str = "MANUAL",
+    email_is_generated: bool | None = None,
 ) -> AdminClientOut:
+    visible_email = visible_client_email(client)
     return AdminClientOut(
         id=client.id,
-        email=client.email,
+        email=visible_email,
+        email_is_generated=((is_generated_client_email(client.email) and not visible_email) if email_is_generated is None else email_is_generated),
+        creation_source=creation_source,
         role=client.role,
         client_kind=client.client_kind,
+        photo_url=None,
         first_name=client.first_name,
         last_name=client.last_name,
         address_line=client.address_line,
@@ -2788,7 +2986,7 @@ def _require_client(db: Session, client_id: UUID) -> User:
 def _family_member_out(user: User) -> AdminFamilyMemberOut:
     return AdminFamilyMemberOut(
         id=user.id,
-        email=user.email,
+        email=visible_client_email(user),
         first_name=user.first_name,
         last_name=user.last_name,
         phone=_main_phone(user),
@@ -2822,7 +3020,7 @@ def _family_link_out(link: ClientFamilyLink, users_by_id: dict[UUID, User]) -> A
 
 
 def _is_email_in_use(db: Session, *, email: str, exclude_user_id: UUID | None = None) -> bool:
-    stmt = select(User.id).where(User.email == email)
+    stmt = select(User.id).where(or_(User.email == email, User.contact_email == email))
     if exclude_user_id is not None:
         stmt = stmt.where(User.id != exclude_user_id)
     return db.scalar(stmt.limit(1)) is not None
@@ -2946,6 +3144,42 @@ def _groups_for_client_ids(db: Session, client_ids: list[UUID]) -> dict[UUID, li
     return groups_by_client
 
 
+def _is_generated_client_email(email: str | None) -> bool:
+    return is_generated_client_email(email)
+
+
+def _client_creation_source_map(db: Session, client_ids: list[UUID]) -> dict[UUID, str]:
+    if not client_ids:
+        return {}
+
+    sources: dict[UUID, str] = {client_id: "MANUAL" for client_id in client_ids}
+
+    import_rows = db.execute(
+        select(ClientImportReference.user_id, ClientImportReference.source_system)
+        .where(ClientImportReference.user_id.in_(client_ids))
+        .order_by(ClientImportReference.created_at.asc())
+    ).all()
+    for user_id, source_system in import_rows:
+        if source_system == MYMUSICSTAFF_SOURCE_SYSTEM:
+            sources[user_id] = "MYMUSICSTAFF"
+
+    typeform_rows = db.execute(
+        select(Prospect.linked_client_id, Prospect.source)
+        .where(
+            Prospect.linked_client_id.in_(client_ids),
+            Prospect.linked_client_id.is_not(None),
+        )
+        .order_by(Prospect.created_at.asc())
+    ).all()
+    for linked_client_id, source in typeform_rows:
+        if linked_client_id is None or sources.get(linked_client_id) == "MYMUSICSTAFF":
+            continue
+        if isinstance(source, str) and source.startswith("typeform:"):
+            sources[linked_client_id] = "TYPEFORM"
+
+    return sources
+
+
 def _format_session_datetime(session_obj: CourseSession, timezone_preference: str | None, location: Location) -> str:
     tz_name = timezone_preference or location.timezone or "UTC"
     try:
@@ -3044,6 +3278,7 @@ def list_admin_clients(
             next_session_by_client[user_id] = start_at_utc
 
     groups_by_client = _groups_for_client_ids(db, client_ids)
+    creation_source_by_client = _client_creation_source_map(db, client_ids)
 
     child_ids = [client.id for client in clients if client.client_kind == ClientKind.CHILD]
     family_name_by_client: dict[UUID, str] = {}
@@ -3081,6 +3316,7 @@ def list_admin_clients(
                 family_name=family_name,
                 group_ids=[group_item[0] for group_item in group_pairs],
                 group_names=[group_item[1] for group_item in group_pairs],
+                creation_source=creation_source_by_client.get(client.id, "MANUAL"),
             )
         )
 
@@ -3417,7 +3653,7 @@ def bulk_admin_clients(
                 if is_email:
                     if not client.email_opt_in:
                         continue
-                    add_email(client.email, client.id)
+                    add_email(deliverable_client_email(client), client.id)
                 else:
                     if not client.sms_opt_in:
                         continue
@@ -3461,7 +3697,7 @@ def bulk_admin_clients(
                 parent_home_phone,
             ) in parent_rows:
                 if bool(parent_email_opt_in):
-                    normalized_parent_email = _normalize_optional(parent_email)
+                    normalized_parent_email = normalize_contact_email(parent_email)
                     if normalized_parent_email:
                         parent_emails_by_child.setdefault(child_user_id, []).append((normalized_parent_email, parent_id))
                 if bool(parent_sms_opt_in):
@@ -3473,7 +3709,7 @@ def bulk_admin_clients(
                 if client.client_kind == ClientKind.ADULT:
                     if is_email:
                         if client.email_opt_in:
-                            add_email(client.email, client.id)
+                            add_email(deliverable_client_email(client), client.id)
                     elif client.sms_opt_in:
                         add_sms(
                             client.mobile_phone_1,
@@ -3640,7 +3876,7 @@ def export_admin_clients_csv(
         writer.writerow(
             [
                 str(client.id),
-                client.email,
+                visible_client_email(client),
                 client.last_name or "",
                 client.first_name or "",
                 client.client_status.value,
@@ -3676,6 +3912,52 @@ def export_admin_clients_csv(
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv; charset=utf-8", headers=headers)
 
 
+@router.post("/imports/mymusicstaff/preview", response_model=AdminMyMusicStaffImportPreviewOut)
+def preview_admin_clients_mymusicstaff_import(
+    csv_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMyMusicStaffImportPreviewOut:
+    if not csv_file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choisissez un fichier CSV MyMusicStaff.")
+
+    csv_bytes = csv_file.file.read()
+    if not csv_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le fichier CSV est vide.")
+
+    try:
+        payload = preview_mymusicstaff_import(csv_bytes, db, file_name=csv_file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    finally:
+        csv_file.file.close()
+
+    return AdminMyMusicStaffImportPreviewOut.model_validate(payload)
+
+
+@router.post("/imports/mymusicstaff/execute", response_model=AdminMyMusicStaffImportExecuteOut)
+def execute_admin_clients_mymusicstaff_import_route(
+    csv_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMyMusicStaffImportExecuteOut:
+    if not csv_file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choisissez un fichier CSV MyMusicStaff.")
+
+    csv_bytes = csv_file.file.read()
+    if not csv_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le fichier CSV est vide.")
+
+    try:
+        payload = execute_mymusicstaff_import(csv_bytes, db, file_name=csv_file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    finally:
+        csv_file.file.close()
+
+    return AdminMyMusicStaffImportExecuteOut.model_validate(payload)
+
+
 @router.get("/{client_id}", response_model=AdminClientOut)
 def get_admin_client(
     client_id: UUID,
@@ -3690,6 +3972,7 @@ def get_admin_client(
         )
     )
     groups_by_client = _groups_for_client_ids(db, [client.id])
+    creation_source_by_client = _client_creation_source_map(db, [client.id])
     group_pairs = groups_by_client.get(client.id, [])
 
     family_name = client.last_name or None
@@ -3716,6 +3999,7 @@ def get_admin_client(
         group_ids=[group_item[0] for group_item in group_pairs],
         group_names=[group_item[1] for group_item in group_pairs],
         delivery_status=delivery_status,
+        creation_source=creation_source_by_client.get(client.id, "MANUAL"),
     )
 
 
@@ -3780,11 +4064,13 @@ def replace_admin_client_groups(
     db.refresh(client)
 
     group_pairs = _groups_for_client_ids(db, [client.id]).get(client.id, [])
+    creation_source = _client_creation_source_map(db, [client.id]).get(client.id, "MANUAL")
     return _client_out(
         client,
         family_name=client.last_name or None,
         group_ids=[group_item[0] for group_item in group_pairs],
         group_names=[group_item[1] for group_item in group_pairs],
+        creation_source=creation_source,
     )
 
 
@@ -3794,9 +4080,10 @@ def create_admin_client(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientOut:
-    normalized_email = _normalize_optional(payload.email)
+    normalized_email = normalize_contact_email(payload.email)
+    contact_email = normalized_email
     if normalized_email:
-        email = normalized_email.lower()
+        email = normalized_email
     else:
         synthetic_prefix = "adult" if payload.client_kind == ClientKind.ADULT else "child"
         email = f"{synthetic_prefix}-{uuid4().hex}@no-email.local"
@@ -3815,6 +4102,7 @@ def create_admin_client(
     now = _utcnow()
     client = User(
         email=email,
+        contact_email=contact_email,
         hashed_password=hash_password(generate_temporary_password()),
         role=UserRole.CLIENT,
         client_kind=payload.client_kind,
@@ -3846,7 +4134,7 @@ def create_admin_client(
     db.add(client)
     db.commit()
     db.refresh(client)
-    return _client_out(client)
+    return _client_out(client, creation_source="MANUAL")
 
 
 @router.patch("/{client_id}", response_model=AdminClientOut)
@@ -3862,16 +4150,17 @@ def patch_admin_client(
 
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
-        return _client_out(client)
+        creation_source = _client_creation_source_map(db, [client.id]).get(client.id, "MANUAL")
+        return _client_out(client, creation_source=creation_source)
 
     if "email" in changes:
-        normalized_new_email = _normalize_optional(changes["email"])
+        normalized_new_email = normalize_contact_email(changes["email"])
         if normalized_new_email:
-            new_email = normalized_new_email.lower()
-            existing = db.scalar(select(User).where(User.email == new_email, User.id != client.id))
-            if existing is not None:
+            new_email = normalized_new_email
+            if _is_email_in_use(db, email=new_email, exclude_user_id=client.id):
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
             client.email = new_email
+            client.contact_email = new_email
         else:
             target_kind_for_email = changes.get("client_kind") or client.client_kind
             synthetic_prefix = "adult" if target_kind_for_email == ClientKind.ADULT else "child"
@@ -3879,6 +4168,7 @@ def patch_admin_client(
             while _is_email_in_use(db, email=generated_email):
                 generated_email = f"{synthetic_prefix}-{uuid4().hex}@no-email.local"
             client.email = generated_email
+            client.contact_email = None
 
     if "client_kind" in changes and changes["client_kind"] is not None:
         target_kind = changes["client_kind"]
@@ -3984,11 +4274,13 @@ def patch_admin_client(
     db.refresh(client)
 
     group_pairs = _groups_for_client_ids(db, [client.id]).get(client.id, [])
+    creation_source = _client_creation_source_map(db, [client.id]).get(client.id, "MANUAL")
     return _client_out(
         client,
         family_name=client.last_name or None,
         group_ids=[group_item[0] for group_item in group_pairs],
         group_names=[group_item[1] for group_item in group_pairs],
+        creation_source=creation_source,
     )
 
 
@@ -4017,18 +4309,22 @@ def send_admin_client_password_email(
         )
     website = _get_setting_value(db, "config_account_website", "")
     login_url = _fallback_login_url(website)
+    visible_email = deliverable_client_email(client)
+    if not visible_email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Client email is missing")
+
     subject, body = render_client_password_email(
         subject_template=subject_template,
         body_template=body_template,
         first_name=(client.first_name or "").strip(),
         last_name=(client.last_name or "").strip(),
-        email=client.email,
+        email=visible_email,
         temporary_password=temporary_password,
         login_url=login_url,
     )
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     message_id = send_client_password_email(
-        to_email=client.email,
+        to_email=visible_email,
         subject=subject,
         body=body,
         body_format=body_format,
@@ -4044,7 +4340,7 @@ def send_admin_client_password_email(
         client_id=client.id,
         author_user_id=actor.id,
         entry_type="EMAIL",
-        message=f"Email d'activation envoye a {client.email} (message id: {message_id}).",
+        message=f"Email d'activation envoye a {visible_email} (message id: {message_id}).",
     )
     client.hashed_password = hash_password(temporary_password)
     client.client_status = ClientStatus.ACTIVE
@@ -4055,7 +4351,7 @@ def send_admin_client_password_email(
 
     return AdminClientPasswordResetOut(
         client_id=client.id,
-        email=client.email,
+        email=visible_email,
         message_id=message_id,
         sent_at=now,
     )
@@ -4796,7 +5092,8 @@ def send_admin_client_subscription_payment_email(
 ) -> AdminClientSubscriptionPaymentEmailOut:
     client = _require_client(db, client_id)
     sub, plan = _admin_subscription_with_plan_for_client(db, client_id=client_id, subscription_id=subscription_id)
-    if not client.email:
+    visible_email = deliverable_client_email(client)
+    if not visible_email:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Client email is missing")
 
     try:
@@ -4863,7 +5160,7 @@ def send_admin_client_subscription_payment_email(
         body_template=body_template,
         first_name=(client.first_name or "").strip(),
         last_name=(client.last_name or "").strip(),
-        email=client.email,
+        email=visible_email,
         plan_name=plan.name,
         amount_due=f"{amount_due:.2f}",
         currency=currency_code,
@@ -4877,7 +5174,7 @@ def send_admin_client_subscription_payment_email(
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     message_id = send_client_payment_email(
-        to_email=client.email,
+        to_email=visible_email,
         subject=subject,
         body=body,
         body_format=body_format,
@@ -4894,7 +5191,7 @@ def send_admin_client_subscription_payment_email(
         author_user_id=actor.id,
         entry_type="EMAIL",
         message=(
-            f"Demande de paiement envoyee a {client.email} pour '{plan.name}' "
+            f"Demande de paiement envoyee a {visible_email} pour '{plan.name}' "
             f"({amount_due:.2f} {currency_code}, {_payment_method_label(method_code)}). "
             f"Message id: {message_id}. "
             + (f"Checkout: {payment_url}." if checkout_url else "")
@@ -4905,7 +5202,7 @@ def send_admin_client_subscription_payment_email(
     return AdminClientSubscriptionPaymentEmailOut(
         client_id=client.id,
         subscription_id=sub.id,
-        email=client.email,
+        email=visible_email,
         message_id=message_id,
         sent_at=sent_at,
     )
@@ -5108,7 +5405,9 @@ def send_admin_client_message_email(
     actor_label = _display_name(actor.first_name, actor.last_name, actor.email)
 
     billing_profile = resolve_billing_profile(db, client)
-    default_recipients = _normalize_email_recipients([client.email, billing_profile.email])
+    default_recipients = _normalize_email_recipients(
+        [deliverable_client_email(client), deliverable_client_email(billing_profile)]
+    )
     to_recipients = default_recipients if payload.to_emails is None else _normalize_email_recipients(payload.to_emails)
     cc_recipients = _normalize_email_recipients(payload.cc_emails)
     if payload.send_copy_to_self and _normalize_optional(actor.email):
@@ -5127,7 +5426,7 @@ def send_admin_client_message_email(
     if not recipients:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
 
-    client_email = (client.email or "").strip().lower()
+    client_email = (deliverable_client_email(client) or "").strip().lower()
     message_ids: list[str] = []
     for recipient in recipients:
         recipient_user_id = client.id if recipient.strip().lower() == client_email else None
@@ -5434,7 +5733,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         owner = scoped_users_by_id.get(sub.user_id)
         label = plan.name
         if owner is not None and owner.id != client.id:
-            label = f"{label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+            label = f"{label} - {_display_name(owner.first_name, owner.last_name, visible_client_email(owner))}"
 
         items.append(
             AdminClientPaymentOut(
@@ -5502,7 +5801,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         owner = scoped_users_by_id.get(booking.user_id)
         label = f"{course_type.name} - {location.name}"
         if owner is not None and owner.id != client.id:
-            label = f"{label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+            label = f"{label} - {_display_name(owner.first_name, owner.last_name, visible_client_email(owner))}"
         seller_legal_entity_id = session_obj.snapshot_seller_legal_entity_id or course_type.seller_legal_entity_id
 
         items.append(
@@ -5535,7 +5834,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             credit_total = _quantize_money(-abs(Decimal(total_incl_vat)))
             credit_label = f"Avoir annulation - {course_type.name} - {location.name}"
             if owner is not None and owner.id != client.id:
-                credit_label = f"{credit_label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+                credit_label = f"{credit_label} - {_display_name(owner.first_name, owner.last_name, visible_client_email(owner))}"
             items.append(
                 AdminClientPaymentOut(
                     id=booking.id,
@@ -5563,7 +5862,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
         owner = scoped_users_by_id.get(row.user_id)
         label = row.label
         if owner is not None and owner.id != client.id:
-            label = f"{label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+            label = f"{label} - {_display_name(owner.first_name, owner.last_name, visible_client_email(owner))}"
         if student is not None and student.id != row.user_id:
             label = f"{label} - {_display_name(student.first_name, student.last_name, student.email)}"
 
@@ -5858,11 +6157,17 @@ def create_admin_client_manual_transaction(
     receipt_send_error: str | None = None
     if payload.send_receipt_email:
         billing_profile = resolve_billing_profile(db, client)
-        receipt_recipients = _normalize_email_recipients([billing_profile.email, client.email])
+        receipt_recipients = _normalize_email_recipients(
+            [deliverable_client_email(billing_profile), deliverable_client_email(client)]
+        )
         if not receipt_recipients:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
         payment_method_label = _payment_method_label_client(payment_method_code) if payment_method_code else "Paiement manuel"
-        client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
+        client_name = _display_name(
+            billing_profile.first_name,
+            billing_profile.last_name,
+            visible_client_email(billing_profile) or visible_client_email(client),
+        )
         invoice_numbers = [invoice_number for _, _, _, invoice_number in reconciled_invoices]
         receipt_lines = [
             f"Bonjour {client_name},",
@@ -6323,7 +6628,7 @@ def create_admin_client_range_invoice(
             entity_group_context.setdefault(group_key, (None, billing_entity))
         payments_by_entity_group.setdefault(group_key, []).append(row)
 
-    issued_at = datetime.combine(issued_date_value, datetime.min.time(), tzinfo=timezone.utc)
+    issued_at = _invoice_issued_at_for_date(issued_date=issued_date_value)
     requested_invoice_number = _normalize_optional(payload.invoice_number)
     auto_footer_note = _normalize_optional(payload.auto_footer_note)
     public_note = _normalize_optional(payload.public_note)
@@ -6370,6 +6675,7 @@ def create_admin_client_range_invoice(
             "kind": "INVOICE_RANGE",
             "invoice_number": resolved_invoice_number,
             "issued_date": issued_date_value.isoformat(),
+            "issued_at": issued_at.isoformat(),
             "due_date": due_date_value.isoformat(),
             "no_due_date": bool(payload.no_due_date),
             "start_date": payload.start_date.isoformat(),
@@ -6671,6 +6977,7 @@ def download_admin_client_range_invoice(
     private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
     invoice_status: str | None = Query(default=None, max_length=20),
+    issued_at: str | None = Query(default=None, max_length=64),
     inline: bool = Query(default=False),
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
@@ -6766,6 +7073,15 @@ def download_admin_client_range_invoice(
         carry_balance = opening_balance if auto_include_previous_balance else Decimal("0.00")
         total_to_pay_by_currency[currency] = _quantize_money(period_total + carry_balance)
 
+    kit_component_lines_by_label = _kit_component_lines_by_title(
+        db,
+        titles={
+            str(row.label or "").strip()
+            for row in payments
+            if row.source.strip().upper() == "MANUAL"
+        },
+    )
+
     invoice_lines: list[InvoicePeriodLine] = []
     if normalized_layout == "DETAILED":
         for row in payments:
@@ -6781,6 +7097,10 @@ def download_admin_client_range_invoice(
                     vat_amount=_quantize_money(Decimal(row.vat_amount)),
                     total_incl_vat=_quantize_money(Decimal(row.total_incl_vat)),
                     currency=currency,
+                    detail_lines=_kit_component_lines_for_label(
+                        label=str(row.label or ""),
+                        mapping=kit_component_lines_by_label,
+                    ),
                 )
             )
     else:
@@ -6816,7 +7136,7 @@ def download_admin_client_range_invoice(
                 student_name = (
                     _display_name(student.first_name, student.last_name, student.email)
                     if student is not None
-                    else _display_name(client.first_name, client.last_name, client.email)
+                    else _display_name(client.first_name, client.last_name, visible_client_email(client))
                 )
                 duration_minutes = int(max((session_end_at - session_start_at).total_seconds(), 0) // 60)
                 booking_context_by_id[booking_id] = {
@@ -6858,7 +7178,7 @@ def download_admin_client_range_invoice(
                 )
                 student_name = str(
                     context.get("student_name")
-                    or _display_name(client.first_name, client.last_name, client.email)
+                    or _display_name(client.first_name, client.last_name, visible_client_email(client))
                 )
                 student_group = grouped_bookings.setdefault(student_name, {})
                 bucket = student_group.setdefault(
@@ -6957,6 +7277,10 @@ def download_admin_client_range_invoice(
                     vat_amount=vat_amount,
                     total_incl_vat=_quantize_money(Decimal(values["total_incl_vat"])),
                     currency=currency,
+                    detail_lines=_kit_component_lines_for_label(
+                        label=base_label,
+                        mapping=kit_component_lines_by_label,
+                    ),
                 )
             )
 
@@ -6971,7 +7295,8 @@ def download_admin_client_range_invoice(
             fallback_currency=_normalize_currency(client.preferred_currency, fallback="EUR"),
         )
 
-    issued_at = datetime.combine(issued_date_value, datetime.min.time(), tzinfo=timezone.utc)
+    explicit_issued_at = _parse_iso_datetime(issued_at)
+    issued_at = explicit_issued_at or _invoice_issued_at_for_date(issued_date=issued_date_value)
     requested_invoice_number = _normalize_optional(invoice_number)
     if requested_invoice_number is not None:
         resolved_invoice_number = requested_invoice_number
@@ -7006,6 +7331,7 @@ def download_admin_client_range_invoice(
             "kind": "INVOICE_RANGE",
             "invoice_number": resolved_invoice_number,
             "issued_date": issued_date_value.isoformat(),
+            "issued_at": issued_at.isoformat(),
             "due_date": due_date_value.isoformat(),
             "no_due_date": bool(no_due_date),
             "start_date": start_date.isoformat(),
@@ -7123,7 +7449,7 @@ def download_admin_client_range_invoice_from_note(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
     _require_client(db, client_id)
-    _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    note_entry, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
     frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
         db,
         note_id=note_id,
@@ -7190,6 +7516,7 @@ def download_admin_client_range_invoice_from_note(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        issued_at=(str(metadata.get("issued_at") or "").strip() or note_entry.created_at.isoformat()),
         inline=inline,
         db=db,
         actor=actor,
@@ -7205,7 +7532,7 @@ def download_admin_client_range_invoice_public(
     db: Session = Depends(get_db),
 ) -> Response:
     client = _require_client(db, client_id)
-    _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    note_entry, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
     frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
         db,
         note_id=note_id,
@@ -7278,6 +7605,7 @@ def download_admin_client_range_invoice_public(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        issued_at=(str(metadata.get("issued_at") or "").strip() or note_entry.created_at.isoformat()),
         inline=inline,
         db=db,
         actor=client,
@@ -7316,6 +7644,10 @@ def start_admin_client_range_invoice_public_payment(
     if seller_legal_entity_id is None:
         seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
 
+    visible_email = deliverable_client_email(client)
+    if not visible_email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Client email is missing")
+
     invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
     base_url = _frontend_base_url()
     success_return_url = (
@@ -7336,8 +7668,8 @@ def start_admin_client_range_invoice_public_payment(
         CheckoutCreateRequest(
             amount=amount_due,
             currency=currency_code,
-            description=f"Facture {invoice_number} ({client.email})",
-            customer_email=client.email,
+            description=f"Facture {invoice_number} ({visible_email})",
+            customer_email=visible_email,
             success_return_url=success_return_url,
             cancel_return_url=cancel_return_url,
             webhook_url=webhook_url,
@@ -7367,6 +7699,22 @@ def start_admin_client_range_invoice_public_payment(
     db.commit()
 
     return RedirectResponse(url=checkout.checkout_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/invoices/range/{note_id}/public-pay")
+def start_admin_client_range_invoice_public_payment_short(
+    note_id: UUID,
+    token: str | None = Query(default=None, min_length=8, max_length=4096),
+    t: str | None = Query(default=None, min_length=8, max_length=4096),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    _, _, client_id = _load_range_invoice_note_by_id(db, note_id=note_id, for_update=False)
+    return start_admin_client_range_invoice_public_payment(
+        client_id=client_id,
+        note_id=note_id,
+        token=_coalesce_public_payment_token(token=token, t=t),
+        db=db,
+    )
 
 
 @router.post("/{client_id}/invoices/range/{note_id}/public-pay/webhook")
@@ -7431,6 +7779,24 @@ def handle_admin_client_range_invoice_public_payment_webhook(
     db.add(note)
     db.commit()
     return {"ok": True, "processed": True, "paid": False, "status": lookup.status}
+
+
+@router.post("/invoices/range/{note_id}/public-pay/webhook")
+def handle_admin_client_range_invoice_public_payment_webhook_short(
+    note_id: UUID,
+    token: str | None = Query(default=None, min_length=8, max_length=4096),
+    t: str | None = Query(default=None, min_length=8, max_length=4096),
+    secret: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    _, _, client_id = _load_range_invoice_note_by_id(db, note_id=note_id, for_update=False)
+    return handle_admin_client_range_invoice_public_payment_webhook(
+        client_id=client_id,
+        note_id=note_id,
+        token=_coalesce_public_payment_token(token=token, t=t),
+        secret=secret,
+        db=db,
+    )
 
 
 @router.get("/{client_id}/invoices/range/{note_id}/public-pay/return")
@@ -7508,6 +7874,24 @@ def return_admin_client_range_invoice_public_payment(
         subtitle="Votre paiement a bien ete enregistre. La facture est marquee comme payee.",
         invoice_number=invoice_number,
         transaction_reference=f"{lookup.provider_reference} (ligne {transaction_id})",
+    )
+
+
+@router.get("/invoices/range/{note_id}/public-pay/return")
+def return_admin_client_range_invoice_public_payment_short(
+    note_id: UUID,
+    token: str | None = Query(default=None, min_length=8, max_length=4096),
+    t: str | None = Query(default=None, min_length=8, max_length=4096),
+    state: str = Query(default="success"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    _, _, client_id = _load_range_invoice_note_by_id(db, note_id=note_id, for_update=False)
+    return return_admin_client_range_invoice_public_payment(
+        client_id=client_id,
+        note_id=note_id,
+        token=_coalesce_public_payment_token(token=token, t=t),
+        state=state,
+        db=db,
     )
 
 
@@ -7626,6 +8010,13 @@ def download_admin_client_payment_invoice(
     invoice_number = payment.invoice_number or _invoice_number_for_payment(payment.id, payment.occurred_at)
     billing_profile = resolve_billing_profile(db, payment_user)
     client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
+    kit_component_lines = _kit_component_lines_for_label(
+        label=payment.label,
+        mapping=_kit_component_lines_by_title(
+            db,
+            titles={str(payment.label or "").strip()},
+        ),
+    )
     line = InvoicePeriodLine(
         date_label=payment.occurred_at.strftime("%d/%m/%Y"),
         type_label=_payment_source_label(payment.source),
@@ -7636,6 +8027,7 @@ def download_admin_client_payment_invoice(
         vat_amount=_quantize_money(Decimal(payment.vat_amount)),
         total_incl_vat=_quantize_money(Decimal(payment.total_incl_vat)),
         currency=_normalize_currency(payment.currency, fallback="EUR"),
+        detail_lines=kit_component_lines,
     )
     totals = {
         _normalize_currency(payment.currency, fallback="EUR"): {

@@ -325,9 +325,14 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
       <section className="card">
         <div className="row spread">
           <h2>Clients</h2>
-          <Link className="mode-link" href={`${closeHref}${closeHref.includes("?") ? "&" : "?"}new_client=1`}>
-            Ajouter nouveau
-          </Link>
+          <div className="row wrap gap-sm">
+            <Link className="mode-link" href="/admin/clients/import/mymusicstaff">
+              Importer MyMusicStaff
+            </Link>
+            <Link className="mode-link" href={`${closeHref}${closeHref.includes("?") ? "&" : "?"}new_client=1`}>
+              Ajouter nouveau
+            </Link>
+          </div>
         </div>
         <p className="muted">Gestion des adherents, des groupes et des actions en masse.</p>
       </section>

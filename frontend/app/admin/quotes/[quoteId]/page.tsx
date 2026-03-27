@@ -182,6 +182,7 @@ type PaymentPlanOut = {
   id: string;
   name: string;
   payment_method: string;
+  schedule_type: string;
 };
 
 type QuoteTypeOut = {
@@ -373,7 +374,24 @@ function formatDate(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Paris" });
+}
+
+function formatDateOnly(value: string | null): string {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "-";
+  }
+  const isoDateMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDateMatch) {
+    const [, year, month, day] = isoDateMatch;
+    return `${day}/${month}/${year}`;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return raw;
+  }
+  return parsed.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" });
 }
 
 function formatAmount(value: string, currency: string): string {
@@ -413,6 +431,70 @@ function paymentMethodLabel(methodCode: string): string {
   if (normalized === "CARD_4X_FEES") return "4 fois avec frais";
   if (!normalized) return "-";
   return normalized;
+}
+
+function paymentScheduleTypeLabel(scheduleType: string): string {
+  const normalized = String(scheduleType || "").trim().toLowerCase();
+  if (normalized === "single") return "Paiement en 1 fois";
+  if (normalized === "split_2") return "Paiement en 2 fois";
+  if (normalized === "split_3") return "Paiement en 3 fois";
+  if (normalized === "split_4") return "Paiement en 4 fois";
+  if (normalized === "monthly") return "Paiement mensuel";
+  if (!normalized) return "-";
+  return scheduleType;
+}
+
+function canonicalPaymentPlanName(paymentMethod: string, scheduleType: string): string {
+  const normalizedMethod = String(paymentMethod || "").trim().toUpperCase();
+  const normalizedSchedule = String(scheduleType || "").trim().toLowerCase();
+  if (normalizedMethod === "CARD_4X_FEES") return "4 fois avec frais";
+  if (normalizedMethod === "BANK_TRANSFER") return "Virement bancaire";
+  if (normalizedMethod === "CASH") return "Especes";
+  if (normalizedMethod === "CHECK") {
+    if (normalizedSchedule === "split_2") return "Cheque en 2 fois";
+    if (normalizedSchedule === "split_3") return "Cheque en 3 fois";
+    if (normalizedSchedule === "split_4") return "Cheque en 4 fois";
+    return "Cheque en 1 fois";
+  }
+  if (normalizedMethod === "CARD_MONTHLY" || normalizedSchedule === "monthly") {
+    return "Carte bancaire mensuelle";
+  }
+  if (normalizedMethod === "CARD") return "Carte bancaire";
+  const methodLabel = paymentMethodLabel(normalizedMethod);
+  const scheduleLabel = paymentScheduleTypeLabel(normalizedSchedule);
+  if (normalizedSchedule === "" || normalizedSchedule === "single") return methodLabel;
+  return `${methodLabel} - ${scheduleLabel.toLowerCase()}`;
+}
+
+function paymentPlanLabel(plan: { name: string; payment_method: string; schedule_type: string } | null | undefined): string {
+  if (!plan) return "-";
+  const rawName = String(plan.name || "").trim();
+  const canonicalName = canonicalPaymentPlanName(plan.payment_method, plan.schedule_type);
+  if (!rawName) return canonicalName;
+  if (rawName.toLowerCase() === canonicalName.toLowerCase()) return rawName;
+  if ([
+    "carte bancaire",
+    "carte bancaire mensuelle",
+    "cheque en 1 fois",
+    "cheque en 2 fois",
+    "cheque en 3 fois",
+    "cheque en 4 fois",
+    "virement bancaire",
+    "especes",
+    "4 fois avec frais",
+  ].includes(rawName.toLowerCase())) {
+    return canonicalName;
+  }
+  const extraLabels: string[] = [];
+  const methodLabel = paymentMethodLabel(plan.payment_method);
+  const scheduleLabel = paymentScheduleTypeLabel(plan.schedule_type);
+  if (!rawName.toLowerCase().includes(methodLabel.toLowerCase())) {
+    extraLabels.push(methodLabel);
+  }
+  if (plan.schedule_type.trim().toLowerCase() !== "single" && !rawName.toLowerCase().includes(scheduleLabel.toLowerCase())) {
+    extraLabels.push(scheduleLabel);
+  }
+  return extraLabels.length > 0 ? `${rawName} (${extraLabels.join(" · ")})` : rawName;
 }
 
 function labelForContext(contextType: string): string {
@@ -472,6 +554,9 @@ function formatScheduleDueLabel(item: Record<string, unknown>): string {
   if (dueType === "on_registration") {
     return "à réception de votre facture";
   }
+  if (dueType === "on_quote_validation_before_first_course") {
+    return "à la validation du devis, avant votre 1er cours";
+  }
   if (
     normalized === "a reception"
     || normalized === "a reception du dossier"
@@ -485,6 +570,12 @@ function formatScheduleDueLabel(item: Record<string, unknown>): string {
   ) {
     return "à réception de votre facture";
   }
+  if (
+    normalized === "a la validation du devis, avant votre 1er cours"
+    || normalized === "à la validation du devis, avant votre 1er cours"
+  ) {
+    return "à la validation du devis, avant votre 1er cours";
+  }
   if (dueLabel) {
     return dueLabel;
   }
@@ -497,6 +588,27 @@ function getCalendarSessions(snapshot: Record<string, unknown>): Array<Record<st
     return [];
   }
   return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+}
+
+type ActivityMode = "ONLINE" | "ONSITE" | "ANY" | null;
+
+function normalizeActivityMode(value: unknown): ActivityMode {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "ONLINE" || normalized === "ONSITE" || normalized === "ANY") {
+    return normalized;
+  }
+  return null;
+}
+
+function sessionMatchesActivityMode(session: Record<string, unknown>, activityMode: ActivityMode): boolean {
+  const sessionMode = normalizeActivityMode(session.modality);
+  if (activityMode === "ONLINE") {
+    return sessionMode !== "ONSITE";
+  }
+  if (activityMode === "ONSITE") {
+    return sessionMode !== "ONLINE";
+  }
+  return true;
 }
 
 const MONTH_LABELS_FR = [
@@ -638,6 +750,23 @@ function readObject(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+function readTypeformParentAddress(normalized: Record<string, unknown> | null): string {
+  if (!normalized) {
+    return "";
+  }
+  const direct = typeof normalized.parent_address === "string" ? normalized.parent_address.trim() : "";
+  if (direct) {
+    return direct;
+  }
+  const line1 = typeof normalized.parent_address_line_1 === "string" ? normalized.parent_address_line_1.trim() : "";
+  const line2 = typeof normalized.parent_address_line_2 === "string" ? normalized.parent_address_line_2.trim() : "";
+  const city = typeof normalized.parent_city === "string" ? normalized.parent_city.trim() : "";
+  const postalCode = typeof normalized.parent_postal_code === "string" ? normalized.parent_postal_code.trim() : "";
+  const country = typeof normalized.parent_country === "string" ? normalized.parent_country.trim() : "";
+  const locality = [postalCode, city].filter(Boolean).join(" ").trim();
+  return [line1, line2, locality, country].filter(Boolean).join(", ");
 }
 
 function getPlanningBlocks(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -1178,11 +1307,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     || selectedClient?.home_phone
     || "-";
   const prospectMeta = readObject(selectedProspect?.meta) || {};
+  const quoteMetaObject = readObject(detail.quote.meta || {}) || {};
+  const typeformIntakeMeta = readObject(quoteMetaObject.typeform_intake);
+  const typeformNormalizedPayload = readObject(typeformIntakeMeta?.normalized_payload);
+  const typeformParentAddress = readTypeformParentAddress(typeformNormalizedPayload);
   const prospectType = String(prospectMeta.prospect_type ?? "").trim().toLowerCase();
   const prospectTypeLabel = labelForProspectType(prospectType);
   const clientKindLabel = labelForClientKind(selectedClient?.client_kind);
   const sourceTypeLabel = prospectTypeLabel !== "-" ? prospectTypeLabel : clientKindLabel;
   const sourceTypeOrigin = prospectTypeLabel !== "-" ? "prospect" : clientKindLabel !== "-" ? "client" : "inconnu";
+  const isChildSource = prospectType === "child" || selectedClient?.client_kind === "CHILD";
   const parentReferent = readObject(prospectMeta.parent_referent);
   const parentReferentName = parentReferent
     ? displayName(
@@ -1193,6 +1327,27 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     : "-";
   const parentReferentEmail = parentReferent && typeof parentReferent.email === "string" ? parentReferent.email : "-";
   const parentReferentPhone = parentReferent && typeof parentReferent.phone === "string" ? parentReferent.phone : "-";
+  const clientAddress = [selectedClient?.address_line, selectedClient?.postal_code, selectedClient?.city]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .trim();
+  const ownerAddress = (
+    typeof prospectMeta.adult_address === "string" && prospectMeta.adult_address.trim()
+      ? prospectMeta.adult_address.trim()
+      : prospectType === "adult"
+        ? typeformParentAddress
+        : clientAddress
+  ) || "-";
+  const parentReferentAddress = parentReferent && typeof parentReferent.address === "string" && parentReferent.address.trim()
+    ? parentReferent.address.trim()
+    : typeformParentAddress || "-";
+  const childBirthDateRaw = (
+    (selectedClient?.client_kind === "CHILD" ? selectedClient.birth_date : null)
+    || (prospectType === "child" && typeof prospectMeta.birth_date === "string" ? prospectMeta.birth_date : null)
+    || (typeof typeformNormalizedPayload?.child_birth_date === "string" ? typeformNormalizedPayload.child_birth_date : null)
+    || (typeof prospectMeta.child_birth_date === "string" ? prospectMeta.child_birth_date : null)
+  );
+  const childBirthDateLabel = childBirthDateRaw ? formatDateOnly(childBirthDateRaw) : "-";
 
   const familyLinks = clientFamily
     ? [
@@ -1312,6 +1467,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
   const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
   const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
+  const activityById = new Map(activities.map((activity) => [activity.id, activity]));
   const planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }> = {};
   for (const session of calendarSessions) {
     const activityId = String(session.activity_id ?? "").trim();
@@ -1321,7 +1477,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     if (!(activityId in planningByActivityId)) {
       planningByActivityId[activityId] = { plannedQuantity: 0, pendingSelection: false };
     }
-    planningByActivityId[activityId].plannedQuantity += 1;
+    const activityMode = normalizeActivityMode(activityById.get(activityId)?.mode);
+    if (sessionMatchesActivityMode(session, activityMode)) {
+      planningByActivityId[activityId].plannedQuantity += 1;
+    }
   }
   for (const block of planningBlocks) {
     const activityId = String(block.activity_id ?? "").trim();
@@ -1337,7 +1496,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       planningByActivityId[activityId].pendingSelection = true;
     }
   }
-  const activityById = new Map(activities.map((activity) => [activity.id, activity]));
   const sendQuantityMismatchWarnings = detail.lines
     .filter((line) => Boolean(line.activity_id))
     .filter((line) => {
@@ -1484,6 +1642,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const sectionHref = (section: QuoteWorkspaceSection): string =>
     `${quoteBasePath}?back=${encodeURIComponent(backPath)}&section=${section}`;
   const selfPath = appendQuickScenario(sectionHref(activeSection), quickScenario);
+  const prospectEditBaseHref = selectedProspect
+    ? `/admin/prospects/${encodeURIComponent(selectedProspect.id)}?return_to=${encodeURIComponent(selfPath)}`
+    : null;
+  const childProspectEditHref = prospectEditBaseHref ? `${prospectEditBaseHref}&edit_target=child` : null;
+  const parentProspectEditHref = prospectEditBaseHref ? `${prospectEditBaseHref}&edit_target=parent` : null;
   const transformBasePath = `${quoteBasePath}/transform?back=${encodeURIComponent(selfPath)}${quickScenario === "live" ? "" : `&scenario=${quickScenario}`}`;
   const followupTransformationFailureUi =
     followupTransformationExecutionStatus === "failed" && followupTransformationFailedMessage
@@ -1556,7 +1719,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     { label: "Annee scolaire", value: detail.quote.school_year_label || "-" },
     {
       label: "Plan de paiement",
-      value: paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id)?.name || "Aucun",
+      value: paymentPlanLabel(paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id) || null) || "Aucun",
     },
     { label: "Options a reprendre", value: readStringMeta(detail.quote.meta || {}, "integration_options_label", "Selon devis valide") },
   ];
@@ -1608,7 +1771,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     schoolYearLabel: detail.quote.school_year_label,
     legalEntityId: detail.quote.legal_entity_id,
     legalEntityName: legalEntities.find((entity) => entity.id === detail.quote.legal_entity_id)?.name || "A definir",
-    paymentPlanName: paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id)?.name || "-",
+    paymentPlanName: paymentPlanLabel(paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id) || null) || "-",
     quoteType: detail.quote.quote_type,
     quoteTypeFormulaName: selectedQuoteType?.formula_name || null,
     locationId: detail.quote.location_id,
@@ -1807,12 +1970,22 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   <p className="muted">Informations source du devis et liens famille disponibles.</p>
                 </div>
                 <div className="row wrap gap-sm">
-                  {selectedProspect ? (
+                  {selectedProspect && isChildSource && childProspectEditHref ? (
+                    <Link className="ghost" href={childProspectEditHref}>
+                      Corriger enfant
+                    </Link>
+                  ) : null}
+                  {selectedProspect && isChildSource && parentProspectEditHref ? (
+                    <Link className="ghost" href={parentProspectEditHref}>
+                      Corriger parent
+                    </Link>
+                  ) : null}
+                  {selectedProspect && prospectEditBaseHref ? (
                     <Link
                       className="ghost"
-                      href={`/admin/prospects/${encodeURIComponent(selectedProspect.id)}?return_to=${encodeURIComponent(selfPath)}`}
+                      href={prospectEditBaseHref}
                     >
-                      Modifier prospect
+                      Modifier prospect complet
                     </Link>
                   ) : null}
                   {selectedClient ? (
@@ -1834,6 +2007,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   <p><strong>Nom:</strong> {ownerName}</p>
                   <p><strong>Email:</strong> {owner?.email || "-"}</p>
                   <p><strong>Telephone:</strong> {ownerPhone}</p>
+                  <p><strong>Adresse:</strong> {ownerAddress}</p>
                   <div className="row wrap gap-sm top-gap-sm">
                     {selectedProspect ? (
                       <Link className="ghost" href={`/admin/prospects/${encodeURIComponent(selectedProspect.id)}`}>
@@ -1851,9 +2025,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                 <article className="item">
                   <h4>Contexte famille</h4>
                   <p><strong>Type source:</strong> {sourceTypeLabel} {sourceTypeOrigin !== "inconnu" ? <small className="muted">(base {sourceTypeOrigin})</small> : null}</p>
+                  {childBirthDateRaw ? <p><strong>Date de naissance enfant:</strong> {childBirthDateLabel}</p> : null}
                   <p><strong>Parent referent:</strong> {resolvedParentReferentName}</p>
                   <p><strong>Email parent:</strong> {resolvedParentReferentEmail}</p>
                   <p><strong>Telephone parent:</strong> {resolvedParentReferentPhone}</p>
+                  <p><strong>Adresse parent:</strong> {parentReferentAddress}</p>
                   {selectedClient ? (
                     <p className="top-gap-sm">
                       <strong>Liens famille client:</strong> {familyLinks.length}
@@ -2293,7 +2469,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             <select name="payment_plan_id" defaultValue={detail.quote.payment_plan_id || ""} disabled={detail.quote.status !== "created"}>
               <option value="">Aucun</option>
               {paymentPlans.map((row) => (
-                <option key={row.id} value={row.id}>{row.name}</option>
+                <option key={row.id} value={row.id}>{paymentPlanLabel(row)}</option>
               ))}
             </select>
           </label>
@@ -2513,6 +2689,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               name: row.name,
               code: row.code,
               service_code: row.service_code,
+              mode: row.mode,
               duration_minutes: row.duration_minutes,
               exclude_holidays_in_recurrence: row.exclude_holidays_in_recurrence,
               exclude_school_vacations_in_recurrence: row.exclude_school_vacations_in_recurrence,
@@ -2728,7 +2905,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                         <select name="payment_plan_id" defaultValue={followupPaymentPlanId}>
                           <option value="">Aucun</option>
                           {paymentPlans.map((row) => (
-                            <option key={row.id} value={row.id}>{row.name} ({paymentMethodLabel(row.payment_method)})</option>
+                            <option key={row.id} value={row.id}>{paymentPlanLabel(row)}</option>
                           ))}
                         </select>
                       </label>

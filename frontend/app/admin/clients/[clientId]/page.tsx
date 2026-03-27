@@ -150,6 +150,7 @@ function formatDate(value: string): string {
   return new Date(value).toLocaleString("fr-FR", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: "Europe/Paris",
   });
 }
 
@@ -159,6 +160,7 @@ function formatDateOnly(value: string | null): string {
   }
   return new Date(value).toLocaleDateString("fr-FR", {
     dateStyle: "medium",
+    timeZone: "Europe/Paris",
   });
 }
 
@@ -168,6 +170,17 @@ function formatDateOnlyNumeric(value: string): string {
     month: "2-digit",
     year: "numeric",
   });
+}
+
+function clientCreationSourceLabel(value: string | null | undefined): string {
+  const normalized = (value || "").trim().toUpperCase();
+  if (normalized === "MYMUSICSTAFF") {
+    return "MyMusicStaff";
+  }
+  if (normalized === "TYPEFORM") {
+    return "Typeform";
+  }
+  return "Manuel";
 }
 
 function formatDateInput(value: Date): string {
@@ -455,6 +468,7 @@ type RangeInvoiceNotePayload = {
   kind: "INVOICE_RANGE";
   invoice_number: string;
   issued_date: string;
+  issued_at?: string;
   due_date: string;
   no_due_date: boolean;
   start_date: string;
@@ -573,6 +587,7 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
       kind: "INVOICE_RANGE",
       invoice_number: payload.invoice_number,
       issued_date: payload.issued_date,
+      issued_at: typeof payload.issued_at === "string" ? payload.issued_at : undefined,
       due_date: payload.due_date,
       no_due_date: Boolean(payload.no_due_date),
       start_date: payload.start_date,
@@ -680,7 +695,14 @@ function initials(client: AdminClientOut): string {
   if (candidate) {
     return candidate;
   }
-  return client.email.slice(0, 2).toUpperCase();
+  return "CL";
+}
+
+function clientPhotoAlt(client: AdminClientOut, fullName: string): string {
+  if (fullName) {
+    return `Photo de ${fullName}`;
+  }
+  return "Photo client";
 }
 
 function tabHref(clientId: string, tab: ClientTab): string {
@@ -1575,7 +1597,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const paymentInvoices: InvoiceListRow[] = payments
     .filter((row) => {
       const normalizedInvoiceStatus = (row.invoice_status ?? "").toUpperCase();
-      return normalizedInvoiceStatus === "PAID" || normalizedInvoiceStatus === "CANCELLED";
+      if (normalizedInvoiceStatus !== "PAID" && normalizedInvoiceStatus !== "CANCELLED") {
+        return false;
+      }
+      if (row.invoice_note_id) {
+        return false;
+      }
+      const normalizedSource = (row.source ?? "").trim().toUpperCase();
+      if (normalizedSource === "BOOKING" || normalizedSource === "MANUAL") {
+        return false;
+      }
+      return true;
     })
     .map((row) => ({
       kind: "payment",
@@ -1601,7 +1633,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       kind: "range",
       key: `range-${payload.invoice_number}-${note.id}`,
       noteId: note.id,
-      occurredAt: `${payload.issued_date}T00:00:00.000Z`,
+      occurredAt: payload.issued_at ?? note.created_at ?? `${payload.issued_date}T00:00:00.000Z`,
       invoiceNumber: payload.invoice_number,
       typeLabel: payload.generation_mode === "AUTO" ? "Facture periode auto" : "Facture periode",
       modeLabel: payload.generation_mode === "AUTO" ? "Auto" : "Manuel",
@@ -1988,6 +2020,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceFieldError = (fieldName: string): string | null => invoiceErrorFieldMap[fieldName] ?? null;
   const invoiceFieldInvalid = (fieldName: string): boolean => invoiceFieldError(fieldName) !== null;
   const invoiceFieldAutoFocus = (fieldName: string): boolean => invoiceFirstInvalidField === fieldName;
+  const heroMeta = [
+    client.email || null,
+    client.mobile_phone_1 ? `Mobile 1: ${client.mobile_phone_1}` : null,
+    client.residence_country,
+    client.preferred_currency,
+    client.client_kind === "CHILD" ? "Enfant" : "Adulte",
+  ].filter(Boolean) as string[];
 
   return (
     <section className="admin-page-grid client-detail-page">
@@ -2012,13 +2051,29 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </div>
 
         <div className="client-hero-main">
-          <div className="client-avatar">{initials(client)}</div>
-          <div>
-            <h2>{fullName || client.email}</h2>
-            <p className="muted">
-              {client.email} | Mobile 1: {client.mobile_phone_1 ?? "-"} | {client.residence_country} | {client.preferred_currency} |{" "}
-              {client.client_kind === "CHILD" ? "Enfant" : "Adulte"}
-            </p>
+          <div className="client-photo-shell">
+            {client.photo_url ? (
+              <img
+                className="client-photo"
+                src={client.photo_url}
+                alt={clientPhotoAlt(client, fullName)}
+              />
+            ) : (
+              <div className="client-avatar" aria-hidden="true">
+                {initials(client)}
+              </div>
+            )}
+            <div className="client-photo-caption">Photo client</div>
+          </div>
+          <div className="client-hero-identity">
+            <h2>{fullName || "Client"}</h2>
+            <div className="client-hero-meta" aria-label="Informations du client">
+              {heroMeta.map((item) => (
+                <span key={item} className="client-hero-meta-chip">
+                  {item}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -3005,9 +3060,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <span className="muted">Nom complet</span>
                   <strong>{fullName || "Non renseigne"}</strong>
                 </article>
-                <article className="item row spread">
-                  <span className="muted">Email</span>
-                  <strong>{client.email}</strong>
+                <article className="item">
+                  <div className="row spread">
+                    <span className="muted">Email</span>
+                    <strong>{client.email || "Non renseigne"}</strong>
+                  </div>
+                  {client.email_is_generated ? (
+                    <p className="muted top-gap-sm">
+                      Une adresse technique interne est conservee pour l'import quand aucun email de contact n'est renseigne. Elle n'est jamais exposee au client.
+                    </p>
+                  ) : null}
                 </article>
                 <article className="item row spread">
                   <span className="muted">Tel mob 1</span>
@@ -3044,6 +3106,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <article className="item row spread">
                   <span className="muted">Type adherent</span>
                   <strong>{client.client_kind === "CHILD" ? "Enfant" : "Adulte"}</strong>
+                </article>
+                <article className="item row spread">
+                  <span className="muted">Source de creation</span>
+                  <strong>{clientCreationSourceLabel(client.creation_source)}</strong>
                 </article>
                 <article className="item row spread">
                   <span className="muted">Statut</span>
@@ -3397,7 +3463,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <strong>
                           Enfant:{" "}
                           <Link className="client-name-link" href={tabHref(link.child.id, "fiche")}>
-                            {([link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email)}
+                            {([link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email || "Client")}
                           </Link>
                         </strong>
                       <span className={`status-pill ${link.is_billing_recipient ? "status-ok" : "status-off"}`}>
@@ -3405,7 +3471,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       </span>
                       </div>
                       <p className="muted">
-                        {link.child.email} | Mobile 1: {link.child.mobile_phone_1 ?? "-"} | Relation: {link.relationship_label ?? "non precisee"}
+                        {[
+                          link.child.email || null,
+                          `Mobile 1: ${link.child.mobile_phone_1 ?? "-"}`,
+                          `Relation: ${link.relationship_label ?? "non precisee"}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" | ")}
                       </p>
                       <div className="row">
                         {!link.is_billing_recipient ? (
@@ -4655,10 +4727,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 Etudiant (optionnel)
                 <select name="student_id" defaultValue="">
                   <option value="">(Non precise)</option>
-                  <option value={client.id}>{fullName || client.email}</option>
+                  <option value={client.id}>{fullName || client.email || "Client"}</option>
                   {family.links_as_adult.map((link) => (
                     <option key={link.child.id} value={link.child.id}>
-                      {[link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email}
+                      {[link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email || "Client"}
                     </option>
                   ))}
                 </select>
@@ -4736,10 +4808,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   Etudiant (optionnel)
                   <select name="student_id" defaultValue={selectedManualTransactionForEdit.student_user_id ?? ""}>
                     <option value="">(Non precise)</option>
-                    <option value={client.id}>{fullName || client.email}</option>
+                    <option value={client.id}>{fullName || client.email || "Client"}</option>
                     {family.links_as_adult.map((link) => (
                       <option key={link.child.id} value={link.child.id}>
-                        {[link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email}
+                        {[link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email || "Client"}
                       </option>
                     ))}
                   </select>

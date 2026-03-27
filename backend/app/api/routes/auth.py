@@ -28,6 +28,8 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.schemas.user import UserOut
+from app.services.client_email import visible_client_email
+from app.services.contacts.delivery_status.service import get_contact_delivery_status_for_user
 from app.services.email_delivery import send_email
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
@@ -121,6 +123,47 @@ def _password_reset_template(db: Session) -> tuple[str, str, str]:
         return DEFAULT_PASSWORD_RESET_SUBJECT, DEFAULT_PASSWORD_RESET_BODY, "TEXT"
 
 
+def _user_out(db: Session, user: User) -> UserOut:
+    delivery_status = get_contact_delivery_status_for_user(db, user_id=user.id)
+    return UserOut(
+        id=user.id,
+        email=visible_client_email(user),
+        role=user.role,
+        client_kind=user.client_kind,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        address_line=user.address_line,
+        postal_code=user.postal_code,
+        city=user.city,
+        address_country=user.address_country,
+        phone=user.phone,
+        mobile_phone_1=user.mobile_phone_1,
+        mobile_phone_2=user.mobile_phone_2,
+        home_phone=user.home_phone,
+        birth_date=user.birth_date,
+        important_info=user.important_info,
+        first_course_at=user.first_course_at,
+        portal_contact_visible=user.portal_contact_visible,
+        email_opt_in=user.email_opt_in,
+        sms_opt_in=user.sms_opt_in,
+        lesson_reminder_email_opt_in=user.lesson_reminder_email_opt_in,
+        lesson_reminder_sms_opt_in=user.lesson_reminder_sms_opt_in,
+        email_delivery_status=(delivery_status.email_status if delivery_status is not None else "active"),
+        email_suspended_at=(delivery_status.email_suspended_at if delivery_status is not None else None),
+        email_suspension_reason=(delivery_status.email_suspension_reason if delivery_status is not None else None),
+        phone_delivery_status=(delivery_status.phone_status if delivery_status is not None else "active"),
+        phone_suspended_at=(delivery_status.phone_suspended_at if delivery_status is not None else None),
+        phone_suspension_reason=(delivery_status.phone_suspension_reason if delivery_status is not None else None),
+        residence_country=user.residence_country,
+        preferred_currency=user.preferred_currency,
+        timezone=user.timezone,
+        client_status=user.client_status,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut:
     normalized_email = payload.email.strip().lower()
@@ -182,7 +225,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
         ) from exc
 
     db.refresh(user)
-    return user
+    return _user_out(db, user)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -335,5 +378,8 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
 
 
 @router.get("/me", response_model=UserOut)
-def me(current_user: User = Depends(get_current_user)) -> UserOut:
-    return current_user
+def me(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> UserOut:
+    return _user_out(db, current_user)

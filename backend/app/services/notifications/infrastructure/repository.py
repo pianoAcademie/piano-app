@@ -152,14 +152,31 @@ def ensure_contact_delivery_status(
         db.add(row)
         return row
 
-    row = ContactDeliveryStatus(
-        contact_type=contact_type,
-        contact_id=contact_id,
-        email=email,
-        phone=phone,
+    with db.begin_nested():
+        row = ContactDeliveryStatus(
+            contact_type=contact_type,
+            contact_id=contact_id,
+            email=email,
+            phone=phone,
+        )
+        db.add(row)
+        try:
+            db.flush()
+            return row
+        except IntegrityError:
+            pass
+
+    row = db.scalar(
+        select(ContactDeliveryStatus).where(
+            ContactDeliveryStatus.contact_type == contact_type,
+            ContactDeliveryStatus.contact_id == contact_id,
+        )
     )
+    if row is None:
+        raise RuntimeError("contact_delivery_status upsert failed")
+    row.email = email or row.email
+    row.phone = phone or row.phone
     db.add(row)
-    db.flush()
     return row
 
 

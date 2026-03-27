@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import ColorHexInput from "../../../components/color-hex-input";
 import RichMessageEditor from "../../../components/rich-message-editor";
+import AdminIntegrationPlanningEmbed from "../../../components/admin-integration-planning-embed";
 import {
   createAdminCatalogCategoryAction,
   createAdminCatalogKitAction,
@@ -568,25 +569,29 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const loadErrors: string[] = [];
 
   let planningLocations: LocationOut[] = [];
+  let integrationLocations: LocationOut[] = [];
   const planningActivitiesByLocationId = new Map<string, AdminPlanningActivitiesOut>();
 
-  if (mainSection === "activities") {
+  if (mainSection === "activities" || mainSection === "integrations") {
     const locationsResult = await backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token);
     if (locationsResult.ok) {
-      planningLocations = [...locationsResult.data].sort((left, right) => left.name.localeCompare(right.name, "fr"));
-      const planningActivityResults = await Promise.all(
-        planningLocations.map((location) =>
-          backendRequest<AdminPlanningActivitiesOut>(`/api/v1/admin/plannings/${location.id}/activities`, {}, token),
-        ),
-      );
-      planningActivityResults.forEach((result, index) => {
-        const location = planningLocations[index];
-        if (result.ok) {
-          planningActivitiesByLocationId.set(location.id, result.data);
-          return;
-        }
-        loadErrors.push(`Activites planning ${location.name}: ${result.message}`);
-      });
+      integrationLocations = [...locationsResult.data].sort((left, right) => left.name.localeCompare(right.name, "fr"));
+      if (mainSection === "activities") {
+        planningLocations = integrationLocations;
+        const planningActivityResults = await Promise.all(
+          planningLocations.map((location) =>
+            backendRequest<AdminPlanningActivitiesOut>(`/api/v1/admin/plannings/${location.id}/activities`, {}, token),
+          ),
+        );
+        planningActivityResults.forEach((result, index) => {
+          const location = planningLocations[index];
+          if (result.ok) {
+            planningActivitiesByLocationId.set(location.id, result.data);
+            return;
+          }
+          loadErrors.push(`Activites planning ${location.name}: ${result.message}`);
+        });
+      }
     } else {
       loadErrors.push(`Locaux: ${locationsResult.message}`);
     }
@@ -796,6 +801,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
+  const selectedIntegrationActivityId = readParam(params, "integration_course_type_id").trim();
+  const selectedIntegrationLocationId = readParam(params, "integration_location_id").trim();
 
   const messagingListPath = buildConfigHref("params-messaging", { messaging_tab: messagingTab });
 
@@ -2283,6 +2290,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           defaultChecked={messagingSettings.quote_cancel_sms_notification_enabled}
                         />
                         Envoyer aussi un SMS quand un devis est annule automatiquement
+                      </label>
+                      <label className="span-2">
+                        Texte Pass Récup non souscrit (devis PDF)
+                        <textarea
+                          name="quote_pass_recup_non_subscribed_text"
+                          rows={6}
+                          defaultValue={messagingSettings.quote_pass_recup_non_subscribed_text}
+                        />
+                        <span className="muted">
+                          Ce texte s affiche sous <strong>Option Pass Récup : non souscrite.</strong> dans le PDF du devis.
+                        </span>
                       </label>
                     </fieldset>
 
@@ -4110,13 +4128,24 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
             </>
           ) : null}
 
+          {section === "integrations" ? (
+            <AdminIntegrationPlanningEmbed
+              accountWebsite={account?.website ?? ""}
+              activities={activities}
+              locations={integrationLocations}
+              selectedActivityId={selectedIntegrationActivityId}
+              selectedLocationId={selectedIntegrationLocationId}
+            />
+          ) : null}
+
           {section !== "params-account" &&
           section !== "params-subscriptions" &&
           section !== "params-payments" &&
           section !== "params-messaging" &&
           section !== "activities" &&
           section !== "legal-entities" &&
-          section !== "credit-types" ? (
+          section !== "credit-types" &&
+          section !== "integrations" ? (
             <section className="card config-placeholder-card">
               <h3>{placeholderTitleBySection[section]}</h3>
               <p className="muted">Cette section est reservee pour un prochain ticket (V2), avec ecran detaille.</p>

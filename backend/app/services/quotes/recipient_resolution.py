@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.family import ClientFamilyLink
 from app.models.quote import Prospect, Quote
 from app.models.user import ClientKind, User, UserRole
+from app.services.client_email import deliverable_client_email
 
 
 def _normalize_email(value: str | None) -> str | None:
@@ -99,12 +100,12 @@ def resolve_quote_recipient_email(db: Session, quote: Quote, explicit_email: str
 
     client = _load_quote_client(db, quote)
     if client is not None:
-        from_client = _normalize_email(client.email)
+        from_client = _normalize_email(deliverable_client_email(client))
         if from_client:
             return from_client
         guardian = _load_primary_guardian(db, child_user_id=client.id) if client.client_kind == ClientKind.CHILD else None
         if guardian is not None:
-            from_guardian = _normalize_email(guardian.email)
+            from_guardian = _normalize_email(deliverable_client_email(guardian))
             if from_guardian:
                 return from_guardian
 

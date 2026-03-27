@@ -2201,6 +2201,7 @@ def update_admin_messaging_settings(
         quote_reminder_sms_enabled=payload.quote_reminder_sms_enabled,
         quote_reminder_lead_hours=payload.quote_reminder_lead_hours,
         quote_daily_job_local_time=payload.quote_daily_job_local_time,
+        quote_pass_recup_non_subscribed_text=payload.quote_pass_recup_non_subscribed_text,
         quote_auto_cancel_enabled=payload.quote_auto_cancel_enabled,
         quote_auto_cancel_delay_hours=payload.quote_auto_cancel_delay_hours,
         quote_cancel_notification_enabled=payload.quote_cancel_notification_enabled,

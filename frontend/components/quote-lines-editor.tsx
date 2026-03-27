@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type ActivityOption = {
   id: string;
@@ -479,6 +479,20 @@ function newLine(kind: LineKind, defaultVatRate: string): EditableLine {
   };
 }
 
+function editableLineFromInitial(row: InitialQuoteLine): EditableLine {
+  return {
+    uid: row.id,
+    kind: inferKind(row),
+    refId: inferRefId(row),
+    title: row.title || "",
+    quantity: normalizeQuantityInput(row.quantity),
+    vatRate: normalizePercentInput(row.vat_rate),
+    unitPrice: row.unit_price_ttc || "0",
+    saved: true,
+    dirty: false,
+  };
+}
+
 export default function QuoteLinesEditor({
   quoteId,
   returnTo,
@@ -495,20 +509,30 @@ export default function QuoteLinesEditor({
   defaultVatRate = "0",
   saveAction,
 }: QuoteLinesEditorProps): JSX.Element {
-  const [lines, setLines] = useState<EditableLine[]>(
-    initialLines.map((row) => ({
-      uid: row.id,
-      kind: inferKind(row),
-      refId: inferRefId(row),
-      title: row.title || "",
-      quantity: normalizeQuantityInput(row.quantity),
-      vatRate: normalizePercentInput(row.vat_rate),
-      unitPrice: row.unit_price_ttc || "0",
-      saved: true,
-      dirty: false,
-    })),
+  const initialLinesSignature = useMemo(
+    () => JSON.stringify(
+      initialLines.map((row) => ({
+        id: row.id,
+        line_type: row.line_type,
+        activity_id: row.activity_id,
+        product_id: row.product_id,
+        kit_id: row.kit_id,
+        title: row.title,
+        quantity: row.quantity,
+        vat_rate: row.vat_rate,
+        unit_price_ttc: row.unit_price_ttc,
+      })),
+    ),
+    [initialLines],
   );
+  const mappedInitialLines = useMemo(() => initialLines.map(editableLineFromInitial), [initialLinesSignature]);
+  const [lines, setLines] = useState<EditableLine[]>(() => mappedInitialLines);
   const [editorState, setEditorState] = useState<EditorState | null>(null);
+
+  useEffect(() => {
+    setLines(mappedInitialLines);
+    setEditorState(null);
+  }, [mappedInitialLines]);
 
   const linesJson = useMemo(() => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index))), [lines]);
   const total = useMemo(() => lines.reduce((sum, line) => sum + lineAmount(line), 0), [lines]);

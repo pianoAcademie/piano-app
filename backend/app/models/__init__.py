@@ -1,4 +1,5 @@
 from app.models.family import ClientFamilyLink
+from app.models.client_import_reference import ClientImportReference
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
     ClientAutoInvoiceOccurrence,
@@ -20,6 +21,7 @@ from app.models.catalog import (
     PlanningConfig,
     PlanningCourseType,
     Professor,
+    SessionAudienceScope,
     SessionStatus,
 )
 from app.models.ops import (
@@ -144,6 +146,7 @@ __all__ = [
     "ClientGroupMembership",
     "ClientKind",
     "ClientInvoiceLine",
+    "ClientImportReference",
     "ClientManualCreditBalance",
     "ClientManualTransaction",
     "ClientNoteEntry",
@@ -172,6 +175,7 @@ __all__ = [
     "Notification",
     "NotificationRule",
     "Professor",
+    "SessionAudienceScope",
     "ProfessorHourlyRate",
     "ProfessorPayGridPeriod",
     "ProfessorPayGridRule",

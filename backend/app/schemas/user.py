@@ -38,6 +38,12 @@ class UserOut(BaseModel):
     sms_opt_in: bool
     lesson_reminder_email_opt_in: bool
     lesson_reminder_sms_opt_in: bool
+    email_delivery_status: str
+    email_suspended_at: datetime | None
+    email_suspension_reason: str | None = None
+    phone_delivery_status: str
+    phone_suspended_at: datetime | None
+    phone_suspension_reason: str | None = None
     residence_country: str
     preferred_currency: str
     timezone: str

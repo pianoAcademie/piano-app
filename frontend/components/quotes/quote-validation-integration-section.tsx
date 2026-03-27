@@ -13,6 +13,11 @@ export default function QuoteValidationIntegrationSection({
   integrationResultCard: React.ReactNode;
   note?: string;
 }): JSX.Element {
+  const isLongCodeValue = (label: string, value: string): boolean => (
+    label.toLowerCase().includes("hash")
+    || /^[a-f0-9]{32,}$/i.test(value.replace(/\s+/g, ""))
+  );
+
   return (
     <section className="card quote-validation-integration-section">
       <h3>Validation et integration</h3>
@@ -21,11 +26,16 @@ export default function QuoteValidationIntegrationSection({
       </p>
       <article className="item top-gap-sm">
         <h4>Validation client</h4>
-        <div className="grid cols-2 top-gap-sm">
+        <div className="grid cols-2 top-gap-sm quote-validation-grid">
           {validationRows.map((row) => (
-            <p key={row.label}>
-              <strong>{row.label}:</strong> {row.value}
-            </p>
+            <div key={row.label} className="quote-validation-row">
+              <strong className="quote-validation-row-label">{row.label}:</strong>
+              <span
+                className={`quote-validation-row-value${isLongCodeValue(row.label, row.value) ? " is-code" : ""}`}
+              >
+                {row.value}
+              </span>
+            </div>
           ))}
         </div>
       </article>

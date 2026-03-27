@@ -7,6 +7,7 @@ type ActivityOption = {
   name: string;
   code?: string;
   service_code?: string;
+  mode?: string;
   duration_minutes: number;
   exclude_holidays_in_recurrence?: boolean;
   exclude_school_vacations_in_recurrence?: boolean;
@@ -134,6 +135,20 @@ const RECURRENCE_OPTIONS: Array<{ value: PlanningBlock["recurrence_frequency"]; 
   { value: "biweekly", label: "Toutes les 2 semaines" },
   { value: "monthly", label: "1 fois par mois" },
 ];
+
+function normalizePlanningModality(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return normalized === "ONLINE" || normalized === "ONSITE" ? normalized : "";
+}
+
+function lockedPlanningModality(activity: ActivityOption | undefined): string {
+  const normalized = String(activity?.mode ?? "").trim().toUpperCase();
+  return normalized === "ONLINE" || normalized === "ONSITE" ? normalized : "";
+}
+
+function resolvePlanningModality(activity: ActivityOption | undefined, currentValue: string | null | undefined): string {
+  return lockedPlanningModality(activity) || normalizePlanningModality(currentValue);
+}
 
 const MONTH_LABELS = [
   "Janvier",
@@ -614,6 +629,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
 }
 
 function newPlanningBlock(activities: ActivityOption[], locations: LocationOption[]): PlanningBlock {
+  const defaultActivity = activities[0];
   const defaultActivityId = activities[0]?.id ?? "";
   const defaultDuration = activities[0]?.duration_minutes ?? 60;
   const startTime = "17:00";
@@ -628,12 +644,27 @@ function newPlanningBlock(activities: ActivityOption[], locations: LocationOptio
     end_date: "",
     start_time: startTime,
     end_time: addMinutesToTime(startTime, defaultDuration),
-    modality: "",
+    modality: resolvePlanningModality(defaultActivity, defaultActivity?.mode),
     calendar_name: "",
     holiday_dates: [],
     closure_dates: [],
     saved: false,
     dirty: true,
+  };
+}
+
+function normalizePlanningBlockWithActivity(block: PlanningBlock, activities: ActivityOption[]): PlanningBlock {
+  const activity = activities.find((item) => item.id === block.activity_id);
+  if (!activity) {
+    return {
+      ...block,
+      modality: normalizePlanningModality(block.modality),
+    };
+  }
+  return {
+    ...block,
+    end_time: block.start_time ? addMinutesToTime(block.start_time, activity.duration_minutes ?? 60) : block.end_time,
+    modality: resolvePlanningModality(activity, block.modality),
   };
 }
 
@@ -661,7 +692,10 @@ export default function QuotePlanningEditor({
   initialMeta,
   saveAction,
 }: QuotePlanningEditorProps): JSX.Element {
-  const initialBlocks = useMemo(() => parseInitialBlocks(initialSnapshot), [initialSnapshot]);
+  const initialBlocks = useMemo(
+    () => parseInitialBlocks(initialSnapshot).map((block) => normalizePlanningBlockWithActivity(block, activities)),
+    [initialSnapshot, activities],
+  );
   const snapshotSyncKey = useMemo(() => {
     const blocksRaw = Array.isArray(initialSnapshot.blocks) ? initialSnapshot.blocks : [];
     const sessionsRaw = Array.isArray(initialSnapshot.sessions) ? initialSnapshot.sessions : [];
@@ -757,7 +791,7 @@ export default function QuotePlanningEditor({
     }
     setEditorState({
       originalUid: uid,
-      block: { ...current },
+      block: normalizePlanningBlockWithActivity(current, activities),
     });
   }
 
@@ -781,7 +815,11 @@ export default function QuotePlanningEditor({
     const activity = activities.find((item) => item.id === activityId);
     const duration = activity?.duration_minutes ?? 60;
     const endTime = addMinutesToTime(startTime, duration);
-    updateEditor({ activity_id: activityId, end_time: endTime });
+    updateEditor({
+      activity_id: activityId,
+      end_time: endTime,
+      modality: resolvePlanningModality(activity, activity?.mode),
+    });
   }
 
   function commitEditor(): void {
@@ -1007,6 +1045,7 @@ export default function QuotePlanningEditor({
 
             {(() => {
               const activity = activities.find((item) => item.id === editorBlock.activity_id);
+              const lockedModality = lockedPlanningModality(activity);
               const selectionPending = editorBlock.weekday === WEEKDAY_UNSET;
               const blockSolfegeLevel = isSolfegeActivity(activity) ? solfegeLevelFromActivity(activity) : null;
               const locationLabel = locations.find((item) => item.id === editorBlock.location_id)?.name || null;
@@ -1101,9 +1140,9 @@ export default function QuotePlanningEditor({
                     <label>
                       Modalite
                       <select
-                        value={editorBlock.modality}
-                        onChange={(event) => updateEditor({ modality: event.target.value })}
-                        disabled={!editable}
+                        value={resolvePlanningModality(activity, editorBlock.modality)}
+                        onChange={(event) => updateEditor({ modality: resolvePlanningModality(activity, event.target.value) })}
+                        disabled={!editable || Boolean(lockedModality)}
                       >
                         <option value="">Auto</option>
                         <option value="ONLINE">En ligne</option>

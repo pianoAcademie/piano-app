@@ -55,6 +55,14 @@ function safeReturnPath(raw: string): string {
   return "/admin/prospects";
 }
 
+function readEditTarget(raw: string): "child" | "parent" | null {
+  const value = raw.trim().toLowerCase();
+  if (value === "child" || value === "parent") {
+    return value;
+  }
+  return null;
+}
+
 function displayName(firstName: string | null, lastName: string | null, fallback: string): string {
   const value = [firstName, lastName].filter(Boolean).join(" ").trim();
   return value || fallback;
@@ -105,6 +113,7 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
   const returnTo = safeReturnPath(readParam(searchParams, "return_to") || "/admin/prospects");
+  const editTarget = readEditTarget(readParam(searchParams, "edit_target"));
 
   const [prospectResult, quotesResult, parentsResult] = await Promise.all([
     backendRequest<ProspectOut>(`/api/v1/prospects/${encodeURIComponent(prospectId)}`, {}, token),
@@ -173,6 +182,7 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
           submitAction={updateAdminProspectAction}
           initial={prospect}
           parentCandidates={parentCandidates}
+          focusTarget={editTarget}
         />
       </section>
 

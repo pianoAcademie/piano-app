@@ -4,10 +4,12 @@ import { redirect } from "next/navigation";
 
 import {
   generateTypeformDraftQuoteAction,
+  reanalyzeTypeformIntakeAction,
   saveTypeformIntakeNormalizedDataAction,
   saveTypeformIntakeResolutionAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 import styles from "../typeform-intakes.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -132,6 +134,10 @@ type TypeformIntakeDetailOut = {
   related_quote_id: string | null;
   form_config: TypeformFormConfigOut | null;
 };
+
+function isNoRelevantSlotBlockage(message: string): boolean {
+  return String(message || "").trim().toLowerCase().startsWith("aucun creneau pertinent trouve pour");
+}
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -364,11 +370,19 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const showResolutionSavedModal = successModal === "resolution_saved" && Boolean(ok);
   const normalizedPayload = detail.normalized_payload_json || {};
   const draftQuoteNeedsArbitrage = detail.intake_status === "MATCHING_REQUIRED";
+  const canCreateDraftWithoutActivities =
+    detail.intake_status === "BLOCKED"
+    && !detail.related_quote_id
+    && detail.blockages.length > 0
+    && detail.blockages.every(isNoRelevantSlotBlockage)
+    && Boolean(detail.preview_quote && detail.preview_quote.lines.length > 0);
   const draftQuoteBlocked =
     Boolean(detail.related_quote_id)
-    || detail.blockages.length > 0
+    || (detail.blockages.length > 0 && !canCreateDraftWithoutActivities)
     || draftQuoteNeedsArbitrage
     || detail.intake_status === "IGNORED";
+  const resolutionFormId = `intake-resolution-form-${detail.id}`;
+  const draftQuoteFormId = `draft-quote-form-${detail.id}`;
 
   return (
     <section className="admin-page-grid">
@@ -687,9 +701,13 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
 
         <article className="card span-2">
           <h3>Panneau de resolution</h3>
-          <form action={saveTypeformIntakeResolutionAction} className="grid cols-2 config-form-grid top-gap-sm">
+          <form
+            id={resolutionFormId}
+            action={saveTypeformIntakeResolutionAction}
+            className="grid cols-2 config-form-grid top-gap-sm"
+          >
             <input type="hidden" name="intake_id" value={detail.id} />
-            <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
+            <input type="hidden" name="return_to" value={intakeHref} />
 
             <label>
               Mode client
@@ -841,10 +859,15 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
               </div>
             </div>
 
-            <div className="row wrap gap-sm span-2">
-              <button type="submit">Enregistrer arbitrage</button>
-            </div>
           </form>
+          <div className="row wrap gap-sm top-gap-sm">
+            <button type="submit" form={resolutionFormId}>Enregistrer arbitrage</button>
+            <form action={reanalyzeTypeformIntakeAction} className="inline">
+              <input type="hidden" name="intake_id" value={detail.id} />
+              <input type="hidden" name="return_to" value={intakeHref} />
+              <button type="submit" className="ghost">Analyser a nouveau les propositions</button>
+            </form>
+          </div>
         </article>
 
         <article className="card span-2">
@@ -853,14 +876,37 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
               <h3>Preview du pre-devis</h3>
               <p className="muted">Le devis brouillon final reutilisera le module devis existant.</p>
             </div>
-            <form action={generateTypeformDraftQuoteAction}>
+            <form id={draftQuoteFormId} action={generateTypeformDraftQuoteAction}>
               <input type="hidden" name="intake_id" value={detail.id} />
               <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
-              <button type="submit" disabled={draftQuoteBlocked}>
-                {detail.related_quote_id ? "Devis deja cree" : "Generer devis brouillon"}
-              </button>
+              {canCreateDraftWithoutActivities ? (
+                <input type="hidden" name="allow_without_activities" value="1" />
+              ) : null}
+              {canCreateDraftWithoutActivities ? (
+                <ConfirmSubmitButton
+                  formId={draftQuoteFormId}
+                  label="Generer devis sans activites"
+                  title="Creer un devis sans activites ?"
+                  description={
+                    "Aucun creneau pertinent n a ete trouve pour cette intake.\n\n"
+                    + "Le devis sera cree sans activites ni planning. "
+                    + "Vous pourrez ensuite ajouter les activites manuellement dans le devis."
+                  }
+                  confirmLabel="Creer le devis vide"
+                  disabled={draftQuoteBlocked}
+                />
+              ) : (
+                <button type="submit" disabled={draftQuoteBlocked}>
+                  {detail.related_quote_id ? "Devis deja cree" : "Generer devis brouillon"}
+                </button>
+              )}
             </form>
           </div>
+          {canCreateDraftWithoutActivities ? (
+            <p className="muted top-gap-sm">
+              Aucun creneau n a ete trouve. Vous pouvez tout de meme creer un devis vide, puis ajouter les activites manuellement.
+            </p>
+          ) : null}
           {draftQuoteNeedsArbitrage && !detail.related_quote_id ? (
             <p className="muted top-gap-sm">
               Enregistrez d abord les arbitrages en attente avant de generer le devis.

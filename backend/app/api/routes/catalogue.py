@@ -18,8 +18,10 @@ from app.models.catalog import (
     Location,
     PlanningCourseType,
     Professor,
+    SessionAudienceScope,
     SessionStatus,
 )
+from app.models.ops import AppSetting
 from app.schemas.catalog import (
     CourseTypeOut,
     LocationOut,
@@ -28,8 +30,21 @@ from app.schemas.catalog import (
     SessionOut,
     SessionProfessorOut,
 )
+from app.services.session_audience import (
+    primary_session_audience_scope,
+    resolve_session_booking_scopes,
+    resolve_session_visibility_scopes,
+    scopes_allow_external_visibility,
+)
 
 router = APIRouter()
+ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
+
+
+def _account_default_currency(db: Session) -> str:
+    raw = db.scalar(select(AppSetting.value).where(AppSetting.key == ACCOUNT_DEFAULT_CURRENCY_KEY))
+    candidate = str(raw or "").strip().upper()
+    return candidate if len(candidate) == 3 else "EUR"
 
 
 @router.get("/course-types", response_model=list[CourseTypeOut])
@@ -177,9 +192,19 @@ def list_sessions(
     stmt = stmt.order_by(CourseSession.start_at_utc.asc())
 
     rows = db.execute(stmt).all()
+    external_booking_currency = _account_default_currency(db)
 
     result: list[SessionOut] = []
     for session, course_type, location, professor, substitute, booked_count in rows:
+        visibility_scopes = resolve_session_visibility_scopes(session)
+        if not scopes_allow_external_visibility(visibility_scopes):
+            continue
+        booking_scopes = resolve_session_booking_scopes(
+            session,
+            allows_student_bookings=bool(course_type.allows_student_bookings),
+        )
+        visibility_scope = primary_session_audience_scope(visibility_scopes)
+        booking_scope = primary_session_audience_scope(booking_scopes, fallback=SessionAudienceScope.PRIVATE)
         effective_professor = substitute or professor
         substitute_display_name = (
             f"{(substitute.first_name or '').strip()} {(substitute.last_name or '').strip()}".strip()
@@ -209,7 +234,13 @@ def list_sessions(
                 capacity_max=session.capacity_max,
                 booked_count=booked,
                 seats_remaining=seats_remaining,
-                online_booking_enabled=(not session.is_private) and bool(session.allow_online_booking),
+                visibility_scopes=visibility_scopes,
+                booking_scopes=booking_scopes,
+                visibility_scope=visibility_scope,
+                booking_scope=booking_scope,
+                online_booking_enabled=SessionAudienceScope.EXTERNAL in booking_scopes,
+                external_booking_price_ttc=session.external_booking_price_ttc,
+                external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
                 zoom_link=session.zoom_link,
                 substitute_teacher_id=session.substitute_teacher_id,
                 substitute_teacher_display_name=substitute_display_name,

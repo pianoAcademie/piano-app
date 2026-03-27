@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.catalog import DeliveryMode, SessionStatus
+from app.models.catalog import DeliveryMode, SessionAudienceScope, SessionStatus
 
 
 class CourseTypeOut(BaseModel):
@@ -74,7 +74,13 @@ class SessionOut(BaseModel):
     capacity_max: int
     booked_count: int
     seats_remaining: int
+    visibility_scopes: list[SessionAudienceScope]
+    booking_scopes: list[SessionAudienceScope]
+    visibility_scope: SessionAudienceScope
+    booking_scope: SessionAudienceScope
     online_booking_enabled: bool
+    external_booking_price_ttc: Decimal | None = None
+    external_booking_currency: str | None = None
     zoom_link: str | None
     substitute_teacher_id: UUID | None = None
     substitute_teacher_display_name: str | None = None
