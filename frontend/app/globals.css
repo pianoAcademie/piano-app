@@ -2212,6 +2212,33 @@ button.danger:focus-visible {
   box-shadow: 0 18px 40px rgba(16, 11, 7, 0.3);
 }
 
+.modal-panel > .modal-close-x:first-child {
+  position: sticky;
+  top: 10px;
+  justify-self: end;
+  margin: 0 0 -46px auto;
+  z-index: 6;
+}
+
+.modal-panel > .row.spread:first-child:has(.modal-close-x),
+.modal-panel > header:first-child:has(.modal-close-x):not(.teacher-attendance-header):not(.product-edit-modal-header) {
+  position: sticky;
+  top: -10px;
+  z-index: 5;
+  margin: -10px -10px 0;
+  padding: 10px;
+  background: linear-gradient(180deg, rgba(255, 253, 249, 0.98), rgba(255, 248, 236, 0.96));
+  border-bottom: 1px solid rgba(64, 46, 26, 0.08);
+  border-radius: 14px 14px 0 0;
+}
+
+.modal-panel > .row.spread:first-child:has(.modal-close-x) .modal-close-x,
+.modal-panel > header:first-child:has(.modal-close-x):not(.teacher-attendance-header):not(.product-edit-modal-header) .modal-close-x,
+.modal-header-close {
+  position: static;
+  flex-shrink: 0;
+}
+
 .client-info-modal {
   width: min(980px, 96vw);
   max-height: 90vh;
