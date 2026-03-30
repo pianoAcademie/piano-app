@@ -116,6 +116,10 @@ jobs:
             export COMPOSE_PROJECT_NAME='piano-app'
             services=\$(docker compose config --services)
 
+            docker ps -a --format '{{.ID}} {{.Names}}' | awk '
+              \$2 ~ /^[0-9a-f]+_piano-app-(db|redis|backend|frontend|notifications-immediate-worker|notifications-scheduled-worker|notifications-feedback-worker)-1$/ { print \$1 }
+            ' | xargs -r docker rm -f
+
             if echo \"\$services\" | grep -qx redis; then
               docker compose up -d --build db redis
             else
@@ -130,10 +134,6 @@ jobs:
                 worker_targets=\"\$worker_targets \$svc\"
               fi
             done
-
-            docker ps -a --format '{{.ID}} {{.Names}}' | awk '
-              \$2 ~ /^[0-9a-f]+_piano-app-(backend|frontend|notifications-immediate-worker|notifications-scheduled-worker|notifications-feedback-worker)-1$/ { print \$1 }
-            ' | xargs -r docker rm -f
 
             docker compose rm -sf backend frontend \$worker_targets || true
             docker compose up -d --build backend \$worker_targets
