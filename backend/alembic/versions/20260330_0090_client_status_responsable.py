@@ -20,7 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute(sa.text("ALTER TYPE client_status ADD VALUE IF NOT EXISTS 'RESPONSABLE'"))
+    with op.get_context().autocommit_block():
+        op.execute(sa.text("ALTER TYPE client_status ADD VALUE IF NOT EXISTS 'RESPONSABLE'"))
     op.execute(
         sa.text(
             """
