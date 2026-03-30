@@ -1143,6 +1143,8 @@ class AdminRangeInvoiceReferenceOut(BaseModel):
 class AdminRangeInvoiceOut(BaseModel):
     note_id: UUID
     invoice_number: str
+    seller_legal_entity_id: UUID | None = None
+    billing_entity: str | None = None
     issued_date: date
     due_date: date
     no_due_date: bool = False

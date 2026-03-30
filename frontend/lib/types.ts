@@ -395,6 +395,8 @@ export type AdminClientNoteOut = {
 export type AdminRangeInvoiceOut = {
   note_id: string;
   invoice_number: string;
+  seller_legal_entity_id: string | null;
+  billing_entity: string | null;
   issued_date: string;
   due_date: string;
   no_due_date: boolean;

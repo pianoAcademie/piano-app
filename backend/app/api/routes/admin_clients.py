@@ -1782,6 +1782,8 @@ def _invoice_range_out(
     return AdminRangeInvoiceOut(
         note_id=note_id,
         invoice_number=str(metadata.get("invoice_number")),
+        seller_legal_entity_id=_parse_optional_uuid(metadata.get("seller_legal_entity_id")),
+        billing_entity=_billing_entity_text(_normalize_optional(str(metadata.get("billing_entity") or ""))),
         issued_date=date.fromisoformat(str(metadata.get("issued_date"))),
         due_date=date.fromisoformat(str(metadata.get("due_date"))),
         no_due_date=bool(metadata.get("no_due_date")),
@@ -1847,9 +1849,11 @@ def _related_invoice_references_for_split_group(
 ) -> list[AdminRangeInvoiceReferenceOut]:
     if not split_group_id:
         return []
+    client = _require_client(db, client_id)
+    scoped_user_ids = list(_payment_scope_users(db, client=client).keys())
     notes = db.scalars(
         select(ClientNoteEntry)
-        .where(ClientNoteEntry.user_id == client_id)
+        .where(ClientNoteEntry.user_id.in_(scoped_user_ids))
         .order_by(ClientNoteEntry.created_at.desc())
     ).all()
     refs: list[AdminRangeInvoiceReferenceOut] = []
@@ -1871,9 +1875,11 @@ def _load_range_invoice_note(
     note_id: UUID,
     for_update: bool = False,
 ) -> tuple[ClientNoteEntry, dict[str, object]]:
+    client = _require_client(db, client_id)
+    scoped_user_ids = list(_payment_scope_users(db, client=client).keys())
     stmt = select(ClientNoteEntry).where(
         ClientNoteEntry.id == note_id,
-        ClientNoteEntry.user_id == client_id,
+        ClientNoteEntry.user_id.in_(scoped_user_ids),
     )
     if for_update:
         stmt = stmt.with_for_update()
@@ -1887,9 +1893,11 @@ def _load_range_invoice_note(
 
 
 def _range_invoice_metadatas_for_client(db: Session, *, client_id: UUID) -> list[dict[str, object]]:
+    client = _require_client(db, client_id)
+    scoped_user_ids = list(_payment_scope_users(db, client=client).keys())
     notes = db.scalars(
         select(ClientNoteEntry)
-        .where(ClientNoteEntry.user_id == client_id)
+        .where(ClientNoteEntry.user_id.in_(scoped_user_ids))
         .order_by(ClientNoteEntry.created_at.desc())
     ).all()
     out: list[dict[str, object]] = []
@@ -2011,6 +2019,8 @@ def _active_invoice_lock_by_payment_key(
     *,
     client_id: UUID,
 ) -> dict[str, tuple[str, str, UUID | None, str, UUID | None]]:
+    client = _require_client(db, client_id)
+    scoped_user_ids = list(_payment_scope_users(db, client=client).keys())
     locks: dict[str, tuple[str, str, UUID | None, str, UUID | None]] = {}
     active_metadatas_by_note_id: dict[UUID, dict[str, object]] = {}
     notes_without_lines: list[tuple[UUID, dict[str, object]]] = []
@@ -2036,7 +2046,7 @@ def _active_invoice_lock_by_payment_key(
         invoice_lines = db.scalars(
             select(ClientInvoiceLine)
             .where(
-                ClientInvoiceLine.user_id == client_id,
+                ClientInvoiceLine.user_id.in_(scoped_user_ids),
                 ClientInvoiceLine.note_id.in_(note_ids),
             )
             .order_by(ClientInvoiceLine.created_at.asc(), ClientInvoiceLine.id.asc())
@@ -2069,6 +2079,17 @@ def _active_invoice_lock_by_payment_key(
             if note_id not in line_note_ids
         ]
 
+    for note_id, metadata in active_metadatas_by_note_id.items():
+        invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+        invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or "-"
+        billing_entity = _billing_entity_text(_normalize_optional(str(metadata.get("billing_entity") or ""))) or "ENTITE_NON_DEFINIE"
+        seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+        for transaction_id in _invoice_range_reconciled_manual_payment_ids(metadata):
+            key = _payment_key(source="MANUAL", payment_id=transaction_id)
+            if key in locks:
+                continue
+            locks[key] = (invoice_status, invoice_number, note_id, billing_entity, seller_legal_entity_id)
+
     for note_id, metadata in notes_without_lines:
         invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
         invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or "-"
@@ -2078,6 +2099,40 @@ def _active_invoice_lock_by_payment_key(
                 continue
             locks[key] = (invoice_status, invoice_number, note_id, billing_entity, None)
     return locks
+
+
+@router.get("/{client_id}/invoices/range", response_model=list[AdminRangeInvoiceOut])
+def list_admin_client_range_invoices(
+    client_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminRangeInvoiceOut]:
+    client = _require_client(db, client_id)
+    scoped_user_ids = list(_payment_scope_users(db, client=client).keys())
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.user_id.in_(scoped_user_ids))
+        .order_by(ClientNoteEntry.created_at.desc())
+    ).all()
+
+    invoices: list[AdminRangeInvoiceOut] = []
+    for note in notes:
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            continue
+        invoices.append(
+            _invoice_range_out(
+                note_id=note.id,
+                metadata=metadata,
+                related_invoices=_related_invoice_references_for_split_group(
+                    db,
+                    client_id=client_id,
+                    split_group_id=_normalize_optional(str(metadata.get("split_group_id") or "")),
+                ),
+            )
+        )
+    invoices.sort(key=lambda row: (row.issued_date, row.invoice_number.casefold()), reverse=True)
+    return invoices
 
 
 def _manual_transaction_lock_info(

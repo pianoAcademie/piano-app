@@ -59,6 +59,7 @@ import type {
   AdminClientPaymentOut,
   AdminFormulaOut,
   AdminLegalEntityOut,
+  AdminRangeInvoiceOut,
   AdminRangeInvoiceEmailPreviewOut,
   AdminClientSubscriptionOut,
   AdminPaymentMethodsOut,
@@ -983,6 +984,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     bookingsResult,
     messagesResult,
     paymentsResult,
+    rangeInvoicesResult,
     productCategoriesResult,
     catalogProductsResult,
     paymentMethodsResult,
@@ -1000,6 +1002,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminClientBookingOut[]>(`/api/v1/admin/clients/${params.clientId}/bookings`, {}, token),
     backendRequest<AdminClientMessageOut[]>(messagesApiPath, {}, token),
     backendRequest<AdminClientPaymentOut[]>(`/api/v1/admin/clients/${params.clientId}/payments`, {}, token),
+    backendRequest<AdminRangeInvoiceOut[]>(`/api/v1/admin/clients/${params.clientId}/invoices/range`, {}, token),
     backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
@@ -1108,6 +1111,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : (() => {
         errors.push(`payments: ${paymentsResult.message}`);
         return [] as AdminClientPaymentOut[];
+      })();
+  const rangeInvoices = rangeInvoicesResult.ok
+    ? rangeInvoicesResult.data
+    : (() => {
+        errors.push(`range_invoices: ${rangeInvoicesResult.message}`);
+        return [] as AdminRangeInvoiceOut[];
       })();
 
   const productCategories = productCategoriesResult.ok
@@ -1595,6 +1604,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
   const paymentInvoices: InvoiceListRow[] = payments
     .filter((row) => {
+      if (row.invoice_note_id) {
+        return false;
+      }
       const normalizedInvoiceStatus = (row.invoice_status ?? "").toUpperCase();
       return normalizedInvoiceStatus === "PAID" || normalizedInvoiceStatus === "CANCELLED";
     })
@@ -1613,37 +1625,30 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       paymentStatus: row.status,
     }));
 
-  const generatedRangeInvoices: RangeInvoiceListRow[] = notes.reduce<RangeInvoiceListRow[]>((acc, note) => {
-    const payload = parseRangeInvoiceNote(note);
-    if (!payload) {
-      return acc;
-    }
-    acc.push({
+  const generatedRangeInvoices: RangeInvoiceListRow[] = rangeInvoices.map((row) => ({
       kind: "range",
-      key: `range-${payload.invoice_number}-${note.id}`,
-      noteId: note.id,
-      occurredAt: `${payload.issued_date}T00:00:00.000Z`,
-      invoiceNumber: payload.invoice_number,
-      typeLabel: payload.generation_mode === "AUTO" ? "Facture periode auto" : "Facture periode",
-      modeLabel: payload.generation_mode === "AUTO" ? "Auto" : "Manuel",
-      label: `${formatDateInputLabel(payload.start_date)} - ${formatDateInputLabel(payload.end_date)}${
-        payload.generation_mode === "AUTO"
-          ? payload.auto_period_scope === "FUTURE"
+      key: `range-${row.invoice_number}-${row.note_id}`,
+      noteId: row.note_id,
+      occurredAt: `${row.issued_date}T00:00:00.000Z`,
+      invoiceNumber: row.invoice_number,
+      typeLabel: row.generation_mode === "AUTO" ? "Facture periode auto" : "Facture periode",
+      modeLabel: row.generation_mode === "AUTO" ? "Auto" : "Manuel",
+      label: `${formatDateInputLabel(row.start_date)} - ${formatDateInputLabel(row.end_date)}${
+        row.generation_mode === "AUTO"
+          ? row.auto_period_scope === "FUTURE"
             ? " | Prestations a venir"
             : " | Prestations precedentes"
           : ""
       }`,
-      status: payload.invoice_status,
-      emailedAt: payload.emailed_at ?? null,
-      remindedAt: payload.reminded_at ?? null,
-      totalLabel: rangeInvoiceTotalLabel(payload.totals_by_currency),
-      downloadHref: rangeInvoicePdfHref(client.id, note.id, false),
-      viewHref: rangeInvoicePdfHref(client.id, note.id, true),
-      sellerLegalEntityId: payload.seller_legal_entity_id ?? null,
-      billingEntity: payload.billing_entity ?? null,
-    });
-    return acc;
-  }, []);
+      status: row.invoice_status,
+      emailedAt: row.emailed_at ?? null,
+      remindedAt: row.reminded_at ?? null,
+      totalLabel: rangeInvoiceTotalLabel(row.totals_by_currency),
+      downloadHref: rangeInvoicePdfHref(client.id, row.note_id, false),
+      viewHref: rangeInvoicePdfHref(client.id, row.note_id, true),
+      sellerLegalEntityId: row.seller_legal_entity_id ?? null,
+      billingEntity: row.billing_entity ?? null,
+    }));
 
   const invoices = [...generatedRangeInvoices, ...paymentInvoices].sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
