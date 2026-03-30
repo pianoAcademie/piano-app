@@ -10653,6 +10653,11 @@ button.danger:focus-visible {
   gap: 6px;
 }
 
+.auth-form label.checkline,
+.auth-form .auth-consent-option {
+  display: flex;
+}
+
 .auth-form input,
 .auth-form select,
 .auth-form textarea,
@@ -10701,6 +10706,66 @@ button.danger:focus-visible {
 .auth-step-card h3 {
   margin: 0;
   font-size: 16px;
+}
+
+.auth-consent-card {
+  gap: 14px;
+}
+
+.auth-consent-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-consent-copy p {
+  margin: 0;
+}
+
+.auth-consent-group {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-consent-group-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: #5f6f85;
+}
+
+.auth-consent-option {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  background: #ffffff;
+  min-height: 0;
+}
+
+.auth-consent-option.is-required {
+  border-color: #d9c48a;
+  background: #fffaf0;
+}
+
+.auth-consent-option input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+.auth-consent-option span {
+  display: grid;
+  gap: 3px;
+}
+
+.auth-consent-option strong {
+  font-size: 15px;
+  color: #23384d;
+}
+
+.auth-consent-option small {
+  line-height: 1.45;
 }
 
 .public-buy-page {

@@ -142,30 +142,52 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
                 <AuthSignupFields emailHint={emailHint} defaultCountry={DEFAULT_COUNTRY} countryOptions={COUNTRY_OPTIONS} />
 
-                <section className="auth-step-card">
+                <section className="auth-step-card auth-consent-card">
                   <h3>Etape 3 - Consentements et validation</h3>
-                  <p>
-                    En creant votre compte, vous autorisez Piano Academie a vous envoyer des emails et SMS lies a la gestion de votre compte, de vos reservations, de vos cours et au fonctionnement du service.
-                  </p>
-                  <p className="muted">
-                    Vous pourrez ensuite modifier vos preferences de communication depuis votre espace client et vous desinscrire des communications non essentielles.
-                  </p>
-                  <label className="checkline">
-                    <input type="checkbox" name="marketing_email_opt_in" />
-                    Je souhaite egalement recevoir les actualites et offres par email.
-                  </label>
-                  <label className="checkline">
-                    <input type="checkbox" name="marketing_sms_opt_in" />
-                    Je souhaite egalement recevoir les actualites et offres par SMS.
-                  </label>
-                  <label className="checkline">
-                    <input type="checkbox" name="confirm_accuracy" required />
-                    Je confirme l exactitude des informations renseignees.
-                  </label>
-                  <label className="checkline">
-                    <input type="checkbox" name="accept_account_terms" required />
-                    J accepte les conditions de creation de mon compte.
-                  </label>
+                  <div className="auth-consent-copy">
+                    <p>
+                      En creant votre compte, vous autorisez Piano Academie a vous envoyer les emails et SMS necessaires a la gestion de votre compte, de vos reservations et de vos cours.
+                    </p>
+                    <p className="muted">
+                      Vous pourrez ensuite modifier vos preferences de communication depuis votre espace client et vous desinscrire des communications non essentielles.
+                    </p>
+                  </div>
+
+                  <div className="auth-consent-group">
+                    <p className="auth-consent-group-title">Preferences optionnelles</p>
+                    <label className="auth-consent-option">
+                      <input type="checkbox" name="marketing_email_opt_in" />
+                      <span>
+                        <strong>Recevoir les actualites et offres par email</strong>
+                        <small className="muted">Informations commerciales occasionnelles de Piano Academie.</small>
+                      </span>
+                    </label>
+                    <label className="auth-consent-option">
+                      <input type="checkbox" name="marketing_sms_opt_in" />
+                      <span>
+                        <strong>Recevoir les actualites et offres par SMS</strong>
+                        <small className="muted">Messages promotionnels ponctuels sur mobile.</small>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="auth-consent-group">
+                    <p className="auth-consent-group-title">Confirmations obligatoires</p>
+                    <label className="auth-consent-option is-required">
+                      <input type="checkbox" name="confirm_accuracy" required />
+                      <span>
+                        <strong>Je confirme l exactitude des informations renseignees</strong>
+                        <small className="muted">Ces informations servent a creer et gerer votre compte client.</small>
+                      </span>
+                    </label>
+                    <label className="auth-consent-option is-required">
+                      <input type="checkbox" name="accept_account_terms" required />
+                      <span>
+                        <strong>J accepte les conditions de creation de mon compte</strong>
+                        <small className="muted">Validation necessaire pour finaliser l ouverture du compte.</small>
+                      </span>
+                    </label>
+                  </div>
                 </section>
 
                 <button type="submit">Creer mon compte</button>
