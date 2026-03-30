@@ -122,6 +122,7 @@ from app.services.client_payment_email import (
     render_client_payment_email,
     send_client_payment_email,
 )
+from app.services.client_purchase_notifications import send_payment_success_notifications
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
@@ -1135,6 +1136,28 @@ def _invoice_range_reconciled_manual_payment_ids(metadata: dict[str, object]) ->
     return out
 
 
+def _invoice_range_reconciled_manual_payment_totals(
+    all_payments: list[AdminClientPaymentOut],
+    *,
+    reconciled_payment_ids: set[UUID],
+) -> dict[str, Decimal]:
+    totals_by_currency: dict[str, Decimal] = {}
+    if not reconciled_payment_ids:
+        return totals_by_currency
+    for row in all_payments:
+        if (row.source or "").strip().upper() != "MANUAL":
+            continue
+        if row.id not in reconciled_payment_ids:
+            continue
+        if not _should_count_in_client_balance(row):
+            continue
+        currency = _normalize_currency(row.currency, fallback="EUR")
+        totals_by_currency[currency] = _quantize_money(
+            totals_by_currency.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
+        )
+    return totals_by_currency
+
+
 def _append_public_payment_reference_to_note(public_note: str | None, provider_reference: str) -> str:
     base = _normalize_optional(public_note) or ""
     marker = f"Transaction paiement en ligne: {provider_reference}"
@@ -1230,6 +1253,23 @@ def _record_invoice_range_public_payment(
         except Exception:
             logger.exception(
                 "Unable to send booking confirmation emails for invoice-range payment client=%s note=%s",
+                client_id,
+                note.id,
+            )
+    if not _normalize_optional(str(metadata.get("payment_confirmation_emails_sent_at") or "")):
+        try:
+            client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
+            if client is not None and _send_invoice_range_payment_success_emails(
+                db,
+                client=client,
+                note_id=note.id,
+                metadata=metadata,
+                paid_at=now,
+            ):
+                metadata["payment_confirmation_emails_sent_at"] = now.isoformat()
+        except Exception:
+            logger.exception(
+                "Unable to send payment success emails for invoice-range payment client=%s note=%s",
                 client_id,
                 note.id,
             )
@@ -1588,6 +1628,70 @@ def _send_invoice_range_booking_confirmation_emails(
     return sent_any
 
 
+def _send_invoice_range_payment_success_emails(
+    db: Session,
+    *,
+    client: User,
+    note_id: UUID,
+    metadata: dict[str, object],
+    paid_at: datetime,
+) -> bool:
+    billing_profile = resolve_billing_profile(db, client)
+    recipient_email = _normalize_optional(billing_profile.email)
+    if recipient_email is None:
+        return False
+
+    booking_ids = [
+        UUID(key.split(":", 1)[1])
+        for key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys"))
+        if key.startswith("BOOKING:")
+    ]
+    activity_names = db.scalars(
+        select(CourseType.name)
+        .join(CourseSession, CourseSession.course_type_id == CourseType.id)
+        .join(Booking, Booking.session_id == CourseSession.id)
+        .where(Booking.id.in_(booking_ids))
+        .distinct()
+    ).all() if booking_ids else []
+
+    payment_label = (
+        str(activity_names[0]).strip()
+        if len(activity_names) == 1 and str(activity_names[0]).strip()
+        else f"Reservation Piano Academie {str(metadata.get('invoice_number') or '').strip()}".strip()
+    )
+    invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
+    invoice_url = _invoice_range_download_url(
+        client_id=client.id,
+        note_id=note_id,
+        metadata=metadata,
+        inline=False,
+    )
+    transactions_url = (
+        f"{_frontend_base_url()}/client?tab=finance&finance_view=transactions&invoice_number="
+        f"{urlencode({'invoice_number': invoice_number}).split('=', 1)[1]}"
+    )
+    amount_paid, currency_code = _invoice_range_primary_total(metadata)
+
+    result = send_payment_success_notifications(
+        db,
+        to_email=recipient_email,
+        first_name=billing_profile.first_name,
+        last_name=billing_profile.last_name,
+        payment_label=payment_label,
+        payment_reference=invoice_number,
+        paid_at=paid_at,
+        amount_paid=amount_paid,
+        currency=currency_code,
+        transactions_url=transactions_url,
+        invoice_url=invoice_url,
+        invoice_number=invoice_number,
+        payment_url=_normalize_optional(str(metadata.get("payment_url") or "")) or invoice_url,
+        issued_date=_normalize_optional(str(metadata.get("issued_date") or "")),
+        due_date=_normalize_optional(str(metadata.get("due_date") or "")),
+    )
+    return any(value for value in result.values())
+
+
 def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, object] | None:
     kind = str(payload.get("kind") or "").strip().upper()
     if kind != "INVOICE_RANGE":
@@ -1700,6 +1804,7 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         "payment_last_lookup_at",
         "paid_at",
         "booking_confirmation_emails_sent_at",
+        "payment_confirmation_emails_sent_at",
     ):
         value = _normalize_optional(str(payload.get(field) or ""))
         if value:
@@ -6769,6 +6874,7 @@ def send_admin_client_range_invoice_email(
             else _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
         ),
         frozen_payment_keys=frozen_payment_keys,
+        reconciled_manual_payment_ids=[str(value) for value in _invoice_range_reconciled_manual_payment_ids(metadata)],
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
@@ -6879,6 +6985,7 @@ def download_admin_client_range_invoice(
     invoice_number: str | None = Query(default=None, max_length=120),
     persist_note: bool = Query(default=True),
     frozen_payment_keys: list[str] = Query(default=[]),
+    reconciled_manual_payment_ids: list[str] = Query(default=[]),
     public_note: str | None = Query(default=None, max_length=2000),
     private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
@@ -6906,6 +7013,15 @@ def download_admin_client_range_invoice(
     start_at = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
     end_at_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
     all_payments = _build_admin_client_payments(db, client_id=client_id)
+    reconciled_payment_id_set: set[UUID] = set()
+    for raw_value in reconciled_manual_payment_ids:
+        candidate = _normalize_optional(str(raw_value))
+        if not candidate:
+            continue
+        try:
+            reconciled_payment_id_set.add(UUID(candidate))
+        except ValueError:
+            continue
     payments_by_key = {
         _payment_key(source=row.source, payment_id=row.id): row
         for row in all_payments
@@ -6964,6 +7080,8 @@ def download_admin_client_range_invoice(
     for row in all_payments:
         if row.occurred_at >= start_at:
             continue
+        if (row.source or "").strip().upper() == "MANUAL" and row.id in reconciled_payment_id_set:
+            continue
         if not _should_count_in_client_balance(row):
             continue
         currency = _normalize_currency(row.currency, fallback="EUR")
@@ -6971,12 +7089,22 @@ def download_admin_client_range_invoice(
             opening_balance_by_currency.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
         )
 
+    applied_payment_totals_by_currency = _invoice_range_reconciled_manual_payment_totals(
+        all_payments,
+        reconciled_payment_ids=reconciled_payment_id_set,
+    )
+
     total_to_pay_by_currency: dict[str, Decimal] = {}
-    for currency in sorted(set(totals_by_currency.keys()) | set(opening_balance_by_currency.keys())):
+    for currency in sorted(
+        set(totals_by_currency.keys())
+        | set(opening_balance_by_currency.keys())
+        | set(applied_payment_totals_by_currency.keys())
+    ):
         period_total = _quantize_money(Decimal(totals_by_currency.get(currency, {}).get("total_incl_vat", Decimal("0.00"))))
         opening_balance = _quantize_money(Decimal(opening_balance_by_currency.get(currency, Decimal("0.00"))))
+        applied_payments = _quantize_money(Decimal(applied_payment_totals_by_currency.get(currency, Decimal("0.00"))))
         carry_balance = opening_balance if auto_include_previous_balance else Decimal("0.00")
-        total_to_pay_by_currency[currency] = _quantize_money(period_total + carry_balance)
+        total_to_pay_by_currency[currency] = _quantize_money(period_total + carry_balance + applied_payments)
 
     invoice_lines: list[InvoicePeriodLine] = []
     if normalized_layout == "DETAILED":
@@ -7305,6 +7433,7 @@ def download_admin_client_range_invoice(
         client_billing_address=client_billing_address,
         due_date=(None if no_due_date else due_date_value),
         opening_balance_by_currency=opening_balance_by_currency,
+        applied_payment_totals_by_currency=applied_payment_totals_by_currency,
         total_to_pay_by_currency=total_to_pay_by_currency,
         payment_link_url=payment_link_url,
         watermark=(
@@ -7396,6 +7525,7 @@ def download_admin_client_range_invoice_from_note(
             else _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
         ),
         frozen_payment_keys=frozen_payment_keys,
+        reconciled_manual_payment_ids=[str(value) for value in _invoice_range_reconciled_manual_payment_ids(metadata)],
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
@@ -7484,6 +7614,7 @@ def download_admin_client_range_invoice_public(
             else _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
         ),
         frozen_payment_keys=frozen_payment_keys,
+        reconciled_manual_payment_ids=[str(value) for value in _invoice_range_reconciled_manual_payment_ids(metadata)],
         invoice_number=str(metadata.get("invoice_number") or ""),
         persist_note=False,
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),

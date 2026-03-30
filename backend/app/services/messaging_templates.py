@@ -813,9 +813,9 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         subject="Confirmation de paiement Piano Academie",
         body=(
             "Bonjour {first_name},\n\n"
-            "Nous confirmons la reception de votre paiement pour {plan_name}.\n"
+            "Nous confirmons la reception de votre paiement pour {payment_label}.\n"
             "Montant regle: {amount_paid} {currency}\n"
-            "Reference abonnement: {subscription_reference}\n"
+            "Reference: {payment_reference}\n"
             "Date de paiement: {paid_at}\n\n"
             "Voir vos transactions: {transactions_url}\n"
             "Telecharger votre facture ({invoice_number}): {invoice_url}\n\n"
@@ -823,8 +823,10 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         ),
         description="Confirmation apres paiement valide.",
         variables_hint=(
-            "{first_name} {plan_name} {amount_paid} {currency} {subscription_reference} "
-            "{paid_at} {transactions_url} {invoice_number} {invoice_url}"
+            "{first_name} {last_name} {full_name} {client_name} "
+            "{payment_label} {payment_reference} {plan_name} {subscription_reference} "
+            "{amount_paid} {currency} {paid_at} {transactions_url} "
+            "{invoice_number} {invoice_url} {payment_url}"
         ),
     ),
     MessagingTemplateDefinition(

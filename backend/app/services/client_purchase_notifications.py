@@ -82,17 +82,23 @@ def _send_template_email(
     )
 
 
-def send_client_payment_success_notifications(
+def send_payment_success_notifications(
     db: Session,
     *,
     to_email: str,
     first_name: str | None,
     last_name: str | None,
-    plan_name: str,
-    subscription_id: UUID,
+    payment_label: str,
+    payment_reference: str,
     paid_at: datetime,
+    transactions_url: str,
+    invoice_url: str,
+    invoice_number: str,
     amount_paid: Decimal | None = None,
     currency: str | None = None,
+    payment_url: str | None = None,
+    issued_date: str | None = None,
+    due_date: str | None = None,
 ) -> dict[str, str | None]:
     safe_first_name = (first_name or "").strip() or to_email
     safe_last_name = (last_name or "").strip()
@@ -102,23 +108,32 @@ def send_client_payment_success_notifications(
     if amount_paid is not None:
         amount_text = f"{amount_paid.quantize(Decimal('0.01')):.2f}"
 
-    transactions_url = _frontend_url(f"/dashboard?tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}")
-    invoice_url = _frontend_url(f"/dashboard/invoices/plan:{subscription_id}/download")
-    invoice_number = _invoice_number_for_subscription(subscription_id, paid_at)
+    normalized_payment_label = payment_label.strip() or invoice_number.strip() or "Paiement"
+    normalized_payment_reference = payment_reference.strip() or invoice_number.strip() or "-"
+    normalized_invoice_number = invoice_number.strip() or normalized_payment_reference
+    normalized_payment_url = (payment_url or "").strip() or invoice_url
 
     context = {
         "first_name": safe_first_name,
         "last_name": safe_last_name,
         "full_name": full_name,
+        "client_name": full_name,
         "email": to_email,
-        "plan_name": plan_name,
-        "subscription_reference": str(subscription_id),
+        "plan_name": normalized_payment_label,
+        "payment_label": normalized_payment_label,
+        "subscription_reference": normalized_payment_reference,
+        "payment_reference": normalized_payment_reference,
         "amount_paid": amount_text,
+        "amount_due": amount_text,
+        "total_incl_vat": amount_text,
         "currency": normalized_currency,
-        "transactions_url": transactions_url,
-        "invoice_url": invoice_url,
-        "invoice_number": invoice_number,
+        "transactions_url": transactions_url.strip(),
+        "invoice_url": invoice_url.strip(),
+        "invoice_number": normalized_invoice_number,
         "paid_at": paid_at.strftime("%d/%m/%Y %H:%M"),
+        "payment_url": normalized_payment_url,
+        "issued_date": (issued_date or "").strip(),
+        "due_date": (due_date or "").strip(),
     }
 
     return {
@@ -139,4 +154,37 @@ def send_client_payment_success_notifications(
     }
 
 
-__all__ = ["send_client_payment_success_notifications"]
+def send_client_payment_success_notifications(
+    db: Session,
+    *,
+    to_email: str,
+    first_name: str | None,
+    last_name: str | None,
+    plan_name: str,
+    subscription_id: UUID,
+    paid_at: datetime,
+    amount_paid: Decimal | None = None,
+    currency: str | None = None,
+) -> dict[str, str | None]:
+    transactions_url = _frontend_url(f"/dashboard?tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}")
+    invoice_url = _frontend_url(f"/dashboard/invoices/plan:{subscription_id}/download")
+    invoice_number = _invoice_number_for_subscription(subscription_id, paid_at)
+    return send_payment_success_notifications(
+        db,
+        to_email=to_email,
+        first_name=first_name,
+        last_name=last_name,
+        payment_label=plan_name,
+        payment_reference=str(subscription_id),
+        paid_at=paid_at,
+        amount_paid=amount_paid,
+        currency=currency,
+        transactions_url=transactions_url,
+        invoice_url=invoice_url,
+        invoice_number=invoice_number,
+        issued_date=paid_at.strftime("%d/%m/%Y"),
+        due_date=paid_at.strftime("%d/%m/%Y"),
+    )
+
+
+__all__ = ["send_client_payment_success_notifications", "send_payment_success_notifications"]

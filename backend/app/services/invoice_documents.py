@@ -754,6 +754,7 @@ def render_invoice_period_pdf(
     lines: list[InvoicePeriodLine],
     totals_by_currency: dict[str, dict[str, Decimal]],
     opening_balance_by_currency: dict[str, Decimal] | None = None,
+    applied_payment_totals_by_currency: dict[str, Decimal] | None = None,
     total_to_pay_by_currency: dict[str, Decimal] | None = None,
     payment_link_url: str | None = None,
     adjustment_summary: list[tuple[str, str, Decimal]] | None = None,
@@ -957,12 +958,19 @@ def render_invoice_period_pdf(
     for currency_code, amount in (opening_balance_by_currency or {}).items():
         currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
         normalized_opening_balance_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
+    normalized_applied_payment_totals_by_currency: dict[str, Decimal] = {}
+    for currency_code, amount in (applied_payment_totals_by_currency or {}).items():
+        currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
+        normalized_applied_payment_totals_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
     normalized_total_to_pay_by_currency: dict[str, Decimal] = {}
     for currency_code, amount in (total_to_pay_by_currency or {}).items():
         currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
         normalized_total_to_pay_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
     summary_currencies = sorted(
-        set(totals_by_currency.keys()) | set(normalized_opening_balance_by_currency.keys()) | set(normalized_total_to_pay_by_currency.keys())
+        set(totals_by_currency.keys())
+        | set(normalized_opening_balance_by_currency.keys())
+        | set(normalized_applied_payment_totals_by_currency.keys())
+        | set(normalized_total_to_pay_by_currency.keys())
     )
     payment_link_text = _ascii_safe((payment_link_url or "").strip())
     payment_link_preview = ""
@@ -976,7 +984,13 @@ def render_invoice_period_pdf(
     reserved_adjustment_space = (len(normalized_adjustments) * 18.0) + 34.0 if normalized_adjustments else 0.0
     reserved_balance_space = 0.0
     if summary_currencies:
-        reserved_balance_space = 24.0 + (len(summary_currencies) * 54.0)
+        reserved_balance_space = 24.0 + sum(
+            68.0
+            if Decimal(normalized_applied_payment_totals_by_currency.get(currency_code, Decimal("0.00"))).quantize(Decimal("0.01"))
+            != Decimal("0.00")
+            else 54.0
+            for currency_code in summary_currencies
+        )
     if payment_link_text:
         reserved_balance_space += 52.0
     reserved_note_space = 80.0 if normalized_note else 0.0
@@ -1028,6 +1042,9 @@ def render_invoice_period_pdf(
         current_row_top += 14.0
         for currency_code in summary_currencies:
             opening_amount = Decimal(normalized_opening_balance_by_currency.get(currency_code, Decimal("0.00"))).quantize(Decimal("0.01"))
+            applied_payments_amount = Decimal(
+                normalized_applied_payment_totals_by_currency.get(currency_code, Decimal("0.00"))
+            ).quantize(Decimal("0.01"))
             period_totals = totals_by_currency.get(currency_code)
             period_amount = (
                 Decimal(period_totals["total_incl_vat"]).quantize(Decimal("0.01"))
@@ -1038,14 +1055,16 @@ def render_invoice_period_pdf(
                 normalized_total_to_pay_by_currency.get(currency_code, period_amount)
             ).quantize(Decimal("0.01"))
             opening_label = f"Ancien Solde au {period_start_label}" if period_start_label else "Ancien Solde"
-            pdf.text(x=col_label_x, top_y=current_row_top, value=opening_label, size=9)
-            pdf.text_right(
-                right_x=totals_col_ttc_right,
-                top_y=current_row_top,
-                value=f"{_format_amount(opening_amount)} {currency_code}",
-                size=9,
-            )
-            current_row_top += 14.0
+            show_opening_balance = opening_amount != Decimal("0.00") or applied_payments_amount == Decimal("0.00")
+            if show_opening_balance:
+                pdf.text(x=col_label_x, top_y=current_row_top, value=opening_label, size=9)
+                pdf.text_right(
+                    right_x=totals_col_ttc_right,
+                    top_y=current_row_top,
+                    value=f"{_format_amount(opening_amount)} {currency_code}",
+                    size=9,
+                )
+                current_row_top += 14.0
             pdf.text(x=col_label_x, top_y=current_row_top, value=f"Montant periode facturee ({currency_code})", size=9)
             pdf.text_right(
                 right_x=totals_col_ttc_right,
@@ -1054,6 +1073,15 @@ def render_invoice_period_pdf(
                 size=9,
             )
             current_row_top += 14.0
+            if applied_payments_amount != Decimal("0.00"):
+                pdf.text(x=col_label_x, top_y=current_row_top, value=f"Paiements enregistres ({currency_code})", size=9)
+                pdf.text_right(
+                    right_x=totals_col_ttc_right,
+                    top_y=current_row_top,
+                    value=f"{_format_amount(applied_payments_amount)} {currency_code}",
+                    size=9,
+                )
+                current_row_top += 14.0
             pdf.text(x=col_label_x, top_y=current_row_top, value=f"Montant total a payer ({currency_code})", size=10, bold=True)
             pdf.text_right(
                 right_x=totals_col_ttc_right,
