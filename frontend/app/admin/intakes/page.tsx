@@ -39,7 +39,8 @@ type TypeformIntakeListPageOut = {
 };
 
 const DEFAULT_PAGE = 1;
-const DEFAULT_PAGE_SIZE = 10;
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
+const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -56,6 +57,14 @@ function readPositiveIntParam(params: SearchParams, key: string, fallback: numbe
     return fallback;
   }
   return parsed;
+}
+
+function readPageSizeParam(params: SearchParams): number {
+  const value = readPositiveIntParam(params, "page_size", DEFAULT_PAGE_SIZE);
+  if (PAGE_SIZE_OPTIONS.includes(value as (typeof PAGE_SIZE_OPTIONS)[number])) {
+    return value;
+  }
+  return DEFAULT_PAGE_SIZE;
 }
 
 function safeStatus(raw: string): string {
@@ -126,10 +135,12 @@ function buildIntakesHref({
   q,
   status,
   page,
+  pageSize,
 }: {
   q: string;
   status: string;
   page?: number;
+  pageSize?: number;
 }): string {
   const params = new URLSearchParams();
   if (q) {
@@ -141,8 +152,76 @@ function buildIntakesHref({
   if ((page ?? DEFAULT_PAGE) > DEFAULT_PAGE) {
     params.set("page", String(page));
   }
+  if ((pageSize ?? DEFAULT_PAGE_SIZE) !== DEFAULT_PAGE_SIZE) {
+    params.set("page_size", String(pageSize));
+  }
   const search = params.toString();
   return search ? `/admin/intakes?${search}` : "/admin/intakes";
+}
+
+function IntakePaginationControls({
+  q,
+  status,
+  total,
+  currentPage,
+  totalPages,
+  pageSize,
+  pageStart,
+}: {
+  q: string;
+  status: string;
+  total: number;
+  currentPage: number;
+  totalPages: number;
+  pageSize: number;
+  pageStart: number;
+}): JSX.Element {
+  const previousPageHref = buildIntakesHref({ q, status, page: currentPage - 1, pageSize });
+  const nextPageHref = buildIntakesHref({ q, status, page: currentPage + 1, pageSize });
+
+  return (
+    <div className="row spread wrap clients-pagination top-gap-sm">
+      <div className="row wrap gap-sm">
+        <small className="muted">
+          Affichage {pageStart + 1}-{Math.min(pageStart + pageSize, total)} sur {total} intake(s)
+        </small>
+        <form method="get" className="row wrap gap-sm">
+          {q ? <input type="hidden" name="q" value={q} /> : null}
+          {status ? <input type="hidden" name="status" value={status} /> : null}
+          <label className="row gap-sm">
+            <span className="muted">Par page</span>
+            <select name="page_size" defaultValue={String(pageSize)}>
+              {PAGE_SIZE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="ghost">Appliquer</button>
+        </form>
+      </div>
+      <div className="row">
+        {currentPage > 1 ? (
+          <Link className="mode-link" href={previousPageHref}>
+            ← Precedent
+          </Link>
+        ) : (
+          <span className="mode-link disabled-link">← Precedent</span>
+        )}
+        <span className="badge">
+          Page {currentPage}/{totalPages}
+        </span>
+        {currentPage < totalPages ? (
+          <Link className="mode-link" href={nextPageHref}>
+            Suivant →
+          </Link>
+        ) : (
+          <span className="mode-link disabled-link">Suivant →</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default async function AdminTypeformIntakesPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
@@ -154,6 +233,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   const q = readParam(searchParams, "q").trim();
   const status = safeStatus(readParam(searchParams, "status"));
   const requestedPage = readPositiveIntParam(searchParams, "page", DEFAULT_PAGE);
+  const requestedPageSize = readPageSizeParam(searchParams);
   const ok = readParam(searchParams, "ok").trim();
   const error = readParam(searchParams, "error").trim();
 
@@ -161,7 +241,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   if (q) query.set("q", q);
   if (status) query.set("status", status);
   query.set("page", String(requestedPage));
-  query.set("page_size", String(DEFAULT_PAGE_SIZE));
+  query.set("page_size", String(requestedPageSize));
 
   const result = await backendRequest<TypeformIntakeListPageOut>(
     `/api/v1/typeform/intakes?${query.toString()}`,
@@ -177,9 +257,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   const pageSize = pageData.page_size;
   const totalPages = Math.max(1, Math.ceil(total / Math.max(pageSize, 1)));
   const pageStart = total === 0 ? 0 : (currentPage - 1) * pageSize;
-  const returnTo = buildIntakesHref({ q, status, page: currentPage });
-  const previousPageHref = buildIntakesHref({ q, status, page: currentPage - 1 });
-  const nextPageHref = buildIntakesHref({ q, status, page: currentPage + 1 });
+  const returnTo = buildIntakesHref({ q, status, page: currentPage, pageSize });
 
   return (
     <section className="admin-page-grid">
@@ -205,7 +283,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
       {error ? <section className="flash-err">{error}</section> : null}
 
       <section className="card">
-        <form method="get" className="grid cols-4 sticky-filters">
+        <form method="get" className="grid cols-5 sticky-filters">
           <label className="span-2">
             Recherche
             <input type="search" name="q" defaultValue={q} placeholder="Prospect, enfant, site, segment..." />
@@ -221,6 +299,16 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
               <option value="BLOCKED">Bloque</option>
               <option value="PROCESSED">Traite</option>
               <option value="IGNORED">Ignore</option>
+            </select>
+          </label>
+          <label>
+            Par page
+            <select name="page_size" defaultValue={String(pageSize)}>
+              {PAGE_SIZE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
             </select>
           </label>
           <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
@@ -244,7 +332,17 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
             </form>
           </div>
         ) : (
-          <div className="table-wrap top-gap-sm">
+          <>
+            <IntakePaginationControls
+              q={q}
+              status={status}
+              total={total}
+              currentPage={currentPage}
+              totalPages={totalPages}
+              pageSize={pageSize}
+              pageStart={pageStart}
+            />
+            <div className="table-wrap top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
@@ -317,33 +415,19 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
         {total > 0 ? (
-          <div className="row spread clients-pagination top-gap-sm">
-            <small className="muted">
-              Affichage {pageStart + 1}-{Math.min(pageStart + rows.length, total)} sur {total} intake(s)
-            </small>
-            <div className="row">
-              {currentPage > 1 ? (
-                <Link className="mode-link" href={previousPageHref}>
-                  ← Precedent
-                </Link>
-              ) : (
-                <span className="mode-link disabled-link">← Precedent</span>
-              )}
-              <span className="badge">
-                Page {currentPage}/{totalPages}
-              </span>
-              {currentPage < totalPages ? (
-                <Link className="mode-link" href={nextPageHref}>
-                  Suivant →
-                </Link>
-              ) : (
-                <span className="mode-link disabled-link">Suivant →</span>
-              )}
-            </div>
-          </div>
+          <IntakePaginationControls
+            q={q}
+            status={status}
+            total={total}
+            currentPage={currentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            pageStart={pageStart}
+          />
         ) : null}
       </section>
     </section>
