@@ -1021,8 +1021,10 @@ export async function loginAction(formData: FormData): Promise<void> {
   }
 
   if (me.role === "admin") {
+    clearAllAuthTokens();
     setAdminSessionToken(result.data.access_token);
   } else {
+    clearAllAuthTokens();
     setPortalSessionToken(result.data.access_token);
   }
 
@@ -1149,6 +1151,7 @@ export async function registerAction(formData: FormData): Promise<void> {
     );
   }
 
+  clearAllAuthTokens();
   setPortalSessionToken(loginResult.data.access_token);
   if (purchaseContext) {
     redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Compte%20cree`);
@@ -1375,6 +1378,14 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
     token,
   );
   if (!purchaseResult.ok) {
+    if (purchaseResult.status === 401) {
+      clearToken();
+      redirect(
+        `/login?mode=login&purchase_context=${encodeURIComponent(purchaseContext)}&error=${encodeURIComponent(
+          "Session expiree, reconnectez-vous pour poursuivre le paiement",
+        )}`,
+      );
+    }
     const withContext = setQueryParam(returnTo, "purchase_context", purchaseContext);
     redirect(appendQueryMessage(withContext, "error", purchaseResult.message));
   }
@@ -1424,6 +1435,14 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
     token,
   );
   if (!result.ok) {
+    if (result.status === 401) {
+      clearToken();
+      redirect(
+        `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(
+          "Session expiree, reconnectez-vous pour poursuivre la reservation",
+        )}`,
+      );
+    }
     redirect(appendQueryMessage(checkoutReturnTo, "error", result.message));
   }
 

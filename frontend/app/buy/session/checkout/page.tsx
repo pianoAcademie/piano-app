@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import type { SessionOut } from "../../../../lib/types";
+import type { SessionOut, UserOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -101,6 +101,14 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   const portalToken = getPortalToken();
   if (!portalToken) {
     redirect(`/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}`);
+  }
+  const authResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, portalToken);
+  if (!authResult.ok) {
+    redirect(
+      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(
+        "Session expiree, reconnectez-vous pour poursuivre la reservation",
+      )}`,
+    );
   }
 
   const isFull = session.seats_remaining <= 0;

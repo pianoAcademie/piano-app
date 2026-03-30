@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { submitFormulaCheckoutAction } from "../../../lib/actions";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
-import type { PublicFormulaPurchaseContextOut } from "../../../lib/types";
+import type { PublicFormulaPurchaseContextOut, UserOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -100,6 +100,14 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
   if (!portalToken) {
     redirect(
       `/login?mode=login&email=${encodeURIComponent(contextResult.data.email)}&purchase_context=${encodeURIComponent(purchaseContext)}`,
+    );
+  }
+  const authResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, portalToken);
+  if (!authResult.ok) {
+    redirect(
+      `/login?mode=login&email=${encodeURIComponent(contextResult.data.email)}&purchase_context=${encodeURIComponent(
+        purchaseContext,
+      )}&error=${encodeURIComponent("Session expiree, reconnectez-vous pour poursuivre le paiement")}`,
     );
   }
 

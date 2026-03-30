@@ -7,6 +7,7 @@ export const PORTAL_ACCESS_TOKEN_COOKIE = "portal_access_token";
 export const PORTAL_RETURN_TO_COOKIE = "portal_return_to";
 
 const EIGHT_HOURS_IN_SECONDS = 60 * 60 * 8;
+const TOKEN_EXPIRY_SKEW_SECONDS = 30;
 
 function isSecureCookie(): boolean {
   const cookieSecureOverride = (process.env.COOKIE_SECURE ?? "").trim().toLowerCase();
@@ -21,11 +22,21 @@ function isSecureCookie(): boolean {
   return nodeEnv === "production" || deployEnv === "production";
 }
 
+function cookieSameSite(name: string): "lax" | "none" {
+  if (!isSecureCookie()) {
+    return "lax";
+  }
+  if (name === PORTAL_ACCESS_TOKEN_COOKIE || name === LEGACY_ACCESS_TOKEN_COOKIE || name === PORTAL_RETURN_TO_COOKIE) {
+    return "none";
+  }
+  return "lax";
+}
+
 function setCookieValue(name: string, value: string, options: { path: string; maxAge: number }): void {
   const { path, maxAge } = options;
   cookies().set(name, value, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: cookieSameSite(name),
     secure: isSecureCookie(),
     path,
     maxAge,
@@ -36,7 +47,7 @@ function clearCookieValue(name: string, options: { path: string }): void {
   const { path } = options;
   cookies().set(name, "", {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: cookieSameSite(name),
     secure: isSecureCookie(),
     path,
     maxAge: 0,
@@ -68,15 +79,23 @@ function decodeJwtPayloadUnsafe(token: string | null): JwtPayloadLike | null {
   }
 }
 
+function isExpiredJwt(token: string | null): boolean {
+  const payload = decodeJwtPayloadUnsafe(token);
+  if (!payload || typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) {
+    return false;
+  }
+  return payload.exp <= Math.floor(Date.now() / 1000) + TOKEN_EXPIRY_SKEW_SECONDS;
+}
+
 export function getAdminToken(): string | null {
   const adminToken = cookies().get(ADMIN_ACCESS_TOKEN_COOKIE)?.value ?? null;
-  if (adminToken) {
+  if (adminToken && !isExpiredJwt(adminToken)) {
     return adminToken;
   }
 
   const legacyToken = cookies().get(LEGACY_ACCESS_TOKEN_COOKIE)?.value ?? null;
   const legacyClaims = decodeJwtPayloadUnsafe(legacyToken);
-  if (legacyToken && legacyClaims?.role === "admin") {
+  if (legacyToken && !isExpiredJwt(legacyToken) && legacyClaims?.role === "admin") {
     return legacyToken;
   }
   return null;
@@ -84,13 +103,13 @@ export function getAdminToken(): string | null {
 
 export function getPortalToken(): string | null {
   const portalToken = cookies().get(PORTAL_ACCESS_TOKEN_COOKIE)?.value ?? null;
-  if (portalToken) {
+  if (portalToken && !isExpiredJwt(portalToken)) {
     return portalToken;
   }
 
   const legacyToken = cookies().get(LEGACY_ACCESS_TOKEN_COOKIE)?.value ?? null;
   const legacyClaims = decodeJwtPayloadUnsafe(legacyToken);
-  if (!legacyToken || !legacyClaims) {
+  if (!legacyToken || !legacyClaims || isExpiredJwt(legacyToken)) {
     return null;
   }
   // Never treat a legacy admin token as a portal session.
@@ -102,9 +121,12 @@ export function getPortalToken(): string | null {
 
 export function getAnyToken(): string | null {
   return (
-    cookies().get(ADMIN_ACCESS_TOKEN_COOKIE)?.value
-    ?? cookies().get(PORTAL_ACCESS_TOKEN_COOKIE)?.value
-    ?? cookies().get(LEGACY_ACCESS_TOKEN_COOKIE)?.value
+    getAdminToken()
+    ?? getPortalToken()
+    ?? (() => {
+      const legacyToken = cookies().get(LEGACY_ACCESS_TOKEN_COOKIE)?.value ?? null;
+      return legacyToken && !isExpiredJwt(legacyToken) ? legacyToken : null;
+    })()
     ?? null
   );
 }
