@@ -233,6 +233,13 @@ class ClientPaymentCheckoutOut(BaseModel):
     provider_reference: str | None = None
 
 
+class ClientSessionCheckoutOut(BaseModel):
+    booking_id: UUID
+    booking_status: str
+    checkout_url: str | None = None
+    invoice_status: str | None = None
+
+
 class ClientPaymentConfirmOut(BaseModel):
     payment_id: str
     subscription_status: str

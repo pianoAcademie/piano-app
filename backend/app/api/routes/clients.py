@@ -15,6 +15,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
+from app.api.routes.bookings import book_session
 from app.core.config import settings
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionAudienceScope, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
@@ -23,6 +24,7 @@ from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription
 from app.models.ops import AppSetting, EmailReminder, LegalEntity
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
+from app.schemas.booking import BookingCreateRequest
 from app.schemas.user import (
     ClientFamilyOverviewOut,
     ClientInvoiceOut,
@@ -30,6 +32,7 @@ from app.schemas.user import (
     ClientMessageOut,
     ClientMessageScope,
     ClientPaymentCheckoutOut,
+    ClientSessionCheckoutOut,
     ClientMeUpdateRequest,
     ClientPaymentOut,
     FamilyBookingOut,
@@ -45,7 +48,9 @@ from app.services.client_purchase_notifications import send_client_payment_succe
 from app.services.invoice_documents import (
     InvoicePeriodLine,
     render_invoice_period_pdf,
+    reserve_next_invoice_number,
 )
+from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, resolve_provider
@@ -411,6 +416,162 @@ def _invoice_range_public_payment_url(*, client_id: UUID, note_id: UUID, metadat
         f"{_frontend_url(path='')}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay"
         f"?token={token}"
     )
+
+
+def _payment_key(*, source: str, payment_id: UUID) -> str:
+    return f"{(source or '').strip().upper()}:{payment_id}"
+
+
+def _allocate_invoice_number_for_seller_entity(
+    db: Session,
+    *,
+    seller_legal_entity_id: UUID | None,
+    issued_at: datetime,
+) -> str:
+    if seller_legal_entity_id is None:
+        return reserve_next_invoice_number(db, issued_at=issued_at)
+    try:
+        return InvoiceNumberService.allocate_invoice_number(
+            db,
+            legal_entity_id=seller_legal_entity_id,
+            issued_at=issued_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown seller legal entity for invoice numbering",
+        ) from exc
+
+
+def _build_invoice_range_note_message(metadata: dict[str, object]) -> str:
+    start_date = str(metadata.get("start_date") or "")
+    end_date = str(metadata.get("end_date") or "")
+    issued_date = str(metadata.get("issued_date") or "")
+    due_date = str(metadata.get("due_date") or "")
+    invoice_number = str(metadata.get("invoice_number") or "")
+    summary = (
+        f"Facture {invoice_number} generee ({start_date} - {end_date}, "
+        f"emise le {issued_date}, echeance {due_date})."
+    )
+    payload_json = json.dumps(metadata, ensure_ascii=True, separators=(",", ":"))
+    return f"{summary}\n{INVOICE_RANGE_NOTE_PREFIX}{payload_json}"
+
+
+def _active_booking_invoice_note(
+    db: Session,
+    *,
+    client_id: UUID,
+    booking_id: UUID,
+) -> tuple[ClientNoteEntry, dict[str, object]] | None:
+    note_ids = db.scalars(
+        select(ClientInvoiceLine.note_id)
+        .where(
+            ClientInvoiceLine.user_id == client_id,
+            ClientInvoiceLine.source == "BOOKING",
+            ClientInvoiceLine.source_payment_id == booking_id,
+        )
+        .order_by(ClientInvoiceLine.created_at.desc(), ClientInvoiceLine.id.desc())
+    ).all()
+    seen: set[UUID] = set()
+    for note_id in note_ids:
+        if note_id in seen:
+            continue
+        seen.add(note_id)
+        note = db.scalar(
+            select(ClientNoteEntry).where(
+                ClientNoteEntry.id == note_id,
+                ClientNoteEntry.user_id == client_id,
+            )
+        )
+        if note is None:
+            continue
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            continue
+        if str(metadata.get("invoice_status") or "ISSUED").strip().upper() == "CANCELLED":
+            continue
+        return note, metadata
+    return None
+
+
+def _create_booking_invoice_note(
+    db: Session,
+    *,
+    booking: Booking,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    location: Location,
+    owner: User,
+    author_user_id: UUID,
+) -> tuple[ClientNoteEntry, dict[str, object]]:
+    issued_at = _utcnow()
+    issued_date = issued_at.date()
+    session_date = session_obj.start_at_utc.astimezone(timezone.utc).date()
+    seller_legal_entity_id = session_obj.snapshot_seller_legal_entity_id or course_type.seller_legal_entity_id
+    legal_entities_by_id = _active_legal_entities_by_id(db)
+    billing_entity = _billing_entity_from_seller_id(
+        legal_entities_by_id=legal_entities_by_id,
+        seller_legal_entity_id=seller_legal_entity_id,
+        fallback_text=session_obj.billing_entity_snapshot,
+    )
+    resolved_billing_entity = _billing_entity_text(billing_entity) or "ENTITE_NON_DEFINIE"
+    currency = (booking.currency_snapshot or "EUR").upper()
+    total_incl_vat = Decimal(booking.total_incl_vat_snapshot).quantize(Decimal("0.01"))
+    invoice_number = _allocate_invoice_number_for_seller_entity(
+        db,
+        seller_legal_entity_id=seller_legal_entity_id,
+        issued_at=issued_at,
+    )
+    metadata: dict[str, object] = {
+        "kind": "INVOICE_RANGE",
+        "invoice_number": invoice_number,
+        "issued_date": issued_date.isoformat(),
+        "due_date": issued_date.isoformat(),
+        "no_due_date": False,
+        "start_date": session_date.isoformat(),
+        "end_date": session_date.isoformat(),
+        "layout": "DETAILED",
+        "billing_entity": resolved_billing_entity,
+        "seller_legal_entity_id": str(seller_legal_entity_id) if seller_legal_entity_id is not None else None,
+        "generation_mode": "MANUAL",
+        "group_adjustments_by_type": False,
+        "include_discount_adjustments": False,
+        "include_supplement_adjustments": False,
+        "include_pending": True,
+        "include_cancelled": False,
+        "included_payment_keys": [_payment_key(source="BOOKING", payment_id=booking.id)],
+        "totals_by_currency": {currency: f"{total_incl_vat:.2f}"},
+        "total_to_pay_by_currency": {currency: f"{total_incl_vat:.2f}"},
+        "invoice_status": "ISSUED",
+        "public_note": f"Reservation {course_type.name} - {location.name}",
+    }
+
+    note = ClientNoteEntry(
+        user_id=owner.id,
+        author_user_id=author_user_id,
+        entry_type="AUTO",
+        message=_build_invoice_range_note_message(metadata),
+    )
+    db.add(note)
+    db.flush()
+
+    invoice_line = ClientInvoiceLine(
+        note_id=note.id,
+        user_id=owner.id,
+        source="BOOKING",
+        source_payment_id=booking.id,
+        occurred_at=booking.booked_at,
+        label=f"{course_type.name} - {location.name}",
+        amount_excl_vat=Decimal(booking.price_excl_vat_snapshot).quantize(Decimal("0.01")),
+        vat_rate=Decimal(booking.vat_rate_snapshot).quantize(Decimal("0.001")),
+        vat_amount=Decimal(booking.vat_amount_snapshot).quantize(Decimal("0.01")),
+        total_incl_vat=total_incl_vat,
+        currency=currency,
+        billing_entity=resolved_billing_entity,
+        seller_legal_entity_id=seller_legal_entity_id,
+    )
+    db.add(invoice_line)
+    return note, metadata
 
 
 def _invoice_period_line_from_invoice_line(line: ClientInvoiceLine) -> InvoicePeriodLine:
@@ -1587,6 +1748,143 @@ def create_client_payment_checkout(
         payment_id=f"plan:{subscription.id}",
         checkout_url=checkout.checkout_url,
         provider_reference=subscription.payment_provider_subscription_ref,
+    )
+
+
+@router.post("/clients/me/sessions/{session_id}/checkout", response_model=ClientSessionCheckoutOut)
+def create_client_session_checkout(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientSessionCheckoutOut:
+    managed_ids = _managed_client_ids_for_sessions(db, current_user)
+
+    existing_booking = db.scalar(
+        select(Booking)
+        .where(
+            Booking.session_id == session_id,
+            Booking.user_id.in_(managed_ids),
+        )
+        .order_by(Booking.booked_at.desc(), Booking.id.desc())
+        .with_for_update()
+        .limit(1)
+    )
+
+    booking_id: UUID | None = None
+    if existing_booking is None or existing_booking.status == BookingStatus.CANCELLED:
+        try:
+            booking_out = book_session(
+                session_id=session_id,
+                payload=BookingCreateRequest(),
+                db=db,
+                current_user=current_user,
+            )
+            booking_id = booking_out.id
+        except HTTPException as exc:
+            detail = str(exc.detail or "").strip()
+            if exc.status_code not in {status.HTTP_409_CONFLICT} or detail not in {"Already booked", "Already in waitlist"}:
+                raise
+            existing_booking = db.scalar(
+                select(Booking)
+                .where(
+                    Booking.session_id == session_id,
+                    Booking.user_id.in_(managed_ids),
+                )
+                .order_by(Booking.booked_at.desc(), Booking.id.desc())
+                .limit(1)
+            )
+            if existing_booking is None:
+                raise
+            booking_id = existing_booking.id
+    else:
+        booking_id = existing_booking.id
+
+    row = db.execute(
+        select(Booking, CourseSession, CourseType, Location, User)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .join(User, User.id == Booking.user_id)
+        .where(
+            Booking.id == booking_id,
+            Booking.user_id.in_(managed_ids),
+        )
+        .with_for_update()
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation introuvable")
+
+    booking, session_obj, course_type, location, owner = row
+    booking_status = booking.status.value if hasattr(booking.status, "value") else str(booking.status)
+
+    if booking.status == BookingStatus.WAITLISTED:
+        return ClientSessionCheckoutOut(
+            booking_id=booking.id,
+            booking_status=booking_status,
+            checkout_url=None,
+            invoice_status=None,
+        )
+
+    if booking.status != BookingStatus.BOOKED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce creneau n est pas reservable pour un paiement")
+
+    if booking.client_plan_subscription_id is not None:
+        return ClientSessionCheckoutOut(
+            booking_id=booking.id,
+            booking_status=booking_status,
+            checkout_url=None,
+            invoice_status="COVERED",
+        )
+
+    amount_due = Decimal(booking.total_incl_vat_snapshot).quantize(Decimal("0.01"))
+    if amount_due <= Decimal("0.00"):
+        return ClientSessionCheckoutOut(
+            booking_id=booking.id,
+            booking_status=booking_status,
+            checkout_url=None,
+            invoice_status="PAID",
+        )
+
+    active_note = _active_booking_invoice_note(
+        db,
+        client_id=owner.id,
+        booking_id=booking.id,
+    )
+    if active_note is not None:
+        note, metadata = active_note
+        invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper() or "ISSUED"
+        checkout_url = None if invoice_status == "PAID" else _invoice_range_public_payment_url(
+            client_id=owner.id,
+            note_id=note.id,
+            metadata=metadata,
+        )
+        return ClientSessionCheckoutOut(
+            booking_id=booking.id,
+            booking_status=booking_status,
+            checkout_url=checkout_url,
+            invoice_status=invoice_status,
+        )
+
+    note, metadata = _create_booking_invoice_note(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        owner=owner,
+        author_user_id=current_user.id,
+    )
+    db.commit()
+
+    return ClientSessionCheckoutOut(
+        booking_id=booking.id,
+        booking_status=booking_status,
+        checkout_url=_invoice_range_public_payment_url(
+            client_id=owner.id,
+            note_id=note.id,
+            metadata=metadata,
+        ),
+        invoice_status="ISSUED",
     )
 
 

@@ -166,6 +166,15 @@ function buildPlanningHref({
   return `/embed/planning?${params.toString()}`;
 }
 
+function buildSessionCheckoutHref(sessionId: string, planningReturnTo: string): string {
+  const params = new URLSearchParams();
+  params.set("session_id", sessionId);
+  if (planningReturnTo) {
+    params.set("planning_return_to", planningReturnTo);
+  }
+  return `/buy/session/checkout?${params.toString()}`;
+}
+
 function bookingStatusLabel(status: string): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "BOOKED") return "Reserve";
@@ -313,6 +322,10 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     date: weekStartKey,
   });
   const loginHref = `/login?mode=login&return_to=${encodeURIComponent(selectedSessionReturnTo)}`;
+  const sessionCheckoutHref = selectedSession ? buildSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo) : "/buy/session/checkout";
+  const sessionCheckoutLoginHref = `/login?mode=login&return_to=${encodeURIComponent(sessionCheckoutHref)}`;
+  const selectedSessionRequiresCheckout =
+    selectedSession !== null && Number(selectedSession.external_booking_price_ttc ?? "0") > 0 && !selectedSessionIsFull;
 
   return (
     <main className="embed-planning-page">
@@ -406,7 +419,9 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
             {!portalToken ? (
               <div className="embed-planning-cta-stack">
                 <p className="muted">Reservez en une etape. La page suivante permet de vous connecter, creer un compte ou recuperer votre mot de passe.</p>
-                <Link className="mode-link embed-planning-primary-link" href={loginHref}>Reserver</Link>
+                <Link className="mode-link embed-planning-primary-link" href={selectedSessionRequiresCheckout ? sessionCheckoutLoginHref : loginHref}>
+                  Reserver
+                </Link>
               </div>
             ) : selectedBooking ? (
               <div className="embed-planning-cta-stack">
@@ -414,6 +429,11 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
               </div>
             ) : selectedSessionStarted ? (
               <p className="flash-err">Ce creneau a deja commence.</p>
+            ) : selectedSessionRequiresCheckout ? (
+              <div className="embed-planning-cta-stack">
+                <p className="muted">La reservation se termine par le paiement securise du creneau.</p>
+                <Link className="mode-link embed-planning-primary-link" href={sessionCheckoutHref}>Continuer vers le paiement</Link>
+              </div>
             ) : (
               <form action={reservePublicPlanningSessionAction} className="embed-planning-book-form">
                 <input type="hidden" name="session_id" value={selectedSession.id} />

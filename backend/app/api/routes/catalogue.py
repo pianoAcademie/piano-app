@@ -47,6 +47,90 @@ def _account_default_currency(db: Session) -> str:
     return candidate if len(candidate) == 3 else "EUR"
 
 
+def _serialize_public_session(
+    *,
+    session: CourseSession,
+    course_type: CourseType,
+    location: Location,
+    professor: Professor | None,
+    substitute: Professor | None,
+    booked_count: int,
+    timezone: str,
+    external_booking_currency: str,
+) -> SessionOut | None:
+    visibility_scopes = resolve_session_visibility_scopes(session)
+    if not scopes_allow_external_visibility(visibility_scopes):
+        return None
+    booking_scopes = resolve_session_booking_scopes(
+        session,
+        allows_student_bookings=bool(course_type.allows_student_bookings),
+    )
+    visibility_scope = primary_session_audience_scope(visibility_scopes)
+    booking_scope = primary_session_audience_scope(booking_scopes, fallback=SessionAudienceScope.PRIVATE)
+    effective_professor = substitute or professor
+    substitute_display_name = (
+        f"{(substitute.first_name or '').strip()} {(substitute.last_name or '').strip()}".strip()
+        if substitute is not None
+        else None
+    )
+    effective_display_name = (
+        f"{(effective_professor.first_name or '').strip()} {(effective_professor.last_name or '').strip()}".strip()
+        if effective_professor is not None
+        else None
+    )
+    booked = int(booked_count or 0)
+    seats_remaining = max(session.capacity_max - booked, 0)
+
+    return SessionOut(
+        id=session.id,
+        title=session.title,
+        description=session.description,
+        start_at_utc=session.start_at_utc,
+        end_at_utc=session.end_at_utc,
+        start_at_local=session.start_at_utc.astimezone(ZoneInfo(timezone)),
+        end_at_local=session.end_at_utc.astimezone(ZoneInfo(timezone)),
+        timezone=timezone,
+        session_timezone=session.timezone,
+        status=session.status,
+        capacity_max=session.capacity_max,
+        booked_count=booked,
+        seats_remaining=seats_remaining,
+        visibility_scopes=visibility_scopes,
+        booking_scopes=booking_scopes,
+        visibility_scope=visibility_scope,
+        booking_scope=booking_scope,
+        online_booking_enabled=SessionAudienceScope.EXTERNAL in booking_scopes,
+        external_booking_price_ttc=session.external_booking_price_ttc,
+        external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
+        show_external_remaining_seats=bool(session.show_external_remaining_seats),
+        zoom_link=session.zoom_link,
+        substitute_teacher_id=session.substitute_teacher_id,
+        substitute_teacher_display_name=substitute_display_name,
+        effective_teacher_id=effective_professor.id if effective_professor is not None else None,
+        effective_teacher_display_name=effective_display_name,
+        course_type=SessionCourseTypeOut(
+            id=course_type.id,
+            code=course_type.code,
+            name=course_type.name,
+        ),
+        location=SessionLocationOut(
+            id=location.id,
+            code=location.code,
+            name=location.name,
+            is_online=location.is_online,
+        ),
+        professor=(
+            SessionProfessorOut(
+                id=effective_professor.id,
+                first_name=effective_professor.first_name,
+                last_name=effective_professor.last_name,
+            )
+            if effective_professor is not None
+            else None
+        ),
+    )
+
+
 @router.get("/course-types", response_model=list[CourseTypeOut])
 def list_course_types(
     active: bool = True,
@@ -196,78 +280,81 @@ def list_sessions(
 
     result: list[SessionOut] = []
     for session, course_type, location, professor, substitute, booked_count in rows:
-        visibility_scopes = resolve_session_visibility_scopes(session)
-        if not scopes_allow_external_visibility(visibility_scopes):
+        serialized = _serialize_public_session(
+            session=session,
+            course_type=course_type,
+            location=location,
+            professor=professor,
+            substitute=substitute,
+            booked_count=int(booked_count or 0),
+            timezone=timezone,
+            external_booking_currency=external_booking_currency,
+        )
+        if serialized is None:
             continue
-        booking_scopes = resolve_session_booking_scopes(
-            session,
-            allows_student_bookings=bool(course_type.allows_student_bookings),
-        )
-        visibility_scope = primary_session_audience_scope(visibility_scopes)
-        booking_scope = primary_session_audience_scope(booking_scopes, fallback=SessionAudienceScope.PRIVATE)
-        effective_professor = substitute or professor
-        substitute_display_name = (
-            f"{(substitute.first_name or '').strip()} {(substitute.last_name or '').strip()}".strip()
-            if substitute is not None
-            else None
-        )
-        effective_display_name = (
-            f"{(effective_professor.first_name or '').strip()} {(effective_professor.last_name or '').strip()}".strip()
-            if effective_professor is not None
-            else None
-        )
-        booked = int(booked_count or 0)
-        seats_remaining = max(session.capacity_max - booked, 0)
-
-        result.append(
-            SessionOut(
-                id=session.id,
-                title=session.title,
-                description=session.description,
-                start_at_utc=session.start_at_utc,
-                end_at_utc=session.end_at_utc,
-                start_at_local=session.start_at_utc.astimezone(tz),
-                end_at_local=session.end_at_utc.astimezone(tz),
-                timezone=timezone,
-                session_timezone=session.timezone,
-                status=session.status,
-                capacity_max=session.capacity_max,
-                booked_count=booked,
-                seats_remaining=seats_remaining,
-                visibility_scopes=visibility_scopes,
-                booking_scopes=booking_scopes,
-                visibility_scope=visibility_scope,
-                booking_scope=booking_scope,
-                online_booking_enabled=SessionAudienceScope.EXTERNAL in booking_scopes,
-                external_booking_price_ttc=session.external_booking_price_ttc,
-                external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
-                show_external_remaining_seats=bool(session.show_external_remaining_seats),
-                zoom_link=session.zoom_link,
-                substitute_teacher_id=session.substitute_teacher_id,
-                substitute_teacher_display_name=substitute_display_name,
-                effective_teacher_id=effective_professor.id if effective_professor is not None else None,
-                effective_teacher_display_name=effective_display_name,
-                course_type=SessionCourseTypeOut(
-                    id=course_type.id,
-                    code=course_type.code,
-                    name=course_type.name,
-                ),
-                location=SessionLocationOut(
-                    id=location.id,
-                    code=location.code,
-                    name=location.name,
-                    is_online=location.is_online,
-                ),
-                professor=(
-                    SessionProfessorOut(
-                        id=effective_professor.id,
-                        first_name=effective_professor.first_name,
-                        last_name=effective_professor.last_name,
-                    )
-                    if effective_professor is not None
-                    else None
-                ),
-            )
-        )
+        result.append(serialized)
 
     return result
+
+
+@router.get("/sessions/{session_id}", response_model=SessionOut)
+def get_session(
+    session_id: UUID,
+    timezone: str = "UTC",
+    db: Session = Depends(get_db),
+) -> SessionOut:
+    try:
+        tz = ZoneInfo(timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid timezone",
+        ) from exc
+
+    booked_counts = (
+        select(
+            Booking.session_id.label("session_id"),
+            func.count(Booking.id).label("booked_count"),
+        )
+        .where(Booking.status == BookingStatus.BOOKED)
+        .group_by(Booking.session_id)
+        .subquery()
+    )
+    substitute_professor = aliased(Professor, name="substitute_professor_detail")
+    row = db.execute(
+        select(
+            CourseSession,
+            CourseType,
+            Location,
+            Professor,
+            substitute_professor,
+            func.coalesce(booked_counts.c.booked_count, 0).label("booked_count"),
+        )
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .outerjoin(Professor, Professor.id == CourseSession.professor_id)
+        .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
+        .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
+        .where(
+            CourseSession.id == session_id,
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.is_private.is_(False),
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    session, course_type, location, professor, substitute, booked_count = row
+    serialized = _serialize_public_session(
+        session=session,
+        course_type=course_type,
+        location=location,
+        professor=professor,
+        substitute=substitute,
+        booked_count=int(booked_count or 0),
+        timezone=tz.key,
+        external_booking_currency=_account_default_currency(db),
+    )
+    if serialized is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return serialized

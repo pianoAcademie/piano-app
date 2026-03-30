@@ -1370,6 +1370,69 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
   redirect("/client?tab=finance&ok=Achat%20de%20la%20formule%20confirme");
 }
 
+export async function submitPublicSessionCheckoutAction(formData: FormData): Promise<void> {
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const checkoutReturnTo = safePublicBuyPath(
+    String(formData.get("checkout_return_to") ?? "").trim(),
+    sessionId ? `/buy/session/checkout?session_id=${encodeURIComponent(sessionId)}` : "/buy/session/checkout",
+  );
+  const planningReturnTo = safePublicReturnPath(
+    String(formData.get("planning_return_to") ?? "").trim(),
+    "/embed/planning",
+  );
+
+  if (!sessionId) {
+    redirect(appendQueryMessage(checkoutReturnTo, "error", "Creneau invalide"));
+  }
+
+  const token = currentPortalToken();
+  if (!token) {
+    redirect(
+      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(
+        "Connectez-vous pour poursuivre la reservation",
+      )}`,
+    );
+  }
+
+  const result = await backendRequest<{
+    booking_id: string;
+    booking_status: string;
+    checkout_url: string | null;
+    invoice_status: string | null;
+  }>(
+    `/api/v1/clients/me/sessions/${sessionId}/checkout`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(checkoutReturnTo, "error", result.message));
+  }
+
+  if (result.data.checkout_url) {
+    redirect(result.data.checkout_url);
+  }
+
+  const bookingStatus = String(result.data.booking_status ?? "").trim().toUpperCase();
+  const invoiceStatus = String(result.data.invoice_status ?? "").trim().toUpperCase();
+  if (bookingStatus === "WAITLISTED") {
+    const successPath = appendQueryMessage(planningReturnTo, "session_ok", "Ajout a la liste d attente");
+    redirect(appendQueryMessage(successPath, "ok", "Ajout a la liste d attente"));
+  }
+  if (invoiceStatus === "PAID") {
+    const successPath = appendQueryMessage(planningReturnTo, "session_ok", "Reservation deja reglee");
+    redirect(appendQueryMessage(successPath, "ok", "Reservation deja reglee"));
+  }
+  if (invoiceStatus === "COVERED") {
+    const successPath = appendQueryMessage(planningReturnTo, "session_ok", "Reservation confirmee");
+    redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
+  }
+
+  const successPath = appendQueryMessage(planningReturnTo, "session_ok", "Reservation confirmee");
+  redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
+}
+
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
