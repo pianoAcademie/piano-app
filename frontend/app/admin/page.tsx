@@ -35,6 +35,7 @@ import type {
   AdminSessionOut,
   CourseTypeOut,
   LocationOut,
+  SessionAudienceScope,
 } from "../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -62,8 +63,9 @@ type CreateSessionDraft = {
   recurrence_interval: string;
   recurrence_until_date: string;
   recurrence_time_basis: string;
-  session_visibility: "PRIVATE" | "PUBLIC";
-  allow_online_booking: "1" | "0";
+  visibility_scopes: SessionAudienceScope[];
+  booking_scopes: SessionAudienceScope[];
+  external_booking_price_ttc: string;
   public_description: string;
   private_description: string;
   professor_reminder_note: string;
@@ -102,6 +104,13 @@ const PLANNING_TIMEZONES: Array<{ value: string; label: string }> = [
   { value: "America/New_York", label: "Etats-Unis Est (America/New_York)" },
   { value: "America/Los_Angeles", label: "Etats-Unis Ouest (America/Los_Angeles)" },
 ];
+
+const SESSION_AUDIENCE_SCOPE_LABELS: Record<SessionAudienceScope, string> = {
+  EXTERNAL: "Externe",
+  SUBSCRIPTION: "Abonne / carnet",
+  FORFAIT: "Forfait",
+  PRIVATE: "Prive",
+};
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -557,6 +566,46 @@ function sessionTypeLabel(session: AdminSessionOut, locationLabel: string): stri
   return "Collectif";
 }
 
+function normalizeSessionAudienceScope(raw: unknown, fallback: SessionAudienceScope): SessionAudienceScope {
+  const value = String(raw ?? "")
+    .trim()
+    .toUpperCase();
+  if (value === "EXTERNAL" || value === "SUBSCRIPTION" || value === "FORFAIT" || value === "PRIVATE") {
+    return value;
+  }
+  return fallback;
+}
+
+function normalizeSessionAudienceScopes(raw: unknown, fallback: SessionAudienceScope[]): SessionAudienceScope[] {
+  const values = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(",") : raw == null ? [] : [raw];
+  const seen = new Set<SessionAudienceScope>();
+  const normalized: SessionAudienceScope[] = [];
+  for (const value of values) {
+    const scope = normalizeSessionAudienceScope(value, "__INVALID__" as SessionAudienceScope);
+    if (scope === ("__INVALID__" as SessionAudienceScope) || seen.has(scope)) {
+      continue;
+    }
+    seen.add(scope);
+    normalized.push(scope);
+  }
+  if (seen.has("PRIVATE")) {
+    return ["PRIVATE"];
+  }
+  const ordered = (["EXTERNAL", "SUBSCRIPTION", "FORFAIT"] as const).filter((scope) => seen.has(scope));
+  return ordered.length > 0 ? [...ordered] : [...fallback];
+}
+
+function sessionAudienceScopeLabel(scope: SessionAudienceScope): string {
+  return SESSION_AUDIENCE_SCOPE_LABELS[scope] ?? scope;
+}
+
+function sessionAudienceScopesLabel(scopes: SessionAudienceScope[]): string {
+  if (scopes.length === 1 && scopes[0] === "PRIVATE") {
+    return "Prive";
+  }
+  return scopes.map((scope) => sessionAudienceScopeLabel(scope)).join(" + ");
+}
+
 function isBookingRemovable(session: AdminSessionOut, booking: AdminSessionBookingOut): boolean {
   if (booking.status === "CANCELLED") {
     return false;
@@ -703,8 +752,23 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return null;
     }
-    const visibilityRaw = String(parsed.session_visibility ?? "").trim().toUpperCase();
-    const visibility = visibilityRaw === "PUBLIC" ? "PUBLIC" : "PRIVATE";
+    const legacyVisibilityRaw = String(parsed.session_visibility ?? "")
+      .trim()
+      .toUpperCase();
+    const legacyVisibilityScope: SessionAudienceScope = legacyVisibilityRaw === "PUBLIC" ? "EXTERNAL" : "PRIVATE";
+    const visibilityScopes = normalizeSessionAudienceScopes(
+      parsed.visibility_scopes ?? parsed.visibility_scope,
+      [legacyVisibilityScope],
+    );
+    const legacyBookingScope: SessionAudienceScope =
+      String(parsed.allow_online_booking ?? "") === "1" ? "EXTERNAL" : "PRIVATE";
+    const bookingScopes: SessionAudienceScope[] =
+      visibilityScopes.length === 1 && visibilityScopes[0] === "PRIVATE"
+        ? ["PRIVATE"]
+        : normalizeSessionAudienceScopes(
+            parsed.booking_scopes ?? parsed.booking_scope,
+            [legacyBookingScope],
+          );
     return {
       title: String(parsed.title ?? ""),
       course_type_id: String(parsed.course_type_id ?? ""),
@@ -723,8 +787,9 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       recurrence_interval: String(parsed.recurrence_interval ?? "1"),
       recurrence_until_date: String(parsed.recurrence_until_date ?? ""),
       recurrence_time_basis: String(parsed.recurrence_time_basis ?? "LOCAL"),
-      session_visibility: visibility,
-      allow_online_booking: String(parsed.allow_online_booking ?? "") === "1" ? "1" : "0",
+      visibility_scopes: visibilityScopes,
+      booking_scopes: bookingScopes,
+      external_booking_price_ttc: String(parsed.external_booking_price_ttc ?? ""),
       public_description: String(parsed.public_description ?? ""),
       private_description: String(parsed.private_description ?? ""),
       professor_reminder_note: String(parsed.professor_reminder_note ?? ""),
@@ -1286,10 +1351,28 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       const known = PLANNING_TIMEZONES.find((option) => option.value === value);
       return { value, label: known?.label ?? value };
     });
-  const createInitialIsPrivate = createDraft ? createDraft.session_visibility !== "PUBLIC" : true;
-  const createInitialAllowOnlineBooking = createDraft
-    ? createDraft.allow_online_booking === "1"
-    : false;
+  const createDraftCourseTypeId = createDraft?.course_type_id || selectedCourseType;
+  const createAllowsStudentBookings = createDraftCourseTypeId
+    ? courseTypeById.get(createDraftCourseTypeId)?.allows_student_bookings !== false
+    : true;
+  const createInitialVisibilityScopes: SessionAudienceScope[] = createDraft?.visibility_scopes ?? ["PRIVATE"];
+  const createInitialBookingScopes: SessionAudienceScope[] =
+    createDraft?.booking_scopes ??
+    (createAllowsStudentBookings && !(createInitialVisibilityScopes.length === 1 && createInitialVisibilityScopes[0] === "PRIVATE")
+      ? ["EXTERNAL"]
+      : ["PRIVATE"]);
+  const selectedVisibilityScopes: SessionAudienceScope[] = selectedSession
+    ? normalizeSessionAudienceScopes(
+        selectedSession.visibility_scopes ?? selectedSession.visibility_scope,
+        [selectedSession.is_private ? "PRIVATE" : "EXTERNAL"],
+      )
+    : ["PRIVATE"];
+  const selectedBookingScopes: SessionAudienceScope[] = selectedSession
+    ? normalizeSessionAudienceScopes(
+        selectedSession.booking_scopes ?? selectedSession.booking_scope,
+        [selectedSession.allow_online_booking ? "EXTERNAL" : "PRIVATE"],
+      )
+    : ["PRIVATE"];
   const createDraftDuration = createDraft ? draftPositiveInteger(createDraft.duration_minutes) : null;
   const createDraftCapacity = createDraft ? draftNonNegativeInteger(createDraft.capacity_max) : null;
   const createRecurrenceMode = createDraft?.recurrence_mode?.trim().toUpperCase() === "RECURRING" ? "RECURRING" : "NONE";
@@ -1657,9 +1740,22 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <h3 className="create-session-section-title">Visibilite et descriptions</h3>
                 <div className="grid cols-2 create-session-visibility-grid">
                   <SessionVisibilityFields
-                    initialIsPrivate={createInitialIsPrivate}
-                    initialAllowOnlineBooking={createInitialAllowOnlineBooking}
+                    initialVisibilityScopes={createInitialVisibilityScopes}
+                    initialBookingScopes={createInitialBookingScopes}
+                    allowsStudentBookings={createAllowsStudentBookings}
                   />
+
+                  <label>
+                    Tarif reservation externe TTC
+                    <input
+                      type="text"
+                      name="external_booking_price_ttc"
+                      inputMode="decimal"
+                      defaultValue={createDraft?.external_booking_price_ttc || ""}
+                      placeholder="ex. 35,00"
+                    />
+                    <small className="muted">Laissez vide pour ne pas exposer ce creneau a l integration externe.</small>
+                  </label>
 
                   <label>
                     Description publique (vue client)
@@ -1811,8 +1907,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <p className="muted">Infos</p>
                     <span className="badge">Professeur: {selectedEffectiveProfessorLabel || "Non requis"}</span>
                     {selectedSessionIsSubstituted ? <span className="badge">Remplacant</span> : null}
-                    <span className="badge">{selectedSession.allow_online_booking ? "Reservation en ligne: oui" : "Reservation en ligne: non"}</span>
-                    {selectedSession.is_private ? <span className="badge">Prive</span> : null}
+                    <span className="badge">Affichage: {sessionAudienceScopesLabel(selectedVisibilityScopes)}</span>
+                    <span className="badge">
+                      Reservation: {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes) : "Fermee"}
+                    </span>
                     {!selectedSessionAllowsStudentBookings ? <span className="badge">Sans eleve</span> : null}
                   </div>
                 </details>
@@ -1831,6 +1929,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </span>
               <span className="badge">{selectedSessionTypeName}</span>
               <span className="badge">{recurrenceLabel(selectedSession)}</span>
+              <span className="badge">Affichage {sessionAudienceScopesLabel(selectedVisibilityScopes)}</span>
+              <span className="badge">
+                Reservation {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes) : "Fermee"}
+              </span>
               {!selectedSessionAllowsStudentBookings ? <span className="badge">Sans eleve</span> : null}
             </div>
 
@@ -2108,7 +2210,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </a>
                 <a className={`session-edit-tab ${editTab === "visibility" ? "active" : ""}`} href={editTabHref("visibility")}>
                   <span>Visibilite</span>
-                  <small>{selectedSession.is_private ? "Prive" : "Public"}</small>
+                  <small>
+                    {sessionAudienceScopesLabel(selectedVisibilityScopes)} ·{" "}
+                    {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes) : "Fermee"}
+                  </small>
                 </a>
                 <a className={`session-edit-tab ${editTab === "notes" ? "active" : ""}`} href={editTabHref("notes")}>
                   <span>Notes & messages</span>
@@ -2312,9 +2417,22 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <section className={`session-edit-panel ${editTab === "visibility" ? "active" : ""}`}>
                   <div className="grid cols-2">
                     <SessionVisibilityFields
-                      initialIsPrivate={selectedSession.is_private}
-                      initialAllowOnlineBooking={selectedSession.allow_online_booking}
+                      initialVisibilityScopes={selectedVisibilityScopes}
+                      initialBookingScopes={selectedBookingScopes}
+                      allowsStudentBookings={selectedSessionAllowsStudentBookings}
                     />
+
+                    <label>
+                      Tarif reservation externe TTC
+                      <input
+                        type="text"
+                        name="external_booking_price_ttc"
+                        inputMode="decimal"
+                        defaultValue={selectedSession.external_booking_price_ttc ?? ""}
+                        placeholder="ex. 35,00"
+                      />
+                      <small className="muted">Laissez vide pour retirer ce creneau de l iframe externe.</small>
+                    </label>
                   </div>
 
                   <details className="session-edit-collapsible" open={Boolean(selectedSession.public_description)}>

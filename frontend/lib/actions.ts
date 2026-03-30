@@ -87,6 +87,7 @@ import type {
 
 type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
 type BookingScope = "OCCURRENCE" | "SERIES_FUTURE";
+type SessionAudienceScope = "EXTERNAL" | "SUBSCRIPTION" | "FORFAIT" | "PRIVATE";
 
 function currentToken(): string | null {
   const referer = headers().get("referer") ?? "";
@@ -166,13 +167,60 @@ function checkboxFieldWithDefault(formData: FormData, fieldName: string, default
   return normalized === "on" || normalized === "true" || normalized === "1";
 }
 
-function parseSessionVisibility(formData: FormData): { isPrivate: boolean; allowOnlineBooking: boolean } {
-  const raw = String(formData.get("session_visibility") ?? "")
-    .trim()
-    .toUpperCase();
-  const isPrivate = raw === "PRIVATE" || (raw !== "PUBLIC" && checkboxField(formData, "is_private"));
-  const allowOnlineBooking = !isPrivate && checkboxFieldWithDefault(formData, "allow_online_booking", true);
-  return { isPrivate, allowOnlineBooking };
+function normalizeSessionAudienceScope(raw: string, fallback: SessionAudienceScope = "EXTERNAL"): SessionAudienceScope {
+  const value = raw.trim().toUpperCase();
+  if (value === "SUBSCRIPTION" || value === "FORFAIT" || value === "PRIVATE" || value === "EXTERNAL") {
+    return value;
+  }
+  return fallback;
+}
+
+function normalizeSessionAudienceScopes(
+  rawValues: Iterable<unknown>,
+  fallback: SessionAudienceScope[] = ["EXTERNAL"],
+): SessionAudienceScope[] {
+  const seen = new Set<SessionAudienceScope>();
+  const values: SessionAudienceScope[] = [];
+  for (const raw of rawValues) {
+    const scope = normalizeSessionAudienceScope(String(raw ?? ""), "__INVALID__" as SessionAudienceScope);
+    if (scope === ("__INVALID__" as SessionAudienceScope) || seen.has(scope)) {
+      continue;
+    }
+    seen.add(scope);
+    values.push(scope);
+  }
+  if (seen.has("PRIVATE")) {
+    return ["PRIVATE"];
+  }
+  const ordered = (["EXTERNAL", "SUBSCRIPTION", "FORFAIT"] as const).filter((scope) => seen.has(scope));
+  if (ordered.length > 0) {
+    return [...ordered];
+  }
+  return [...fallback];
+}
+
+function parseSessionAudience(formData: FormData): {
+  visibilityScopes: SessionAudienceScope[];
+  bookingScopes: SessionAudienceScope[];
+  isPrivate: boolean;
+  allowOnlineBooking: boolean;
+} {
+  const visibilityScopes: SessionAudienceScope[] = normalizeSessionAudienceScopes(
+    formData.getAll("visibility_scopes"),
+    checkboxField(formData, "is_private") ? ["PRIVATE"] : ["EXTERNAL"],
+  );
+  const bookingScopes: SessionAudienceScope[] = visibilityScopes.includes("PRIVATE")
+    ? ["PRIVATE"]
+    : normalizeSessionAudienceScopes(
+        formData.getAll("booking_scopes"),
+        checkboxFieldWithDefault(formData, "allow_online_booking", true) ? ["EXTERNAL"] : ["PRIVATE"],
+      );
+  return {
+    visibilityScopes,
+    bookingScopes,
+    isPrivate: visibilityScopes.length === 1 && visibilityScopes[0] === "PRIVATE",
+    allowOnlineBooking: !(bookingScopes.length === 1 && bookingScopes[0] === "PRIVATE"),
+  };
 }
 
 function parseApplyScope(raw: string): ApplyScope {
@@ -406,8 +454,9 @@ type CreateSessionDraftPayload = {
   recurrence_interval: string;
   recurrence_until_date: string;
   recurrence_time_basis: string;
-  session_visibility: "PRIVATE" | "PUBLIC";
-  allow_online_booking: "1" | "0";
+  visibility_scopes: SessionAudienceScope[];
+  booking_scopes: SessionAudienceScope[];
+  external_booking_price_ttc: string;
   public_description: string;
   private_description: string;
   professor_reminder_note: string;
@@ -1862,10 +1911,14 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const public_description = optionalField(formData, "public_description");
   const private_description = optionalField(formData, "private_description");
   const professor_reminder_note = optionalField(formData, "professor_reminder_note");
+  const externalBookingPriceRaw = String(formData.get("external_booking_price_ttc") ?? "").trim();
+  const externalBookingPrice = externalBookingPriceRaw ? parseNonNegativeDecimal(externalBookingPriceRaw.replace(",", ".")) : null;
   const zoom_link = optionalField(formData, "zoom_link");
-  const sessionVisibility = parseSessionVisibility(formData);
-  const is_private = sessionVisibility.isPrivate;
-  const allow_online_booking = sessionVisibility.allowOnlineBooking;
+  const sessionAudience = parseSessionAudience(formData);
+  const visibility_scopes = sessionAudience.visibilityScopes;
+  const booking_scopes = sessionAudience.bookingScopes;
+  const is_private = sessionAudience.isPrivate;
+  const allow_online_booking = sessionAudience.allowOnlineBooking;
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const recurrence_mode = String(formData.get("recurrence_mode") ?? "NONE").trim().toUpperCase();
@@ -1917,8 +1970,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     recurrence_interval: recurrence_interval_raw || "1",
     recurrence_until_date: recurrence_until_date || "",
     recurrence_time_basis,
-    session_visibility: is_private ? "PRIVATE" : "PUBLIC",
-    allow_online_booking: allow_online_booking ? "1" : "0",
+    visibility_scopes,
+    booking_scopes,
+    external_booking_price_ttc: externalBookingPriceRaw,
     public_description: clampDraftValue(public_description ?? "", 1200),
     private_description: clampDraftValue(private_description ?? "", 1200),
     professor_reminder_note: clampDraftValue(professor_reminder_note ?? "", 1200),
@@ -1955,6 +2009,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   if (!capacity_raw.trim() || parsed_capacity_max === null || capacity_max < 0) {
     redirect(createSessionErrorPath(returnTo, createDraftPayload, "Capacite max obligatoire (>= 0; vacances = 0)"));
   }
+  if (externalBookingPriceRaw && externalBookingPrice === null) {
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Tarif externe invalide"));
+  }
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
   if (recurrenceEnabled) {
@@ -1976,6 +2033,8 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     start_at_utc,
     is_all_day,
     capacity_max,
+    visibility_scopes,
+    booking_scopes,
     is_private,
     allow_online_booking,
     timezone: session_timezone,
@@ -1993,6 +2052,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   }
   if (zoom_link !== null) {
     payload.zoom_link = zoom_link;
+  }
+  if (externalBookingPriceRaw) {
+    payload.external_booking_price_ttc = externalBookingPrice;
   }
   if (end_at_utc !== null) {
     payload.end_at_utc = end_at_utc;
@@ -2039,6 +2101,8 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const public_description = optionalField(formData, "public_description");
   const private_description = optionalField(formData, "private_description");
   const professor_reminder_note = optionalField(formData, "professor_reminder_note");
+  const externalBookingPriceRaw = String(formData.get("external_booking_price_ttc") ?? "").trim();
+  const externalBookingPrice = externalBookingPriceRaw ? parseNonNegativeDecimal(externalBookingPriceRaw.replace(",", ".")) : null;
   const course_type_id = String(formData.get("course_type_id") ?? "").trim();
   const location_id = String(formData.get("location_id") ?? "").trim();
   const professor_id = String(formData.get("professor_id") ?? "").trim();
@@ -2046,9 +2110,11 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const substitute_note = optionalField(formData, "substitute_note");
   const zoom_link = optionalField(formData, "zoom_link");
   const status = String(formData.get("status") ?? "").trim();
-  const sessionVisibility = parseSessionVisibility(formData);
-  const is_private = sessionVisibility.isPrivate;
-  const allow_online_booking = sessionVisibility.allowOnlineBooking;
+  const sessionAudience = parseSessionAudience(formData);
+  const visibility_scopes = sessionAudience.visibilityScopes;
+  const booking_scopes = sessionAudience.bookingScopes;
+  const is_private = sessionAudience.isPrivate;
+  const allow_online_booking = sessionAudience.allowOnlineBooking;
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
@@ -2107,6 +2173,9 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   if (capacity_raw.trim() && capacity_max === null) {
     redirect(appendQueryMessage(returnTo, "error", "Capacite max invalide"));
   }
+  if (externalBookingPriceRaw && externalBookingPrice === null) {
+    redirect(appendQueryMessage(returnTo, "error", "Tarif externe invalide"));
+  }
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
   if (recurrenceEnabled) {
@@ -2136,8 +2205,11 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     location_id,
     start_at_utc,
     is_all_day,
+    visibility_scopes,
+    booking_scopes,
     is_private,
     allow_online_booking,
+    external_booking_price_ttc: externalBookingPriceRaw ? externalBookingPrice : null,
     timezone: session_timezone,
   };
   payload.professor_id = professor_id || null;

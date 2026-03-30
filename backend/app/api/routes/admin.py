@@ -35,6 +35,7 @@ from app.models.catalog import (
     PlanningConfig,
     PlanningCourseType,
     Professor,
+    SessionAudienceScope,
     SessionStatus,
 )
 from app.models.family import ClientFamilyLink
@@ -50,6 +51,15 @@ from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, l
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_slot_cancelled_notifications
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
+from app.services.session_audience import (
+    coerce_session_scope_sets,
+    legacy_flags_from_scopes,
+    normalize_session_audience_scopes,
+    primary_session_audience_scope,
+    resolve_session_booking_scopes,
+    resolve_session_visibility_scopes,
+    serialize_session_audience_scopes,
+)
 from app.services.session_teachers import (
     normalized_substitute_teacher_id,
     professor_display_name,
@@ -163,7 +173,7 @@ def _session_location_label(location: Location | None) -> str:
 
 
 def _session_type_label(session_obj: CourseSession, *, course_type: CourseType | None, location: Location | None) -> str:
-    if session_obj.is_private:
+    if resolve_session_visibility_scopes(session_obj) == [SessionAudienceScope.PRIVATE]:
         return "Prive"
     location_code = (location.code if location is not None else "").upper()
     location_name = (location.name if location is not None else "").lower()
@@ -183,6 +193,57 @@ def _is_online_session_context(*, course_type: CourseType | None, location: Loca
     if course_type is not None and course_type.mode == DeliveryMode.ONLINE:
         return True
     return False
+
+
+def _resolve_payload_session_scopes(
+    *,
+    visibility_scopes: list[SessionAudienceScope] | list[str] | None = None,
+    booking_scopes: list[SessionAudienceScope] | list[str] | None = None,
+    visibility_scope: SessionAudienceScope | str | None,
+    booking_scope: SessionAudienceScope | str | None,
+    is_private: bool | None,
+    allow_online_booking: bool | None,
+    allows_student_bookings: bool,
+    current_visibility_scopes: list[SessionAudienceScope] | None = None,
+    current_booking_scopes: list[SessionAudienceScope] | None = None,
+    current_is_private: bool = False,
+    current_allow_online_booking: bool = True,
+) -> tuple[list[SessionAudienceScope], list[SessionAudienceScope]]:
+    fallback_visibility_scopes = current_visibility_scopes or (
+        [SessionAudienceScope.PRIVATE]
+        if bool(is_private if is_private is not None else current_is_private)
+        else [SessionAudienceScope.EXTERNAL]
+    )
+    raw_visibility_scopes: object | None = (
+        visibility_scopes if visibility_scopes is not None else ([visibility_scope] if visibility_scope is not None else None)
+    )
+    next_visibility_scopes = normalize_session_audience_scopes(
+        raw_visibility_scopes,
+        fallback=fallback_visibility_scopes,
+    )
+
+    fallback_booking_scopes = current_booking_scopes or (
+        [SessionAudienceScope.PRIVATE]
+        if bool(is_private if is_private is not None else current_is_private)
+        or not bool(allow_online_booking if allow_online_booking is not None else current_allow_online_booking)
+        else [SessionAudienceScope.EXTERNAL]
+    )
+    raw_booking_scopes: object | None = booking_scopes if booking_scopes is not None else ([booking_scope] if booking_scope is not None else None)
+    next_booking_scopes = normalize_session_audience_scopes(
+        raw_booking_scopes,
+        fallback=fallback_booking_scopes,
+    )
+    if visibility_scopes is None and visibility_scope is None and current_visibility_scopes is None and is_private is not None:
+        next_visibility_scopes = [SessionAudienceScope.PRIVATE] if is_private else [SessionAudienceScope.EXTERNAL]
+    if booking_scopes is None and booking_scope is None and current_booking_scopes is None and allow_online_booking is not None:
+        next_booking_scopes = [SessionAudienceScope.PRIVATE] if not allow_online_booking else [SessionAudienceScope.EXTERNAL]
+    return coerce_session_scope_sets(
+        visibility_scopes=next_visibility_scopes,
+        booking_scopes=next_booking_scopes,
+        allows_student_bookings=allows_student_bookings,
+        fallback_is_private=current_is_private,
+        fallback_allow_online_booking=current_allow_online_booking,
+    )
 
 
 def _resolve_session_zoom_link(
@@ -219,6 +280,16 @@ def _to_admin_session_out(
     substitute_teacher_display_name = _session_teacher_display_name(substitute_professor) if substitute_professor is not None else None
     effective_teacher_id = session_obj.substitute_teacher_id or session_obj.professor_id
     effective_teacher_display_name = substitute_teacher_display_name or habitual_teacher_display_name
+    allows_student_bookings = bool(course_type.allows_student_bookings) if course_type is not None else True
+    visibility_scopes = resolve_session_visibility_scopes(session_obj)
+    booking_scopes = resolve_session_booking_scopes(session_obj, allows_student_bookings=allows_student_bookings)
+    visibility_scope = primary_session_audience_scope(visibility_scopes)
+    booking_scope = primary_session_audience_scope(booking_scopes, fallback=SessionAudienceScope.PRIVATE)
+    is_private, allow_online_booking = legacy_flags_from_scopes(
+        visibility_scopes=visibility_scopes,
+        booking_scopes=booking_scopes,
+        allows_student_bookings=allows_student_bookings,
+    )
     location_label = _session_location_label(location)
     type_label = _session_type_label(session_obj, course_type=course_type, location=location)
     status_label = _session_status_label(session_obj.status)
@@ -259,8 +330,13 @@ def _to_admin_session_out(
         auto_cancel_deadline_utc=session_obj.auto_cancel_deadline_utc,
         cancel_reason=session_obj.cancel_reason,
         zoom_link=session_obj.zoom_link,
-        is_private=session_obj.is_private,
-        allow_online_booking=session_obj.allow_online_booking,
+        visibility_scopes=visibility_scopes,
+        booking_scopes=booking_scopes,
+        visibility_scope=visibility_scope,
+        booking_scope=booking_scope,
+        is_private=is_private,
+        allow_online_booking=allow_online_booking,
+        external_booking_price_ttc=session_obj.external_booking_price_ttc,
         timezone=session_obj.timezone,
         recurrence_group_id=session_obj.recurrence_group_id,
         recurrence_rule=session_obj.recurrence_rule,
@@ -1781,6 +1857,20 @@ def create_session(
     deadline_delta = start_at_utc - auto_cancel_deadline_utc
     now = _utcnow()
     calendar_skip_cache: dict[str, object] = {}
+    visibility_scopes, booking_scopes = _resolve_payload_session_scopes(
+        visibility_scopes=payload.visibility_scopes,
+        booking_scopes=payload.booking_scopes,
+        visibility_scope=payload.visibility_scope,
+        booking_scope=payload.booking_scope,
+        is_private=payload.is_private,
+        allow_online_booking=payload.allow_online_booking,
+        allows_student_bookings=allows_student_bookings,
+    )
+    is_private, allow_online_booking = legacy_flags_from_scopes(
+        visibility_scopes=visibility_scopes,
+        booking_scopes=booking_scopes,
+        allows_student_bookings=allows_student_bookings,
+    )
 
     sessions_to_create: list[CourseSession] = []
     for index in range(recurrence_occurrences):
@@ -1855,8 +1945,11 @@ def create_session(
                     location=location,
                     professor=professor,
                 ),
-                is_private=payload.is_private,
-                allow_online_booking=(not payload.is_private) and allows_student_bookings and bool(payload.allow_online_booking),
+                visibility_scope=serialize_session_audience_scopes(visibility_scopes),
+                booking_scope=serialize_session_audience_scopes(booking_scopes),
+                is_private=is_private,
+                allow_online_booking=allow_online_booking,
+                external_booking_price_ttc=payload.external_booking_price_ttc,
                 timezone=session_timezone,
                 recurrence_group_id=recurrence_group_id,
                 recurrence_rule=recurrence_rule,
@@ -2716,6 +2809,29 @@ def update_session(
     is_vacation = _is_vacation_course_type(course_type)
     allows_student_bookings = bool(course_type.allows_student_bookings)
     anchor_timezone = _normalize_session_timezone(updates.get("timezone", session_obj.timezone or location.timezone))
+    current_visibility_scopes = resolve_session_visibility_scopes(session_obj)
+    current_booking_scopes = resolve_session_booking_scopes(
+        session_obj,
+        allows_student_bookings=allows_student_bookings,
+    )
+    next_visibility_scopes, next_booking_scopes = _resolve_payload_session_scopes(
+        visibility_scopes=updates.get("visibility_scopes"),
+        booking_scopes=updates.get("booking_scopes"),
+        visibility_scope=updates.get("visibility_scope"),
+        booking_scope=updates.get("booking_scope"),
+        is_private=updates.get("is_private"),
+        allow_online_booking=updates.get("allow_online_booking"),
+        allows_student_bookings=allows_student_bookings,
+        current_visibility_scopes=current_visibility_scopes,
+        current_booking_scopes=current_booking_scopes,
+        current_is_private=bool(session_obj.is_private),
+        current_allow_online_booking=bool(session_obj.allow_online_booking),
+    )
+    next_is_private, next_allow_online_booking = legacy_flags_from_scopes(
+        visibility_scopes=next_visibility_scopes,
+        booking_scopes=next_booking_scopes,
+        allows_student_bookings=allows_student_bookings,
+    )
 
     original_anchor_start = session_obj.start_at_utc
     original_anchor_end = session_obj.end_at_utc
@@ -2950,12 +3066,12 @@ def update_session(
             target.status = updates["status"]
         if "cancel_reason" in updates:
             target.cancel_reason = updates["cancel_reason"]
-        if "is_private" in updates:
-            target.is_private = updates["is_private"]
-        if "allow_online_booking" in updates or "is_private" in updates:
-            next_online_booking = bool(updates.get("allow_online_booking", target.allow_online_booking))
-            next_is_private = bool(updates.get("is_private", target.is_private))
-            target.allow_online_booking = False if next_is_private or not allows_student_bookings else next_online_booking
+        target.visibility_scope = serialize_session_audience_scopes(next_visibility_scopes)
+        target.booking_scope = serialize_session_audience_scopes(next_booking_scopes)
+        target.is_private = next_is_private
+        target.allow_online_booking = next_allow_online_booking
+        if "external_booking_price_ttc" in updates:
+            target.external_booking_price_ttc = updates["external_booking_price_ttc"]
 
         original_target_start = target.start_at_utc
         original_target_end = target.end_at_utc
@@ -3165,8 +3281,11 @@ def update_session(
                     auto_cancel_deadline_utc=deadline_at,
                     cancel_reason=session_obj.cancel_reason,
                     zoom_link=session_obj.zoom_link,
+                    visibility_scope=session_obj.visibility_scope,
+                    booking_scope=session_obj.booking_scope,
                     is_private=session_obj.is_private,
                     allow_online_booking=session_obj.allow_online_booking,
+                    external_booking_price_ttc=session_obj.external_booking_price_ttc,
                     timezone=session_obj.timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,
@@ -3225,8 +3344,11 @@ def update_session(
                     auto_cancel_deadline_utc=deadline_at,
                     cancel_reason=session_obj.cancel_reason,
                     zoom_link=session_obj.zoom_link,
+                    visibility_scope=session_obj.visibility_scope,
+                    booking_scope=session_obj.booking_scope,
                     is_private=session_obj.is_private,
                     allow_online_booking=session_obj.allow_online_booking,
+                    external_booking_price_ttc=session_obj.external_booking_price_ttc,
                     timezone=session_obj.timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,
@@ -3341,8 +3463,11 @@ def duplicate_session_operation(
                 auto_cancel_deadline_utc=duplicate_deadline,
                 cancel_reason=None,
                 zoom_link=target.zoom_link,
+                visibility_scope=target.visibility_scope,
+                booking_scope=target.booking_scope,
                 is_private=target.is_private,
                 allow_online_booking=target.allow_online_booking,
+                external_booking_price_ttc=target.external_booking_price_ttc,
                 timezone=target_timezone,
                 recurrence_group_id=recurrence_group_id,
                 recurrence_rule=recurrence_rule,

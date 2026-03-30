@@ -51,6 +51,13 @@ class BookingStatus(str, enum.Enum):
     EXCUSED_ABSENCE = "EXCUSED_ABSENCE"
 
 
+class SessionAudienceScope(str, enum.Enum):
+    EXTERNAL = "EXTERNAL"
+    SUBSCRIPTION = "SUBSCRIPTION"
+    FORFAIT = "FORFAIT"
+    PRIVATE = "PRIVATE"
+
+
 class Professor(Base):
     __tablename__ = "professors"
 
@@ -342,6 +349,9 @@ class CourseSession(Base):
     zoom_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     allow_online_booking: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    visibility_scope: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'EXTERNAL'"))
+    booking_scope: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'EXTERNAL'"))
+    external_booking_price_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'UTC'"))
     recurrence_group_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     recurrence_rule: Mapped[str | None] = mapped_column(String(30), nullable=True)

@@ -10,8 +10,9 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, PlanningConfig, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, PlanningConfig, SessionAudienceScope, SessionStatus
 from app.models.family import ClientFamilyLink
+from app.models.ops import AppSetting
 from app.models.plan import (
     ClientForfaitActivityPricing,
     ClientPlanSubscription,
@@ -31,6 +32,11 @@ from app.services.notifications.application.orchestrator import (
 )
 from app.services.pricing import resolve_vat_rate
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
+from app.services.session_audience import (
+    allowed_plan_kinds_for_scopes,
+    resolve_session_booking_scopes,
+    scopes_allow_planless_booking,
+)
 from app.services.subscriptions import can_book_with_subscription, reconcile_subscription_status
 
 router = APIRouter()
@@ -40,10 +46,22 @@ PLANNING_RULE_DEFAULTS = {
     "cancellation_deadline_hours": 1,
     "block_client_cancellation": False,
 }
+ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _account_default_currency(db: Session, *, fallback: str = "EUR") -> str:
+    raw = db.scalar(select(AppSetting.value).where(AppSetting.key == ACCOUNT_DEFAULT_CURRENCY_KEY))
+    candidate = str(raw or "").strip().upper()
+    if len(candidate) == 3:
+        return candidate
+    normalized_fallback = fallback.strip().upper()
+    if len(normalized_fallback) == 3:
+        return normalized_fallback
+    return "EUR"
 
 
 def _effective_session_booking_rules(
@@ -556,6 +574,7 @@ def _select_eligible_subscription(
     course_type_id: UUID,
     now: datetime,
     requested_subscription_id: UUID | None,
+    allowed_plan_kinds: set[PlanKind] | None = None,
 ) -> tuple[ClientPlanSubscription, Plan] | None:
     stmt = (
         select(ClientPlanSubscription, Plan)
@@ -589,6 +608,8 @@ def _select_eligible_subscription(
 
     if requested_subscription_id is not None:
         stmt = stmt.where(ClientPlanSubscription.id == requested_subscription_id)
+    if allowed_plan_kinds:
+        stmt = stmt.where(Plan.kind.in_(tuple(allowed_plan_kinds)))
 
     candidates = db.execute(stmt).all()
     for subscription, plan in candidates:
@@ -656,6 +677,18 @@ def _resolve_booking_snapshot(
         service_code=course_type.service_code,
         on_date=now.date(),
     )
+    if subscription is None and plan is None and session_obj.external_booking_price_ttc is not None:
+        total_incl_vat = Decimal(session_obj.external_booking_price_ttc).quantize(Decimal("0.01"))
+        currency = _account_default_currency(db, fallback=currency)
+        if vat_rate <= Decimal("0.00"):
+            amount_excl_vat = total_incl_vat
+            vat_amount = Decimal("0.00")
+        else:
+            divisor = Decimal("1.00") + (vat_rate / Decimal("100.00"))
+            amount_excl_vat = (total_incl_vat / divisor).quantize(Decimal("0.01")) if divisor > Decimal("0.00") else total_incl_vat
+            vat_amount = (total_incl_vat - amount_excl_vat).quantize(Decimal("0.01"))
+        return amount_excl_vat, vat_rate.quantize(Decimal("0.01")), vat_amount, total_incl_vat, currency
+
     duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
     if duration_seconds <= 0:
         duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
@@ -684,7 +717,13 @@ def _resolve_booking_snapshot(
     return amount_excl_vat, vat_rate.quantize(Decimal("0.01")), vat_amount, total_incl_vat, currency
 
 
-def _promote_waitlist_if_possible(db: Session, session_obj: CourseSession, now: datetime) -> None:
+def _promote_waitlist_if_possible(
+    db: Session,
+    session_obj: CourseSession,
+    now: datetime,
+    *,
+    allow_planless_promotion: bool = False,
+) -> None:
     while True:
         booked_count = _count_booked(db, session_obj.id)
         if booked_count >= session_obj.capacity_max:
@@ -705,6 +744,26 @@ def _promote_waitlist_if_possible(db: Session, session_obj: CourseSession, now: 
             return
 
         if next_waitlisted.client_plan_subscription_id is None:
+            if allow_planless_promotion:
+                next_waitlisted.status = BookingStatus.BOOKED
+                next_waitlisted.booked_at = now
+                next_waitlisted.cancelled_at = None
+                next_waitlisted.cancellation_reason = None
+                promoted_user = db.scalar(
+                    select(User)
+                    .where(User.id == next_waitlisted.user_id)
+                    .with_for_update()
+                )
+                if promoted_user is not None:
+                    _mark_first_course_if_needed(promoted_user, session_obj)
+                ensure_booking_reminder(
+                    db,
+                    booking=next_waitlisted,
+                    session_obj=session_obj,
+                    now=now,
+                )
+                db.flush()
+                continue
             next_waitlisted.status = BookingStatus.CANCELLED
             next_waitlisted.cancelled_at = now
             next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_NO_PLAN"
@@ -813,9 +872,15 @@ def book_session(
     if session_obj.status != SessionStatus.SCHEDULED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not bookable")
 
-    if session_obj.is_private:
+    session_booking_scopes = resolve_session_booking_scopes(
+        session_obj,
+        allows_student_bookings=bool(course_type.allows_student_bookings),
+    )
+    if session_booking_scopes == [SessionAudienceScope.PRIVATE]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Private session cannot be booked directly")
-    if not session_obj.allow_online_booking:
+    allows_planless_booking = scopes_allow_planless_booking(session_booking_scopes)
+    allowed_plan_kinds = allowed_plan_kinds_for_scopes(session_booking_scopes)
+    if not allowed_plan_kinds and not allows_planless_booking:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Online booking is disabled for this session")
 
     if session_obj.start_at_utc <= now:
@@ -827,7 +892,12 @@ def book_session(
             detail="Booking deadline reached for this activity",
         )
 
-    _promote_waitlist_if_possible(db, session_obj, now)
+    _promote_waitlist_if_possible(
+        db,
+        session_obj,
+        now,
+        allow_planless_promotion=allows_planless_booking,
+    )
 
     existing = db.scalar(
         select(Booking)
@@ -852,14 +922,22 @@ def book_session(
         course_type_id=session_obj.course_type_id,
         now=now,
         requested_subscription_id=payload.client_plan_subscription_id,
+        allowed_plan_kinds=allowed_plan_kinds,
     )
-    if selected is None:
+    subscription: ClientPlanSubscription | None = None
+    plan: Plan | None = None
+    if selected is not None:
+        subscription, plan = selected
+    elif payload.client_plan_subscription_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Selected plan is not eligible for this session",
+        )
+    elif not allows_planless_booking:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No eligible active plan for this session",
         )
-
-    subscription, plan = selected
     price, vat_rate, vat_amount, total, currency = _resolve_booking_snapshot(
         db,
         session_obj=session_obj,
@@ -874,7 +952,7 @@ def book_session(
 
     if existing is not None:
         existing.status = booking_status
-        existing.client_plan_subscription_id = subscription.id
+        existing.client_plan_subscription_id = subscription.id if subscription is not None else None
         existing.booked_at = now
         existing.cancelled_at = None
         existing.cancellation_reason = None
@@ -884,13 +962,13 @@ def book_session(
         existing.total_incl_vat_snapshot = total
         existing.currency_snapshot = currency
 
-        if booking_status == BookingStatus.BOOKED and not _consume_pack_credit(subscription, plan):
+        if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None and not _consume_pack_credit(subscription, plan):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No remaining credits on selected pack",
             )
 
-        if booking_status == BookingStatus.BOOKED:
+        if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None:
             _enforce_plan_restrictions(
                 db,
                 subscription=subscription,
@@ -946,7 +1024,7 @@ def book_session(
     booking = Booking(
         session_id=session_id,
         user_id=booking_owner.id,
-        client_plan_subscription_id=subscription.id,
+        client_plan_subscription_id=subscription.id if subscription is not None else None,
         status=booking_status,
         booked_at=now,
         price_excl_vat_snapshot=price,
@@ -956,13 +1034,13 @@ def book_session(
         currency_snapshot=currency,
     )
 
-    if booking_status == BookingStatus.BOOKED and not _consume_pack_credit(subscription, plan):
+    if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None and not _consume_pack_credit(subscription, plan):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No remaining credits on selected pack",
         )
 
-    if booking_status == BookingStatus.BOOKED:
+    if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None:
         _enforce_plan_restrictions(
             db,
             subscription=subscription,

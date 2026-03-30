@@ -16,11 +16,11 @@ from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionAudienceScope, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
-from app.models.ops import EmailReminder, LegalEntity
+from app.models.ops import AppSetting, EmailReminder, LegalEntity
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.user import (
@@ -50,6 +50,13 @@ from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
+from app.services.session_audience import (
+    primary_session_audience_scope,
+    resolve_session_booking_scopes,
+    resolve_session_visibility_scopes,
+    scopes_allow_external_visibility,
+    scopes_allow_plan_kind,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -86,6 +93,7 @@ COUNTRY_NAME_BY_CODE = {
     "CA": "Canada",
     "DE": "Allemagne",
 }
+ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
 
 
 def _utcnow() -> datetime:
@@ -112,6 +120,12 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _account_default_currency(db: Session) -> str:
+    raw = db.scalar(select(AppSetting.value).where(AppSetting.key == ACCOUNT_DEFAULT_CURRENCY_KEY))
+    candidate = str(raw or "").strip().upper()
+    return candidate if len(candidate) == 3 else "EUR"
 
 
 def _billing_entity_text(value: str | None) -> str | None:
@@ -834,7 +848,7 @@ def list_client_visible_sessions(
         ) from exc
 
     managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
-    private_visible_session_ids_stmt = (
+    visible_booked_session_ids_stmt = (
         select(Booking.session_id)
         .where(
             Booking.user_id.in_(managed_client_ids),
@@ -842,6 +856,38 @@ def list_client_visible_sessions(
         )
         .distinct()
     )
+    visible_booked_session_ids = {
+        row[0]
+        for row in db.execute(visible_booked_session_ids_stmt).all()
+    }
+    now = _utcnow()
+    active_entitlement_rows = db.execute(
+        select(
+            ClientPlanSubscription.user_id,
+            Plan.kind,
+            PlanEntitlement.course_type_id,
+        )
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .join(PlanEntitlement, PlanEntitlement.plan_id == ClientPlanSubscription.plan_id)
+        .where(
+            ClientPlanSubscription.user_id.in_(managed_client_ids),
+            ClientPlanSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.PAYMENT_ALERT,
+                SubscriptionStatus.PAUSED,
+            ]),
+            ClientPlanSubscription.started_at <= now,
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
+            Plan.active.is_(True),
+        )
+    ).all()
+    subscription_entitlements_by_user: dict[UUID, set[UUID]] = defaultdict(set)
+    forfait_entitlements_by_user: dict[UUID, set[UUID]] = defaultdict(set)
+    for owner_id, plan_kind, entitlement_course_type_id in active_entitlement_rows:
+        if plan_kind in {PlanKind.SUBSCRIPTION, PlanKind.PACK}:
+            subscription_entitlements_by_user[owner_id].add(entitlement_course_type_id)
+        elif plan_kind == PlanKind.FORFAIT:
+            forfait_entitlements_by_user[owner_id].add(entitlement_course_type_id)
 
     booked_counts = (
         select(
@@ -872,7 +918,7 @@ def list_client_visible_sessions(
             CourseSession.status == SessionStatus.SCHEDULED,
             (
                 CourseSession.is_private.is_(False)
-                | CourseSession.id.in_(private_visible_session_ids_stmt)
+                | CourseSession.id.in_(visible_booked_session_ids_stmt)
             ),
         )
     )
@@ -888,9 +934,36 @@ def list_client_visible_sessions(
 
     stmt = stmt.order_by(CourseSession.start_at_utc.asc())
     rows = db.execute(stmt).all()
+    external_booking_currency = _account_default_currency(db)
 
     payload: list[SessionOut] = []
     for session, course_type, location, professor, substitute, booked_count in rows:
+        visibility_scopes = resolve_session_visibility_scopes(session)
+        booking_scopes = resolve_session_booking_scopes(
+            session,
+            allows_student_bookings=bool(course_type.allows_student_bookings),
+        )
+        visibility_scope = primary_session_audience_scope(visibility_scopes)
+        booking_scope = primary_session_audience_scope(booking_scopes, fallback=SessionAudienceScope.PRIVATE)
+        if session.id not in visible_booked_session_ids:
+            if visibility_scopes == [SessionAudienceScope.PRIVATE]:
+                continue
+            if scopes_allow_external_visibility(visibility_scopes):
+                pass
+            elif scopes_allow_plan_kind(visibility_scopes, plan_kind=PlanKind.SUBSCRIPTION) or scopes_allow_plan_kind(visibility_scopes, plan_kind=PlanKind.PACK):
+                if not any(
+                    session.course_type_id in subscription_entitlements_by_user.get(owner_id, set())
+                    for owner_id in managed_client_ids
+                ):
+                    continue
+            elif scopes_allow_plan_kind(visibility_scopes, plan_kind=PlanKind.FORFAIT):
+                if not any(
+                    session.course_type_id in forfait_entitlements_by_user.get(owner_id, set())
+                    for owner_id in managed_client_ids
+                ):
+                    continue
+            else:
+                continue
         effective_professor = substitute or professor
         substitute_display_name = (
             f"{(substitute.first_name or '').strip()} {(substitute.last_name or '').strip()}".strip()
@@ -919,7 +992,13 @@ def list_client_visible_sessions(
                 capacity_max=session.capacity_max,
                 booked_count=booked,
                 seats_remaining=seats_remaining,
-                online_booking_enabled=(not session.is_private) and bool(session.allow_online_booking),
+                visibility_scopes=visibility_scopes,
+                booking_scopes=booking_scopes,
+                visibility_scope=visibility_scope,
+                booking_scope=booking_scope,
+                online_booking_enabled=booking_scopes != [SessionAudienceScope.PRIVATE],
+                external_booking_price_ttc=session.external_booking_price_ttc,
+                external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
                 zoom_link=session.zoom_link,
                 substitute_teacher_id=session.substitute_teacher_id,
                 substitute_teacher_display_name=substitute_display_name,

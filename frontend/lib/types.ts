@@ -81,6 +81,8 @@ export type LocationOut = {
   active: boolean;
 };
 
+export type SessionAudienceScope = "EXTERNAL" | "SUBSCRIPTION" | "FORFAIT" | "PRIVATE";
+
 export type SessionOut = {
   id: string;
   title: string;
@@ -95,7 +97,13 @@ export type SessionOut = {
   capacity_max: number;
   booked_count: number;
   seats_remaining: number;
+  visibility_scopes: SessionAudienceScope[];
+  booking_scopes: SessionAudienceScope[];
+  visibility_scope: SessionAudienceScope;
+  booking_scope: SessionAudienceScope;
   online_booking_enabled: boolean;
+  external_booking_price_ttc: string | null;
+  external_booking_currency: string | null;
   zoom_link: string | null;
   substitute_teacher_id: string | null;
   substitute_teacher_display_name: string | null;
@@ -1111,8 +1119,13 @@ export type AdminSessionOut = {
   auto_cancel_deadline_utc: string;
   cancel_reason: string | null;
   zoom_link: string | null;
+  visibility_scopes: SessionAudienceScope[];
+  booking_scopes: SessionAudienceScope[];
+  visibility_scope: SessionAudienceScope;
+  booking_scope: SessionAudienceScope;
   is_private: boolean;
   allow_online_booking: boolean;
+  external_booking_price_ttc: string | null;
   timezone: string;
   recurrence_group_id: string | null;
   recurrence_rule: string | null;

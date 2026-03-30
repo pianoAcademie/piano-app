@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.models.catalog import DeliveryMode, SessionStatus
+from app.models.catalog import DeliveryMode, SessionAudienceScope, SessionStatus
 from app.models.ops import ReminderStatus
 from app.models.payout import PayoutStatus, SalaryPaymentMethod
 from app.models.plan import PlanCreditGrantsRelation, PlanKind, PlanPriceTaxMode, PlanRestrictionPeriod, SubscriptionStatus
@@ -1725,8 +1725,13 @@ class AdminSessionCreateRequest(BaseModel):
     capacity_max: int = Field(default=1, ge=0)
     auto_cancel_deadline_utc: datetime | None = None
     zoom_link: str | None = None
-    is_private: bool = False
-    allow_online_booking: bool = True
+    visibility_scopes: list[SessionAudienceScope] = Field(default_factory=lambda: [SessionAudienceScope.EXTERNAL])
+    booking_scopes: list[SessionAudienceScope] = Field(default_factory=lambda: [SessionAudienceScope.EXTERNAL])
+    visibility_scope: SessionAudienceScope | None = None
+    booking_scope: SessionAudienceScope | None = None
+    is_private: bool | None = None
+    allow_online_booking: bool | None = None
+    external_booking_price_ttc: Decimal | None = Field(default=None, ge=0)
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
 
@@ -1750,8 +1755,13 @@ class AdminSessionUpdateRequest(BaseModel):
     zoom_link: str | None = None
     status: SessionStatus | None = None
     cancel_reason: str | None = None
+    visibility_scopes: list[SessionAudienceScope] | None = None
+    booking_scopes: list[SessionAudienceScope] | None = None
+    visibility_scope: SessionAudienceScope | None = None
+    booking_scope: SessionAudienceScope | None = None
     is_private: bool | None = None
     allow_online_booking: bool | None = None
+    external_booking_price_ttc: Decimal | None = Field(default=None, ge=0)
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
 
@@ -1792,8 +1802,13 @@ class AdminSessionOut(BaseModel):
     auto_cancel_deadline_utc: datetime
     cancel_reason: str | None
     zoom_link: str | None
+    visibility_scopes: list[SessionAudienceScope] = Field(default_factory=list)
+    booking_scopes: list[SessionAudienceScope] = Field(default_factory=list)
+    visibility_scope: SessionAudienceScope
+    booking_scope: SessionAudienceScope
     is_private: bool
     allow_online_booking: bool
+    external_booking_price_ttc: Decimal | None
     timezone: str
     recurrence_group_id: UUID | None
     recurrence_rule: str | None
