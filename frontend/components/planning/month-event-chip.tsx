@@ -14,6 +14,7 @@ export type PlanningEventChipData = {
   effective_teacher_display_name?: string;
   requires_professor?: boolean;
   location_label: string;
+  show_location_badge?: boolean;
   type_label: string;
   status_label: string;
   status: string;
@@ -144,6 +145,36 @@ function capacityBadgeClass(used: number, max: number): string {
   return "month-badge-capacity-neutral";
 }
 
+function locationToneClass(value: string): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "location-tone-1";
+  }
+  let hash = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = (hash * 31 + normalized.charCodeAt(index)) >>> 0;
+  }
+  return `location-tone-${(hash % 6) + 1}`;
+}
+
+function compactLocationLabel(value: string): string {
+  const trimmed = (value || "").trim();
+  if (!trimmed) {
+    return "Lieu";
+  }
+  if (trimmed.length <= 12) {
+    return trimmed;
+  }
+  const tokens = trimmed.split(/[\s/-]+/).filter((token) => token.length > 0);
+  if (tokens.length > 1) {
+    const lastToken = tokens[tokens.length - 1];
+    if (lastToken.length <= 12) {
+      return lastToken;
+    }
+  }
+  return trimmed.slice(0, 12).trim();
+}
+
 export default function MonthEventChip({
   event,
   href,
@@ -169,6 +200,9 @@ export default function MonthEventChip({
   const timezone = (event.timezone || "").trim() || "Europe/Paris";
   const startTime = formatEventTime(event.start_at_utc, timezone);
   const endTime = formatEventTime(event.end_at_utc, timezone);
+  const showLocationBadge = Boolean(event.show_location_badge);
+  const locationBadgeLabel = compactLocationLabel(locationLabel);
+  const locationTone = locationToneClass(locationLabel);
   const tooltip = [
     `${startTime}-${endTime}`,
     event.title,
@@ -185,14 +219,24 @@ export default function MonthEventChip({
   const capacityUsed = resolveCapacityUsed(event);
   const capacityMax = Math.max(0, Math.floor(event.capacity_max || 0));
   const capacityLabel = event.capacity_label?.trim() || `${capacityUsed}/${capacityMax}`;
+  const showTypeBadge = !showLocationBadge || !compact;
 
   return (
-    <a className={`month-event-chip ${expanded ? "expanded" : ""} ${compact ? "compact" : ""}`} href={href} title={tooltip}>
+    <a
+      className={`month-event-chip ${expanded ? "expanded" : ""} ${compact ? "compact" : ""} ${showLocationBadge ? `has-location-cue ${locationTone}` : ""}`}
+      href={href}
+      title={tooltip}
+    >
       <div className="month-event-chip-meta">
         <span className="month-event-chip-time">{startTime}</span>
         <span className="month-event-chip-badges">
           <span className={`month-badge month-badge-capacity ${capacityBadgeClass(capacityUsed, capacityMax)}`}>{capacityLabel}</span>
-          <span className="month-badge month-badge-type">{typeLabel}</span>
+          {showLocationBadge ? (
+            <span className={`month-badge month-badge-location ${locationTone}`} title={locationLabel}>
+              {locationBadgeLabel}
+            </span>
+          ) : null}
+          {showTypeBadge ? <span className="month-badge month-badge-type">{typeLabel}</span> : null}
           {showStatusBadge ? <span className={`month-badge ${statusBadgeClass(event.status)}`}>{event.status_label}</span> : null}
         </span>
       </div>

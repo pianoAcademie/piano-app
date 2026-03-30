@@ -825,6 +825,10 @@ function draftNonNegativeInteger(raw: string): number | null {
   return parsed;
 }
 
+function shouldShowLocationCue(sessions: AdminSessionOut[]): boolean {
+  return new Set(sessions.map((session) => session.location_id)).size > 1;
+}
+
 function parseRecurrenceRuleDefaults(
   rawRule: string | null | undefined,
 ): { frequency: "DAILY" | "WEEKLY" | "MONTHLY"; interval: number; timeBasis: "LOCAL" | "UTC" } {
@@ -1147,10 +1151,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     label: agendaDayLabel(dayKey, agendaView),
     sessions: sessionsByDay.get(dayKey) ?? [],
   }));
+  const showLocationCue = agendaView === "month" && shouldShowLocationCue(filteredSessions);
   const agendaDayCards = agendaDays.map((day) => ({
     key: day.key,
     label: day.label,
-    events: day.sessions.map((session) => session),
+    events: day.sessions.map((session) => ({ ...session, show_location_badge: showLocationCue })),
   }));
   const selectedDayDetails = dayDetails ? agendaDayCards.find((day) => day.key === dayDetails) ?? null : null;
   const visibleEventsByView = agendaView === "month" ? 5 : agendaView === "week" ? 8 : 24;

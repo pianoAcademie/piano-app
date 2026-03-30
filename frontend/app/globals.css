@@ -541,10 +541,42 @@ button.danger:focus-visible {
   min-width: 0;
 }
 
+.month-event-chip.has-location-cue {
+  padding-left: 9px;
+}
+
+.month-event-chip.has-location-cue.location-tone-1 {
+  box-shadow: inset 4px 0 0 #2f6fdf;
+}
+
+.month-event-chip.has-location-cue.location-tone-2 {
+  box-shadow: inset 4px 0 0 #1f8a70;
+}
+
+.month-event-chip.has-location-cue.location-tone-3 {
+  box-shadow: inset 4px 0 0 #c46a1e;
+}
+
+.month-event-chip.has-location-cue.location-tone-4 {
+  box-shadow: inset 4px 0 0 #8d5cf6;
+}
+
+.month-event-chip.has-location-cue.location-tone-5 {
+  box-shadow: inset 4px 0 0 #c44b7a;
+}
+
+.month-event-chip.has-location-cue.location-tone-6 {
+  box-shadow: inset 4px 0 0 #1481a8;
+}
+
 .agenda-grid-month .month-event-chip.compact {
   gap: 1px;
   padding: 3px 5px;
   border-radius: 8px;
+}
+
+.agenda-grid-month .month-event-chip.compact.has-location-cue {
+  padding-left: 8px;
 }
 
 .month-event-chip:hover {
@@ -617,6 +649,42 @@ button.danger:focus-visible {
 .month-badge-type {
   background: #ebf2ff;
   color: #1d4d7a;
+}
+
+.month-badge-location {
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.month-badge-location.location-tone-1 {
+  background: #e9f1ff;
+  color: #1c4fa8;
+}
+
+.month-badge-location.location-tone-2 {
+  background: #e7f7f2;
+  color: #176754;
+}
+
+.month-badge-location.location-tone-3 {
+  background: #fff0df;
+  color: #9a5616;
+}
+
+.month-badge-location.location-tone-4 {
+  background: #f1eaff;
+  color: #6540c8;
+}
+
+.month-badge-location.location-tone-5 {
+  background: #fde8f1;
+  color: #a63d65;
+}
+
+.month-badge-location.location-tone-6 {
+  background: #e4f4fb;
+  color: #0f6d8f;
 }
 
 .month-badge-capacity {
