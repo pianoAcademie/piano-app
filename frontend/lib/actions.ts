@@ -1058,7 +1058,6 @@ export async function registerAction(formData: FormData): Promise<void> {
     typeof File !== "undefined" && studentPhoto instanceof File && studentPhoto.size > 0
       ? studentPhoto
       : null;
-  const isEmbedBookingSignup = publicReturnTo.startsWith("/embed/");
   const confirmAccuracy = parseCheckboxFlag(formData, "confirm_accuracy", false);
   const acceptAccountTerms = parseCheckboxFlag(formData, "accept_account_terms", false);
   const marketingEmail = parseCheckboxFlag(formData, "marketing_email_opt_in", false);
@@ -1087,9 +1086,6 @@ export async function registerAction(formData: FormData): Promise<void> {
   }
   if (password.length < 8) {
     redirect(`${signupPathBase}&error=Veuillez%20choisir%20un%20mot%20de%20passe%20de%208%20caracteres%20minimum.`);
-  }
-  if (!studentPhotoFile && !isEmbedBookingSignup) {
-    redirect(`${signupPathBase}&error=Veuillez%20ajouter%20une%20photo%20de%20l%27eleve.`);
   }
   if (!confirmAccuracy) {
     redirect(`${signupPathBase}&error=Veuillez%20confirmer%20l%27exactitude%20des%20informations.`);

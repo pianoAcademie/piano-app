@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { forgotPasswordAction, loginAction, registerAction, resetPasswordAction } from "../../lib/actions";
+import AuthSignupFields from "../../components/auth-signup-fields";
 import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from "../../lib/reference-data";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -128,69 +129,18 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
           {mode === "signup" ? (
             <section className="auth-section">
               <h2>Creer un compte</h2>
-              <p className="muted">Renseignez les informations de base, ajoutez la photo eleve et validez les consentements.</p>
+              <p className="muted">Renseignez les informations de base puis validez les consentements. La photo eleve est facultative.</p>
 
               <ol className="auth-step-indicator">
                 <li>Etape 1 - Informations obligatoires</li>
-                <li>Etape 2 - Photo de l eleve</li>
+                <li>Etape 2 - Photo de l eleve (optionnel)</li>
                 <li>Etape 3 - Consentements et validation</li>
               </ol>
 
               <form action={registerAction} className="grid auth-form" encType="multipart/form-data">
                 <input type="hidden" name="auth_mode" value="signup" />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
-
-                <section className="auth-step-card">
-                  <h3>Etape 1 - Informations obligatoires</h3>
-                  <label>
-                    Cette inscription concerne
-                    <select name="registration_subject_type" defaultValue="self" required>
-                      <option value="self">Moi-meme</option>
-                      <option value="child">Mon enfant</option>
-                    </select>
-                  </label>
-                  <label>
-                    Prenom
-                    <input type="text" name="first_name" required maxLength={100} autoComplete="given-name" />
-                  </label>
-                  <label>
-                    Nom
-                    <input type="text" name="last_name" required maxLength={100} autoComplete="family-name" />
-                  </label>
-                  <label>
-                    Email
-                    <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
-                  </label>
-                  <label>
-                    Telephone
-                    <input type="tel" name="phone" required maxLength={30} autoComplete="tel" />
-                  </label>
-                  <label>
-                    Pays de residence
-                    <select name="residence_country" defaultValue={DEFAULT_COUNTRY} required>
-                      {COUNTRY_OPTIONS.map((country) => (
-                        <option key={country.value} value={country.value}>
-                          {country.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Mot de passe
-                    <input type="password" name="password" required minLength={8} autoComplete="new-password" />
-                  </label>
-                  <p className="muted">Une photo de l eleve sera demandee a l etape suivante pour faciliter l identification pendant les cours en ligne.</p>
-                </section>
-
-                <section className="auth-step-card">
-                  <h3>Etape 2 - Photo de l eleve</h3>
-                  <p className="muted">Cette photo est obligatoire pour finaliser la creation du compte.</p>
-                  <label>
-                    Prendre une photo (mobile) ou choisir une image
-                    <input type="file" name="student_photo" accept="image/jpeg,image/jpg,image/png,image/webp" capture="user" required />
-                  </label>
-                  <p className="muted">Si la camera est indisponible, choisissez une photo existante depuis votre galerie.</p>
-                </section>
+                <AuthSignupFields emailHint={emailHint} defaultCountry={DEFAULT_COUNTRY} countryOptions={COUNTRY_OPTIONS} />
 
                 <section className="auth-step-card">
                   <h3>Etape 3 - Consentements et validation</h3>
