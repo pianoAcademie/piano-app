@@ -722,6 +722,21 @@ function recurrenceLabel(session: AdminSessionOut): string {
   return `${label} · UTC fixe`;
 }
 
+function isRecurringSession(session: AdminSessionOut): boolean {
+  return Boolean(session.recurrence_group_id || session.recurrence_rule);
+}
+
+function recurrenceSummaryLabel(session: AdminSessionOut): string {
+  if (!isRecurringSession(session)) {
+    return "Creneau ponctuel";
+  }
+  const parts = [recurrenceLabel(session)];
+  if (session.recurrence_end_date) {
+    parts.push(`jusqu au ${formatDateKeyFr(session.recurrence_end_date)}`);
+  }
+  return `Serie recurrente · ${parts.join(" · ")}`;
+}
+
 function defaultApplyScope(session: AdminSessionOut): ApplyScope {
   if (session.recurrence_group_id) {
     return "SERIES_FUTURE";
@@ -1991,7 +2006,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 {selectedSession.booked_count}/{selectedSession.capacity_max}
               </span>
               <span className="badge">{selectedSessionTypeName}</span>
-              <span className="badge">{recurrenceLabel(selectedSession)}</span>
+              <span className="badge">{isRecurringSession(selectedSession) ? "Serie recurrente" : "Creneau ponctuel"}</span>
+              {isRecurringSession(selectedSession) ? <span className="badge">{recurrenceLabel(selectedSession)}</span> : null}
               <span className="badge">Affichage {sessionAudienceScopesLabel(selectedVisibilityScopes)}</span>
               <span className="badge">
                 Reservation {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes) : "Fermee"}
@@ -2178,6 +2194,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <div className="session-slot-section-body session-slot-details-list">
                     <p className="muted">
                       <strong>Activite:</strong> {selectedCourseTypeName}
+                    </p>
+                    <p className="muted">
+                      <strong>Recurrence:</strong> {recurrenceSummaryLabel(selectedSession)}
                     </p>
                     <p className="muted">
                       <strong>Professeur habituel:</strong> {selectedHabitualProfessorLabel}
