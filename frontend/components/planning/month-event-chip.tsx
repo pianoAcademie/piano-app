@@ -14,6 +14,7 @@ export type PlanningEventChipData = {
   effective_teacher_display_name?: string;
   requires_professor?: boolean;
   location_label: string;
+  location_tone?: string;
   show_location_badge?: boolean;
   type_label: string;
   status_label: string;
@@ -202,7 +203,7 @@ export default function MonthEventChip({
   const endTime = formatEventTime(event.end_at_utc, timezone);
   const showLocationBadge = Boolean(event.show_location_badge);
   const locationBadgeLabel = compactLocationLabel(locationLabel);
-  const locationTone = locationToneClass(locationLabel);
+  const locationTone = (event.location_tone || "").trim() || locationToneClass(locationLabel);
   const tooltip = [
     `${startTime}-${endTime}`,
     event.title,
