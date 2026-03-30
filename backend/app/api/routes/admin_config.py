@@ -185,6 +185,7 @@ PAYMENT_METHODS_SETTING_KEY = "config_payment_methods_enabled"
 PAYMENT_METHODS_LEGAL_ENTITY_MAP_SETTING_KEY = "config_payment_methods_legal_entity_map_v1"
 PRODUCT_CATEGORIES_SETTING_KEY = "config_products_categories_v1"
 MANUAL_PAYMENT_METHOD_CODES_WITH_DEFAULT_ENTITY = {"BANK_TRANSFER", "CHECK", "CASH"}
+LEGAL_ENTITY_LEGAL_FORMS = {"SAS", "SA", "SARL", "EURL"}
 
 
 def _utcnow() -> datetime:
@@ -433,6 +434,19 @@ def _ensure_legal_entity_minimum_fields(*, name: str | None, country_code: str |
         )
 
 
+def _normalize_legal_form(value: str | None) -> str | None:
+    normalized = _normalize_legal_entity_text(value, max_length=20)
+    if normalized is None:
+        return None
+    upper_value = normalized.upper()
+    if upper_value not in LEGAL_ENTITY_LEGAL_FORMS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="legal_form is invalid",
+        )
+    return upper_value
+
+
 def _legal_entity_by_id(db: Session) -> dict[UUID, LegalEntity]:
     rows = db.scalars(select(LegalEntity).order_by(LegalEntity.name.asc())).all()
     return {row.id: row for row in rows}
@@ -469,6 +483,9 @@ def _serialize_legal_entity(entity: LegalEntity) -> AdminLegalEntityOut:
         vat_number=entity.vat_number,
         address_text=entity.address_text,
         accounting_email=entity.accounting_email,
+        phone=entity.phone,
+        legal_form=entity.legal_form,
+        share_capital=entity.share_capital,
         country_code=entity.country_code,
         invoice_prefix=entity.invoice_prefix,
         invoice_next_number=entity.invoice_next_number,
@@ -1318,6 +1335,9 @@ def create_admin_legal_entity(
         vat_number=_normalize_legal_entity_text(payload.vat_number, max_length=64),
         address_text=_normalize_legal_entity_text(payload.address_text, max_length=2000),
         accounting_email=_normalize_legal_entity_text(payload.accounting_email, max_length=320),
+        phone=_normalize_legal_entity_text(payload.phone, max_length=30),
+        legal_form=_normalize_legal_form(payload.legal_form),
+        share_capital=_normalize_legal_entity_text(payload.share_capital, max_length=120),
         country_code=_normalize_country_code(payload.country_code),
         invoice_prefix=invoice_prefix,
         invoice_next_number=int(payload.invoice_next_number),
@@ -1370,6 +1390,12 @@ def update_admin_legal_entity(
         entity.address_text = _normalize_legal_entity_text(changes["address_text"], max_length=2000)
     if "accounting_email" in changes:
         entity.accounting_email = _normalize_legal_entity_text(changes["accounting_email"], max_length=320)
+    if "phone" in changes:
+        entity.phone = _normalize_legal_entity_text(changes["phone"], max_length=30)
+    if "legal_form" in changes:
+        entity.legal_form = _normalize_legal_form(changes["legal_form"])
+    if "share_capital" in changes:
+        entity.share_capital = _normalize_legal_entity_text(changes["share_capital"], max_length=120)
 
     if "country_code" in changes:
         entity.country_code = _normalize_country_code(changes["country_code"])

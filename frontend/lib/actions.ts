@@ -1104,6 +1104,10 @@ export async function registerAction(formData: FormData): Promise<void> {
   const first_name = String(formData.get("first_name") ?? "").trim();
   const last_name = String(formData.get("last_name") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim();
+  const address_line = String(formData.get("address_line") ?? "").trim();
+  const postal_code = String(formData.get("postal_code") ?? "").trim();
+  const city = String(formData.get("city") ?? "").trim();
+  const address_country = String(formData.get("address_country") ?? "FR").trim().toUpperCase();
   const registrationSubjectTypeRaw = String(formData.get("registration_subject_type") ?? "self").trim().toLowerCase();
   const registration_subject_type = registrationSubjectTypeRaw === "child" ? "child" : "self";
   const child_first_name = String(formData.get("child_first_name") ?? "").trim();
@@ -1150,6 +1154,18 @@ export async function registerAction(formData: FormData): Promise<void> {
   if (!phone) {
     redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20telephone.`);
   }
+  if (!address_line) {
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20adresse.`);
+  }
+  if (!postal_code) {
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20code%20postal.`);
+  }
+  if (!city) {
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20ville.`);
+  }
+  if (!address_country || address_country.length !== 2) {
+    redirect(`${signupPathBase}&error=Veuillez%20selectionner%20le%20pays%20de%20votre%20adresse.`);
+  }
   if (!residence_country || residence_country.length !== 2) {
     redirect(`${signupPathBase}&error=Veuillez%20selectionner%20votre%20pays%20de%20residence.`);
   }
@@ -1182,6 +1198,10 @@ export async function registerAction(formData: FormData): Promise<void> {
       marketing_sms_opt_in: marketingSms,
       student_photo_filename: studentPhotoFile?.name || null,
       student_photo_mime_type: studentPhotoFile?.type || null,
+      address_line,
+      postal_code,
+      city,
+      address_country,
       residence_country,
       preferred_currency,
       timezone,
@@ -6832,6 +6852,9 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
     vat_number: optionalField(formData, "vat_number"),
     address_text: optionalField(formData, "address_text"),
     accounting_email: optionalField(formData, "accounting_email"),
+    phone: optionalField(formData, "phone"),
+    legal_form: optionalField(formData, "legal_form"),
+    share_capital: optionalField(formData, "share_capital"),
     country_code: countryCode,
     invoice_prefix: invoicePrefix,
     invoice_next_number: invoiceNextNumber,
@@ -6906,6 +6929,9 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
     vat_number: optionalField(formData, "vat_number"),
     address_text: optionalField(formData, "address_text"),
     accounting_email: optionalField(formData, "accounting_email"),
+    phone: optionalField(formData, "phone"),
+    legal_form: optionalField(formData, "legal_form"),
+    share_capital: optionalField(formData, "share_capital"),
     country_code: countryCode,
     invoice_prefix: invoicePrefix,
     invoice_next_number: invoiceNextNumber,

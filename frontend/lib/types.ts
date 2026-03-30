@@ -1740,6 +1740,9 @@ export type AdminLegalEntityOut = {
   vat_number: string | null;
   address_text: string | null;
   accounting_email: string | null;
+  phone: string | null;
+  legal_form: "SAS" | "SA" | "SARL" | "EURL" | null;
+  share_capital: string | null;
   country_code: string;
   invoice_prefix: string;
   invoice_next_number: number;

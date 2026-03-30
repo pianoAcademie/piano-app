@@ -586,6 +586,8 @@ class CompanyIdentity:
     company_siret: str
     company_vat_number: str
     company_address: str
+    company_legal_form: str | None
+    company_share_capital: str | None
     company_logo_jpeg: bytes | None
     company_logo_width_px: int | None
     company_logo_height_px: int | None
@@ -705,6 +707,8 @@ def _legacy_company_identity_from_settings(
         company_siret=company_siret,
         company_vat_number=company_vat_number,
         company_address=company_address,
+        company_legal_form=None,
+        company_share_capital=None,
         company_logo_jpeg=logo_jpeg,
         company_logo_width_px=logo_dimensions[0] if logo_dimensions else None,
         company_logo_height_px=logo_dimensions[1] if logo_dimensions else None,
@@ -731,12 +735,14 @@ def _company_identity(
     company_address = address or "-"
     return CompanyIdentity(
         company_name=(entity.name or "").strip() or "Societe",
-        company_email="-",
-        company_phone="-",
+        company_email=(entity.accounting_email or "").strip() or legacy_identity.company_email,
+        company_phone=(entity.phone or "").strip() or legacy_identity.company_phone,
         company_siren=(entity.siren or "").strip() or "-",
         company_siret=(entity.siret or "").strip() or "-",
         company_vat_number=(entity.vat_number or "").strip() or "-",
         company_address=company_address,
+        company_legal_form=(entity.legal_form or "").strip() or None,
+        company_share_capital=(entity.share_capital or "").strip() or None,
         company_logo_jpeg=legacy_identity.company_logo_jpeg,
         company_logo_width_px=legacy_identity.company_logo_width_px,
         company_logo_height_px=legacy_identity.company_logo_height_px,
@@ -842,14 +848,36 @@ def render_invoice_period_pdf(
         )
 
         # Bloc identite emetteur
-        pdf.text(x=left, top_y=116.0, value=identity.company_name, size=10, bold=True)
-        pdf.text(x=left, top_y=132.0, value=f"SIREN: {identity.company_siren}", size=10)
-        pdf.text(x=left, top_y=148.0, value=f"SIRET: {identity.company_siret}", size=10)
-        pdf.text(x=left, top_y=164.0, value=f"TVA intracom: {identity.company_vat_number}", size=10)
-        pdf.text(x=left, top_y=180.0, value=f"Telephone: {identity.company_phone}", size=10)
-        pdf.text(x=left, top_y=196.0, value=f"Email: {identity.company_email}", size=10)
+        issuer_lines = [identity.company_name]
+        legal_summary_parts = [
+            identity.company_legal_form or "",
+            f"Capital social: {identity.company_share_capital}" if identity.company_share_capital else "",
+        ]
+        legal_summary = " | ".join(part for part in legal_summary_parts if part).strip()
+        if legal_summary:
+            issuer_lines.append(legal_summary)
+        issuer_lines.extend(
+            [
+                f"SIREN: {identity.company_siren}",
+                f"SIRET: {identity.company_siret}",
+                f"TVA intracom: {identity.company_vat_number}",
+                f"Telephone: {identity.company_phone}",
+                f"Email: {identity.company_email}",
+            ]
+        )
+        issuer_top_y = 116.0
+        issuer_line_height = 16.0
+        for index, line in enumerate(issuer_lines):
+            pdf.text(
+                x=left,
+                top_y=issuer_top_y + (index * issuer_line_height),
+                value=line,
+                size=10,
+                bold=index == 0,
+            )
+        address_top_y = issuer_top_y + (len(issuer_lines) * issuer_line_height)
         for index, chunk in enumerate(_wrap_text(identity.company_address, 48)):
-            pdf.text(x=left, top_y=212.0 + (index * 14.0), value=chunk, size=10)
+            pdf.text(x=left, top_y=address_top_y + (index * 14.0), value=chunk, size=10)
 
         # Bloc client facture
         billing_address = _ascii_safe((client_billing_address or "").strip()) or "-"

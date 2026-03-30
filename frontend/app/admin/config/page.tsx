@@ -3696,6 +3696,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               <div>
                                 <strong>{entity.name}</strong>
                                 <small className="muted">{entity.country_code}</small>
+                                <small>
+                                  {[entity.legal_form, entity.share_capital ? `Capital: ${entity.share_capital}` : null]
+                                    .filter((value): value is string => Boolean(value))
+                                    .join(" | ") || "-"}
+                                </small>
                               </div>
                             </td>
                             <td>
@@ -3708,6 +3713,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <td>
                               <span className="badge">{entity.default_payment_provider || "PAYPLUG"}</span>
                               <small>Compta: {entity.accounting_email || "-"}</small>
+                              <small>Tel: {entity.phone || "-"}</small>
                             </td>
                             <td>
                               <div>
@@ -3792,6 +3798,24 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <label>
                           Email comptabilite
                           <input type="email" name="accounting_email" maxLength={320} />
+                        </label>
+                        <label>
+                          Tel
+                          <input type="tel" name="phone" maxLength={30} />
+                        </label>
+                        <label>
+                          Forme juridique
+                          <select name="legal_form" defaultValue="">
+                            <option value="">Selectionner</option>
+                            <option value="SAS">SAS</option>
+                            <option value="SA">SA</option>
+                            <option value="SARL">SARL</option>
+                            <option value="EURL">EURL</option>
+                          </select>
+                        </label>
+                        <label>
+                          Capital social
+                          <input type="text" name="share_capital" maxLength={120} placeholder="ex: 10 000 EUR" />
                         </label>
                         <label>
                           Code pays (ISO2)
@@ -3883,6 +3907,30 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             name="accounting_email"
                             defaultValue={selectedLegalEntity.accounting_email ?? ""}
                             maxLength={320}
+                          />
+                        </label>
+                        <label>
+                          Tel
+                          <input type="tel" name="phone" defaultValue={selectedLegalEntity.phone ?? ""} maxLength={30} />
+                        </label>
+                        <label>
+                          Forme juridique
+                          <select name="legal_form" defaultValue={selectedLegalEntity.legal_form ?? ""}>
+                            <option value="">Selectionner</option>
+                            <option value="SAS">SAS</option>
+                            <option value="SA">SA</option>
+                            <option value="SARL">SARL</option>
+                            <option value="EURL">EURL</option>
+                          </select>
+                        </label>
+                        <label>
+                          Capital social
+                          <input
+                            type="text"
+                            name="share_capital"
+                            defaultValue={selectedLegalEntity.share_capital ?? ""}
+                            maxLength={120}
+                            placeholder="ex: 10 000 EUR"
                           />
                         </label>
                         <label>

@@ -62,6 +62,37 @@ export default function AuthSignupFields({
           <input type="tel" name="phone" required maxLength={30} autoComplete="tel" />
         </label>
         <label>
+          Adresse postale{contactLabelSuffix}
+          <input
+            type="text"
+            name="address_line"
+            required
+            maxLength={255}
+            autoComplete="street-address"
+            placeholder="Numero et rue"
+          />
+        </label>
+        <div className="grid cols-2 config-form-grid">
+          <label>
+            Code postal{contactLabelSuffix}
+            <input type="text" name="postal_code" required maxLength={20} autoComplete="postal-code" />
+          </label>
+          <label>
+            Ville{contactLabelSuffix}
+            <input type="text" name="city" required maxLength={120} autoComplete="address-level2" />
+          </label>
+        </div>
+        <label>
+          Pays de l adresse{contactLabelSuffix}
+          <select name="address_country" defaultValue={defaultCountry} required autoComplete="country">
+            {countryOptions.map((country) => (
+              <option key={`address-country-${country.value}`} value={country.value}>
+                {country.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           Pays de residence
           <select name="residence_country" defaultValue={defaultCountry} required>
             {countryOptions.map((country) => (

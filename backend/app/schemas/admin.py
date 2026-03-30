@@ -701,6 +701,9 @@ class AdminLegalEntityOut(BaseModel):
     vat_number: str | None
     address_text: str | None
     accounting_email: str | None
+    phone: str | None
+    legal_form: Literal["SAS", "SA", "SARL", "EURL"] | None
+    share_capital: str | None
     country_code: str
     invoice_prefix: str
     invoice_next_number: int
@@ -717,6 +720,9 @@ class AdminLegalEntityCreateRequest(BaseModel):
     vat_number: str | None = Field(default=None, max_length=64)
     address_text: str | None = Field(default=None, max_length=2000)
     accounting_email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=30)
+    legal_form: Literal["SAS", "SA", "SARL", "EURL"] | None = None
+    share_capital: str | None = Field(default=None, max_length=120)
     country_code: str = Field(default="FR", min_length=2, max_length=2)
     invoice_prefix: str = Field(min_length=1, max_length=20)
     invoice_next_number: int = Field(default=1, ge=1)
@@ -731,6 +737,9 @@ class AdminLegalEntityUpdateRequest(BaseModel):
     vat_number: str | None = Field(default=None, max_length=64)
     address_text: str | None = Field(default=None, max_length=2000)
     accounting_email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=30)
+    legal_form: Literal["SAS", "SA", "SARL", "EURL"] | None = None
+    share_capital: str | None = Field(default=None, max_length=120)
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
     invoice_prefix: str | None = Field(default=None, min_length=1, max_length=20)
     invoice_next_number: int | None = Field(default=None, ge=1)

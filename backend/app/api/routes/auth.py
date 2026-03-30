@@ -208,11 +208,15 @@ def _password_reset_template(db: Session) -> tuple[str, str, str]:
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut:
     normalized_email = payload.email.strip().lower()
     residence_country = payload.residence_country.upper()
+    address_country = (payload.address_country or payload.residence_country).upper()
     preferred_currency = payload.preferred_currency.upper()
     timezone_name = _validate_timezone(payload.timezone)
     parent_first_name = _normalize_optional(payload.first_name)
     parent_last_name = _normalize_optional(payload.last_name)
     phone = _normalize_optional(payload.phone)
+    address_line = _normalize_optional(payload.address_line)
+    postal_code = _normalize_optional(payload.postal_code)
+    city = _normalize_optional(payload.city)
     child_first_name = _normalize_optional(payload.child_first_name)
     child_last_name = _normalize_optional(payload.child_last_name)
     is_child_registration = payload.registration_subject_type == "child"
@@ -223,6 +227,14 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Last name is required")
     if not phone:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Phone is required")
+    if not address_line:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Address line is required")
+    if not postal_code:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Postal code is required")
+    if not city:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="City is required")
+    if len(address_country) != 2:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Address country is required")
     if is_child_registration and not child_first_name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Child first name is required")
     if is_child_registration and not child_last_name:
@@ -262,8 +274,10 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             role=UserRole.CLIENT,
             first_name=parent_first_name,
             last_name=parent_last_name,
-            address_line=_normalize_optional(payload.address_line),
-            address_country=residence_country,
+            address_line=address_line,
+            postal_code=postal_code,
+            city=city,
+            address_country=address_country,
             phone=phone,
             mobile_phone_1=phone,
             birth_date=None,
@@ -290,8 +304,10 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             role=UserRole.CLIENT,
             first_name=child_first_name,
             last_name=child_last_name,
-            address_line=None,
-            address_country=residence_country,
+            address_line=address_line,
+            postal_code=postal_code,
+            city=city,
+            address_country=address_country,
             phone=None,
             mobile_phone_1=None,
             birth_date=payload.child_birth_date,
@@ -336,8 +352,10 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             role=UserRole.CLIENT,
             first_name=parent_first_name,
             last_name=parent_last_name,
-            address_line=_normalize_optional(payload.address_line),
-            address_country=residence_country,
+            address_line=address_line,
+            postal_code=postal_code,
+            city=city,
+            address_country=address_country,
             phone=phone,
             mobile_phone_1=phone,
             birth_date=None,
