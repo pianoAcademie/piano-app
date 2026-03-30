@@ -1323,6 +1323,79 @@ button.danger:focus-visible {
   gap: 8px;
 }
 
+.planning-agenda-nav {
+  gap: 8px;
+  align-items: center;
+}
+
+.planning-jump-menu {
+  position: relative;
+}
+
+.planning-jump-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.planning-jump-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.planning-jump-trigger::after {
+  content: "▾";
+  font-size: 10px;
+  line-height: 1;
+}
+
+.planning-jump-menu[open] .planning-jump-trigger::after {
+  content: "▴";
+}
+
+.planning-jump-form {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 8;
+  width: min(280px, 84vw);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  box-shadow: 0 18px 40px rgba(16, 11, 7, 0.18);
+}
+
+.planning-jump-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.planning-jump-field span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4d5d74;
+}
+
+.planning-jump-field input {
+  margin: 0;
+  min-height: 38px;
+}
+
+.planning-jump-help {
+  margin: 0;
+  font-size: 12px;
+}
+
+.planning-jump-actions {
+  justify-content: flex-end;
+}
+
 .planning-filters-card {
   padding: 10px 12px;
   position: sticky;

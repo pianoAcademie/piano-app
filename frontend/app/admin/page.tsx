@@ -990,6 +990,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const previousHref = buildPlanningHref({ ...queryForLinks, agendaDate: previousAgendaDate, createOpen: false, dayDetails: "" });
   const nextHref = buildPlanningHref({ ...queryForLinks, agendaDate: nextAgendaDate, createOpen: false, dayDetails: "" });
   const todayHref = buildPlanningHref({ ...queryForLinks, agendaDate: todayAgendaKey, createOpen: false, dayDetails: "" });
+  const quickJumpLabel = agendaView === "month" ? "Aller rapidement a une date" : "Aller directement a la date";
+  const quickJumpHelp =
+    agendaView === "month"
+      ? "Choisissez une date du mois voulu pour y aller sans navigation pas a pas."
+      : "Choisissez une date pour y naviguer instantanement.";
 
   const agendaRange = buildAgendaRange(agendaView, agendaDate);
   const fromMs = agendaRange.from.getTime();
@@ -1698,11 +1703,44 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       <section className="card">
         <div className="row spread">
           <h2>Agenda</h2>
-          <div className="row">
+          <div className="row planning-agenda-nav">
             <a className="mode-link" href={previousHref}>
               ←
             </a>
-            <span className="badge">{agendaRange.title}</span>
+            <details className="planning-jump-menu">
+              <summary className="badge planning-jump-trigger" aria-label={quickJumpLabel}>
+                {agendaRange.title}
+              </summary>
+              <form method="get" className="planning-jump-form">
+                <input type="hidden" name="agenda_view" value={agendaView} />
+                <input type="hidden" name="timezone" value={timezone} />
+                <input type="hidden" name="location_id" value={focusedLocationId} />
+                <input type="hidden" name="course_type_id" value={selectedCourseType} />
+                <input type="hidden" name="status" value={selectedStatus} />
+                <input type="hidden" name="client_status" value={selectedClientStatus} />
+                {selectedActivityIds.map((activityId) => (
+                  <input key={`jump-activity-${activityId}`} type="hidden" name="activity_ids" value={activityId} />
+                ))}
+                {selectedLocationIdsFromQuery.map((locationId) => (
+                  <input key={`jump-location-${locationId}`} type="hidden" name="location_ids" value={locationId} />
+                ))}
+                {selectedProfessorIds.map((professorId) => (
+                  <input key={`jump-professor-${professorId}`} type="hidden" name="professor_ids" value={professorId} />
+                ))}
+                {selectedClientIds.map((clientId) => (
+                  <input key={`jump-client-${clientId}`} type="hidden" name="client_ids" value={clientId} />
+                ))}
+
+                <label className="planning-jump-field">
+                  <span>{quickJumpLabel}</span>
+                  <input type="date" name="agenda_date" defaultValue={agendaDate} required />
+                </label>
+                <p className="muted planning-jump-help">{quickJumpHelp}</p>
+                <div className="row planning-jump-actions">
+                  <button type="submit">Aller</button>
+                </div>
+              </form>
+            </details>
             <a className="mode-link" href={nextHref}>
               →
             </a>
