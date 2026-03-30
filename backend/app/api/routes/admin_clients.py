@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import re
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
@@ -136,6 +137,10 @@ from app.services.messaging_templates import (
     resolve_predefined_template,
     resolve_sender_profile,
     upsert_predefined_template,
+)
+from app.services.notifications.application.recipients import (
+    resolve_admin_booking_notification_recipients,
+    resolve_client_booking_notification_recipient,
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider
@@ -1215,6 +1220,16 @@ def _record_invoice_range_public_payment(
         _normalize_optional(str(metadata.get("public_note") or "")),
         provider_reference=provider_reference,
     )
+    if not _normalize_optional(str(metadata.get("booking_confirmation_emails_sent_at") or "")):
+        try:
+            if _send_invoice_range_booking_confirmation_emails(db, metadata=metadata):
+                metadata["booking_confirmation_emails_sent_at"] = now.isoformat()
+        except Exception:
+            logger.exception(
+                "Unable to send booking confirmation emails for invoice-range payment client=%s note=%s",
+                client_id,
+                note.id,
+            )
     note.message = _build_invoice_range_note_message(metadata)
     db.add(note)
     db.commit()
@@ -1447,6 +1462,99 @@ def _normalize_invoice_range_payment_keys(raw: object) -> list[str]:
     return out
 
 
+def _booking_notification_email_content(
+    *,
+    course_type_name: str,
+    start_at: datetime,
+    student_label: str,
+) -> tuple[str, str]:
+    date_label = start_at.strftime("%d/%m/%Y %H:%M UTC")
+    subject = f"Confirmation de reservation - {course_type_name}"
+    body = (
+        f"Reservation confirmee.\n"
+        f"Eleve: {student_label}\n"
+        f"Activite: {course_type_name}\n"
+        f"Debut: {date_label}\n"
+    )
+    return subject, body
+
+
+def _send_invoice_range_booking_confirmation_emails(
+    db: Session,
+    *,
+    metadata: dict[str, object],
+) -> bool:
+    booking_ids = [
+        UUID(key.split(":", 1)[1])
+        for key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys"))
+        if key.startswith("BOOKING:")
+    ]
+    if not booking_ids:
+        return False
+
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    sent_any = False
+    for booking_id in booking_ids:
+        row = db.execute(
+            select(Booking, CourseSession, CourseType, User)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .join(User, User.id == Booking.user_id)
+            .where(Booking.id == booking_id)
+        ).first()
+        if row is None:
+            continue
+
+        booking, session_obj, course_type, student = row
+        if booking.status != BookingStatus.BOOKED:
+            continue
+
+        student_label = (f"{(student.first_name or '').strip()} {(student.last_name or '').strip()}".strip() if student is not None else "") or (
+            student.email if student is not None else str(booking.user_id)
+        )
+        subject, body = _booking_notification_email_content(
+            course_type_name=course_type.name,
+            start_at=session_obj.start_at_utc,
+            student_label=student_label,
+        )
+
+        client_recipient = resolve_client_booking_notification_recipient(db, booking=booking)
+        if client_recipient is not None and client_recipient.email is not None:
+            send_email(
+                to_email=client_recipient.email,
+                subject=subject,
+                body=body,
+                body_format="TEXT",
+                context="CLIENT_BOOKING_CONFIRMED_PAYMENT",
+                from_email=sender.from_email,
+                from_name=sender.from_name,
+                reply_to=sender.reply_to,
+                subject_prefix=sender.subject_prefix,
+                recipient_user_id=client_recipient.contact_id,
+                communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            )
+            sent_any = True
+
+        for admin_recipient in resolve_admin_booking_notification_recipients(db, is_cancellation=False):
+            if admin_recipient.email is None:
+                continue
+            send_email(
+                to_email=admin_recipient.email,
+                subject=subject,
+                body=body,
+                body_format="TEXT",
+                context="ADMIN_BOOKING_CONFIRMED_PAYMENT",
+                from_email=sender.from_email,
+                from_name=sender.from_name,
+                reply_to=sender.reply_to,
+                subject_prefix=sender.subject_prefix,
+                communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+            )
+            sent_any = True
+
+    return sent_any
+
+
 def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, object] | None:
     kind = str(payload.get("kind") or "").strip().upper()
     if kind != "INVOICE_RANGE":
@@ -1548,6 +1656,21 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         normalized["public_note"] = public_note
     if private_note:
         normalized["private_note"] = private_note
+
+    for field in (
+        "payment_provider",
+        "payment_provider_reference",
+        "payment_checkout_status",
+        "payment_lookup_status",
+        "payment_transaction_id",
+        "payment_last_attempt_at",
+        "payment_last_lookup_at",
+        "paid_at",
+        "booking_confirmation_emails_sent_at",
+    ):
+        value = _normalize_optional(str(payload.get(field) or ""))
+        if value:
+            normalized[field] = value
 
     status_value = str(payload.get("invoice_status") or "ISSUED").strip().upper()
     normalized["invoice_status"] = status_value if status_value in INVOICE_RANGE_STATUSES else "ISSUED"
@@ -7808,3 +7931,4 @@ def admin_purchase_plan_for_client(
         checkout_url=checkout_url,
         payment_reference=subscription.payment_provider_subscription_ref,
     )
+logger = logging.getLogger(__name__)
