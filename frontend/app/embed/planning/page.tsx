@@ -176,6 +176,13 @@ function bookingStatusLabel(status: string): string {
   return normalized || "-";
 }
 
+function externalAvailabilityLabel(session: SessionOut): string {
+  if (!session.show_external_remaining_seats) {
+    return session.seats_remaining > 0 ? "Reservation disponible" : "Complet";
+  }
+  return session.seats_remaining > 0 ? `${session.seats_remaining} place(s) restante(s)` : "Liste d attente";
+}
+
 export default async function EmbedPlanningPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const courseTypeId = readParam(searchParams, "course_type_id").trim();
   const locationId = readParam(searchParams, "location_id").trim();
@@ -306,7 +313,6 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     date: weekStartKey,
   });
   const loginHref = `/login?mode=login&return_to=${encodeURIComponent(selectedSessionReturnTo)}`;
-  const signupHref = `/login?mode=signup&return_to=${encodeURIComponent(selectedSessionReturnTo)}`;
 
   return (
     <main className="embed-planning-page">
@@ -358,9 +364,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                           </div>
                           <p>{session.title}</p>
                           <small>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency)}</small>
-                          <small>
-                            {session.seats_remaining > 0 ? `${session.seats_remaining} place(s) restante(s)` : "Liste d attente"}
-                          </small>
+                          <small>{externalAvailabilityLabel(session)}</small>
                         </Link>
                       );
                     })
@@ -389,7 +393,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
               </article>
               <article className="item">
                 <small className="muted">Disponibilite</small>
-                <p>{selectedSessionIsFull ? "Liste d attente" : `${selectedSession.seats_remaining} place(s) restante(s)`}</p>
+                <p>{externalAvailabilityLabel(selectedSession)}</p>
               </article>
               <article className="item">
                 <small className="muted">Coach</small>
@@ -401,11 +405,8 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
 
             {!portalToken ? (
               <div className="embed-planning-cta-stack">
-                <p className="muted">Connectez-vous ou creez un compte pour reserver ce creneau.</p>
-                <div className="row">
-                  <Link className="mode-link" href={loginHref}>Se connecter</Link>
-                  <Link className="mode-link" href={signupHref}>Creer un compte</Link>
-                </div>
+                <p className="muted">Reservez en une etape. La page suivante permet de vous connecter, creer un compte ou recuperer votre mot de passe.</p>
+                <Link className="mode-link embed-planning-primary-link" href={loginHref}>Reserver</Link>
               </div>
             ) : selectedBooking ? (
               <div className="embed-planning-cta-stack">

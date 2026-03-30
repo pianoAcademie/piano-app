@@ -2542,12 +2542,12 @@ button.danger:focus-visible {
 .embed-planning-page {
   min-height: 100vh;
   background: linear-gradient(180deg, #f9f6ef 0%, #f3ede2 100%);
-  padding: 20px;
+  padding: 12px;
 }
 
 .embed-planning-shell {
   display: grid;
-  gap: 16px;
+  gap: 12px;
   max-width: 1280px;
   margin: 0 auto;
 }
@@ -2559,10 +2559,8 @@ button.danger:focus-visible {
 }
 
 .embed-planning-header {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
   gap: 16px;
-  align-items: center;
   margin-bottom: 16px;
 }
 
@@ -2574,7 +2572,7 @@ button.danger:focus-visible {
 
 .embed-planning-week-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -2635,7 +2633,7 @@ button.danger:focus-visible {
 
 .embed-planning-detail-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
   margin: 14px 0;
 }
@@ -2645,28 +2643,43 @@ button.danger:focus-visible {
   margin-top: 18px;
 }
 
-@media (max-width: 1100px) {
+.embed-planning-primary-link,
+.embed-planning-book-form button {
+  width: 100%;
+  justify-content: center;
+}
+
+@media (min-width: 721px) {
+  .embed-planning-page {
+    padding: 20px;
+  }
+
+  .embed-planning-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
   .embed-planning-week-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
+@media (min-width: 900px) {
   .embed-planning-detail-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1101px) {
+  .embed-planning-week-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 720px) {
-  .embed-planning-page {
-    padding: 12px;
-  }
-
-  .embed-planning-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .embed-planning-week-grid {
-    grid-template-columns: 1fr;
+  .embed-planning-nav .mode-link {
+    flex: 1 1 calc(33.333% - 8px);
+    justify-content: center;
   }
 }
 

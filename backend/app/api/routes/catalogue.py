@@ -241,6 +241,7 @@ def list_sessions(
                 online_booking_enabled=SessionAudienceScope.EXTERNAL in booking_scopes,
                 external_booking_price_ttc=session.external_booking_price_ttc,
                 external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
+                show_external_remaining_seats=bool(session.show_external_remaining_seats),
                 zoom_link=session.zoom_link,
                 substitute_teacher_id=session.substitute_teacher_id,
                 substitute_teacher_display_name=substitute_display_name,

@@ -337,6 +337,7 @@ def _to_admin_session_out(
         is_private=is_private,
         allow_online_booking=allow_online_booking,
         external_booking_price_ttc=session_obj.external_booking_price_ttc,
+        show_external_remaining_seats=bool(session_obj.show_external_remaining_seats),
         timezone=session_obj.timezone,
         recurrence_group_id=session_obj.recurrence_group_id,
         recurrence_rule=session_obj.recurrence_rule,
@@ -1950,6 +1951,7 @@ def create_session(
                 is_private=is_private,
                 allow_online_booking=allow_online_booking,
                 external_booking_price_ttc=payload.external_booking_price_ttc,
+                show_external_remaining_seats=payload.show_external_remaining_seats,
                 timezone=session_timezone,
                 recurrence_group_id=recurrence_group_id,
                 recurrence_rule=recurrence_rule,
@@ -3072,6 +3074,8 @@ def update_session(
         target.allow_online_booking = next_allow_online_booking
         if "external_booking_price_ttc" in updates:
             target.external_booking_price_ttc = updates["external_booking_price_ttc"]
+        if "show_external_remaining_seats" in updates:
+            target.show_external_remaining_seats = bool(updates["show_external_remaining_seats"])
 
         original_target_start = target.start_at_utc
         original_target_end = target.end_at_utc
@@ -3286,6 +3290,7 @@ def update_session(
                     is_private=session_obj.is_private,
                     allow_online_booking=session_obj.allow_online_booking,
                     external_booking_price_ttc=session_obj.external_booking_price_ttc,
+                    show_external_remaining_seats=session_obj.show_external_remaining_seats,
                     timezone=session_obj.timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,
@@ -3349,6 +3354,7 @@ def update_session(
                     is_private=session_obj.is_private,
                     allow_online_booking=session_obj.allow_online_booking,
                     external_booking_price_ttc=session_obj.external_booking_price_ttc,
+                    show_external_remaining_seats=session_obj.show_external_remaining_seats,
                     timezone=session_obj.timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,
@@ -3468,6 +3474,7 @@ def duplicate_session_operation(
                 is_private=target.is_private,
                 allow_online_booking=target.allow_online_booking,
                 external_booking_price_ttc=target.external_booking_price_ttc,
+                show_external_remaining_seats=target.show_external_remaining_seats,
                 timezone=target_timezone,
                 recurrence_group_id=recurrence_group_id,
                 recurrence_rule=recurrence_rule,

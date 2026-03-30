@@ -352,6 +352,7 @@ class CourseSession(Base):
     visibility_scope: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'EXTERNAL'"))
     booking_scope: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'EXTERNAL'"))
     external_booking_price_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    show_external_remaining_seats: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'UTC'"))
     recurrence_group_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     recurrence_rule: Mapped[str | None] = mapped_column(String(30), nullable=True)

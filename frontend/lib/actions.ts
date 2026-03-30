@@ -167,6 +167,20 @@ function checkboxFieldWithDefault(formData: FormData, fieldName: string, default
   return normalized === "on" || normalized === "true" || normalized === "1";
 }
 
+function multiCheckboxField(formData: FormData, fieldName: string, defaultValue: boolean): boolean {
+  const values = formData.getAll(fieldName);
+  if (values.length === 0) {
+    return defaultValue;
+  }
+  const normalized = String(values[values.length - 1] ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    return defaultValue;
+  }
+  return normalized === "on" || normalized === "true" || normalized === "1";
+}
+
 function normalizeSessionAudienceScope(raw: string, fallback: SessionAudienceScope = "EXTERNAL"): SessionAudienceScope {
   const value = raw.trim().toUpperCase();
   if (value === "SUBSCRIPTION" || value === "FORFAIT" || value === "PRIVATE" || value === "EXTERNAL") {
@@ -204,6 +218,7 @@ function parseSessionAudience(formData: FormData): {
   bookingScopes: SessionAudienceScope[];
   isPrivate: boolean;
   allowOnlineBooking: boolean;
+  showExternalRemainingSeats: boolean;
 } {
   const visibilityScopes: SessionAudienceScope[] = normalizeSessionAudienceScopes(
     formData.getAll("visibility_scopes"),
@@ -220,6 +235,7 @@ function parseSessionAudience(formData: FormData): {
     bookingScopes,
     isPrivate: visibilityScopes.length === 1 && visibilityScopes[0] === "PRIVATE",
     allowOnlineBooking: !(bookingScopes.length === 1 && bookingScopes[0] === "PRIVATE"),
+    showExternalRemainingSeats: multiCheckboxField(formData, "show_external_remaining_seats", true),
   };
 }
 
@@ -465,6 +481,7 @@ type CreateSessionDraftPayload = {
   visibility_scopes: SessionAudienceScope[];
   booking_scopes: SessionAudienceScope[];
   external_booking_price_ttc: string;
+  show_external_remaining_seats: "1" | "0";
   public_description: string;
   private_description: string;
   professor_reminder_note: string;
@@ -1982,6 +1999,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const booking_scopes = sessionAudience.bookingScopes;
   const is_private = sessionAudience.isPrivate;
   const allow_online_booking = sessionAudience.allowOnlineBooking;
+  const show_external_remaining_seats = sessionAudience.showExternalRemainingSeats;
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const recurrence_mode = String(formData.get("recurrence_mode") ?? "NONE").trim().toUpperCase();
@@ -2036,6 +2054,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     visibility_scopes,
     booking_scopes,
     external_booking_price_ttc: externalBookingPriceRaw,
+    show_external_remaining_seats: show_external_remaining_seats ? "1" : "0",
     public_description: clampDraftValue(public_description ?? "", 1200),
     private_description: clampDraftValue(private_description ?? "", 1200),
     professor_reminder_note: clampDraftValue(professor_reminder_note ?? "", 1200),
@@ -2100,6 +2119,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     booking_scopes,
     is_private,
     allow_online_booking,
+    show_external_remaining_seats,
     timezone: session_timezone,
   };
   payload.professor_id = professor_id || null;
@@ -2178,6 +2198,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const booking_scopes = sessionAudience.bookingScopes;
   const is_private = sessionAudience.isPrivate;
   const allow_online_booking = sessionAudience.allowOnlineBooking;
+  const show_external_remaining_seats = sessionAudience.showExternalRemainingSeats;
   const is_all_day = checkboxField(formData, "is_all_day");
   const session_timezone = normalizeTimezone(String(formData.get("session_timezone") ?? "Europe/Paris"), "Europe/Paris");
   const apply_scope = parseApplyScope(String(formData.get("apply_scope") ?? "ONE"));
@@ -2272,6 +2293,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     booking_scopes,
     is_private,
     allow_online_booking,
+    show_external_remaining_seats,
     external_booking_price_ttc: externalBookingPriceRaw ? externalBookingPrice : null,
     timezone: session_timezone,
   };

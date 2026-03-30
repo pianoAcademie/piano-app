@@ -1732,6 +1732,7 @@ class AdminSessionCreateRequest(BaseModel):
     is_private: bool | None = None
     allow_online_booking: bool | None = None
     external_booking_price_ttc: Decimal | None = Field(default=None, ge=0)
+    show_external_remaining_seats: bool = True
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
 
@@ -1762,6 +1763,7 @@ class AdminSessionUpdateRequest(BaseModel):
     is_private: bool | None = None
     allow_online_booking: bool | None = None
     external_booking_price_ttc: Decimal | None = Field(default=None, ge=0)
+    show_external_remaining_seats: bool | None = None
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     recurrence: AdminSessionRecurrenceRequest | None = None
 
@@ -1809,6 +1811,7 @@ class AdminSessionOut(BaseModel):
     is_private: bool
     allow_online_booking: bool
     external_booking_price_ttc: Decimal | None
+    show_external_remaining_seats: bool
     timezone: str
     recurrence_group_id: UUID | None
     recurrence_rule: str | None

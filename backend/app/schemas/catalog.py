@@ -81,6 +81,7 @@ class SessionOut(BaseModel):
     online_booking_enabled: bool
     external_booking_price_ttc: Decimal | None = None
     external_booking_currency: str | None = None
+    show_external_remaining_seats: bool = True
     zoom_link: str | None
     substitute_teacher_id: UUID | None = None
     substitute_teacher_display_name: str | None = None

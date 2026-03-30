@@ -66,6 +66,7 @@ type CreateSessionDraft = {
   visibility_scopes: SessionAudienceScope[];
   booking_scopes: SessionAudienceScope[];
   external_booking_price_ttc: string;
+  show_external_remaining_seats: "1" | "0";
   public_description: string;
   private_description: string;
   professor_reminder_note: string;
@@ -790,6 +791,7 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       visibility_scopes: visibilityScopes,
       booking_scopes: bookingScopes,
       external_booking_price_ttc: String(parsed.external_booking_price_ttc ?? ""),
+      show_external_remaining_seats: String(parsed.show_external_remaining_seats ?? "1") === "0" ? "0" : "1",
       public_description: String(parsed.public_description ?? ""),
       private_description: String(parsed.private_description ?? ""),
       professor_reminder_note: String(parsed.professor_reminder_note ?? ""),
@@ -1361,6 +1363,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     (createAllowsStudentBookings && !(createInitialVisibilityScopes.length === 1 && createInitialVisibilityScopes[0] === "PRIVATE")
       ? ["EXTERNAL"]
       : ["PRIVATE"]);
+  const createShowExternalRemainingSeats = createDraft?.show_external_remaining_seats !== "0";
   const selectedVisibilityScopes: SessionAudienceScope[] = selectedSession
     ? normalizeSessionAudienceScopes(
         selectedSession.visibility_scopes ?? selectedSession.visibility_scope,
@@ -1373,6 +1376,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         [selectedSession.allow_online_booking ? "EXTERNAL" : "PRIVATE"],
       )
     : ["PRIVATE"];
+  const selectedShowExternalRemainingSeats = selectedSession?.show_external_remaining_seats !== false;
   const createDraftDuration = createDraft ? draftPositiveInteger(createDraft.duration_minutes) : null;
   const createDraftCapacity = createDraft ? draftNonNegativeInteger(createDraft.capacity_max) : null;
   const createRecurrenceMode = createDraft?.recurrence_mode?.trim().toUpperCase() === "RECURRING" ? "RECURRING" : "NONE";
@@ -1743,6 +1747,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     initialVisibilityScopes={createInitialVisibilityScopes}
                     initialBookingScopes={createInitialBookingScopes}
                     allowsStudentBookings={createAllowsStudentBookings}
+                    initialShowExternalRemainingSeats={createShowExternalRemainingSeats}
                   />
 
                   <label>
@@ -2420,6 +2425,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       initialVisibilityScopes={selectedVisibilityScopes}
                       initialBookingScopes={selectedBookingScopes}
                       allowsStudentBookings={selectedSessionAllowsStudentBookings}
+                      initialShowExternalRemainingSeats={selectedShowExternalRemainingSeats}
                     />
 
                     <label>

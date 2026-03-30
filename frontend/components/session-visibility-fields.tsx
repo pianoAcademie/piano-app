@@ -8,6 +8,7 @@ type SessionVisibilityFieldsProps = {
   initialVisibilityScopes: SessionAudienceScope[];
   initialBookingScopes: SessionAudienceScope[];
   allowsStudentBookings?: boolean;
+  initialShowExternalRemainingSeats?: boolean;
 };
 
 const NON_PRIVATE_SCOPE_OPTIONS: Array<{ value: SessionAudienceScope; label: string; hint: string }> = [
@@ -58,6 +59,7 @@ export default function SessionVisibilityFields({
   initialVisibilityScopes,
   initialBookingScopes,
   allowsStudentBookings = true,
+  initialShowExternalRemainingSeats = true,
 }: SessionVisibilityFieldsProps): JSX.Element {
   const [visibilityScopes, setVisibilityScopes] = useState<SessionAudienceScope[]>(
     normalizeScopes(initialVisibilityScopes, ["EXTERNAL"]),
@@ -165,6 +167,26 @@ export default function SessionVisibilityFields({
               ? "Un creneau prive ne peut pas etre reserve en ligne."
               : `Actuel: ${scopeGroupSummary(effectiveBookingScopes)}.`}
         </small>
+      </fieldset>
+
+      <fieldset className="session-audience-fieldset">
+        <legend>Integration externe</legend>
+        <small className="muted">
+          Controle l information de disponibilite affichee dans l iframe publique pour ce creneau.
+        </small>
+        <label className="session-audience-option">
+          <input type="hidden" name="show_external_remaining_seats" value="0" />
+          <input
+            type="checkbox"
+            name="show_external_remaining_seats"
+            value="1"
+            defaultChecked={initialShowExternalRemainingSeats}
+          />
+          <span>
+            <strong>Afficher le nombre de places restantes</strong>
+            <small className="muted">Sinon, l iframe affiche seulement Reservation disponible ou Complet.</small>
+          </span>
+        </label>
       </fieldset>
     </>
   );

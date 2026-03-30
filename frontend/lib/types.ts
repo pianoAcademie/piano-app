@@ -104,6 +104,7 @@ export type SessionOut = {
   online_booking_enabled: boolean;
   external_booking_price_ttc: string | null;
   external_booking_currency: string | null;
+  show_external_remaining_seats: boolean;
   zoom_link: string | null;
   substitute_teacher_id: string | null;
   substitute_teacher_display_name: string | null;
@@ -1126,6 +1127,7 @@ export type AdminSessionOut = {
   is_private: boolean;
   allow_online_booking: boolean;
   external_booking_price_ttc: string | null;
+  show_external_remaining_seats: boolean;
   timezone: string;
   recurrence_group_id: string | null;
   recurrence_rule: string | null;
