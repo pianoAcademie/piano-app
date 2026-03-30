@@ -660,14 +660,14 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
           {isEditProfileOpen ? (
             <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Modifier collaborateur">
-              <section className="modal-card">
+              <section className="modal-panel professor-profile-modal">
                 <div className="row spread">
                   <h3>Modifier la fiche</h3>
                   <Link className="close-link" href={`/admin/professors/${professor.id}?tab=profil`}>
                     ×
                   </Link>
                 </div>
-                <form action={updateAdminCollaboratorProfileAction} className="grid cols-2">
+                <form action={updateAdminCollaboratorProfileAction} className="grid cols-2 professor-profile-modal-form">
               <input type="hidden" name="professor_id" value={professor.id} />
               <input type="hidden" name="return_tab" value="profil" />
 
@@ -801,7 +801,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 Ne pas envoyer si aucun cours
               </label>
 
-              <div className="row span-2">
+              <div className="row span-2 modal-actions-end professor-profile-modal-actions">
                 <button type="submit">Enregistrer</button>
                 <Link className="reset-link" href={`/admin/professors/${professor.id}?tab=profil`}>
                   Annuler

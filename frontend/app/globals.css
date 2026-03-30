@@ -2384,6 +2384,24 @@ button.danger:focus-visible {
   padding: 10px;
 }
 
+.professor-profile-modal {
+  width: min(760px, 96vw);
+  max-height: 92vh;
+}
+
+.professor-profile-modal-form {
+  gap: 10px;
+}
+
+.professor-profile-modal-actions {
+  position: sticky;
+  bottom: -10px;
+  padding-top: 10px;
+  padding-bottom: 2px;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255, 249, 239, 0.94), #f8ebd2 45%);
+}
+
 .modal-panel .grid {
   gap: 10px;
 }
