@@ -661,12 +661,10 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
           {isEditProfileOpen ? (
             <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Modifier collaborateur">
               <section className="modal-panel professor-profile-modal">
-                <div className="row spread">
-                  <h3>Modifier la fiche</h3>
-                  <Link className="close-link" href={`/admin/professors/${professor.id}?tab=profil`}>
-                    ×
-                  </Link>
-                </div>
+                <Link className="modal-close-x" href={`/admin/professors/${professor.id}?tab=profil`} aria-label="Fermer">
+                  ×
+                </Link>
+                <h3 className="modal-title">Modifier la fiche</h3>
                 <form action={updateAdminCollaboratorProfileAction} className="grid cols-2 professor-profile-modal-form">
               <input type="hidden" name="professor_id" value={professor.id} />
               <input type="hidden" name="return_tab" value="profil" />
