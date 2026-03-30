@@ -31,7 +31,7 @@ from app.models.client_record import (
     ClientPaymentRefund,
 )
 from app.models.family import ClientFamilyLink
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, DeliveryMode, Location, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, DeliveryMode, Location, Professor, SessionStatus
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
@@ -117,6 +117,7 @@ from app.services.client_password_email import (
     render_client_password_email,
     send_client_password_email,
 )
+from app.services.booking_confirmation_templates import render_booking_confirmation_email
 from app.services.client_payment_email import (
     render_client_payment_email,
     send_client_payment_email,
@@ -142,6 +143,7 @@ from app.services.notifications.application.recipients import (
     resolve_admin_booking_notification_recipients,
     resolve_client_booking_notification_recipient,
 )
+from app.services.session_teachers import effective_teacher_id_for_session, professor_display_name
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
@@ -1473,23 +1475,6 @@ def _normalize_invoice_range_payment_keys(raw: object) -> list[str]:
     return out
 
 
-def _booking_notification_email_content(
-    *,
-    course_type_name: str,
-    start_at: datetime,
-    student_label: str,
-) -> tuple[str, str]:
-    date_label = start_at.strftime("%d/%m/%Y %H:%M UTC")
-    subject = f"Confirmation de reservation - {course_type_name}"
-    body = (
-        f"Reservation confirmee.\n"
-        f"Eleve: {student_label}\n"
-        f"Activite: {course_type_name}\n"
-        f"Debut: {date_label}\n"
-    )
-    return subject, body
-
-
 def _send_invoice_range_booking_confirmation_emails(
     db: Session,
     *,
@@ -1507,35 +1492,59 @@ def _send_invoice_range_booking_confirmation_emails(
     sent_any = False
     for booking_id in booking_ids:
         row = db.execute(
-            select(Booking, CourseSession, CourseType, User)
+            select(Booking, CourseSession, CourseType, User, Location)
             .join(CourseSession, CourseSession.id == Booking.session_id)
             .join(CourseType, CourseType.id == CourseSession.course_type_id)
             .join(User, User.id == Booking.user_id)
+            .join(Location, Location.id == CourseSession.location_id)
             .where(Booking.id == booking_id)
         ).first()
         if row is None:
             continue
 
-        booking, session_obj, course_type, student = row
+        booking, session_obj, course_type, student, location = row
         if booking.status != BookingStatus.BOOKED:
             continue
 
         student_label = (f"{(student.first_name or '').strip()} {(student.last_name or '').strip()}".strip() if student is not None else "") or (
             student.email if student is not None else str(booking.user_id)
         )
-        subject, body = _booking_notification_email_content(
-            course_type_name=course_type.name,
-            start_at=session_obj.start_at_utc,
-            student_label=student_label,
-        )
+        teacher_id = effective_teacher_id_for_session(session_obj)
+        teacher = db.scalar(select(Professor).where(Professor.id == teacher_id)) if teacher_id is not None else None
+        teacher_label = professor_display_name(teacher)
+        location_label = (location.name or "").strip()
 
         client_recipient = resolve_client_booking_notification_recipient(db, booking=booking)
         if client_recipient is not None and client_recipient.email is not None:
+            recipient_user = (
+                db.scalar(select(User).where(User.id == client_recipient.contact_id))
+                if client_recipient.contact_id is not None
+                else None
+            )
+            recipient_name = (
+                f"{(recipient_user.first_name or '').strip()} {(recipient_user.last_name or '').strip()}".strip()
+                if recipient_user is not None
+                else client_recipient.email
+            )
+            rendered = render_booking_confirmation_email(
+                db,
+                audience="CLIENT",
+                recipient_name=recipient_name,
+                student_name=student_label,
+                activity_name=course_type.name,
+                start_at=session_obj.start_at_utc,
+                timezone_name=session_obj.timezone,
+                location_name=location_label,
+                teacher_name=teacher_label,
+            )
+        else:
+            rendered = None
+        if client_recipient is not None and client_recipient.email is not None and rendered is not None:
             send_email(
                 to_email=client_recipient.email,
-                subject=subject,
-                body=body,
-                body_format="TEXT",
+                subject=rendered.subject,
+                body=rendered.body,
+                body_format=rendered.body_format,
                 context="CLIENT_BOOKING_CONFIRMED_PAYMENT",
                 from_email=sender.from_email,
                 from_name=sender.from_name,
@@ -1549,11 +1558,24 @@ def _send_invoice_range_booking_confirmation_emails(
         for admin_recipient in resolve_admin_booking_notification_recipients(db, is_cancellation=False):
             if admin_recipient.email is None:
                 continue
+            rendered = render_booking_confirmation_email(
+                db,
+                audience="ADMIN",
+                recipient_name="Administration",
+                student_name=student_label,
+                activity_name=course_type.name,
+                start_at=session_obj.start_at_utc,
+                timezone_name=session_obj.timezone,
+                location_name=location_label,
+                teacher_name=teacher_label,
+            )
+            if rendered is None:
+                continue
             send_email(
                 to_email=admin_recipient.email,
-                subject=subject,
-                body=body,
-                body_format="TEXT",
+                subject=rendered.subject,
+                body=rendered.body,
+                body_format=rendered.body_format,
                 context="ADMIN_BOOKING_CONFIRMED_PAYMENT",
                 from_email=sender.from_email,
                 from_name=sender.from_name,

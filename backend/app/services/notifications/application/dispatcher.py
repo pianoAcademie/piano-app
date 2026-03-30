@@ -107,7 +107,11 @@ def dispatch_notification(
             to_email=notification.recipient_email,
             subject=notification.subject or "Notification",
             body=notification.body_snapshot or "",
-            body_format="TEXT",
+            body_format=(
+                "HTML"
+                if str((notification.payload_snapshot or {}).get("body_format") or "").strip().upper() == "HTML"
+                else "TEXT"
+            ),
             context=f"NOTIFICATION:{notification.notification_type}",
         )
         notification.provider_name = provider_result.provider_name

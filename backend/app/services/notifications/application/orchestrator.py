@@ -7,9 +7,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Booking, CourseSession, CourseType
+from app.models.catalog import Booking, CourseSession, CourseType, Location, Professor
 from app.models.ops import AppSetting
 from app.models.user import User, UserRole
+from app.services.booking_confirmation_templates import render_booking_confirmation_email
 from app.services.notifications.application.recipients import (
     resolve_admin_booking_notification_recipients,
     resolve_admin_cancellation_recipients,
@@ -44,6 +45,7 @@ from app.services.notifications.infrastructure.repository import (
     create_notification_if_new,
     resolve_notification_rule,
 )
+from app.services.session_teachers import effective_teacher_id_for_session, professor_display_name
 from app.services.shared.queue.redis_queue import queue_push
 
 
@@ -171,12 +173,11 @@ def schedule_booking_created_notifications(
     student_label = (f"{(student.first_name or '').strip()} {(student.last_name or '').strip()}".strip() if student is not None else "") or (
         student.email if student is not None else str(booking.user_id)
     )
-    subject, body = _body_for_booking_notification(
-        is_cancellation=False,
-        course_type_name=course_type.name,
-        start_at=session_obj.start_at_utc,
-        student_label=student_label,
-    )
+    location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
+    teacher_id = effective_teacher_id_for_session(session_obj)
+    teacher = db.scalar(select(Professor).where(Professor.id == teacher_id)) if teacher_id is not None else None
+    location_label = (location.name or "").strip() if location is not None else ""
+    teacher_label = professor_display_name(teacher)
 
     event = create_domain_event(
         db,
@@ -197,6 +198,31 @@ def schedule_booking_created_notifications(
     out: list[OrchestratedNotification] = []
     client_recipient = resolve_client_booking_notification_recipient(db, booking=booking)
     if client_recipient is not None and client_recipient.email is not None:
+        client_contact = (
+            db.scalar(select(User).where(User.id == client_recipient.contact_id))
+            if client_recipient.contact_id is not None
+            else None
+        )
+        client_recipient_name = (
+            f"{(client_contact.first_name or '').strip()} {(client_contact.last_name or '').strip()}".strip()
+            if client_contact is not None
+            else client_recipient.email
+        )
+        rendered = render_booking_confirmation_email(
+            db,
+            audience="CLIENT",
+            recipient_name=client_recipient_name,
+            student_name=student_label,
+            activity_name=course_type.name,
+            start_at=session_obj.start_at_utc,
+            timezone_name=session_obj.timezone,
+            location_name=location_label,
+            teacher_name=teacher_label,
+        )
+    else:
+        rendered = None
+
+    if client_recipient is not None and client_recipient.email is not None and rendered is not None:
         created = create_notification_if_new(
             db,
             notification_type=NOTIFICATION_TYPE_CLIENT_BOOKING_CONFIRMATION,
@@ -212,9 +238,9 @@ def schedule_booking_created_notifications(
             recipient_contact_id=client_recipient.contact_id,
             recipient_email=client_recipient.email,
             recipient_phone=None,
-            subject=subject,
-            body_snapshot=body,
-            payload_snapshot={"booking_id": str(booking.id)},
+            subject=rendered.subject,
+            body_snapshot=rendered.body,
+            payload_snapshot={"booking_id": str(booking.id), "body_format": rendered.body_format},
             idempotency_key=_idempotency_key_for_booking_notification(
                 notification_type=NOTIFICATION_TYPE_CLIENT_BOOKING_CONFIRMATION,
                 booking_id=booking.id,
@@ -229,6 +255,19 @@ def schedule_booking_created_notifications(
 
     for admin_recipient in resolve_admin_booking_notification_recipients(db, is_cancellation=False):
         if admin_recipient.email is None:
+            continue
+        rendered = render_booking_confirmation_email(
+            db,
+            audience="ADMIN",
+            recipient_name="Administration",
+            student_name=student_label,
+            activity_name=course_type.name,
+            start_at=session_obj.start_at_utc,
+            timezone_name=session_obj.timezone,
+            location_name=location_label,
+            teacher_name=teacher_label,
+        )
+        if rendered is None:
             continue
         created = create_notification_if_new(
             db,
@@ -245,9 +284,9 @@ def schedule_booking_created_notifications(
             recipient_contact_id=admin_recipient.contact_id,
             recipient_email=admin_recipient.email,
             recipient_phone=None,
-            subject=subject,
-            body_snapshot=body,
-            payload_snapshot={"booking_id": str(booking.id)},
+            subject=rendered.subject,
+            body_snapshot=rendered.body,
+            payload_snapshot={"booking_id": str(booking.id), "body_format": rendered.body_format},
             idempotency_key=_idempotency_key_for_booking_notification(
                 notification_type=NOTIFICATION_TYPE_ADMIN_BOOKING_CONFIRMATION,
                 booking_id=booking.id,

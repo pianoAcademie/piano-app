@@ -80,6 +80,8 @@ PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT = "QUOTE_APPROVED_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT = "QUOTE_REJECTED_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT = "QUOTE_CHANGE_REQUESTED_DEFAULT"
+PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION = "CLIENT_BOOKING_CONFIRMATION"
+PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION = "ADMIN_BOOKING_CONFIRMATION"
 PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_SMS_DEFAULT"
@@ -683,6 +685,53 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         description="Notification SMS d annulation manuelle ou automatique d un devis.",
         variables_hint="{quote_number} {quote_status_label} {cancelled_at_local} {recipient_name}",
         usage_contexts=(USAGE_CONTEXT_QUOTE_CANCEL,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION,
+        name="Reservation - Confirmation client",
+        channel="EMAIL",
+        subject="Confirmation de votre reservation - {activity_name}",
+        body=(
+            "<p>Bonjour {recipient_name},</p>"
+            "<p>Votre reservation est confirmee.</p>"
+            "<ul>"
+            "<li><strong>Eleve :</strong> {student_name}</li>"
+            "<li><strong>Activite :</strong> {activity_name}</li>"
+            "<li><strong>Date :</strong> {session_date}</li>"
+            "<li><strong>Heure :</strong> {session_time}</li>"
+            "<li><strong>Lieu :</strong> {location_name}</li>"
+            "<li><strong>Professeur :</strong> {teacher_name}</li>"
+            "</ul>"
+            "<p><a href=\"{account_url}\">Acceder a mon compte</a></p>"
+            "<p>Piano Academie</p>"
+        ),
+        description="Confirmation de reservation envoyee au client ou au responsable legal.",
+        variables_hint=(
+            "{recipient_name} {student_name} {activity_name} {session_date} {session_time} "
+            "{session_start_local} {location_name} {teacher_name} {account_url}"
+        ),
+        body_format="HTML",
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION,
+        name="Reservation - Confirmation admin",
+        channel="EMAIL",
+        subject="Nouvelle reservation confirmee - {activity_name}",
+        body=(
+            "<p>Une reservation a ete confirmee.</p>"
+            "<ul>"
+            "<li><strong>Eleve :</strong> {student_name}</li>"
+            "<li><strong>Activite :</strong> {activity_name}</li>"
+            "<li><strong>Date :</strong> {session_date}</li>"
+            "<li><strong>Heure :</strong> {session_time}</li>"
+            "<li><strong>Lieu :</strong> {location_name}</li>"
+            "<li><strong>Professeur :</strong> {teacher_name}</li>"
+            "</ul>"
+            "<p>Piano Academie</p>"
+        ),
+        description="Confirmation de reservation envoyee aux administrateurs.",
+        variables_hint="{student_name} {activity_name} {session_date} {session_time} {session_start_local} {location_name} {teacher_name}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="EVENT_REMINDER",
