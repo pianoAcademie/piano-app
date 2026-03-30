@@ -275,6 +275,7 @@ def _to_admin_session_out(
     location: Location | None = None,
     professor: Professor | None = None,
     substitute_professor: Professor | None = None,
+    recurrence_end_at_utc: datetime | None = None,
 ) -> AdminSessionOut:
     habitual_teacher_display_name = _session_teacher_display_name(professor)
     substitute_teacher_display_name = _session_teacher_display_name(substitute_professor) if substitute_professor is not None else None
@@ -341,9 +342,37 @@ def _to_admin_session_out(
         timezone=session_obj.timezone,
         recurrence_group_id=session_obj.recurrence_group_id,
         recurrence_rule=session_obj.recurrence_rule,
+        recurrence_end_date=(
+            _local_date_in_timezone(recurrence_end_at_utc, session_obj.timezone)
+            if recurrence_end_at_utc is not None and session_obj.recurrence_group_id is not None
+            else None
+        ),
         created_at=session_obj.created_at,
         updated_at=session_obj.updated_at,
     )
+
+
+def _recurrence_end_at_map(
+    db: Session,
+    *,
+    recurrence_group_ids: list[UUID | None],
+) -> dict[UUID, datetime]:
+    filtered_ids = [group_id for group_id in recurrence_group_ids if group_id is not None]
+    if not filtered_ids:
+        return {}
+
+    rows = db.execute(
+        select(CourseSession.recurrence_group_id, func.max(CourseSession.start_at_utc))
+        .where(CourseSession.recurrence_group_id.in_(filtered_ids))
+        .group_by(CourseSession.recurrence_group_id)
+    ).all()
+
+    result: dict[UUID, datetime] = {}
+    for group_id, end_at in rows:
+        if group_id is None or end_at is None:
+            continue
+        result[group_id] = end_at
+    return result
 
 
 def _client_display_name(user: User) -> str:
@@ -2059,6 +2088,10 @@ def list_admin_sessions(
     rows = db.execute(stmt.order_by(CourseSession.start_at_utc.desc())).all()
     session_ids = [session_obj.id for session_obj, _, _, _, _ in rows]
     counts = _booked_counts_map(db, session_ids)
+    recurrence_end_map = _recurrence_end_at_map(
+        db,
+        recurrence_group_ids=[session_obj.recurrence_group_id for session_obj, _, _, _, _ in rows],
+    )
 
     return [
         _to_admin_session_out(
@@ -2068,6 +2101,7 @@ def list_admin_sessions(
             location=location,
             professor=professor,
             substitute_professor=substitute_professor_row,
+            recurrence_end_at_utc=recurrence_end_map.get(session_obj.recurrence_group_id) if session_obj.recurrence_group_id else None,
         )
         for session_obj, course_type, location, professor, substitute_professor_row in rows
     ]
@@ -2092,6 +2126,11 @@ def get_admin_session(
         location=location,
         professor=professor,
         substitute_professor=substitute_professor,
+        recurrence_end_at_utc=(
+            _recurrence_end_at_map(db, recurrence_group_ids=[session_obj.recurrence_group_id]).get(session_obj.recurrence_group_id)
+            if session_obj.recurrence_group_id is not None
+            else None
+        ),
     )
 
 

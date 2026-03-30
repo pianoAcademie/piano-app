@@ -1815,6 +1815,7 @@ class AdminSessionOut(BaseModel):
     timezone: str
     recurrence_group_id: UUID | None
     recurrence_rule: str | None
+    recurrence_end_date: date | None
     created_at: datetime
     updated_at: datetime
 

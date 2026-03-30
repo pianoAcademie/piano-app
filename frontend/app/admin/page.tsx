@@ -1393,8 +1393,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const createRecurrenceInterval = createDraft ? draftPositiveInteger(createDraft.recurrence_interval) ?? 1 : 1;
   const createRecurrenceTimeBasis = createDraft?.recurrence_time_basis?.trim().toUpperCase() === "UTC" ? "UTC" : "LOCAL";
   const editRecurrenceDefaults = parseRecurrenceRuleDefaults(selectedSession?.recurrence_rule);
+  const editDefaultRecurrenceMode = selectedSession?.recurrence_group_id ? "RECURRING" : "NONE";
   const editRecurrenceUntilDate = selectedSession
-    ? toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
+    ? selectedSession.recurrence_end_date ??
+      toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
     : agendaDate;
 
   return (
@@ -2373,11 +2375,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <legend>Recurrence</legend>
                     <div className="recurrence-mode-row">
                       <label className="checkline">
-                        <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
+                        <input type="radio" name="recurrence_mode" value="NONE" defaultChecked={editDefaultRecurrenceMode === "NONE"} />
                         Ne pas modifier la recurrence
                       </label>
                       <label className="checkline">
-                        <input type="radio" name="recurrence_mode" value="RECURRING" />
+                        <input type="radio" name="recurrence_mode" value="RECURRING" defaultChecked={editDefaultRecurrenceMode === "RECURRING"} />
                         Modifier la recurrence
                       </label>
                     </div>

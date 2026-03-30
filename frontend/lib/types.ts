@@ -1131,6 +1131,7 @@ export type AdminSessionOut = {
   timezone: string;
   recurrence_group_id: string | null;
   recurrence_rule: string | null;
+  recurrence_end_date: string | null;
   created_at: string;
   updated_at: string;
 };
