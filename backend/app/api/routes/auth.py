@@ -4,7 +4,9 @@ import hashlib
 import logging
 import re
 import secrets
+import unicodedata
 from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,8 +16,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
 from app.core.config import settings
+from app.models.catalog import CourseSession, CourseType
+from app.models.client_group import ClientGroup, ClientGroupMembership
+from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, PasswordResetToken
-from app.models.user import ClientKind, User, UserRole
+from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.auth import (
     EmailLookupRequest,
     EmailLookupResponse,
@@ -75,6 +80,84 @@ def _validate_timezone(value: str) -> str:
             detail="Invalid timezone",
         ) from exc
     return timezone_name
+
+
+def _synthetic_client_email(*, prefix: str) -> str:
+    return f"{prefix}+{uuid4().hex[:16]}@piano-academie.invalid"
+
+
+def _unique_synthetic_client_email(db: Session, *, prefix: str) -> str:
+    email = _synthetic_client_email(prefix=prefix)
+    while db.scalar(select(User.id).where(User.email == email)) is not None:
+        email = _synthetic_client_email(prefix=prefix)
+    return email
+
+
+def _normalize_match_text(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    normalized = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    collapsed = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+    return re.sub(r"\s+", " ", collapsed)
+
+
+def _resolve_trial_group_label(*, course_type_name: str, is_child_registration: bool) -> str | None:
+    normalized = _normalize_match_text(course_type_name)
+    if not normalized:
+        return None
+    tokens = set(normalized.split(" "))
+    if "eveil" in normalized and "musical" in normalized:
+        return "eveil musical" if is_child_registration else None
+    if "collectif" not in normalized:
+        return None
+    if "enfant" in normalized:
+        return "collectif enfant" if is_child_registration else None
+    if tokens.intersection({"ado", "ados", "adolescent", "adolescents"}):
+        return "collectif ado" if is_child_registration else "collectif adulte"
+    if tokens.intersection({"adulte", "adultes", "adult", "adults"}):
+        return "collectif ado" if is_child_registration else "collectif adulte"
+    return None
+
+
+def _find_active_group_id(db: Session, *, label: str) -> UUID | None:
+    normalized_target = _normalize_match_text(label)
+    if not normalized_target:
+        return None
+    target_tokens = [token for token in normalized_target.split(" ") if token]
+    groups = db.scalars(select(ClientGroup).where(ClientGroup.active.is_(True)).order_by(ClientGroup.name.asc())).all()
+
+    exact_match: UUID | None = None
+    partial_matches: list[tuple[int, UUID]] = []
+    for group in groups:
+        candidates = {
+            _normalize_match_text(group.name),
+            _normalize_match_text(group.code),
+        }
+        if normalized_target in candidates:
+            exact_match = group.id
+            break
+        for candidate in candidates:
+            if candidate and all(token in candidate for token in target_tokens):
+                partial_matches.append((len(candidate), group.id))
+                break
+    if exact_match is not None:
+        return exact_match
+    if partial_matches:
+        partial_matches.sort(key=lambda item: (item[0], str(item[1])))
+        return partial_matches[0][1]
+    return None
+
+
+def _ensure_group_membership(db: Session, *, user_id: UUID, group_id: UUID) -> None:
+    existing = db.scalar(
+        select(ClientGroupMembership.id).where(
+            ClientGroupMembership.user_id == user_id,
+            ClientGroupMembership.group_id == group_id,
+        )
+    )
+    if existing is None:
+        db.add(ClientGroupMembership(user_id=user_id, group_id=group_id))
 
 
 def _hash_reset_token(raw_token: str) -> str:
@@ -154,36 +237,134 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             detail="Email already registered",
         )
 
-    account_first_name = child_first_name if is_child_registration else parent_first_name
-    account_last_name = child_last_name if is_child_registration else parent_last_name
-    private_note = None
-    if is_child_registration:
-        parent_label = " ".join(part for part in [parent_first_name, parent_last_name] if part).strip()
-        if parent_label:
-            private_note = f"Responsable legal: {parent_label}"
+    trial_course_type_name: str | None = None
+    if payload.trial_session_id is not None:
+        trial_row = db.execute(
+            select(CourseSession, CourseType)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .where(CourseSession.id == payload.trial_session_id)
+        ).first()
+        if trial_row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trial session not found")
+        _, trial_course_type = trial_row
+        trial_course_type_name = trial_course_type.name
 
-    user = User(
-        email=normalized_email,
-        hashed_password=hash_password(payload.password),
-        role=UserRole.CLIENT,
-        first_name=account_first_name,
-        last_name=account_last_name,
-        address_line=_normalize_optional(payload.address_line),
-        address_country=residence_country,
-        phone=phone,
-        mobile_phone_1=phone,
-        birth_date=payload.child_birth_date if is_child_registration else None,
-        private_note=private_note,
-        residence_country=residence_country,
-        preferred_currency=preferred_currency,
-        timezone=timezone_name,
-        client_kind=ClientKind.CHILD if is_child_registration else ClientKind.ADULT,
-        email_opt_in=bool(payload.transactional_email_opt_in),
-        sms_opt_in=bool(payload.transactional_sms_opt_in),
-        lesson_reminder_email_opt_in=bool(payload.transactional_email_opt_in),
-        lesson_reminder_sms_opt_in=bool(payload.transactional_sms_opt_in),
-    )
-    db.add(user)
+    primary_status = ClientStatus.TRIAL if payload.trial_session_id is not None else ClientStatus.ACTIVE
+    portal_user: User
+    now = datetime.now(timezone.utc)
+    hashed_password = hash_password(payload.password)
+    relationship_label = "parent"
+
+    if is_child_registration:
+        parent_user = User(
+            email=normalized_email,
+            hashed_password=hashed_password,
+            role=UserRole.CLIENT,
+            first_name=parent_first_name,
+            last_name=parent_last_name,
+            address_line=_normalize_optional(payload.address_line),
+            address_country=residence_country,
+            phone=phone,
+            mobile_phone_1=phone,
+            birth_date=None,
+            private_note=None,
+            residence_country=residence_country,
+            preferred_currency=preferred_currency,
+            timezone=timezone_name,
+            client_kind=ClientKind.ADULT,
+            client_status=ClientStatus.ACTIVE,
+            is_active=True,
+            email_opt_in=bool(payload.transactional_email_opt_in),
+            sms_opt_in=bool(payload.transactional_sms_opt_in),
+            lesson_reminder_email_opt_in=bool(payload.transactional_email_opt_in),
+            lesson_reminder_sms_opt_in=bool(payload.transactional_sms_opt_in),
+            updated_at=now,
+        )
+        parent_label = " ".join(part for part in [parent_first_name, parent_last_name] if part).strip()
+        child_private_note = None
+        if parent_label:
+            child_private_note = f"Responsable legal: {parent_label}"
+        child_user = User(
+            email=_unique_synthetic_client_email(db, prefix="child"),
+            hashed_password=hashed_password,
+            role=UserRole.CLIENT,
+            first_name=child_first_name,
+            last_name=child_last_name,
+            address_line=None,
+            address_country=residence_country,
+            phone=None,
+            mobile_phone_1=None,
+            birth_date=payload.child_birth_date,
+            private_note=child_private_note,
+            residence_country=residence_country,
+            preferred_currency=preferred_currency,
+            timezone=timezone_name,
+            client_kind=ClientKind.CHILD,
+            client_status=primary_status,
+            is_active=True,
+            email_opt_in=False,
+            sms_opt_in=False,
+            lesson_reminder_email_opt_in=False,
+            lesson_reminder_sms_opt_in=False,
+            updated_at=now,
+        )
+        db.add(parent_user)
+        db.add(child_user)
+        db.flush()
+        db.add(
+            ClientFamilyLink(
+                adult_user_id=parent_user.id,
+                child_user_id=child_user.id,
+                relationship_label=relationship_label,
+                is_billing_recipient=True,
+                updated_at=now,
+            )
+        )
+        group_label = _resolve_trial_group_label(
+            course_type_name=trial_course_type_name or "",
+            is_child_registration=True,
+        )
+        if group_label is not None:
+            group_id = _find_active_group_id(db, label=group_label)
+            if group_id is not None:
+                _ensure_group_membership(db, user_id=child_user.id, group_id=group_id)
+        portal_user = parent_user
+    else:
+        user = User(
+            email=normalized_email,
+            hashed_password=hashed_password,
+            role=UserRole.CLIENT,
+            first_name=parent_first_name,
+            last_name=parent_last_name,
+            address_line=_normalize_optional(payload.address_line),
+            address_country=residence_country,
+            phone=phone,
+            mobile_phone_1=phone,
+            birth_date=None,
+            private_note=None,
+            residence_country=residence_country,
+            preferred_currency=preferred_currency,
+            timezone=timezone_name,
+            client_kind=ClientKind.ADULT,
+            client_status=primary_status,
+            is_active=True,
+            email_opt_in=bool(payload.transactional_email_opt_in),
+            sms_opt_in=bool(payload.transactional_sms_opt_in),
+            lesson_reminder_email_opt_in=bool(payload.transactional_email_opt_in),
+            lesson_reminder_sms_opt_in=bool(payload.transactional_sms_opt_in),
+            updated_at=now,
+        )
+        db.add(user)
+        group_label = _resolve_trial_group_label(
+            course_type_name=trial_course_type_name or "",
+            is_child_registration=False,
+        )
+        if group_label is not None:
+            db.flush()
+            group_id = _find_active_group_id(db, label=group_label)
+            if group_id is not None:
+                _ensure_group_membership(db, user_id=user.id, group_id=group_id)
+        portal_user = user
 
     try:
         db.commit()
@@ -200,8 +381,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             detail=f"Database error: {exc.__class__.__name__}",
         ) from exc
 
-    db.refresh(user)
-    return user
+    db.refresh(portal_user)
+    return portal_user
 
 
 @router.post("/login", response_model=TokenResponse)

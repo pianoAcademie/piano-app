@@ -51,11 +51,14 @@ function formatDateTime(value: string, timezone: string): string {
   }).format(parsed);
 }
 
-function buildCheckoutHref(sessionId: string, planningReturnTo: string): string {
+function buildCheckoutHref(sessionId: string, planningReturnTo: string, bookingUserId: string): string {
   const params = new URLSearchParams();
   params.set("session_id", sessionId);
   if (planningReturnTo) {
     params.set("planning_return_to", planningReturnTo);
+  }
+  if (bookingUserId) {
+    params.set("booking_user_id", bookingUserId);
   }
   return `/buy/session/checkout?${params.toString()}`;
 }
@@ -64,9 +67,10 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   const params = searchParams ?? {};
   const sessionId = readParam(params, "session_id").trim();
   const planningReturnTo = readParam(params, "planning_return_to").trim();
+  const bookingUserId = readParam(params, "booking_user_id").trim();
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
-  const checkoutReturnTo = sessionId ? buildCheckoutHref(sessionId, planningReturnTo) : "/buy/session/checkout";
+  const checkoutReturnTo = sessionId ? buildCheckoutHref(sessionId, planningReturnTo, bookingUserId) : "/buy/session/checkout";
 
   if (!sessionId) {
     return (
@@ -158,6 +162,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
             <input type="hidden" name="session_id" value={session.id} />
             <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
             <input type="hidden" name="planning_return_to" value={planningReturnTo} />
+            <input type="hidden" name="booking_user_id" value={bookingUserId} />
             <button type="submit">{submitLabel}</button>
           </form>
 

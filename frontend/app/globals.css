@@ -1541,34 +1541,110 @@ button.danger:focus-visible {
 }
 
 .client-hero-main {
-  margin-top: 10px;
+  margin-top: 14px;
   display: grid;
-  justify-items: center;
-  gap: 10px;
-  text-align: center;
-  color: #f2f6fb;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.24);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 18px 22px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(24, 31, 43, 0.96), rgba(39, 50, 68, 0.92));
+  color: #f7fbff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .client-hero-main h2 {
-  color: #f2f6fb;
+  margin: 0;
+  color: #f7fbff;
+  font-size: clamp(28px, 3vw, 38px);
+  line-height: 1.05;
 }
 
 .client-hero-main .muted {
   color: #c6d2e3;
 }
 
+.client-hero-identity {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.client-photo-shell {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
 .client-avatar {
-  width: 74px;
-  height: 74px;
-  border-radius: 999px;
-  border: 4px solid #f4f6f8;
-  background: #2f3745;
-  color: #f4f6f8;
+  width: 92px;
+  height: 92px;
+  border-radius: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.92);
+  background: linear-gradient(135deg, #2d3645, #161d28);
+  color: #f8fbff;
   display: grid;
   place-items: center;
-  font-size: 24px;
+  font-size: 30px;
   font-weight: 800;
+  letter-spacing: 0.03em;
+  box-shadow: 0 12px 28px rgba(10, 18, 29, 0.24);
+}
+
+.client-photo {
+  width: 92px;
+  height: 92px;
+  border-radius: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.92);
+  object-fit: cover;
+  background: #dde6f0;
+  box-shadow: 0 12px 28px rgba(10, 18, 29, 0.24);
+}
+
+.client-photo-caption {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(235, 242, 251, 0.82);
+}
+
+.client-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.client-hero-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(248, 251, 255, 0.12);
+  border: 1px solid rgba(248, 251, 255, 0.18);
+  color: #eef5ff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .client-hero-main {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .client-hero-identity {
+    justify-items: center;
+  }
+
+  .client-hero-meta {
+    justify-content: center;
+  }
 }
 
 .client-tabs {

@@ -538,6 +538,52 @@ function setQueryParam(path: string, key: string, value: string | null): string 
   }
 }
 
+function sessionCheckoutContext(path: string): { isSessionCheckout: boolean; sessionId: string; bookingUserId: string } {
+  try {
+    const url = new URL(path, "http://localhost");
+    return {
+      isSessionCheckout: url.pathname === "/buy/session/checkout",
+      sessionId: String(url.searchParams.get("session_id") ?? "").trim(),
+      bookingUserId: String(url.searchParams.get("booking_user_id") ?? "").trim(),
+    };
+  } catch {
+    return { isSessionCheckout: false, sessionId: "", bookingUserId: "" };
+  }
+}
+
+async function resolveChildBookingReturnTo(
+  token: string,
+  returnTo: string,
+  registrationSubjectType: "self" | "child",
+): Promise<string> {
+  if (registrationSubjectType !== "child") {
+    return returnTo;
+  }
+  const context = sessionCheckoutContext(returnTo);
+  if (!context.isSessionCheckout || !context.sessionId || context.bookingUserId) {
+    return returnTo;
+  }
+
+  const familyResult = await backendRequest<{
+    links_as_adult: Array<{ child: { id: string } }>;
+  }>("/api/v1/clients/me/family", {}, token);
+  if (!familyResult.ok) {
+    return returnTo;
+  }
+
+  const childIds = [
+    ...new Set(
+      (familyResult.data.links_as_adult || [])
+        .map((link) => String(link.child?.id ?? "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  ];
+  if (childIds.length !== 1) {
+    return returnTo;
+  }
+  return setQueryParam(returnTo, "booking_user_id", childIds[0]);
+}
+
 function parsePositiveInt(raw: string): number | null {
   const value = raw.trim();
   if (!value) {
@@ -1002,9 +1048,13 @@ export async function loginAction(formData: FormData): Promise<void> {
   const mode = String(formData.get("auth_mode") ?? "login").trim().toLowerCase() || "login";
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
+  const registrationSubjectTypeRaw = String(formData.get("registration_subject_type") ?? "self").trim().toLowerCase();
+  const registrationSubjectType = registrationSubjectTypeRaw === "child" ? "child" : "self";
   const loginPathBase = `/login?mode=${encodeURIComponent(mode)}${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&registration_subject_type=${encodeURIComponent(
+    registrationSubjectType,
+  )}`;
 
   const result = await backendRequest<AuthLoginResponse>("/api/v1/auth/login", {
     method: "POST",
@@ -1037,7 +1087,8 @@ export async function loginAction(formData: FormData): Promise<void> {
       redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Connexion%20reussie`);
     }
     if (publicReturnTo) {
-      redirect(appendQueryMessage(publicReturnTo, "ok", "Connexion reussie"));
+      const resolvedReturnTo = await resolveChildBookingReturnTo(result.data.access_token, publicReturnTo, registrationSubjectType);
+      redirect(appendQueryMessage(resolvedReturnTo, "ok", "Connexion reussie"));
     }
     redirect("/client?tab=home&ok=Connexion%20reussie");
   }
@@ -1075,6 +1126,8 @@ export async function registerAction(formData: FormData): Promise<void> {
   }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&registration_subject_type=${encodeURIComponent(
     registration_subject_type,
   )}`;
+  const trialSessionContext = sessionCheckoutContext(publicReturnTo);
+  const trialSessionId = trialSessionContext.isSessionCheckout ? trialSessionContext.sessionId : "";
 
   if (!first_name) {
     redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20prenom.`);
@@ -1122,6 +1175,7 @@ export async function registerAction(formData: FormData): Promise<void> {
       child_first_name: registration_subject_type === "child" ? child_first_name : null,
       child_last_name: registration_subject_type === "child" ? child_last_name : null,
       child_birth_date: registration_subject_type === "child" ? child_birth_date || null : null,
+      trial_session_id: trialSessionId || null,
       transactional_email_opt_in: true,
       transactional_sms_opt_in: true,
       marketing_email_opt_in: marketingEmail,
@@ -1157,7 +1211,12 @@ export async function registerAction(formData: FormData): Promise<void> {
     redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Compte%20cree`);
   }
   if (publicReturnTo) {
-    redirect(appendQueryMessage(publicReturnTo, "ok", "Compte cree"));
+    const resolvedReturnTo = await resolveChildBookingReturnTo(
+      loginResult.data.access_token,
+      publicReturnTo,
+      registration_subject_type,
+    );
+    redirect(appendQueryMessage(resolvedReturnTo, "ok", "Compte cree"));
   }
   redirect("/client?tab=home&ok=Compte%20cree");
 }
@@ -1400,6 +1459,7 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
 
 export async function submitPublicSessionCheckoutAction(formData: FormData): Promise<void> {
   const sessionId = String(formData.get("session_id") ?? "").trim();
+  const bookingUserId = String(formData.get("booking_user_id") ?? "").trim();
   const checkoutReturnTo = safePublicBuyPath(
     String(formData.get("checkout_return_to") ?? "").trim(),
     sessionId ? `/buy/session/checkout?session_id=${encodeURIComponent(sessionId)}` : "/buy/session/checkout",
@@ -1431,6 +1491,7 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
     `/api/v1/clients/me/sessions/${sessionId}/checkout`,
     {
       method: "POST",
+      body: JSON.stringify(bookingUserId ? { user_id: bookingUserId } : {}),
     },
     token,
   );

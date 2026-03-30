@@ -75,6 +75,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                 <input type="hidden" name="auth_mode" value="login" />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
                 <input type="hidden" name="return_to" value={returnTo} />
+                <input type="hidden" name="registration_subject_type" value={registrationSubjectType} />
                 <label>
                   Email
                   <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />

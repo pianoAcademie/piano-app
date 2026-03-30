@@ -1767,16 +1767,22 @@ def create_client_payment_checkout(
 @router.post("/clients/me/sessions/{session_id}/checkout", response_model=ClientSessionCheckoutOut)
 def create_client_session_checkout(
     session_id: UUID,
+    payload: BookingCreateRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CLIENT)),
 ) -> ClientSessionCheckoutOut:
     managed_ids = _managed_client_ids_for_sessions(db, current_user)
+    checkout_payload = payload or BookingCreateRequest()
+    requested_user_id = checkout_payload.user_id
+    if requested_user_id is not None and requested_user_id not in managed_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Target member is not attached to this adult account")
+    lookup_user_ids = [requested_user_id] if requested_user_id is not None else managed_ids
 
     existing_booking = db.scalar(
         select(Booking)
         .where(
             Booking.session_id == session_id,
-            Booking.user_id.in_(managed_ids),
+            Booking.user_id.in_(lookup_user_ids),
         )
         .order_by(Booking.booked_at.desc(), Booking.id.desc())
         .with_for_update()
@@ -1788,7 +1794,7 @@ def create_client_session_checkout(
         try:
             booking_out = book_session(
                 session_id=session_id,
-                payload=BookingCreateRequest(),
+                payload=BookingCreateRequest(user_id=requested_user_id),
                 db=db,
                 current_user=current_user,
             )
@@ -1801,7 +1807,7 @@ def create_client_session_checkout(
                 select(Booking)
                 .where(
                     Booking.session_id == session_id,
-                    Booking.user_id.in_(managed_ids),
+                    Booking.user_id.in_(lookup_user_ids),
                 )
                 .order_by(Booking.booked_at.desc(), Booking.id.desc())
                 .limit(1)
@@ -1820,7 +1826,7 @@ def create_client_session_checkout(
         .join(User, User.id == Booking.user_id)
         .where(
             Booking.id == booking_id,
-            Booking.user_id.in_(managed_ids),
+            Booking.user_id.in_(lookup_user_ids),
         )
         .with_for_update()
     ).first()

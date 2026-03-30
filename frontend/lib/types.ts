@@ -198,6 +198,7 @@ export type AdminClientOut = {
   email: string;
   role: "admin" | "prof" | "client";
   client_kind: "ADULT" | "CHILD" | string;
+  photo_url: string | null;
   client_status: "ACTIVE" | "INACTIVE" | "TRIAL" | "PENDING" | "ARCHIVED" | string;
   first_name: string | null;
   last_name: string | null;

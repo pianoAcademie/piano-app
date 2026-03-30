@@ -683,6 +683,24 @@ function initials(client: AdminClientOut): string {
   return client.email.slice(0, 2).toUpperCase();
 }
 
+function clientPhotoAlt(client: AdminClientOut, fullName: string): string {
+  if (fullName) {
+    return `Photo de ${fullName}`;
+  }
+  return "Photo client";
+}
+
+function visibleClientEmail(email: string | null | undefined): string | null {
+  const normalized = String(email ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.endsWith("@piano-academie.invalid") || normalized.endsWith("@no-email.local")) {
+    return null;
+  }
+  return String(email ?? "").trim() || null;
+}
+
 function tabHref(clientId: string, tab: ClientTab): string {
   return `/admin/clients/${clientId}?tab=${tab}`;
 }
@@ -1988,6 +2006,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceFieldError = (fieldName: string): string | null => invoiceErrorFieldMap[fieldName] ?? null;
   const invoiceFieldInvalid = (fieldName: string): boolean => invoiceFieldError(fieldName) !== null;
   const invoiceFieldAutoFocus = (fieldName: string): boolean => invoiceFirstInvalidField === fieldName;
+  const visibleEmail = visibleClientEmail(client.email);
+  const heroMeta = [
+    visibleEmail,
+    client.mobile_phone_1 ? `Mobile 1: ${client.mobile_phone_1}` : null,
+    client.residence_country,
+    client.preferred_currency,
+    client.client_kind === "CHILD" ? "Enfant" : "Adulte",
+  ].filter(Boolean) as string[];
 
   return (
     <section className="admin-page-grid client-detail-page">
@@ -2012,13 +2038,29 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </div>
 
         <div className="client-hero-main">
-          <div className="client-avatar">{initials(client)}</div>
-          <div>
-            <h2>{fullName || client.email}</h2>
-            <p className="muted">
-              {client.email} | Mobile 1: {client.mobile_phone_1 ?? "-"} | {client.residence_country} | {client.preferred_currency} |{" "}
-              {client.client_kind === "CHILD" ? "Enfant" : "Adulte"}
-            </p>
+          <div className="client-photo-shell">
+            {client.photo_url ? (
+              <img
+                className="client-photo"
+                src={client.photo_url}
+                alt={clientPhotoAlt(client, fullName)}
+              />
+            ) : (
+              <div className="client-avatar" aria-hidden="true">
+                {initials(client)}
+              </div>
+            )}
+            <div className="client-photo-caption">Photo client</div>
+          </div>
+          <div className="client-hero-identity">
+            <h2>{fullName || "Client"}</h2>
+            <div className="client-hero-meta" aria-label="Informations du client">
+              {heroMeta.map((item) => (
+                <span key={item} className="client-hero-meta-chip">
+                  {item}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
 

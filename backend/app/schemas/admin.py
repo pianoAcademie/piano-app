@@ -654,6 +654,7 @@ class AdminClientOut(BaseModel):
     email: str
     role: UserRole
     client_kind: ClientKind
+    photo_url: str | None = None
     first_name: str | None
     last_name: str | None
     address_line: str | None
