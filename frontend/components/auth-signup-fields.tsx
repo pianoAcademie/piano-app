@@ -11,16 +11,18 @@ type AuthSignupFieldsProps = {
   emailHint: string;
   defaultCountry: string;
   countryOptions: CountryOption[];
+  defaultRegistrationSubjectType?: "self" | "child";
 };
 
 export default function AuthSignupFields({
   emailHint,
   defaultCountry,
   countryOptions,
+  defaultRegistrationSubjectType = "self",
 }: AuthSignupFieldsProps): JSX.Element {
-  const [registrationSubjectType, setRegistrationSubjectType] = useState<"self" | "child">("self");
+  const [registrationSubjectType, setRegistrationSubjectType] = useState<"self" | "child">(defaultRegistrationSubjectType);
   const isChildRegistration = registrationSubjectType === "child";
-  const contactLabelSuffix = isChildRegistration ? " du parent / responsable" : "";
+  const contactLabelSuffix = isChildRegistration ? " du parent / responsable legal" : "";
 
   return (
     <>
@@ -40,7 +42,7 @@ export default function AuthSignupFields({
         </label>
         <p className="muted">
           {isChildRegistration
-            ? "Renseignez ici les coordonnees du parent ou responsable legal. Les informations de l enfant seront completees ensuite."
+            ? "Renseignez ici les coordonnees du parent ou responsable legal, puis les informations de l enfant juste en dessous."
             : "Renseignez ici les informations de la personne qui cree le compte client."}
         </p>
         <label>
@@ -73,6 +75,27 @@ export default function AuthSignupFields({
           Mot de passe
           <input type="password" name="password" required minLength={8} autoComplete="new-password" />
         </label>
+
+        {isChildRegistration ? (
+          <div className="auth-child-details">
+            <p className="auth-consent-group-title">Informations de l enfant</p>
+            <p className="muted">
+              Ces informations servent a creer le compte eleve en statut essai et a rattacher la reservation au bon enfant.
+            </p>
+            <label>
+              Prenom de l enfant
+              <input type="text" name="child_first_name" required={isChildRegistration} maxLength={100} autoComplete="off" />
+            </label>
+            <label>
+              Nom de l enfant
+              <input type="text" name="child_last_name" required={isChildRegistration} maxLength={100} autoComplete="off" />
+            </label>
+            <label>
+              Date de naissance de l enfant
+              <input type="date" name="child_birth_date" required={isChildRegistration} />
+            </label>
+          </div>
+        ) : null}
       </section>
 
       <section className="auth-step-card">

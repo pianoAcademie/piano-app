@@ -127,16 +127,25 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
     residence_country = payload.residence_country.upper()
     preferred_currency = payload.preferred_currency.upper()
     timezone_name = _validate_timezone(payload.timezone)
-    first_name = _normalize_optional(payload.first_name)
-    last_name = _normalize_optional(payload.last_name)
+    parent_first_name = _normalize_optional(payload.first_name)
+    parent_last_name = _normalize_optional(payload.last_name)
     phone = _normalize_optional(payload.phone)
+    child_first_name = _normalize_optional(payload.child_first_name)
+    child_last_name = _normalize_optional(payload.child_last_name)
+    is_child_registration = payload.registration_subject_type == "child"
 
-    if not first_name:
+    if not parent_first_name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="First name is required")
-    if not last_name:
+    if not parent_last_name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Last name is required")
     if not phone:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Phone is required")
+    if is_child_registration and not child_first_name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Child first name is required")
+    if is_child_registration and not child_last_name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Child last name is required")
+    if is_child_registration and payload.child_birth_date is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Child birth date is required")
 
     existing = db.scalar(select(User).where(User.email == normalized_email))
     if existing is not None:
@@ -145,20 +154,30 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             detail="Email already registered",
         )
 
+    account_first_name = child_first_name if is_child_registration else parent_first_name
+    account_last_name = child_last_name if is_child_registration else parent_last_name
+    private_note = None
+    if is_child_registration:
+        parent_label = " ".join(part for part in [parent_first_name, parent_last_name] if part).strip()
+        if parent_label:
+            private_note = f"Responsable legal: {parent_label}"
+
     user = User(
         email=normalized_email,
         hashed_password=hash_password(payload.password),
         role=UserRole.CLIENT,
-        first_name=first_name,
-        last_name=last_name,
+        first_name=account_first_name,
+        last_name=account_last_name,
         address_line=_normalize_optional(payload.address_line),
         address_country=residence_country,
         phone=phone,
         mobile_phone_1=phone,
+        birth_date=payload.child_birth_date if is_child_registration else None,
+        private_note=private_note,
         residence_country=residence_country,
         preferred_currency=preferred_currency,
         timezone=timezone_name,
-        client_kind=ClientKind.CHILD if payload.registration_subject_type == "child" else ClientKind.ADULT,
+        client_kind=ClientKind.CHILD if is_child_registration else ClientKind.ADULT,
         email_opt_in=bool(payload.transactional_email_opt_in),
         sms_opt_in=bool(payload.transactional_sms_opt_in),
         lesson_reminder_email_opt_in=bool(payload.transactional_email_opt_in),

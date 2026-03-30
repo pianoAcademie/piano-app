@@ -1091,7 +1091,7 @@ def _invoice_range_payment_url(
             metadata=metadata,
         )
         query = urlencode({"token": token})
-        return f"{_frontend_base_url()}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay?{query}"
+        return f"{_frontend_base_url()}/api/v1/public/payments/invoices/range/{client_id}/{note_id}?{query}"
 
     amount, currency = _invoice_range_primary_total(metadata)
     params = urlencode(
@@ -7319,15 +7319,15 @@ def start_admin_client_range_invoice_public_payment(
     invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
     base_url = _frontend_base_url()
     success_return_url = (
-        f"{base_url}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay/return"
+        f"{base_url}/api/v1/public/payments/invoices/range/{client_id}/{note_id}/return"
         f"?token={urlencode({'token': token}).split('=', 1)[1]}&state=success"
     )
     cancel_return_url = (
-        f"{base_url}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay/return"
+        f"{base_url}/api/v1/public/payments/invoices/range/{client_id}/{note_id}/return"
         f"?token={urlencode({'token': token}).split('=', 1)[1]}&state=cancel"
     )
     webhook_url = with_webhook_secret(
-        f"{base_url}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay/webhook?token={urlencode({'token': token}).split('=', 1)[1]}",
+        f"{base_url}/api/v1/public/payments/invoices/range/{client_id}/{note_id}/webhook?token={urlencode({'token': token}).split('=', 1)[1]}",
         settings.payment_webhook_secret,
     )
 

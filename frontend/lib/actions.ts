@@ -1053,6 +1053,9 @@ export async function registerAction(formData: FormData): Promise<void> {
   const phone = String(formData.get("phone") ?? "").trim();
   const registrationSubjectTypeRaw = String(formData.get("registration_subject_type") ?? "self").trim().toLowerCase();
   const registration_subject_type = registrationSubjectTypeRaw === "child" ? "child" : "self";
+  const child_first_name = String(formData.get("child_first_name") ?? "").trim();
+  const child_last_name = String(formData.get("child_last_name") ?? "").trim();
+  const child_birth_date = String(formData.get("child_birth_date") ?? "").trim();
   const studentPhoto = formData.get("student_photo");
   const studentPhotoFile =
     typeof File !== "undefined" && studentPhoto instanceof File && studentPhoto.size > 0
@@ -1067,13 +1070,24 @@ export async function registerAction(formData: FormData): Promise<void> {
   const timezone = "Europe/Paris";
   const signupPathBase = `/login?mode=signup${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&registration_subject_type=${encodeURIComponent(
+    registration_subject_type,
+  )}`;
 
   if (!first_name) {
     redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20prenom.`);
   }
   if (!last_name) {
     redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20nom.`);
+  }
+  if (registration_subject_type === "child" && !child_first_name) {
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20le%20prenom%20de%20l%27enfant.`);
+  }
+  if (registration_subject_type === "child" && !child_last_name) {
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20le%20nom%20de%20l%27enfant.`);
+  }
+  if (registration_subject_type === "child" && !child_birth_date) {
+    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20la%20date%20de%20naissance%20de%20l%27enfant.`);
   }
   if (!email.includes("@")) {
     redirect(`${signupPathBase}&error=Veuillez%20saisir%20une%20adresse%20email%20valide.`);
@@ -1103,6 +1117,9 @@ export async function registerAction(formData: FormData): Promise<void> {
       last_name,
       phone,
       registration_subject_type,
+      child_first_name: registration_subject_type === "child" ? child_first_name : null,
+      child_last_name: registration_subject_type === "child" ? child_last_name : null,
+      child_birth_date: registration_subject_type === "child" ? child_birth_date || null : null,
       transactional_email_opt_in: true,
       transactional_sms_opt_in: true,
       marketing_email_opt_in: marketingEmail,

@@ -20,6 +20,7 @@ type AdminIntegrationPlanningEmbedProps = {
   locations: LocationOut[];
   selectedActivityId?: string;
   selectedLocationId?: string;
+  selectedStartDate?: string;
 };
 
 export default function AdminIntegrationPlanningEmbed({
@@ -28,6 +29,7 @@ export default function AdminIntegrationPlanningEmbed({
   locations,
   selectedActivityId = "",
   selectedLocationId = "",
+  selectedStartDate = "",
 }: AdminIntegrationPlanningEmbedProps): JSX.Element {
   const eligibleActivities = [...activities]
     .filter((activity) => activity.active && activity.allows_student_bookings)
@@ -38,10 +40,17 @@ export default function AdminIntegrationPlanningEmbed({
 
   const selectedActivity = eligibleActivities.find((activity) => activity.id === selectedActivityId) ?? null;
   const selectedLocation = activeLocations.find((location) => location.id === selectedLocationId) ?? null;
-  const embedPath =
-    selectedActivity && selectedLocation
-      ? `/embed/planning?course_type_id=${encodeURIComponent(selectedActivity.id)}&location_id=${encodeURIComponent(selectedLocation.id)}`
-      : "";
+  const embedParams = new URLSearchParams();
+  if (selectedActivity) {
+    embedParams.set("course_type_id", selectedActivity.id);
+  }
+  if (selectedLocation) {
+    embedParams.set("location_id", selectedLocation.id);
+  }
+  if (selectedStartDate) {
+    embedParams.set("date", selectedStartDate);
+  }
+  const embedPath = selectedActivity && selectedLocation ? `/embed/planning?${embedParams.toString()}` : "";
   const normalizedBaseUrl = normalizeBaseUrl(accountWebsite);
   const absoluteEmbedUrl = embedPath && normalizedBaseUrl ? `${normalizedBaseUrl}${embedPath}` : "";
   const iframeTitle =
@@ -87,9 +96,14 @@ export default function AdminIntegrationPlanningEmbed({
           </select>
         </label>
 
+        <label>
+          Date de depart (optionnel)
+          <input type="date" name="integration_date" defaultValue={selectedStartDate} />
+        </label>
+
         <div className="row span-2">
           <button type="submit">Generer le code iframe</button>
-          {selectedActivity || selectedLocation ? (
+          {selectedActivity || selectedLocation || selectedStartDate ? (
             <Link className="ghost small-btn" href="/admin/config?section=integrations">
               Reinitialiser
             </Link>
@@ -103,6 +117,7 @@ export default function AdminIntegrationPlanningEmbed({
           <li>Seuls les creneaux avec reservation externe active et un tarif externe TTC renseigne apparaitront dans l iframe.</li>
           <li>Le tarif externe se regle directement sur chaque creneau dans l agenda admin.</li>
           <li>Le visiteur peut ouvrir un slot, se connecter ou creer un compte, puis reserver la session depuis l iframe.</li>
+          <li>Vous pouvez fixer une date de depart pour ouvrir directement le planning sur une semaine ciblee.</li>
         </ul>
       </section>
 
@@ -120,6 +135,7 @@ export default function AdminIntegrationPlanningEmbed({
               <h4>Resultat</h4>
               <p className="muted">
                 {selectedActivity?.name} · {selectedLocation?.name}
+                {selectedStartDate ? ` · debut ${selectedStartDate}` : ""}
               </p>
             </div>
             <div className="row">

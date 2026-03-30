@@ -35,13 +35,16 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
   const emailHint = readParam(searchParams, "email");
   const purchaseContext = readParam(searchParams, "purchase_context");
   const returnTo = readParam(searchParams, "return_to");
+  const registrationSubjectType = readParam(searchParams, "registration_subject_type").trim().toLowerCase() === "child" ? "child" : "self";
   const mode = resolveMode(readParam(searchParams, "mode").trim().toLowerCase(), resetToken);
   const preservedPurchaseContext = purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : "";
   const preservedReturnTo = returnTo ? `&return_to=${encodeURIComponent(returnTo)}` : "";
   const preservedEmail = emailHint ? `&email=${encodeURIComponent(emailHint)}` : "";
-  const loginHref = `/login?mode=login${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}`;
-  const signupHref = `/login?mode=signup${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}`;
-  const forgotHref = `/login?mode=forgot${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}`;
+  const preservedRegistrationSubjectType =
+    registrationSubjectType === "child" ? `&registration_subject_type=${encodeURIComponent(registrationSubjectType)}` : "";
+  const loginHref = `/login?mode=login${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}`;
+  const signupHref = `/login?mode=signup${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}`;
+  const forgotHref = `/login?mode=forgot${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}`;
 
   return (
     <main className="page auth-page">
@@ -145,7 +148,12 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                 <input type="hidden" name="auth_mode" value="signup" />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
                 <input type="hidden" name="return_to" value={returnTo} />
-                <AuthSignupFields emailHint={emailHint} defaultCountry={DEFAULT_COUNTRY} countryOptions={COUNTRY_OPTIONS} />
+                <AuthSignupFields
+                  emailHint={emailHint}
+                  defaultCountry={DEFAULT_COUNTRY}
+                  countryOptions={COUNTRY_OPTIONS}
+                  defaultRegistrationSubjectType={registrationSubjectType}
+                />
 
                 <section className="auth-step-card auth-consent-card">
                   <h3>Etape 3 - Consentements et validation</h3>

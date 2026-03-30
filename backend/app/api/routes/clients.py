@@ -412,10 +412,23 @@ def _create_invoice_range_public_payment_token(
 
 def _invoice_range_public_payment_url(*, client_id: UUID, note_id: UUID, metadata: dict[str, object]) -> str:
     token = _create_invoice_range_public_payment_token(client_id=client_id, note_id=note_id, metadata=metadata)
-    return (
-        f"{_frontend_url(path='')}/api/v1/admin/clients/{client_id}/invoices/range/{note_id}/public-pay"
-        f"?token={token}"
+    return f"{_frontend_url(path='')}/api/v1/public/payments/invoices/range/{client_id}/{note_id}?token={token}"
+
+
+def _normalize_public_invoice_payment_url(raw_url: str | None) -> str:
+    normalized = (raw_url or "").strip()
+    if not normalized or "/api/v1/admin/clients/" not in normalized or "/public-pay" not in normalized:
+        return normalized
+    normalized = normalized.replace(
+        "/api/v1/admin/clients/",
+        "/api/v1/public/payments/invoices/range/",
+        1,
     )
+    normalized = normalized.replace("/invoices/range/", "/", 1)
+    normalized = normalized.replace("/public-pay/return", "/return")
+    normalized = normalized.replace("/public-pay/webhook", "/webhook")
+    normalized = normalized.replace("/public-pay", "")
+    return normalized
 
 
 def _payment_key(*, source: str, payment_id: UUID) -> str:
@@ -2131,7 +2144,7 @@ def list_client_invoices(
                 currency=currency_code,
                 reference=str(note.id),
                 download_url=f"/client/invoices/invoice-range:{note.id}/download",
-                payment_url=str(metadata.get("payment_url") or "").strip()
+                payment_url=_normalize_public_invoice_payment_url(str(metadata.get("payment_url") or "").strip())
                 or _invoice_range_public_payment_url(client_id=note.user_id, note_id=note.id, metadata=metadata),
                 included_payment_keys=payment_keys,
             )

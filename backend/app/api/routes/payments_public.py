@@ -6,11 +6,17 @@ from decimal import Decimal
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import SessionLocal
+from app.api.deps import SessionLocal, get_db
+from app.api.routes.admin_clients import (
+    handle_admin_client_range_invoice_public_payment_webhook,
+    return_admin_client_range_invoice_public_payment,
+    start_admin_client_range_invoice_public_payment,
+)
 from app.core.config import settings
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
 from app.models.user import User
@@ -166,3 +172,52 @@ async def payment_webhook(
         return {"ok": True, "processed": True, "payment_status": status_text}
     finally:
         db.close()
+
+
+@router.get("/invoices/range/{client_id}/{note_id}")
+def start_invoice_range_public_payment(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    return start_admin_client_range_invoice_public_payment(
+        client_id=client_id,
+        note_id=note_id,
+        token=token,
+        db=db,
+    )
+
+
+@router.post("/invoices/range/{client_id}/{note_id}/webhook")
+def handle_invoice_range_public_payment_webhook(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    secret: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return handle_admin_client_range_invoice_public_payment_webhook(
+        client_id=client_id,
+        note_id=note_id,
+        token=token,
+        secret=secret,
+        db=db,
+    )
+
+
+@router.get("/invoices/range/{client_id}/{note_id}/return")
+def return_invoice_range_public_payment(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    state: str = Query(default="success"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    return return_admin_client_range_invoice_public_payment(
+        client_id=client_id,
+        note_id=note_id,
+        token=token,
+        state=state,
+        db=db,
+    )

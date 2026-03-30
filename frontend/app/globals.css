@@ -10726,6 +10726,14 @@ button.danger:focus-visible {
   gap: 10px;
 }
 
+.auth-child-details {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f1;
+}
+
 .auth-consent-group-title {
   margin: 0;
   font-size: 13px;

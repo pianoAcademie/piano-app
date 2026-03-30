@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -11,6 +12,9 @@ class RegisterRequest(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     registration_subject_type: Literal["self", "child"] = "self"
+    child_first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    child_last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    child_birth_date: date | None = None
     transactional_email_opt_in: bool = True
     transactional_sms_opt_in: bool = True
     marketing_email_opt_in: bool = False

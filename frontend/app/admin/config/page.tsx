@@ -803,6 +803,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const errorMessage = readParam(params, "error");
   const selectedIntegrationActivityId = readParam(params, "integration_course_type_id").trim();
   const selectedIntegrationLocationId = readParam(params, "integration_location_id").trim();
+  const selectedIntegrationDate = readParam(params, "integration_date").trim();
 
   const messagingListPath = buildConfigHref("params-messaging", { messaging_tab: messagingTab });
 
@@ -4124,6 +4125,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               locations={integrationLocations}
               selectedActivityId={selectedIntegrationActivityId}
               selectedLocationId={selectedIntegrationLocationId}
+              selectedStartDate={selectedIntegrationDate}
             />
           ) : null}
 
