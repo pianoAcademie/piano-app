@@ -321,6 +321,40 @@ export type AdminClientBookingOut = {
   vat_amount_snapshot: string;
   total_incl_vat_snapshot: string;
   currency_snapshot: string;
+  scheduled_service_date: string | null;
+  service_completed_at: string | null;
+  payment_received: boolean;
+  payment_received_at: string | null;
+  payment_received_amount: string | null;
+  payment_receipt_id: string | null;
+  payment_receipt_number: string | null;
+  payment_receipt_status: string | null;
+  payment_receipt_sent_at: string | null;
+  final_invoice_generated: boolean;
+  final_invoice_note_id: string | null;
+  final_invoice_number: string | null;
+  final_invoice_status: string | null;
+};
+
+export type AdminPaymentReceiptOut = {
+  id: string;
+  receipt_number: string | null;
+  status: string;
+  customer_id: string;
+  student_id: string | null;
+  booking_id: string;
+  amount_paid: string;
+  currency: string;
+  paid_at: string | null;
+  payment_method: string | null;
+  payment_provider: string | null;
+  payment_transaction_reference: string | null;
+  reservation_label: string;
+  scheduled_service_date: string | null;
+  location_label: string | null;
+  email_sent_at: string | null;
+  final_invoice_note_id: string | null;
+  final_invoice_generated_at: string | null;
 };
 
 export type AdminClientMessageOut = {

@@ -8,6 +8,7 @@ from app.models.client_record import (
     ClientManualTransaction,
     ClientNoteEntry,
     ClientPaymentRefund,
+    PaymentReceipt,
 )
 from app.models.catalog import (
     Booking,
@@ -149,6 +150,7 @@ __all__ = [
     "ClientNoteEntry",
     "ClientForfaitActivityPricing",
     "ClientPaymentRefund",
+    "PaymentReceipt",
     "ClientStatus",
     "ClientPlanSubscription",
     "CourseSession",

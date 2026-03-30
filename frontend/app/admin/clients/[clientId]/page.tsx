@@ -18,7 +18,9 @@ import {
   createAdminClientManualTransactionAction,
   updateAdminClientManualTransactionAction,
   deleteAdminClientManualTransactionAction,
+  generateAdminClientBookingFinalInvoiceAction,
   refundAdminClientPaymentAction,
+  sendAdminClientPaymentReceiptAction,
   sendAdminClientRangeInvoiceEmailAction,
   sendAdminClientMessageAction,
   sendAdminClientPasswordAction,
@@ -645,6 +647,14 @@ function rangeInvoicePdfHref(clientId: string, noteId: string, inline = false): 
     payment_return_tab: "factures",
   });
   return `/admin/clients/${clientId}/invoices/range/${noteId}/pdf?${params.toString()}`;
+}
+
+function paymentReceiptPdfHref(clientId: string, receiptId: string, inline = false): string {
+  const params = new URLSearchParams({
+    inline: inline ? "true" : "false",
+    payment_return_tab: "reservations",
+  });
+  return `/admin/clients/${clientId}/payment-receipts/${receiptId}/pdf?${params.toString()}`;
 }
 
 function rangeInvoiceStatusLabel(status: string): string {
@@ -1568,6 +1578,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const pastBookings = bookings
     .filter((row) => Date.parse(row.session_start_at_utc) < Date.now())
     .sort((a, b) => b.session_start_at_utc.localeCompare(a.session_start_at_utc));
+  const reservationRows = [...upcomingBookings, ...pastBookings];
 
   const paymentsAsOfDate = payments.filter((row) => {
     const occurredAtMs = Date.parse(row.occurred_at);
@@ -5377,66 +5388,264 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       ) : null}
 
       {currentTab === "reservations" ? (
-        <section className="grid cols-2">
+        <section className="admin-page-grid">
+          <section className="grid cols-2">
+            <article className="card">
+              <h3>Stats reservations</h3>
+              <div className="list">
+                <article className="item row spread">
+                  <span className="muted">Taux de presence</span>
+                  <strong>{formatPercent(attendanceRate)}</strong>
+                </article>
+                <article className="item row spread">
+                  <span className="muted">Reservations a venir</span>
+                  <strong>{upcomingBookings.length}</strong>
+                </article>
+                <article className="item row spread">
+                  <span className="muted">Historique reservations</span>
+                  <strong>{pastBookings.length}</strong>
+                </article>
+                <article className="item row spread">
+                  <span className="muted">Paiements recus</span>
+                  <strong>{bookings.filter((row) => row.payment_received).length}</strong>
+                </article>
+                <article className="item row spread">
+                  <span className="muted">Factures finales generees</span>
+                  <strong>{bookings.filter((row) => row.final_invoice_generated).length}</strong>
+                </article>
+              </div>
+
+              <form action={adminClientActionPlaceholder} className="grid">
+                <input type="hidden" name="client_id" value={client.id} />
+                <input type="hidden" name="action_name" value="Rattachement de cours" />
+                <button type="submit">Rattacher un cours</button>
+              </form>
+            </article>
+
+            <article className="card">
+              <h3>Planning du client</h3>
+              <h4>Prochains cours</h4>
+              {upcomingBookings.length === 0 ? (
+                <p className="muted">Aucune reservation a venir.</p>
+              ) : (
+                <div className="list">
+                  {upcomingBookings.slice(0, 12).map((row) => (
+                    <article key={row.id} className="item">
+                      <div className="row spread">
+                        <strong>{row.session_title}</strong>
+                        <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
+                      </div>
+                      <p className="muted">
+                        {formatDate(row.session_start_at_utc)} | {row.course_type_name} | {row.location_name}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+
+              <h4>Historique recent</h4>
+              {pastBookings.length === 0 ? (
+                <p className="muted">Pas encore d&apos;historique.</p>
+              ) : (
+                <div className="list">
+                  {pastBookings.slice(0, 10).map((row) => (
+                    <article key={row.id} className="item row spread">
+                      <div>
+                        <strong>{row.session_title}</strong>
+                        <p className="muted">{formatDate(row.session_start_at_utc)}</p>
+                      </div>
+                      <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </article>
+          </section>
+
           <article className="card">
-            <h3>Stats reservations</h3>
-            <div className="list">
-              <article className="item row spread">
-                <span className="muted">Taux de presence</span>
-                <strong>{formatPercent(attendanceRate)}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Reservations a venir</span>
-                <strong>{upcomingBookings.length}</strong>
-              </article>
-              <article className="item row spread">
-                <span className="muted">Historique reservations</span>
-                <strong>{pastBookings.length}</strong>
-              </article>
+            <div className="row spread">
+              <div className="stack-xs">
+                <h3>Suivi paiements / justificatifs / factures finales</h3>
+                <p className="muted">
+                  Pour chaque reservation, l&apos;admin voit si le paiement est recu, si le justificatif a ete envoye et si la
+                  facture finale a deja ete emise.
+                </p>
+              </div>
+              <div className="row">
+                <span className="badge">Justificatifs envoyes: {bookings.filter((row) => Boolean(row.payment_receipt_sent_at)).length}</span>
+                <span className="badge">Prestations realisees: {bookings.filter((row) => Boolean(row.service_completed_at)).length}</span>
+              </div>
             </div>
 
-            <form action={adminClientActionPlaceholder} className="grid">
-              <input type="hidden" name="client_id" value={client.id} />
-              <input type="hidden" name="action_name" value="Rattachement de cours" />
-              <button type="submit">Rattacher un cours</button>
-            </form>
-          </article>
-
-          <article className="card">
-            <h3>Planning du client</h3>
-            <h4>Prochains cours</h4>
-            {upcomingBookings.length === 0 ? (
-              <p className="muted">Aucune reservation a venir.</p>
+            {reservationRows.length === 0 ? (
+              <p className="muted">Aucune reservation pour ce client.</p>
             ) : (
-              <div className="list">
-                {upcomingBookings.slice(0, 12).map((row) => (
-                  <article key={row.id} className="item">
-                    <div className="row spread">
-                      <strong>{row.session_title}</strong>
-                      <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
-                    </div>
-                    <p className="muted">
-                      {formatDate(row.session_start_at_utc)} | {row.course_type_name} | {row.location_name}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            )}
-
-            <h4>Historique recent</h4>
-            {pastBookings.length === 0 ? (
-              <p className="muted">Pas encore d&apos;historique.</p>
-            ) : (
-              <div className="list">
-                {pastBookings.slice(0, 10).map((row) => (
-                  <article key={row.id} className="item row spread">
-                    <div>
-                      <strong>{row.session_title}</strong>
-                      <p className="muted">{formatDate(row.session_start_at_utc)}</p>
-                    </div>
-                    <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
-                  </article>
-                ))}
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Prestation</th>
+                      <th>Reservation</th>
+                      <th>Paiement recu</th>
+                      <th>Justificatif</th>
+                      <th>Facture finale</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reservationRows.map((row) => {
+                      const canGenerateFinalInvoice =
+                        !row.final_invoice_generated &&
+                        row.status.toUpperCase() !== "CANCELLED" &&
+                        row.session_status.toUpperCase() === "COMPLETED";
+                      const waitingForService =
+                        !row.final_invoice_generated &&
+                        row.status.toUpperCase() !== "CANCELLED" &&
+                        row.session_status.toUpperCase() !== "COMPLETED";
+                      return (
+                        <tr key={row.id}>
+                          <td>
+                            <div className="stack-xs">
+                              <strong>{formatDateOnlyNumeric(row.scheduled_service_date ?? row.session_start_at_utc)}</strong>
+                              <small className="muted">{formatDate(row.session_start_at_utc)}</small>
+                              {row.service_completed_at ? (
+                                <small className="muted">Realisee le {formatDate(row.service_completed_at)}</small>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="stack-xs">
+                              <strong>{row.session_title}</strong>
+                              <small className="muted">
+                                {row.course_type_name} | {row.location_name}
+                              </small>
+                              <small className="muted">
+                                Tarif {formatMoney(row.total_incl_vat_snapshot, row.currency_snapshot)} | TVA{" "}
+                                {formatVatRateLabel(row.vat_rate_snapshot)}
+                              </small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="stack-xs">
+                              <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
+                              <small className="muted">Session: {row.session_status}</small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="stack-xs">
+                              <span className={`status-pill ${row.payment_received ? "status-ok" : "status-warn"}`}>
+                                {row.payment_received ? "Oui" : "Non"}
+                              </span>
+                              <small className="muted">
+                                {row.payment_received
+                                  ? `${formatMoney(row.payment_received_amount ?? row.total_incl_vat_snapshot, row.currency_snapshot)}${
+                                      row.payment_received_at ? ` | ${formatDate(row.payment_received_at)}` : ""
+                                    }`
+                                  : "Aucun paiement confirme"}
+                              </small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="stack-xs">
+                              <span
+                                className={`status-pill ${
+                                  row.payment_receipt_sent_at
+                                    ? "status-ok"
+                                    : row.payment_receipt_status === "COMPLETED"
+                                      ? "status-warn"
+                                      : "status-off"
+                                }`}
+                              >
+                                {row.payment_receipt_sent_at
+                                  ? "Envoye"
+                                  : row.payment_receipt_status === "COMPLETED"
+                                    ? "A renvoyer"
+                                    : row.payment_receipt_status || "Non cree"}
+                              </span>
+                              <small className="muted">
+                                {row.payment_receipt_number
+                                  ? row.payment_receipt_number
+                                  : row.payment_received
+                                    ? "Justificatif en attente de numero"
+                                    : "Pas de justificatif pour l instant"}
+                              </small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="stack-xs">
+                              <span className={`status-pill ${row.final_invoice_generated ? "status-ok" : "status-off"}`}>
+                                {row.final_invoice_generated ? row.final_invoice_status || "Generee" : "Non generee"}
+                              </span>
+                              <small className="muted">
+                                {row.final_invoice_number
+                                  ? row.final_invoice_number
+                                  : waitingForService
+                                    ? "Emission a la realisation"
+                                    : canGenerateFinalInvoice
+                                      ? "Prete a etre emise"
+                                      : "Aucune facture finale"}
+                              </small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="row payment-row-actions">
+                              {row.payment_receipt_id && row.payment_receipt_status === "COMPLETED" ? (
+                                <>
+                                  <a
+                                    className="client-action-icon"
+                                    href={paymentReceiptPdfHref(client.id, row.payment_receipt_id)}
+                                    title="Telecharger le justificatif"
+                                  >
+                                    ↓
+                                  </a>
+                                  <form action={sendAdminClientPaymentReceiptAction}>
+                                    <input type="hidden" name="client_id" value={client.id} />
+                                    <input type="hidden" name="receipt_id" value={row.payment_receipt_id} />
+                                    <input type="hidden" name="return_tab" value="reservations" />
+                                    <button type="submit" className="client-action-icon" title="Renvoyer le justificatif">
+                                      ✉
+                                    </button>
+                                  </form>
+                                </>
+                              ) : null}
+                              {row.final_invoice_generated && row.final_invoice_note_id ? (
+                                <>
+                                  <a
+                                    className="client-action-icon"
+                                    href={rangeInvoicePdfHref(client.id, row.final_invoice_note_id, true)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title="Voir la facture finale"
+                                  >
+                                    V
+                                  </a>
+                                  <a
+                                    className="client-action-icon"
+                                    href={rangeInvoicePdfHref(client.id, row.final_invoice_note_id, false)}
+                                    title="Telecharger la facture finale"
+                                  >
+                                    ↓
+                                  </a>
+                                </>
+                              ) : null}
+                              {canGenerateFinalInvoice ? (
+                                <form action={generateAdminClientBookingFinalInvoiceAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="booking_id" value={row.id} />
+                                  <input type="hidden" name="return_tab" value="reservations" />
+                                  <button type="submit" className="client-action-icon" title="Generer la facture finale">
+                                    F
+                                  </button>
+                                </form>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </article>

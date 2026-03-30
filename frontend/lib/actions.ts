@@ -4685,6 +4685,64 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
   redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=${okMessage}`);
 }
 
+export async function sendAdminClientPaymentReceiptAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const receiptId = String(formData.get("receipt_id") ?? "").trim();
+  const returnTabRaw = String(formData.get("return_tab") ?? "reservations").trim().toLowerCase();
+  const returnTab = returnTabRaw === "factures" ? "factures" : "reservations";
+  if (!clientId || !receiptId) {
+    redirect("/admin/clients?error=Justificatif%20invalide");
+  }
+
+  const result = await backendRequest<{ receipt_id: string; sent_at: string }>(
+    `/api/v1/admin/clients/${clientId}/payment-receipts/${receiptId}/email`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Justificatif%20renvoye`);
+}
+
+export async function generateAdminClientBookingFinalInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const bookingId = String(formData.get("booking_id") ?? "").trim();
+  const returnTabRaw = String(formData.get("return_tab") ?? "reservations").trim().toLowerCase();
+  const returnTab = returnTabRaw === "factures" ? "factures" : "reservations";
+  if (!clientId || !bookingId) {
+    redirect("/admin/clients?error=Reservation%20invalide");
+  }
+
+  const result = await backendRequest<AdminRangeInvoiceOut>(
+    `/api/v1/admin/clients/${clientId}/bookings/${bookingId}/final-invoice`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Facture%20finale%20generee`);
+}
+
 export async function createAdminClientManualTransactionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

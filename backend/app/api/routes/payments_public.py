@@ -13,8 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import SessionLocal, get_db
 from app.api.routes.admin_clients import (
+    handle_admin_client_payment_receipt_public_payment_webhook,
     handle_admin_client_range_invoice_public_payment_webhook,
+    return_admin_client_payment_receipt_public_payment,
     return_admin_client_range_invoice_public_payment,
+    start_admin_client_payment_receipt_public_payment,
     start_admin_client_range_invoice_public_payment,
 )
 from app.core.config import settings
@@ -217,6 +220,55 @@ def return_invoice_range_public_payment(
     return return_admin_client_range_invoice_public_payment(
         client_id=client_id,
         note_id=note_id,
+        token=token,
+        state=state,
+        db=db,
+    )
+
+
+@router.get("/bookings/{client_id}/{receipt_id}")
+def start_booking_public_payment(
+    client_id: UUID,
+    receipt_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    return start_admin_client_payment_receipt_public_payment(
+        client_id=client_id,
+        receipt_id=receipt_id,
+        token=token,
+        db=db,
+    )
+
+
+@router.post("/bookings/{client_id}/{receipt_id}/webhook")
+def handle_booking_public_payment_webhook(
+    client_id: UUID,
+    receipt_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    secret: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return handle_admin_client_payment_receipt_public_payment_webhook(
+        client_id=client_id,
+        receipt_id=receipt_id,
+        token=token,
+        secret=secret,
+        db=db,
+    )
+
+
+@router.get("/bookings/{client_id}/{receipt_id}/return")
+def return_booking_public_payment(
+    client_id: UUID,
+    receipt_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    state: str = Query(default="success"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    return return_admin_client_payment_receipt_public_payment(
+        client_id=client_id,
+        receipt_id=receipt_id,
         token=token,
         state=state,
         db=db,

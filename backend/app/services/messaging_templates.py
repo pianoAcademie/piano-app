@@ -830,6 +830,55 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         ),
     ),
     MessagingTemplateDefinition(
+        code="PAYMENT_RECEIPT",
+        name="Payment Receipt",
+        channel="EMAIL",
+        subject="Confirmation de reception de votre paiement",
+        body=(
+            "Bonjour {first_name},\n\n"
+            "Nous confirmons la reception de votre paiement de {amount_paid} {currency} le {paid_at}.\n\n"
+            "Reservation concernee: {reservation_label}\n"
+            "Date prevue: {scheduled_service_date}\n"
+            "Lieu: {location_label}\n"
+            "Reference de paiement: {payment_reference}\n\n"
+            "Ce document est un justificatif de paiement et non une facture de prestation.\n"
+            "La facture definitive sera emise a la realisation de la prestation.\n\n"
+            "Acceder a mon compte: {account_url}\n\n"
+            "Piano Academie"
+        ),
+        description="Justificatif de paiement envoye immediatement apres paiement d une prestation future.",
+        variables_hint=(
+            "{first_name} {last_name} {full_name} {client_name} {student_name} "
+            "{receipt_number} {amount_paid} {currency} {paid_at} {payment_date} "
+            "{payment_method} {payment_provider} {payment_reference} "
+            "{reservation_label} {scheduled_service_date} {location_label} {account_url} "
+            "{transactions_url} {payment_document_notice}"
+        ),
+    ),
+    MessagingTemplateDefinition(
+        code="PAYMENT_RECEIPT_ADMIN",
+        name="Payment Receipt Admin",
+        channel="EMAIL",
+        subject="Paiement recu - {reservation_label}",
+        body=(
+            "Un paiement a ete recu.\n\n"
+            "Client: {client_name}\n"
+            "Eleve / beneficiaire: {student_name}\n"
+            "Montant: {amount_paid} {currency}\n"
+            "Date de paiement: {paid_at}\n"
+            "Prestation: {reservation_label}\n"
+            "Date prevue: {scheduled_service_date}\n"
+            "Lieu: {location_label}\n"
+            "Reference PSP: {payment_reference}\n\n"
+            "Piano Academie"
+        ),
+        description="Notification interne pour un paiement recu sur une reservation future.",
+        variables_hint=(
+            "{client_name} {student_name} {amount_paid} {currency} {paid_at} "
+            "{reservation_label} {scheduled_service_date} {location_label} {payment_reference}"
+        ),
+    ),
+    MessagingTemplateDefinition(
         code="REFUND_ISSUED",
         name="Refund Issued",
         channel="EMAIL",

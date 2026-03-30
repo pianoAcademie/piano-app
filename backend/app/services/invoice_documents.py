@@ -1223,3 +1223,194 @@ def render_invoice_period_pdf(
 
     pdf.add_page_numbers()
     return pdf.build()
+
+
+def render_payment_receipt_pdf(
+    db: Session,
+    *,
+    receipt_number: str,
+    paid_at: datetime,
+    client_name: str,
+    client_billing_address: str | None,
+    amount_paid: Decimal,
+    currency: str,
+    payment_method: str | None,
+    payment_provider: str | None,
+    payment_transaction_reference: str | None,
+    reservation_label: str,
+    scheduled_service_date: date | None,
+    location_label: str | None,
+    student_name: str | None,
+    note: str | None = None,
+    legal_entity_id: UUID | None = None,
+) -> bytes:
+    identity = _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=None)
+    pdf = _SimplePdfDocument()
+    logo_resource_name: str | None = None
+    logo_width = 0.0
+    logo_height = 0.0
+    if (
+        identity.company_logo_jpeg is not None
+        and identity.company_logo_width_px is not None
+        and identity.company_logo_height_px is not None
+    ):
+        logo_resource_name = pdf.register_jpeg_image(
+            image_bytes=identity.company_logo_jpeg,
+            width_px=identity.company_logo_width_px,
+            height_px=identity.company_logo_height_px,
+        )
+        logo_height = 44.0
+        logo_width = min(
+            150.0,
+            logo_height * (identity.company_logo_width_px / max(1, identity.company_logo_height_px)),
+        )
+
+    left = 34.0
+    right = pdf.width - 34.0
+
+    def draw_header() -> None:
+        pdf.rect(
+            x=0.0,
+            top_y=0.0,
+            width=pdf.width,
+            height=92.0,
+            stroke_color=(0.11, 0.15, 0.24),
+            fill_color=(0.11, 0.15, 0.24),
+            stroke_width=0.0,
+        )
+        title_x = left
+        if logo_resource_name is not None:
+            pdf.draw_image(
+                image_name=logo_resource_name,
+                x=left,
+                top_y=22.0,
+                width=logo_width,
+                height=logo_height,
+            )
+            title_x = left + logo_width + 12.0
+        pdf.text(x=title_x, top_y=32.0, value=identity.company_name, size=20, bold=True, color=(1, 1, 1))
+        pdf.text(x=title_x, top_y=54.0, value="JUSTIFICATIF DE PAIEMENT", size=12, bold=True, color=(0.95, 0.78, 0.48))
+        pdf.text_right(
+            right_x=right - 2.0,
+            top_y=30.0,
+            value=_truncate_text(f"Reference: {receipt_number}", 52),
+            size=11,
+            bold=True,
+            color=(1, 1, 1),
+        )
+        pdf.text_right(
+            right_x=right - 2.0,
+            top_y=48.0,
+            value=f"Paiement recu le: {paid_at.strftime('%d/%m/%Y')}",
+            size=10,
+            color=(0.92, 0.93, 0.96),
+        )
+
+    draw_header()
+
+    issuer_lines = [identity.company_name]
+    legal_summary_parts = [
+        identity.company_legal_form or "",
+        f"Capital social: {identity.company_share_capital}" if identity.company_share_capital else "",
+    ]
+    legal_summary = " | ".join(part for part in legal_summary_parts if part).strip()
+    if legal_summary:
+        issuer_lines.append(legal_summary)
+    issuer_lines.extend(
+        [
+            f"SIREN: {identity.company_siren}",
+            f"SIRET: {identity.company_siret}",
+            f"TVA intracom: {identity.company_vat_number}",
+            f"Telephone: {identity.company_phone}",
+            f"Email: {identity.company_email}",
+        ]
+    )
+    issuer_top_y = 116.0
+    for index, line in enumerate(issuer_lines):
+        pdf.text(x=left, top_y=issuer_top_y + (index * 16.0), value=line, size=10, bold=index == 0)
+    address_top_y = issuer_top_y + (len(issuer_lines) * 16.0)
+    for index, chunk in enumerate(_wrap_text(identity.company_address, 48)):
+        pdf.text(x=left, top_y=address_top_y + (index * 14.0), value=chunk, size=10)
+
+    recipient_top_y = 116.0
+    pdf.text(x=330.0, top_y=recipient_top_y, value="Document pour", size=11, bold=True)
+    pdf.text(x=330.0, top_y=recipient_top_y + 18.0, value=client_name, size=10, bold=True)
+    billing_address = _ascii_safe((client_billing_address or "").strip()) or "-"
+    for index, chunk in enumerate(_wrap_text(billing_address, 34)):
+        pdf.text(x=330.0, top_y=recipient_top_y + 34.0 + (index * 14.0), value=chunk, size=10)
+
+    info_box_top = 248.0
+    pdf.rect(
+        x=left,
+        top_y=info_box_top,
+        width=right - left,
+        height=54.0,
+        stroke_color=(0.96, 0.84, 0.71),
+        fill_color=(1.0, 0.96, 0.91),
+    )
+    pdf.text(x=left + 10.0, top_y=info_box_top + 18.0, value="Ce document confirme la reception de votre paiement.", size=11, bold=True)
+    pdf.text(
+        x=left + 10.0,
+        top_y=info_box_top + 34.0,
+        value="Le document commercial final de la prestation sera emis a la realisation du service.",
+        size=9,
+    )
+
+    section_top = 330.0
+    pdf.text(x=left, top_y=section_top, value="Paiement", size=11, bold=True)
+    payment_rows = [
+        ("Montant paye", f"{_format_amount(Decimal(amount_paid).quantize(Decimal('0.01')))} {(_ascii_safe(currency) or 'EUR').upper()}"),
+        ("Date de paiement", paid_at.strftime("%d/%m/%Y %H:%M")),
+        ("Moyen de paiement", _ascii_safe(payment_method or "") or "-"),
+        ("PSP", _ascii_safe(payment_provider or "") or "-"),
+        ("Reference transaction", _ascii_safe(payment_transaction_reference or "") or "-"),
+    ]
+    current_top = section_top + 18.0
+    for label, value in payment_rows:
+        pdf.rect(x=left, top_y=current_top, width=right - left, height=22.0, stroke_color=(0.90, 0.92, 0.95))
+        pdf.text(x=left + 10.0, top_y=current_top + 14.0, value=label, size=9, bold=True)
+        pdf.text_right(right_x=right - 10.0, top_y=current_top + 14.0, value=value, size=9)
+        current_top += 22.0
+
+    current_top += 18.0
+    pdf.text(x=left, top_y=current_top, value="Reservation concernee", size=11, bold=True)
+    reservation_rows = [
+        ("Prestation reservee", _ascii_safe(reservation_label) or "-"),
+        (
+            "Date prevue de la prestation",
+            scheduled_service_date.strftime("%d/%m/%Y") if scheduled_service_date is not None else "-",
+        ),
+        ("Lieu", _ascii_safe(location_label or "") or "-"),
+        ("Beneficiaire / eleve", _ascii_safe(student_name or "") or client_name),
+    ]
+    current_top += 18.0
+    for label, value in reservation_rows:
+        lines = _wrap_text(value, 56)
+        row_height = max(22.0, 12.0 * len(lines) + 8.0)
+        pdf.rect(x=left, top_y=current_top, width=right - left, height=row_height, stroke_color=(0.90, 0.92, 0.95))
+        pdf.text(x=left + 10.0, top_y=current_top + 14.0, value=label, size=9, bold=True)
+        for index, line in enumerate(lines):
+            pdf.text(x=260.0, top_y=current_top + 14.0 + (index * 12.0), value=line, size=9)
+        current_top += row_height
+
+    normalized_note = _ascii_safe((note or "").strip())
+    if normalized_note:
+        current_top += 18.0
+        pdf.text(x=left, top_y=current_top, value="Note", size=11, bold=True)
+        current_top += 16.0
+        for index, line in enumerate(_wrap_text(normalized_note, 96)[:5]):
+            pdf.text(x=left, top_y=current_top + (index * 12.0), value=line, size=9)
+
+    footer_line_1 = f"{identity.company_name} | SIRET: {identity.company_siret} | Tel: {identity.company_phone}"
+    footer_line_2 = f"{identity.company_email} | {identity.company_address}"
+    for page_idx in range(len(pdf._pages)):
+        pdf._push_on_page(
+            page_idx,
+            f"BT /F1 8.00 Tf 0.420 0.470 0.560 rg 1 0 0 1 {left:.2f} 20.00 Tm ({_pdf_escape(_ascii_safe(footer_line_1))}) Tj ET",
+        )
+        pdf._push_on_page(
+            page_idx,
+            f"BT /F1 8.00 Tf 0.420 0.470 0.560 rg 1 0 0 1 {left:.2f} 8.00 Tm ({_pdf_escape(_ascii_safe(footer_line_2))}) Tj ET",
+        )
+    pdf.add_page_numbers()
+    return pdf.build()

@@ -1233,6 +1233,45 @@ class AdminClientBookingOut(BaseModel):
     vat_amount_snapshot: Decimal
     total_incl_vat_snapshot: Decimal
     currency_snapshot: str
+    scheduled_service_date: date | None = None
+    service_completed_at: datetime | None = None
+    payment_received: bool = False
+    payment_received_at: datetime | None = None
+    payment_received_amount: Decimal | None = None
+    payment_receipt_id: UUID | None = None
+    payment_receipt_number: str | None = None
+    payment_receipt_status: str | None = None
+    payment_receipt_sent_at: datetime | None = None
+    final_invoice_generated: bool = False
+    final_invoice_note_id: UUID | None = None
+    final_invoice_number: str | None = None
+    final_invoice_status: str | None = None
+
+
+class AdminPaymentReceiptOut(BaseModel):
+    id: UUID
+    receipt_number: str | None = None
+    status: str
+    customer_id: UUID
+    student_id: UUID | None = None
+    booking_id: UUID
+    amount_paid: Decimal
+    currency: str
+    paid_at: datetime | None = None
+    payment_method: str | None = None
+    payment_provider: str | None = None
+    payment_transaction_reference: str | None = None
+    reservation_label: str
+    scheduled_service_date: date | None = None
+    location_label: str | None = None
+    email_sent_at: datetime | None = None
+    final_invoice_note_id: UUID | None = None
+    final_invoice_generated_at: datetime | None = None
+
+
+class AdminPaymentReceiptEmailOut(BaseModel):
+    receipt_id: UUID
+    sent_at: datetime
 
 
 class AdminClientMessageOut(BaseModel):

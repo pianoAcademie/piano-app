@@ -29,6 +29,7 @@ from app.models.client_record import (
     ClientManualTransaction,
     ClientNoteEntry,
     ClientPaymentRefund,
+    PaymentReceipt,
 )
 from app.models.family import ClientFamilyLink
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, DeliveryMode, Location, Professor, SessionStatus
@@ -110,6 +111,8 @@ from app.schemas.admin import (
     AdminClientGroupCreateRequest,
     AdminClientGroupOut,
     AdminClientGroupUpdateRequest,
+    AdminPaymentReceiptEmailOut,
+    AdminPaymentReceiptOut,
 )
 from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut
 from app.services.client_password_email import (
@@ -143,6 +146,17 @@ from app.services.messaging_templates import (
 from app.services.notifications.application.recipients import (
     resolve_admin_booking_notification_recipients,
     resolve_client_booking_notification_recipient,
+)
+from app.services.payment_receipts import (
+    assert_payment_receipt_public_token,
+    build_booking_receipt_snapshot,
+    completed_payment_receipt_totals,
+    generate_final_invoice_for_booking,
+    mark_payment_receipt_completed,
+    payment_receipt_checkout_urls,
+    render_payment_receipt_attachment,
+    send_final_invoice_email,
+    send_payment_receipt_notifications,
 )
 from app.services.session_teachers import effective_teacher_id_for_session, professor_display_name
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
@@ -1115,6 +1129,66 @@ def _invoice_range_payment_url(
     return f"{_frontend_base_url()}/client?{params}"
 
 
+def _load_payment_receipt(
+    db: Session,
+    *,
+    client_id: UUID,
+    receipt_id: UUID,
+    for_update: bool = False,
+) -> PaymentReceipt:
+    query = select(PaymentReceipt).where(
+        PaymentReceipt.id == receipt_id,
+        PaymentReceipt.customer_id == client_id,
+    )
+    if for_update:
+        query = query.with_for_update()
+    receipt = db.scalar(query)
+    if receipt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Justificatif introuvable")
+    return receipt
+
+
+def _booking_context_for_receipt(
+    db: Session,
+    *,
+    booking_id: UUID,
+) -> tuple[Booking, CourseSession, CourseType, Location, User]:
+    row = db.execute(
+        select(Booking, CourseSession, CourseType, Location, User)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .join(User, User.id == Booking.user_id)
+        .where(Booking.id == booking_id)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation introuvable")
+    return row
+
+
+def _payment_receipt_out(receipt: PaymentReceipt) -> AdminPaymentReceiptOut:
+    return AdminPaymentReceiptOut(
+        id=receipt.id,
+        receipt_number=receipt.receipt_number,
+        status=receipt.status,
+        customer_id=receipt.customer_id,
+        student_id=receipt.student_id,
+        booking_id=receipt.booking_id,
+        amount_paid=_quantize_money(Decimal(receipt.amount_paid)),
+        currency=_normalize_currency(receipt.currency, fallback="EUR"),
+        paid_at=receipt.paid_at,
+        payment_method=_normalize_optional(receipt.payment_method),
+        payment_provider=_normalize_optional(receipt.payment_provider),
+        payment_transaction_reference=_normalize_optional(receipt.payment_transaction_reference),
+        reservation_label=receipt.reservation_label,
+        scheduled_service_date=receipt.scheduled_service_date,
+        location_label=_normalize_optional(receipt.location_label),
+        email_sent_at=receipt.email_sent_at,
+        final_invoice_note_id=receipt.final_invoice_note_id,
+        final_invoice_generated_at=receipt.final_invoice_generated_at,
+    )
+
+
 def _invoice_range_reconciled_manual_payment_ids(metadata: dict[str, object]) -> list[UUID]:
     raw_values = metadata.get("reconciled_manual_payment_ids")
     if not isinstance(raw_values, list):
@@ -1284,11 +1358,12 @@ def _public_payment_result_html(
     title: str,
     subtitle: str,
     invoice_number: str,
+    document_label: str = "Facture",
     transaction_reference: str | None = None,
     action_href: str | None = None,
     action_label: str | None = None,
 ) -> HTMLResponse:
-    details = f"<p><strong>Facture:</strong> {invoice_number}</p>"
+    details = f"<p><strong>{document_label}:</strong> {invoice_number}</p>"
     if transaction_reference:
         details += f"<p><strong>Transaction:</strong> {transaction_reference}</p>"
     action_html = ""
@@ -5383,6 +5458,43 @@ def list_admin_client_bookings(
         .order_by(CourseSession.start_at_utc.desc(), Booking.booked_at.desc())
     ).all()
 
+    booking_ids = [booking.id for booking, *_ in rows]
+    latest_receipt_by_booking: dict[UUID, PaymentReceipt] = {}
+    latest_completed_receipt_by_booking: dict[UUID, PaymentReceipt] = {}
+    paid_totals_by_booking: dict[UUID, Decimal] = {}
+    if booking_ids:
+        receipt_rows = db.scalars(
+            select(PaymentReceipt)
+            .where(PaymentReceipt.booking_id.in_(booking_ids))
+            .order_by(PaymentReceipt.created_at.desc(), PaymentReceipt.id.desc())
+        ).all()
+        for receipt in receipt_rows:
+            latest_receipt_by_booking.setdefault(receipt.booking_id, receipt)
+            if receipt.status == "COMPLETED":
+                latest_completed_receipt_by_booking.setdefault(receipt.booking_id, receipt)
+                paid_totals_by_booking[receipt.booking_id] = _quantize_money(
+                    paid_totals_by_booking.get(receipt.booking_id, Decimal("0.00")) + Decimal(receipt.amount_paid)
+                )
+
+    final_invoice_by_booking: dict[UUID, tuple[ClientNoteEntry, dict[str, object]]] = {}
+    if booking_ids:
+        note_rows = db.execute(
+            select(ClientInvoiceLine, ClientNoteEntry)
+            .join(ClientNoteEntry, ClientNoteEntry.id == ClientInvoiceLine.note_id)
+            .where(
+                ClientInvoiceLine.source == "BOOKING",
+                ClientInvoiceLine.source_payment_id.in_(booking_ids),
+            )
+            .order_by(ClientInvoiceLine.created_at.desc(), ClientInvoiceLine.id.desc())
+        ).all()
+        for invoice_line, note in note_rows:
+            if invoice_line.source_payment_id in final_invoice_by_booking:
+                continue
+            metadata = _parse_invoice_range_note_entry(note)
+            if metadata is None:
+                continue
+            final_invoice_by_booking[invoice_line.source_payment_id] = (note, metadata)
+
     return [
         AdminClientBookingOut(
             id=booking.id,
@@ -5404,6 +5516,49 @@ def list_admin_client_bookings(
             vat_amount_snapshot=booking.vat_amount_snapshot,
             total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
             currency_snapshot=booking.currency_snapshot,
+            scheduled_service_date=latest_receipt_by_booking.get(booking.id).scheduled_service_date
+            if latest_receipt_by_booking.get(booking.id) is not None
+            else session_obj.start_at_utc.date(),
+            service_completed_at=session_obj.start_at_utc if session_obj.status == SessionStatus.COMPLETED else None,
+            payment_received=booking.id in paid_totals_by_booking,
+            payment_received_at=(
+                latest_completed_receipt_by_booking.get(booking.id).paid_at
+                if latest_completed_receipt_by_booking.get(booking.id) is not None
+                else None
+            ),
+            payment_received_amount=paid_totals_by_booking.get(booking.id),
+            payment_receipt_id=(
+                latest_receipt_by_booking.get(booking.id).id if latest_receipt_by_booking.get(booking.id) is not None else None
+            ),
+            payment_receipt_number=(
+                latest_receipt_by_booking.get(booking.id).receipt_number
+                if latest_receipt_by_booking.get(booking.id) is not None
+                else None
+            ),
+            payment_receipt_status=(
+                latest_receipt_by_booking.get(booking.id).status
+                if latest_receipt_by_booking.get(booking.id) is not None
+                else None
+            ),
+            payment_receipt_sent_at=(
+                latest_receipt_by_booking.get(booking.id).email_sent_at
+                if latest_receipt_by_booking.get(booking.id) is not None
+                else None
+            ),
+            final_invoice_generated=booking.id in final_invoice_by_booking,
+            final_invoice_note_id=(
+                final_invoice_by_booking[booking.id][0].id if booking.id in final_invoice_by_booking else None
+            ),
+            final_invoice_number=(
+                str(final_invoice_by_booking[booking.id][1].get("invoice_number") or "")
+                if booking.id in final_invoice_by_booking
+                else None
+            ),
+            final_invoice_status=(
+                str(final_invoice_by_booking[booking.id][1].get("invoice_status") or "")
+                if booking.id in final_invoice_by_booking
+                else None
+            ),
         )
         for booking, session_obj, course_type, location, plan in rows
     ]
@@ -6927,6 +7082,113 @@ def send_admin_client_range_invoice_email(
     )
 
 
+@router.get("/{client_id}/payment-receipts/{receipt_id}/download")
+def download_admin_client_payment_receipt(
+    client_id: UUID,
+    receipt_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    _require_client(db, client_id)
+    receipt = _load_payment_receipt(db, client_id=client_id, receipt_id=receipt_id, for_update=False)
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
+    snapshot = build_booking_receipt_snapshot(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        owner=owner,
+    )
+    file_name, content = render_payment_receipt_attachment(db, receipt=receipt, snapshot=snapshot)
+    safe_file_name = file_name.replace('"', "")
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_file_name}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.post("/{client_id}/payment-receipts/{receipt_id}/email", response_model=AdminPaymentReceiptEmailOut)
+def send_admin_client_payment_receipt_email(
+    client_id: UUID,
+    receipt_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminPaymentReceiptEmailOut:
+    _require_client(db, client_id)
+    receipt = _load_payment_receipt(db, client_id=client_id, receipt_id=receipt_id, for_update=True)
+    if receipt.status != "COMPLETED":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le justificatif n est disponible qu apres confirmation du paiement",
+        )
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
+    snapshot = build_booking_receipt_snapshot(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        owner=owner,
+    )
+    sent_any = send_payment_receipt_notifications(
+        db,
+        receipt=receipt,
+        snapshot=snapshot,
+        send_admin_copy=False,
+    )
+    if not sent_any:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Aucune adresse email disponible pour envoyer le justificatif",
+        )
+    now = _utcnow()
+    receipt.email_sent_at = now
+    receipt.updated_at = now
+    db.add(receipt)
+    db.commit()
+    return AdminPaymentReceiptEmailOut(receipt_id=receipt.id, sent_at=now)
+
+
+@router.post("/{client_id}/bookings/{booking_id}/final-invoice", response_model=AdminRangeInvoiceOut)
+def generate_admin_client_booking_final_invoice(
+    client_id: UUID,
+    booking_id: UUID,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminRangeInvoiceOut:
+    _require_client(db, client_id)
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=booking_id)
+    if owner.id != client_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation introuvable")
+    note, metadata, _ = generate_final_invoice_for_booking(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        owner=owner,
+        author_user_id=actor.id,
+    )
+    invoice_customer = db.scalar(select(User).where(User.id == note.user_id, User.role == UserRole.CLIENT))
+    if invoice_customer is not None:
+        try:
+            send_final_invoice_email(
+                db,
+                customer=invoice_customer,
+                note_id=note.id,
+                metadata=metadata,
+            )
+        except Exception:
+            logger.exception("Unable to send final invoice email for booking=%s note=%s", booking_id, note.id)
+    db.commit()
+    return _invoice_range_out(note_id=note.id, metadata=metadata, related_invoices=[])
+
+
 @router.get("/{client_id}/invoices/range/{note_id}/email/preview", response_model=AdminRangeInvoiceEmailPreviewOut)
 def preview_admin_client_range_invoice_email(
     client_id: UUID,
@@ -7852,6 +8114,267 @@ def return_admin_client_range_invoice_public_payment(
         invoice_number=invoice_number,
         transaction_reference=f"{lookup.provider_reference} (ligne {transaction_id})",
         action_href=f"{_frontend_base_url()}/client?tab=finance&finance_view=transactions&invoice_number={invoice_number}",
+        action_label="Aller vers mon compte",
+    )
+
+
+@router.get("/{client_id}/payment-receipts/{receipt_id}/public-pay")
+def start_admin_client_payment_receipt_public_payment(
+    client_id: UUID,
+    receipt_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    client = _require_client(db, client_id)
+    receipt = _load_payment_receipt(db, client_id=client_id, receipt_id=receipt_id, for_update=True)
+    try:
+        assert_payment_receipt_public_token(token=token, client_id=client_id, receipt_id=receipt_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    if receipt.status == "COMPLETED" and receipt.payment_transaction_reference:
+        return RedirectResponse(
+            url=f"{_frontend_base_url()}/api/v1/public/payments/bookings/{client_id}/{receipt_id}/return?token={token}&state=success",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    amount_due = _quantize_money(Decimal(receipt.amount_paid or 0))
+    if amount_due <= Decimal("0.00"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun montant a encaisser")
+
+    success_return_url, cancel_return_url, webhook_url = payment_receipt_checkout_urls(
+        client_id=client_id,
+        receipt_id=receipt_id,
+    )
+    checkout = create_checkout_session(
+        db,
+        payload=with_webhook_secret(
+            CheckoutCreateRequest(
+                amount=amount_due,
+                currency=_normalize_currency(receipt.currency, fallback="EUR"),
+                description=f"Justificatif paiement reservation {receipt.reservation_label} ({client.email})",
+                customer_email=client.email,
+                success_return_url=success_return_url,
+                cancel_return_url=cancel_return_url,
+                webhook_url=webhook_url,
+                metadata={
+                    "client_id": str(client_id),
+                    "receipt_id": str(receipt_id),
+                    "booking_id": str(receipt.booking_id),
+                },
+            ),
+            legal_entity_id=receipt.legal_entity_id,
+        ),
+        legal_entity_id=receipt.legal_entity_id,
+    )
+    if not checkout.success or not checkout.checkout_url:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Impossible de creer la session de paiement ({checkout.message})",
+        )
+    provider_reference = _normalize_optional(checkout.provider_reference)
+    if provider_reference is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Reference de transaction PSP absente")
+    receipt.payment_provider = checkout.provider.value
+    receipt.payment_transaction_reference = provider_reference
+    receipt.payment_method = "CARD_ONLINE"
+    metadata = dict(receipt.receipt_metadata or {})
+    metadata["payment_last_attempt_at"] = _utcnow().isoformat()
+    metadata["payment_checkout_status"] = (checkout.status or "").strip().upper() or "CREATED"
+    receipt.receipt_metadata = metadata
+    receipt.updated_at = _utcnow()
+    db.add(receipt)
+    db.commit()
+    return RedirectResponse(url=checkout.checkout_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.post("/{client_id}/payment-receipts/{receipt_id}/public-pay/webhook")
+def handle_admin_client_payment_receipt_public_payment_webhook(
+    client_id: UUID,
+    receipt_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    secret: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if settings.payment_webhook_secret and secret != settings.payment_webhook_secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret")
+    _require_client(db, client_id)
+    receipt = _load_payment_receipt(db, client_id=client_id, receipt_id=receipt_id, for_update=True)
+    try:
+        assert_payment_receipt_public_token(token=token, client_id=client_id, receipt_id=receipt_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    provider_reference = _normalize_optional(receipt.payment_transaction_reference)
+    if provider_reference is None:
+        return {"ok": True, "processed": False, "reason": "missing_provider_reference"}
+    provider = detect_provider_from_reference(provider_reference)
+    if provider is None:
+        provider = parse_provider(receipt.payment_provider)
+    if provider is None:
+        provider = resolve_provider(db)
+    lookup = lookup_payment(db, provider=provider, payment_reference=provider_reference)
+    metadata = dict(receipt.receipt_metadata or {})
+    metadata["payment_lookup_status"] = (lookup.status or "").strip().upper() or "UNKNOWN"
+    metadata["payment_last_lookup_at"] = _utcnow().isoformat()
+    receipt.receipt_metadata = metadata
+    if not lookup.paid:
+        db.add(receipt)
+        db.commit()
+        return {"ok": True, "processed": True, "paid": False, "status": lookup.status}
+
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
+    snapshot = build_booking_receipt_snapshot(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        owner=owner,
+    )
+    receipt, transaction, _ = mark_payment_receipt_completed(
+        db,
+        receipt=receipt,
+        provider_reference=lookup.provider_reference,
+        payment_provider=provider.value,
+        payment_method="CARD_ONLINE",
+    )
+    if receipt.email_sent_at is None:
+        try:
+            if _send_invoice_range_booking_confirmation_emails(
+                db,
+                metadata={"included_payment_keys": [f"BOOKING:{booking.id}"]},
+            ):
+                metadata["booking_confirmation_emails_sent_at"] = _utcnow().isoformat()
+        except Exception:
+            logger.exception("Unable to send booking confirmation emails for receipt=%s", receipt.id)
+        try:
+            if send_payment_receipt_notifications(
+                db,
+                receipt=receipt,
+                snapshot=snapshot,
+                send_admin_copy=True,
+            ):
+                receipt.email_sent_at = _utcnow()
+        except Exception:
+            logger.exception("Unable to send payment receipt emails for receipt=%s", receipt.id)
+    receipt.receipt_metadata = metadata
+    receipt.updated_at = _utcnow()
+    db.add(receipt)
+    db.commit()
+    return {
+        "ok": True,
+        "processed": True,
+        "paid": True,
+        "receipt_id": str(receipt.id),
+        "receipt_number": receipt.receipt_number,
+        "transaction_id": str(transaction.id),
+    }
+
+
+@router.get("/{client_id}/payment-receipts/{receipt_id}/public-pay/return")
+def return_admin_client_payment_receipt_public_payment(
+    client_id: UUID,
+    receipt_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    state: str = Query(default="success"),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    _require_client(db, client_id)
+    receipt = _load_payment_receipt(db, client_id=client_id, receipt_id=receipt_id, for_update=True)
+    try:
+        assert_payment_receipt_public_token(token=token, client_id=client_id, receipt_id=receipt_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    receipt_label = _normalize_optional(receipt.receipt_number) or str(receipt.id)
+    normalized_state = (state or "").strip().lower()
+    if normalized_state == "cancel":
+        return _public_payment_result_html(
+            title="Paiement annule",
+            subtitle="Aucun debit n'a ete valide. Vous pouvez relancer le paiement depuis votre lien de reservation.",
+            invoice_number=receipt_label,
+            document_label="Justificatif",
+        )
+
+    provider_reference = _normalize_optional(receipt.payment_transaction_reference)
+    if provider_reference is None:
+        return _public_payment_result_html(
+            title="Paiement en attente",
+            subtitle="Reference de transaction indisponible. Merci de contacter l'administration.",
+            invoice_number=receipt_label,
+            document_label="Justificatif",
+        )
+
+    provider = detect_provider_from_reference(provider_reference)
+    if provider is None:
+        provider = parse_provider(receipt.payment_provider)
+    if provider is None:
+        provider = resolve_provider(db)
+    lookup = lookup_payment(db, provider=provider, payment_reference=provider_reference)
+    metadata = dict(receipt.receipt_metadata or {})
+    metadata["payment_lookup_status"] = (lookup.status or "").strip().upper() or "UNKNOWN"
+    metadata["payment_last_lookup_at"] = _utcnow().isoformat()
+    receipt.receipt_metadata = metadata
+    if not lookup.paid:
+        db.add(receipt)
+        db.commit()
+        return _public_payment_result_html(
+            title="Paiement en cours",
+            subtitle="Le PSP n'a pas encore confirme le paiement. Merci de verifier a nouveau dans quelques minutes.",
+            invoice_number=receipt_label,
+            document_label="Justificatif",
+            transaction_reference=provider_reference,
+        )
+
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
+    snapshot = build_booking_receipt_snapshot(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        owner=owner,
+    )
+    receipt, transaction, _ = mark_payment_receipt_completed(
+        db,
+        receipt=receipt,
+        provider_reference=lookup.provider_reference,
+        payment_provider=provider.value,
+        payment_method="CARD_ONLINE",
+    )
+    if receipt.email_sent_at is None:
+        try:
+            _send_invoice_range_booking_confirmation_emails(
+                db,
+                metadata={"included_payment_keys": [f"BOOKING:{booking.id}"]},
+            )
+        except Exception:
+            logger.exception("Unable to send booking confirmation email for receipt=%s", receipt.id)
+        try:
+            if send_payment_receipt_notifications(
+                db,
+                receipt=receipt,
+                snapshot=snapshot,
+                send_admin_copy=True,
+            ):
+                receipt.email_sent_at = _utcnow()
+        except Exception:
+            logger.exception("Unable to send receipt emails for receipt=%s", receipt.id)
+    receipt.receipt_metadata = metadata
+    receipt.updated_at = _utcnow()
+    db.add(receipt)
+    db.commit()
+
+    return _public_payment_result_html(
+        title="Paiement confirme",
+        subtitle=(
+            "Votre paiement a bien ete enregistre. Un justificatif de paiement vous a ete envoye. "
+            "La facture finale sera emise a la realisation de la prestation."
+        ),
+        invoice_number=receipt.receipt_number or str(receipt.id),
+        document_label="Justificatif",
+        transaction_reference=f"{lookup.provider_reference} (ligne {transaction.id})",
+        action_href=f"{_frontend_base_url()}/client?tab=finance&finance_view=transactions",
         action_label="Aller vers mon compte",
     )
 

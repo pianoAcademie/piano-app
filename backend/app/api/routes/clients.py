@@ -53,6 +53,13 @@ from app.services.invoice_documents import (
 from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
+from app.services.payment_receipts import (
+    build_booking_receipt_snapshot,
+    get_or_create_pending_booking_payment_receipt,
+    payment_receipt_public_payment_url,
+    remaining_booking_amount_due,
+    should_defer_booking_invoice,
+)
 from app.services.payment_provider import detect_provider_from_reference, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.session_audience import (
@@ -1855,6 +1862,39 @@ def create_client_session_checkout(
             invoice_status="COVERED",
         )
 
+    if should_defer_booking_invoice(session_obj):
+        amount_due = remaining_booking_amount_due(db, booking=booking)
+        if amount_due <= Decimal("0.00"):
+            return ClientSessionCheckoutOut(
+                booking_id=booking.id,
+                booking_status=booking_status,
+                checkout_url=None,
+                invoice_status="PAID",
+            )
+        receipt_snapshot = build_booking_receipt_snapshot(
+            db,
+            booking=booking,
+            session_obj=session_obj,
+            course_type=course_type,
+            location=location,
+            owner=owner,
+        )
+        receipt = get_or_create_pending_booking_payment_receipt(
+            db,
+            booking=booking,
+            snapshot=receipt_snapshot,
+        )
+        db.commit()
+        return ClientSessionCheckoutOut(
+            booking_id=booking.id,
+            booking_status=booking_status,
+            checkout_url=payment_receipt_public_payment_url(
+                client_id=receipt_snapshot.customer_id,
+                receipt_id=receipt.id,
+            ),
+            invoice_status="PAYMENT_PENDING",
+        )
+
     amount_due = Decimal(booking.total_incl_vat_snapshot).quantize(Decimal("0.01"))
     if amount_due <= Decimal("0.00"):
         return ClientSessionCheckoutOut(
@@ -2300,6 +2340,14 @@ def download_client_invoice(
                     total_to_pay_by_currency[str(currency_code).strip().upper() or "EUR"] = Decimal(str(value)).quantize(Decimal("0.01"))
                 except Exception:
                     continue
+        applied_payment_totals_by_currency: dict[str, Decimal] = {}
+        raw_applied_payments = metadata.get("applied_payment_totals_by_currency")
+        if isinstance(raw_applied_payments, dict):
+            for currency_code, value in raw_applied_payments.items():
+                try:
+                    applied_payment_totals_by_currency[str(currency_code).strip().upper() or "EUR"] = Decimal(str(value)).quantize(Decimal("0.01"))
+                except Exception:
+                    continue
 
         public_note = _normalize_optional(str(metadata.get("public_note") or ""))
         legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
@@ -2324,6 +2372,7 @@ def download_client_invoice(
             client_billing_address=_billing_address_label(billing_profile),
             due_date=due_date_value,
             opening_balance_by_currency=opening_balance_by_currency,
+            applied_payment_totals_by_currency=applied_payment_totals_by_currency,
             total_to_pay_by_currency=total_to_pay_by_currency,
             payment_link_url=payment_link_url,
             watermark=("PAYE" if invoice_status == "PAID" else None),

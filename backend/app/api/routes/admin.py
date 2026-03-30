@@ -3,6 +3,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 import json
+import logging
 import re
 from typing import Literal
 from uuid import UUID, uuid4
@@ -50,6 +51,7 @@ from app.models.user import ClientStatus, User, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_slot_cancelled_notifications
+from app.services.payment_receipts import generate_final_invoice_for_booking, send_final_invoice_email
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_audience import (
     coerce_session_scope_sets,
@@ -96,6 +98,7 @@ from app.schemas.admin import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 ALLOWED_SETTING_KEYS = {
     "auto_cancel_hours_before_start": 6,
@@ -3058,7 +3061,9 @@ def update_session(
         target_sessions = target_sessions[: len(desired_recurrence_starts)]
         missing_recurrence_starts = desired_recurrence_starts[len(target_sessions):]
 
+    sessions_completed_for_invoicing: set[UUID] = set()
     for target_index, target in enumerate(target_sessions):
+        previous_status = target.status
         target.course_type_id = course_type_id
         target.billing_entity_snapshot = normalize_billing_entity(course_type.billing_entity_code)
         target.snapshot_seller_legal_entity_id = course_type.seller_legal_entity_id
@@ -3216,6 +3221,8 @@ def update_session(
             target.recurrence_group_id = recurrence_group_id
             target.recurrence_rule = recurrence_rule
         target.updated_at = now
+        if previous_status != SessionStatus.COMPLETED and target.status == SessionStatus.COMPLETED:
+            sessions_completed_for_invoicing.add(target.id)
         if (
             "capacity_max" in updates
             and target.status == SessionStatus.SCHEDULED
@@ -3400,6 +3407,55 @@ def update_session(
                     updated_at=now,
                 )
             )
+
+    if sessions_completed_for_invoicing:
+        invoice_eligible_statuses = {
+            BookingStatus.BOOKED,
+            BookingStatus.ATTENDED,
+            BookingStatus.NO_SHOW,
+            BookingStatus.EXCUSED_ABSENCE,
+        }
+        completed_booking_rows = db.execute(
+            select(Booking, CourseSession, CourseType, Location, User)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .join(Location, Location.id == CourseSession.location_id)
+            .join(User, User.id == Booking.user_id)
+            .where(
+                Booking.session_id.in_(sessions_completed_for_invoicing),
+                Booking.status.in_(invoice_eligible_statuses),
+            )
+        ).all()
+        for booking, completed_session, completed_course_type, completed_location, booking_owner in completed_booking_rows:
+            try:
+                note, metadata, _ = generate_final_invoice_for_booking(
+                    db,
+                    booking=booking,
+                    session_obj=completed_session,
+                    course_type=completed_course_type,
+                    location=completed_location,
+                    owner=booking_owner,
+                    author_user_id=current_user.id,
+                )
+            except ValueError:
+                continue
+            invoice_customer = db.scalar(select(User).where(User.id == note.user_id, User.role == UserRole.CLIENT))
+            if invoice_customer is None:
+                continue
+            try:
+                send_final_invoice_email(
+                    db,
+                    customer=invoice_customer,
+                    note_id=note.id,
+                    metadata=metadata,
+                )
+            except Exception:
+                logger.exception(
+                    "Unable to send final invoice email for session=%s booking=%s note=%s",
+                    completed_session.id,
+                    booking.id,
+                    note.id,
+                )
 
     db.commit()
     db.refresh(session_obj)
