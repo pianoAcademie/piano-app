@@ -42,6 +42,7 @@ from app.schemas.typeform_intake import (
     TypeformDraftQuoteResultOut,
     TypeformFormConfigOut,
     TypeformIntakeDetailOut,
+    TypeformIntakeListPageOut,
     TypeformIntakeListOut,
     TypeformIntakeNormalizedPatchRequest,
     TypeformIntakeResolutionRequest,
@@ -2879,15 +2880,16 @@ def list_typeform_form_configs(
     return [_form_config_out(row) for row in rows]
 
 
-@router.get("/intakes", response_model=list[TypeformIntakeListOut])
+@router.get("/intakes", response_model=TypeformIntakeListPageOut)
 def list_typeform_intakes(
     status_filter: str | None = Query(default=None, alias="status"),
     q: str | None = None,
-    limit: int = Query(default=200, ge=1, le=1000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
-) -> list[TypeformIntakeListOut]:
-    stmt = select(TypeformIntake).order_by(TypeformIntake.received_at.desc()).limit(limit)
+) -> TypeformIntakeListPageOut:
+    stmt = select(TypeformIntake).order_by(TypeformIntake.received_at.desc())
     if status_filter:
         stmt = stmt.where(TypeformIntake.intake_status == _text(status_filter).upper())
     rows = db.scalars(stmt).all()
@@ -2914,7 +2916,17 @@ def list_typeform_intakes(
         items.append(item)
     if changed:
         db.commit()
-    return items
+    total = len(items)
+    total_pages = max((total + page_size - 1) // page_size, 1)
+    current_page = min(page, total_pages)
+    start = (current_page - 1) * page_size
+    end = start + page_size
+    return TypeformIntakeListPageOut(
+        items=items[start:end],
+        total=total,
+        page=current_page,
+        page_size=page_size,
+    )
 
 
 @router.get("/intakes/{intake_id}", response_model=TypeformIntakeDetailOut)

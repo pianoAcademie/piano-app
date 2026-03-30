@@ -31,12 +31,31 @@ type TypeformIntakeListOut = {
   related_quote_id: string | null;
 };
 
+type TypeformIntakeListPageOut = {
+  items: TypeformIntakeListOut[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+const DEFAULT_PAGE = 1;
+const DEFAULT_PAGE_SIZE = 10;
+
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
   if (Array.isArray(value)) {
     return value[0] ?? "";
   }
   return value ?? "";
+}
+
+function readPositiveIntParam(params: SearchParams, key: string, fallback: number): number {
+  const raw = readParam(params, key).trim();
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return parsed;
 }
 
 function safeStatus(raw: string): string {
@@ -103,13 +122,24 @@ function compactList(values: string[]): string {
   return `${values[0]} (+${values.length - 1})`;
 }
 
-function intakeListReturnTo(q: string, status: string): string {
+function buildIntakesHref({
+  q,
+  status,
+  page,
+}: {
+  q: string;
+  status: string;
+  page?: number;
+}): string {
   const params = new URLSearchParams();
   if (q) {
     params.set("q", q);
   }
   if (status) {
     params.set("status", status);
+  }
+  if ((page ?? DEFAULT_PAGE) > DEFAULT_PAGE) {
+    params.set("page", String(page));
   }
   const search = params.toString();
   return search ? `/admin/intakes?${search}` : "/admin/intakes";
@@ -123,21 +153,33 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
 
   const q = readParam(searchParams, "q").trim();
   const status = safeStatus(readParam(searchParams, "status"));
+  const requestedPage = readPositiveIntParam(searchParams, "page", DEFAULT_PAGE);
   const ok = readParam(searchParams, "ok").trim();
   const error = readParam(searchParams, "error").trim();
-  const returnTo = intakeListReturnTo(q, status);
 
   const query = new URLSearchParams();
   if (q) query.set("q", q);
   if (status) query.set("status", status);
-  query.set("limit", "500");
+  query.set("page", String(requestedPage));
+  query.set("page_size", String(DEFAULT_PAGE_SIZE));
 
-  const result = await backendRequest<TypeformIntakeListOut[]>(
+  const result = await backendRequest<TypeformIntakeListPageOut>(
     `/api/v1/typeform/intakes?${query.toString()}`,
     {},
     token,
   );
-  const rows = result.ok ? result.data : [];
+  const pageData = result.ok
+    ? result.data
+    : { items: [], total: 0, page: DEFAULT_PAGE, page_size: DEFAULT_PAGE_SIZE };
+  const rows = pageData.items;
+  const total = pageData.total;
+  const currentPage = pageData.page;
+  const pageSize = pageData.page_size;
+  const totalPages = Math.max(1, Math.ceil(total / Math.max(pageSize, 1)));
+  const pageStart = total === 0 ? 0 : (currentPage - 1) * pageSize;
+  const returnTo = buildIntakesHref({ q, status, page: currentPage });
+  const previousPageHref = buildIntakesHref({ q, status, page: currentPage - 1 });
+  const nextPageHref = buildIntakesHref({ q, status, page: currentPage + 1 });
 
   return (
     <section className="admin-page-grid">
@@ -191,7 +233,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
       <section className="card">
         <div className="row spread wrap gap-sm">
           <h3>Intakes</h3>
-          <p className="muted">{rows.length} element(s)</p>
+          <p className="muted">{total} element(s)</p>
         </div>
         {rows.length === 0 ? (
           <div className={`${styles.emptyState} top-gap-sm`}>
@@ -277,6 +319,32 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
             </table>
           </div>
         )}
+        {total > 0 ? (
+          <div className="row spread clients-pagination top-gap-sm">
+            <small className="muted">
+              Affichage {pageStart + 1}-{Math.min(pageStart + rows.length, total)} sur {total} intake(s)
+            </small>
+            <div className="row">
+              {currentPage > 1 ? (
+                <Link className="mode-link" href={previousPageHref}>
+                  ← Precedent
+                </Link>
+              ) : (
+                <span className="mode-link disabled-link">← Precedent</span>
+              )}
+              <span className="badge">
+                Page {currentPage}/{totalPages}
+              </span>
+              {currentPage < totalPages ? (
+                <Link className="mode-link" href={nextPageHref}>
+                  Suivant →
+                </Link>
+              ) : (
+                <span className="mode-link disabled-link">Suivant →</span>
+              )}
+            </div>
+          </div>
+        ) : null}
       </section>
     </section>
   );

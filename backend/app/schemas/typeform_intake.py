@@ -145,6 +145,13 @@ class TypeformIntakeListOut(BaseModel):
     related_quote_id: UUID | None = None
 
 
+class TypeformIntakeListPageOut(BaseModel):
+    items: list[TypeformIntakeListOut] = Field(default_factory=list)
+    total: int
+    page: int
+    page_size: int
+
+
 class TypeformIntakeDetailOut(BaseModel):
     id: UUID
     source_form_id: str
