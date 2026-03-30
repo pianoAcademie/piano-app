@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
+import AdminIntegrationPlanningEmbed from "../../../components/admin-integration-planning-embed";
 import ColorHexInput from "../../../components/color-hex-input";
 import RichMessageEditor from "../../../components/rich-message-editor";
 import {
@@ -568,25 +569,29 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const loadErrors: string[] = [];
 
   let planningLocations: LocationOut[] = [];
+  let integrationLocations: LocationOut[] = [];
   const planningActivitiesByLocationId = new Map<string, AdminPlanningActivitiesOut>();
 
-  if (mainSection === "activities") {
+  if (mainSection === "activities" || mainSection === "integrations") {
     const locationsResult = await backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token);
     if (locationsResult.ok) {
-      planningLocations = [...locationsResult.data].sort((left, right) => left.name.localeCompare(right.name, "fr"));
-      const planningActivityResults = await Promise.all(
-        planningLocations.map((location) =>
-          backendRequest<AdminPlanningActivitiesOut>(`/api/v1/admin/plannings/${location.id}/activities`, {}, token),
-        ),
-      );
-      planningActivityResults.forEach((result, index) => {
-        const location = planningLocations[index];
-        if (result.ok) {
-          planningActivitiesByLocationId.set(location.id, result.data);
-          return;
-        }
-        loadErrors.push(`Activites planning ${location.name}: ${result.message}`);
-      });
+      integrationLocations = [...locationsResult.data].sort((left, right) => left.name.localeCompare(right.name, "fr"));
+      if (mainSection === "activities") {
+        planningLocations = integrationLocations;
+        const planningActivityResults = await Promise.all(
+          planningLocations.map((location) =>
+            backendRequest<AdminPlanningActivitiesOut>(`/api/v1/admin/plannings/${location.id}/activities`, {}, token),
+          ),
+        );
+        planningActivityResults.forEach((result, index) => {
+          const location = planningLocations[index];
+          if (result.ok) {
+            planningActivitiesByLocationId.set(location.id, result.data);
+            return;
+          }
+          loadErrors.push(`Activites planning ${location.name}: ${result.message}`);
+        });
+      }
     } else {
       loadErrors.push(`Locaux: ${locationsResult.message}`);
     }
@@ -796,6 +801,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
+  const selectedIntegrationActivityId = readParam(params, "integration_course_type_id").trim();
+  const selectedIntegrationLocationId = readParam(params, "integration_location_id").trim();
 
   const messagingListPath = buildConfigHref("params-messaging", { messaging_tab: messagingTab });
 
@@ -4110,13 +4117,24 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
             </>
           ) : null}
 
+          {section === "integrations" ? (
+            <AdminIntegrationPlanningEmbed
+              accountWebsite={account?.website ?? ""}
+              activities={activities}
+              locations={integrationLocations}
+              selectedActivityId={selectedIntegrationActivityId}
+              selectedLocationId={selectedIntegrationLocationId}
+            />
+          ) : null}
+
           {section !== "params-account" &&
           section !== "params-subscriptions" &&
           section !== "params-payments" &&
           section !== "params-messaging" &&
           section !== "activities" &&
           section !== "legal-entities" &&
-          section !== "credit-types" ? (
+          section !== "credit-types" &&
+          section !== "integrations" ? (
             <section className="card config-placeholder-card">
               <h3>{placeholderTitleBySection[section]}</h3>
               <p className="muted">Cette section est reservee pour un prochain ticket (V2), avec ecran detaille.</p>

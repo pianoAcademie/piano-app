@@ -431,6 +431,14 @@ function safePublicBuyPath(raw: string, fallback: string): string {
   return fallback;
 }
 
+function safePublicReturnPath(raw: string, fallback: string): string {
+  const value = raw.trim();
+  if (value.startsWith("/buy/") || value.startsWith("/login") || value.startsWith("/embed/")) {
+    return value;
+  }
+  return fallback;
+}
+
 function appendQueryMessage(path: string, key: string, message: string): string {
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}${key}=${encodeURIComponent(message)}`;
@@ -976,9 +984,10 @@ export async function loginAction(formData: FormData): Promise<void> {
   const password = String(formData.get("password") ?? "");
   const mode = String(formData.get("auth_mode") ?? "login").trim().toLowerCase() || "login";
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
   const loginPathBase = `/login?mode=${encodeURIComponent(mode)}${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
 
   const result = await backendRequest<AuthLoginResponse>("/api/v1/auth/login", {
     method: "POST",
@@ -1008,6 +1017,9 @@ export async function loginAction(formData: FormData): Promise<void> {
     if (purchaseContext) {
       redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Connexion%20reussie`);
     }
+    if (publicReturnTo) {
+      redirect(appendQueryMessage(publicReturnTo, "ok", "Connexion reussie"));
+    }
     redirect("/client?tab=home&ok=Connexion%20reussie");
   }
 
@@ -1018,6 +1030,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
   const first_name = String(formData.get("first_name") ?? "").trim();
   const last_name = String(formData.get("last_name") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -1028,6 +1041,7 @@ export async function registerAction(formData: FormData): Promise<void> {
     typeof File !== "undefined" && studentPhoto instanceof File && studentPhoto.size > 0
       ? studentPhoto
       : null;
+  const isEmbedBookingSignup = publicReturnTo.startsWith("/embed/");
   const confirmAccuracy = parseCheckboxFlag(formData, "confirm_accuracy", false);
   const acceptAccountTerms = parseCheckboxFlag(formData, "accept_account_terms", false);
   const marketingEmail = parseCheckboxFlag(formData, "marketing_email_opt_in", false);
@@ -1037,7 +1051,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   const timezone = "Europe/Paris";
   const signupPathBase = `/login?mode=signup${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
 
   if (!first_name) {
     redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20prenom.`);
@@ -1057,7 +1071,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   if (password.length < 8) {
     redirect(`${signupPathBase}&error=Veuillez%20choisir%20un%20mot%20de%20passe%20de%208%20caracteres%20minimum.`);
   }
-  if (!studentPhotoFile) {
+  if (!studentPhotoFile && !isEmbedBookingSignup) {
     redirect(`${signupPathBase}&error=Veuillez%20ajouter%20une%20photo%20de%20l%27eleve.`);
   }
   if (!confirmAccuracy) {
@@ -1080,8 +1094,8 @@ export async function registerAction(formData: FormData): Promise<void> {
       transactional_sms_opt_in: true,
       marketing_email_opt_in: marketingEmail,
       marketing_sms_opt_in: marketingSms,
-      student_photo_filename: studentPhotoFile.name || null,
-      student_photo_mime_type: studentPhotoFile.type || null,
+      student_photo_filename: studentPhotoFile?.name || null,
+      student_photo_mime_type: studentPhotoFile?.type || null,
       residence_country,
       preferred_currency,
       timezone,
@@ -1101,7 +1115,7 @@ export async function registerAction(formData: FormData): Promise<void> {
     redirect(
       `/login?mode=login${email ? `&email=${encodeURIComponent(email)}` : ""}${
         purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-      }&error=${encodeURIComponent(loginResult.message)}`,
+      }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&error=${encodeURIComponent(loginResult.message)}`,
     );
   }
 
@@ -1109,15 +1123,19 @@ export async function registerAction(formData: FormData): Promise<void> {
   if (purchaseContext) {
     redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Compte%20cree`);
   }
+  if (publicReturnTo) {
+    redirect(appendQueryMessage(publicReturnTo, "ok", "Compte cree"));
+  }
   redirect("/client?tab=home&ok=Compte%20cree");
 }
 
 export async function forgotPasswordAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
+  const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
   const forgotPathBase = `/login?mode=forgot${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
   if (!email) {
     redirect(`${forgotPathBase}&error=Email%20obligatoire`);
   }
@@ -1427,6 +1445,51 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
     successPath = removeQueryParam(successPath, "session_ok");
     successPath = appendQueryMessage(successPath, "session_ok", "Reservation confirmee");
   }
+  redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
+}
+
+export async function reservePublicPlanningSessionAction(formData: FormData): Promise<void> {
+  const fallbackReturnTo = "/embed/planning";
+  const returnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), fallbackReturnTo);
+  const token = currentPortalToken();
+  if (!token) {
+    redirect(`/login?mode=login&return_to=${encodeURIComponent(returnTo)}&error=Connexion%20requise`);
+  }
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  if (!sessionId) {
+    redirect(appendQueryMessage(returnTo, "session_error", "Creneau invalide"));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/sessions/${sessionId}/book`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    const userMessage =
+      result.status === 403 && result.message === "No eligible active plan for this session"
+        ? "Aucune formule active compatible avec ce type de cours."
+        : result.status === 403 && result.message === "No remaining credits on selected pack"
+          ? "Plus de credits disponibles sur le carnet selectionne."
+          : result.message;
+    let failurePath = removeQueryParam(returnTo, "ok");
+    failurePath = removeQueryParam(failurePath, "error");
+    failurePath = removeQueryParam(failurePath, "session_ok");
+    failurePath = removeQueryParam(failurePath, "session_error");
+    failurePath = appendQueryMessage(failurePath, "session_error", userMessage);
+    redirect(appendQueryMessage(failurePath, "error", userMessage));
+  }
+
+  revalidatePath("/embed/planning");
+  let successPath = removeQueryParam(returnTo, "error");
+  successPath = removeQueryParam(successPath, "session_error");
+  successPath = removeQueryParam(successPath, "session_ok");
+  successPath = appendQueryMessage(successPath, "session_ok", "Reservation confirmee");
   redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
 }
 
