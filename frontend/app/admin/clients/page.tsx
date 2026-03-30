@@ -29,6 +29,7 @@ type PerPage = 5 | 50;
 
 const CLIENT_STATUS_OPTIONS = [
   { value: "ACTIVE", label: "ACTIF" },
+  { value: "RESPONSABLE", label: "RESPONSABLE" },
   { value: "TRIAL", label: "ESSAI" },
   { value: "PENDING", label: "EN ATTENTE" },
   { value: "INACTIVE", label: "INACTIF" },
@@ -108,6 +109,9 @@ function statusPillClass(status: string): string {
   if (normalized === "ACTIVE") {
     return "status-ok";
   }
+  if (normalized === "RESPONSABLE") {
+    return "status-info";
+  }
   if (normalized === "TRIAL" || normalized === "PENDING") {
     return "status-warn";
   }
@@ -174,6 +178,7 @@ function closeModalHref(params: {
 function countByStatus(clients: AdminClientOut[]): Record<string, number> {
   const counts: Record<string, number> = {
     ACTIVE: 0,
+    RESPONSABLE: 0,
     TRIAL: 0,
     PENDING: 0,
     INACTIVE: 0,
@@ -378,6 +383,9 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
             <div className="row client-status-counts">
               <span>
                 <strong>{counts.ACTIVE}</strong> Actif
+              </span>
+              <span>
+                <strong>{counts.RESPONSABLE}</strong> Responsable
               </span>
               <span>
                 <strong>{counts.TRIAL}</strong> Essai

@@ -756,6 +756,9 @@ function statusClass(status: string): string {
   ) {
     return "status-ok";
   }
+  if (normalized === "RESPONSABLE") {
+    return "status-info";
+  }
   if (normalized === "WAITLISTED" || normalized === "PENDING" || normalized === "TRIAL" || normalized === "FAILED") {
     return "status-warn";
   }
@@ -3323,6 +3326,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       Statut
                       <select name="client_status" defaultValue={client.client_status || "ACTIVE"} required>
                         <option value="ACTIVE">ACTIF</option>
+                        <option value="RESPONSABLE">RESPONSABLE</option>
                         <option value="TRIAL">ESSAI</option>
                         <option value="PENDING">EN ATTENTE</option>
                         <option value="INACTIVE">INACTIF</option>
@@ -3680,6 +3684,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   Statut
                   <select name="child_client_status" defaultValue="ACTIVE">
                     <option value="ACTIVE">ACTIF</option>
+                    <option value="RESPONSABLE">RESPONSABLE</option>
                     <option value="TRIAL">ESSAI</option>
                     <option value="PENDING">EN ATTENTE</option>
                     <option value="INACTIVE">INACTIF</option>
@@ -3787,6 +3792,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   Statut
                   <select name="adult_client_status" defaultValue="ACTIVE">
                     <option value="ACTIVE">ACTIF</option>
+                    <option value="RESPONSABLE">RESPONSABLE</option>
                     <option value="TRIAL">ESSAI</option>
                     <option value="PENDING">EN ATTENTE</option>
                     <option value="INACTIVE">INACTIF</option>

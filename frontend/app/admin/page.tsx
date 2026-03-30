@@ -1647,6 +1647,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <select name="client_status" defaultValue={selectedClientStatus}>
                   <option value="ALL">Tous</option>
                   <option value="ACTIVE">ACTIF</option>
+                  <option value="RESPONSABLE">RESPONSABLE</option>
                   <option value="TRIAL">ESSAI</option>
                   <option value="PENDING">EN ATTENTE</option>
                   <option value="INACTIVE">INACTIF</option>

@@ -24,6 +24,7 @@ class ClientKind(str, enum.Enum):
 
 class ClientStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
+    RESPONSABLE = "RESPONSABLE"
     INACTIVE = "INACTIVE"
     TRIAL = "TRIAL"
     PENDING = "PENDING"

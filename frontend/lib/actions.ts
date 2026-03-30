@@ -968,7 +968,7 @@ function parseStringList(rawValues: FormDataEntryValue[]): string[] {
 
 function isActiveFromClientStatus(status: string): boolean {
   const normalized = status.trim().toUpperCase();
-  return normalized === "ACTIVE" || normalized === "TRIAL";
+  return normalized === "ACTIVE" || normalized === "RESPONSABLE" || normalized === "TRIAL";
 }
 
 const PROFESSOR_PERMISSION_KEYS: Array<keyof ProfessorPermissionOut> = [

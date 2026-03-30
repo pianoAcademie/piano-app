@@ -779,16 +779,17 @@ def _main_phone(client: User) -> str | None:
 
 
 def _status_implies_active(client_status: ClientStatus) -> bool:
-    return client_status in {ClientStatus.ACTIVE, ClientStatus.TRIAL}
+    return client_status in {ClientStatus.ACTIVE, ClientStatus.RESPONSABLE, ClientStatus.TRIAL}
 
 
 def _client_status_sort_value(client_status: ClientStatus) -> int:
     order = {
         ClientStatus.ACTIVE: 0,
-        ClientStatus.TRIAL: 1,
-        ClientStatus.PENDING: 2,
-        ClientStatus.INACTIVE: 3,
-        ClientStatus.ARCHIVED: 4,
+        ClientStatus.RESPONSABLE: 1,
+        ClientStatus.TRIAL: 2,
+        ClientStatus.PENDING: 3,
+        ClientStatus.INACTIVE: 4,
+        ClientStatus.ARCHIVED: 5,
     }
     return order.get(client_status, 99)
 
@@ -1242,10 +1243,17 @@ def _public_payment_result_html(
     subtitle: str,
     invoice_number: str,
     transaction_reference: str | None = None,
+    action_href: str | None = None,
+    action_label: str | None = None,
 ) -> HTMLResponse:
     details = f"<p><strong>Facture:</strong> {invoice_number}</p>"
     if transaction_reference:
         details += f"<p><strong>Transaction:</strong> {transaction_reference}</p>"
+    action_html = ""
+    if action_href and action_label:
+        action_html = (
+            f'<p class="actions"><a class="button" href="{action_href}">{action_label}</a></p>'
+        )
     html = f"""<!doctype html>
 <html lang="fr">
   <head>
@@ -1258,6 +1266,8 @@ def _public_payment_result_html(
       h1 {{ margin: 0 0 10px; font-size: 22px; }}
       p {{ margin: 6px 0; line-height: 1.45; }}
       .muted {{ color: #4b5563; }}
+      .actions {{ margin-top: 20px; }}
+      .button {{ display: inline-block; padding: 12px 18px; background: #c98937; color: #fff; text-decoration: none; border-radius: 10px; font-weight: 700; }}
     </style>
   </head>
   <body>
@@ -1265,6 +1275,7 @@ def _public_payment_result_html(
       <h1>{title}</h1>
       <p class="muted">{subtitle}</p>
       {details}
+      {action_html}
     </section>
   </body>
 </html>"""
@@ -4098,7 +4109,7 @@ def patch_admin_client(
         client.is_active = desired_active
         if desired_active and client.client_status in {ClientStatus.INACTIVE, ClientStatus.PENDING, ClientStatus.ARCHIVED}:
             client.client_status = ClientStatus.ACTIVE
-        if not desired_active and client.client_status in {ClientStatus.ACTIVE, ClientStatus.TRIAL, ClientStatus.PENDING}:
+        if not desired_active and client.client_status in {ClientStatus.ACTIVE, ClientStatus.RESPONSABLE, ClientStatus.TRIAL, ClientStatus.PENDING}:
             client.client_status = ClientStatus.INACTIVE
 
     client.updated_at = _utcnow()
@@ -4170,7 +4181,8 @@ def send_admin_client_password_email(
         message=f"Email d'activation envoye a {client.email} (message id: {message_id}).",
     )
     client.hashed_password = hash_password(temporary_password)
-    client.client_status = ClientStatus.ACTIVE
+    if client.client_status != ClientStatus.RESPONSABLE:
+        client.client_status = ClientStatus.ACTIVE
     client.is_active = True
     client.updated_at = now
     db.add(client)
@@ -7631,6 +7643,8 @@ def return_admin_client_range_invoice_public_payment(
         subtitle="Votre paiement a bien ete enregistre. La facture est marquee comme payee.",
         invoice_number=invoice_number,
         transaction_reference=f"{lookup.provider_reference} (ligne {transaction_id})",
+        action_href=f"{_frontend_base_url()}/client?tab=finance&finance_view=transactions&invoice_number={invoice_number}",
+        action_label="Aller vers mon compte",
     )
 
 

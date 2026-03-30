@@ -8,7 +8,7 @@ export type UserOut = {
   email: string;
   role: "admin" | "prof" | "client";
   client_kind: "ADULT" | "CHILD" | string;
-  client_status: "ACTIVE" | "INACTIVE" | "TRIAL" | "PENDING" | "ARCHIVED" | string;
+  client_status: "ACTIVE" | "RESPONSABLE" | "INACTIVE" | "TRIAL" | "PENDING" | "ARCHIVED" | string;
   first_name: string | null;
   last_name: string | null;
   address_line: string | null;
@@ -199,7 +199,7 @@ export type AdminClientOut = {
   role: "admin" | "prof" | "client";
   client_kind: "ADULT" | "CHILD" | string;
   photo_url: string | null;
-  client_status: "ACTIVE" | "INACTIVE" | "TRIAL" | "PENDING" | "ARCHIVED" | string;
+  client_status: "ACTIVE" | "RESPONSABLE" | "INACTIVE" | "TRIAL" | "PENDING" | "ARCHIVED" | string;
   first_name: string | null;
   last_name: string | null;
   family_name: string | null;
