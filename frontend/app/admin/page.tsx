@@ -131,6 +131,10 @@ function readMultiParam(params: SearchParams, key: string): string[] {
   return Array.from(new Set(entries));
 }
 
+function hasQueryParam(params: SearchParams, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(params, key);
+}
+
 function parseAgendaView(value: string): AgendaView {
   if (value === "week" || value === "day") {
     return value;
@@ -866,6 +870,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedCourseType = readParam(searchParams, "course_type_id");
   const selectedActivityIds = readMultiParam(searchParams, "activity_ids");
   const rawLocation = readParam(searchParams, "location_id");
+  const hasQuickLocationParam = hasQueryParam(searchParams, "location_id");
   const selectedLocationIdsFromQuery = readMultiParam(searchParams, "location_ids");
   const selectedProfessorLegacy = readParam(searchParams, "professor_id");
   const selectedProfessorIdsFromQuery = readMultiParam(searchParams, "professor_ids");
@@ -928,8 +933,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const confirmActionRaw = readParam(searchParams, "confirm_action").toLowerCase();
   const confirmAction: "" | "cancel" | "delete" = confirmActionRaw === "cancel" || confirmActionRaw === "delete" ? confirmActionRaw : "";
 
+  const selectedLocationIds = hasQuickLocationParam
+    ? rawLocation
+      ? [rawLocation]
+      : []
+    : selectedLocationIdsFromQuery.length
+      ? selectedLocationIdsFromQuery
+      : rawLocation
+        ? [rawLocation]
+        : [];
+
   const sessionsQuery = new URLSearchParams();
-  const locationFilterIdsForApi = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : rawLocation ? [rawLocation] : [];
+  const locationFilterIdsForApi = selectedLocationIds;
   for (const locationId of locationFilterIdsForApi) {
     sessionsQuery.append("location_ids", locationId);
   }
@@ -998,8 +1013,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         return [] as AdminMessagingTemplateOut[];
       })();
 
-  const focusedLocationId = rawLocation || selectedLocationIdsFromQuery[0] || "";
-  const selectedLocationIds = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : rawLocation ? [rawLocation] : [];
+  const focusedLocationId = hasQuickLocationParam ? rawLocation : rawLocation || selectedLocationIdsFromQuery[0] || "";
   const focusedLocation = locations.find((location) => location.id === focusedLocationId) ?? null;
 
   const courseTypesEndpoint = focusedLocationId
@@ -1017,7 +1031,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     agendaView,
     agendaDate,
     timezone,
-    locationId: focusedLocationId,
+    locationId: hasQuickLocationParam ? rawLocation : "",
     locationIds: selectedLocationIds,
     activityIds: selectedActivityIds,
     courseTypeId: selectedCourseType,
@@ -1042,6 +1056,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const filtersCloseHref = buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: "" });
   const filtersResetHref = buildPlanningHref({
     ...queryForLinks,
+    locationId: "",
     activityIds: [],
     courseTypeId: "",
     locationIds: [],
@@ -1081,7 +1096,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedActivityLabels = selectedActivityIds
     .map((activityId) => courseTypeById.get(activityId)?.name ?? "")
     .filter((name) => name.length > 0);
-  const selectedLocationLabels = selectedLocationIdsFromQuery
+  const selectedLocationLabels = selectedLocationIds
     .map((locationId) => locationById.get(locationId)?.name ?? "")
     .filter((name) => name.length > 0);
   const selectedProfessorLabels = selectedProfessorIds
@@ -1096,12 +1111,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     .map((client) => clientDisplayName(client));
   const hasAdvancedFilters =
     selectedActivityIds.length > 0 ||
-    Boolean(selectedCourseType) ||
-    selectedLocationIdsFromQuery.length > 0 ||
+    (!hasQuickLocationParam && selectedLocationIdsFromQuery.length > 0) ||
     selectedProfessorIds.length > 0 ||
     selectedClientIds.length > 0 ||
     selectedStatus !== "ALL" ||
-    selectedClientStatus !== "ALL";
+    selectedClientStatus !== "ALL" ||
+    timezone !== "Europe/Paris";
   const planningLocationLabel =
     selectedLocationLabels.length > 1
       ? `Multi lieux (${selectedLocationLabels.length})`
@@ -1435,10 +1450,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       <section className="card planning-filters-card">
         <form method="get" className="planning-quick-form">
-          <input type="hidden" name="course_type_id" value={selectedCourseType} />
           <input type="hidden" name="status" value={selectedStatus} />
           <input type="hidden" name="client_status" value={selectedClientStatus} />
           <input type="hidden" name="agenda_date" value={agendaDate} />
+          <input type="hidden" name="timezone" value={timezone} />
           {selectedActivityIds.map((activityId) => (
             <input key={`quick-activity-${activityId}`} type="hidden" name="activity_ids" value={activityId} />
           ))}
@@ -1463,6 +1478,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           </label>
 
           <label>
+            Activite
+            <AutoSubmitSelect
+              name="course_type_id"
+              defaultValue={selectedCourseType}
+              options={[{ value: "", label: "-- Toutes les activites --" }, ...courseTypes.map((row) => ({ value: row.id, label: row.name }))]}
+            />
+          </label>
+
+          <label>
             Vue agenda
             <AutoSubmitSelect
               name="agenda_view"
@@ -1472,15 +1496,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 { value: "week", label: "Semaine" },
                 { value: "day", label: "Jour" },
               ]}
-            />
-          </label>
-
-          <label>
-            Fuseau horaire
-            <AutoSubmitSelect
-              name="timezone"
-              defaultValue={timezone}
-              options={timezoneOptions.map((option) => ({ value: option.value, label: option.label }))}
             />
           </label>
 
@@ -1498,11 +1513,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             <span className="badge">Activites: {compactList(selectedActivityLabels)}</span>
           ) : null}
           {selectedCourseType ? (
-            <span className="badge">Type: {courseTypeById.get(selectedCourseType)?.name ?? "Selection"}</span>
+            <span className="badge">Activite: {courseTypeById.get(selectedCourseType)?.name ?? "Selection"}</span>
           ) : null}
           {selectedLocationLabels.length > 0 ? (
             <span className="badge">Lieux: {compactList(selectedLocationLabels)}</span>
           ) : null}
+          {timezone !== "Europe/Paris" ? <span className="badge">Fuseau: {timezone}</span> : null}
           {selectedProfessorLabels.length > 0 ? (
             <span className="badge">Professeurs: {compactList(selectedProfessorLabels)}</span>
           ) : null}
@@ -1526,10 +1542,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             <h2 className="modal-title">Filtres planning</h2>
             <p className="muted">Vous pouvez filtrer sur plusieurs lieux, professeurs et etudiants.</p>
             <form method="get" className="grid cols-2">
-              <input type="hidden" name="location_id" value={focusedLocationId} />
               <input type="hidden" name="agenda_view" value={agendaView} />
               <input type="hidden" name="agenda_date" value={agendaDate} />
-              <input type="hidden" name="timezone" value={timezone} />
               {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
               <label className="span-2">
@@ -1558,7 +1572,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 label="Par salles"
                 name="location_ids"
                 options={locationFilterOptions}
-                selectedIds={selectedLocationIdsFromQuery}
+                selectedIds={selectedLocationIds}
                 placeholder="Rechercher une salle..."
                 emptySelectionLabel="Aucune salle selectionnee."
               />
@@ -1581,6 +1595,17 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 placeholder="Rechercher un etudiant..."
                 emptySelectionLabel="Aucun etudiant selectionne."
               />
+
+              <label>
+                Fuseau horaire
+                <select name="timezone" defaultValue={timezone}>
+                  {timezoneOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               <label>
                 Statut cours

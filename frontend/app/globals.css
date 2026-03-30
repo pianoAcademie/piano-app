@@ -911,7 +911,7 @@ button.danger:focus-visible {
 
 .planning-quick-form {
   display: grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr)) auto;
+  grid-template-columns: repeat(3, minmax(160px, 1fr)) auto;
   align-items: end;
   gap: 10px;
 }
