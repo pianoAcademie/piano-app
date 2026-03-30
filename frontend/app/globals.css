@@ -3659,9 +3659,10 @@ button.danger:focus-visible {
 
 .session-slot-attendee-actions {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .session-slot-attendee-actions .mode-link {
@@ -3670,6 +3671,8 @@ button.danger:focus-visible {
 
 .session-slot-inline-confirm {
   position: relative;
+  display: grid;
+  justify-items: end;
 }
 
 .session-slot-inline-confirm > summary {
@@ -3686,21 +3689,26 @@ button.danger:focus-visible {
   cursor: pointer;
 }
 
+.session-slot-inline-confirm[open] > summary {
+  background: #b2352f;
+  border-color: #b2352f;
+  color: #ffffff;
+}
+
 .session-slot-inline-confirm > summary::-webkit-details-marker {
   display: none;
 }
 
 .session-slot-inline-confirm-panel {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 4;
+  position: static;
+  margin-top: 8px;
+  min-width: max-content;
   border: 1px solid #e6e8ee;
   border-radius: 10px;
   background: #ffffff;
   box-shadow: 0 14px 30px rgba(15, 23, 42, 0.16);
   padding: 8px;
-  display: flex;
+  display: grid;
   align-items: center;
   gap: 8px;
 }
