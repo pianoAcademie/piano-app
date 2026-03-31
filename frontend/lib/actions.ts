@@ -449,7 +449,13 @@ function safePublicBuyPath(raw: string, fallback: string): string {
 
 function safePublicReturnPath(raw: string, fallback: string): string {
   const value = raw.trim();
-  if (value.startsWith("/buy/") || value.startsWith("/login") || value.startsWith("/embed/")) {
+  if (
+    value.startsWith("/buy/")
+    || value.startsWith("/login")
+    || value.startsWith("/embed/")
+    || value.startsWith("/client")
+    || value.startsWith("/dashboard")
+  ) {
     return value;
   }
   return fallback;

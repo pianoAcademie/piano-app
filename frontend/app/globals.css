@@ -9493,6 +9493,22 @@ button.danger:focus-visible {
   border-radius: 18px;
 }
 
+.client-planning-quick-filter-form {
+  margin-top: 10px;
+}
+
+.client-planning-quick-filter-label {
+  display: grid;
+  gap: 6px;
+  max-width: 280px;
+}
+
+.client-planning-quick-filter-label > span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6f6252;
+}
+
 .client-planning-quick-filters {
   gap: 8px;
   flex-wrap: wrap;
@@ -9528,6 +9544,27 @@ button.danger:focus-visible {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.02em;
+}
+
+.client-session-modal-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.client-session-modal-action-list {
+  display: grid;
+  gap: 10px;
+}
+
+.client-session-modal-action-list form,
+.client-session-modal-action-list .stack-sm {
+  width: 100%;
+}
+
+.client-session-modal-action-list button,
+.client-session-modal-action-list .mode-link {
+  width: 100%;
+  justify-content: center;
 }
 
 @media (max-width: 980px) {
@@ -9702,6 +9739,10 @@ button.danger:focus-visible {
 
   .client-planning-toolbar-actions {
     width: 100%;
+  }
+
+  .client-planning-quick-filter-label {
+    max-width: none;
   }
 
   .client-planning-apply,

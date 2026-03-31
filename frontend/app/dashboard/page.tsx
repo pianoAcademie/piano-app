@@ -5,12 +5,12 @@ import PortalImpersonationBanner from "../../components/portal-impersonation-ban
 import { getAdminToken, getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
 import { backendRequest } from "../../lib/backend";
 import {
-  bookSessionAction,
   cancelBookingAction,
   endPortalImpersonationAction,
   logoutAction,
   openClientPaymentCheckoutAction,
   purchasePlanAction,
+  submitPublicSessionCheckoutAction,
   updateProfileAction,
 } from "../../lib/actions";
 import {
@@ -38,6 +38,8 @@ import type {
   UserOut,
 } from "../../lib/types";
 import Card from "../../components/client-ui/card";
+import AutoSubmitInput from "../../components/auto-submit-input";
+import AutoSubmitSelect from "../../components/auto-submit-select";
 import DrawerFilters from "../../components/client-ui/drawer-filters";
 import ListRow from "../../components/client-ui/list-row";
 import MobileHeader from "../../components/client-ui/mobile-header";
@@ -117,6 +119,7 @@ const FINANCE_PAGE_SIZES = [20, 30] as const;
 const FINANCE_PENDING_STATUSES = new Set(["PENDING", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT"]);
 const FINANCE_CANCELLED_STATUSES = new Set(["CANCELLED", "CANCELED", "NOT_BILLABLE", "REFUNDED"]);
 const FINANCE_FAILED_STATUSES = new Set(["FAILED", "ERROR", "DECLINED", "NETWORK_ERROR", "UNEXPECTED_ERROR"]);
+const FAMILY_BOOKING_OWNER = "FAMILY";
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -829,6 +832,18 @@ function withUpdatedQuery(base: URLSearchParams, updates: Record<string, string 
   return query ? `/client?${query}` : "/client";
 }
 
+function buildClientSessionCheckoutHref(sessionId: string, planningReturnTo: string, bookingUserId: string | null): string {
+  const params = new URLSearchParams();
+  params.set("session_id", sessionId);
+  if (planningReturnTo) {
+    params.set("planning_return_to", planningReturnTo);
+  }
+  if (bookingUserId) {
+    params.set("booking_user_id", bookingUserId);
+  }
+  return `/buy/session/checkout?${params.toString()}`;
+}
+
 export default async function DashboardPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
   const token = getPortalToken();
   if (!token) {
@@ -866,7 +881,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const reservationScope = readParam(searchParams, "reservation_scope") || "CURRENT";
   const reservationStatusFilter = readParam(searchParams, "reservation_status");
   const selectedMemberFilter = emptyAsAll(readParam(searchParams, "member_id"));
-  const selectedBookingOwner = readParam(searchParams, "booking_owner_id") || me.id;
+  const selectedBookingOwner = readParam(searchParams, "booking_owner_id") || FAMILY_BOOKING_OWNER;
   const selectedSessionId = readParam(searchParams, "session_id");
   const selectedOfferDetailId = readParam(searchParams, "offer_detail_id");
   const messageScope = parseMessageScope(readParam(searchParams, "message_scope"));
@@ -1094,8 +1109,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const members = [...memberMap.values()].sort((a, b) => a.display_name.localeCompare(b.display_name, "fr"));
   const linkedMembers = members.filter((member) => member.id !== me.id);
   const validMemberIds = new Set(members.map((member) => member.id));
-  const bookingOwnerId = validMemberIds.has(selectedBookingOwner) ? selectedBookingOwner : me.id;
-  const bookingOwnerMember = members.find((member) => member.id === bookingOwnerId) ?? members[0] ?? null;
+  const isFamilyBookingOwner = selectedBookingOwner === FAMILY_BOOKING_OWNER;
+  const bookingOwnerId = isFamilyBookingOwner
+    ? FAMILY_BOOKING_OWNER
+    : validMemberIds.has(selectedBookingOwner)
+      ? selectedBookingOwner
+      : FAMILY_BOOKING_OWNER;
+  const bookingOwnerMember = bookingOwnerId === FAMILY_BOOKING_OWNER
+    ? null
+    : members.find((member) => member.id === bookingOwnerId) ?? members[0] ?? null;
+  const bookingOwnerLabel = bookingOwnerId === FAMILY_BOOKING_OWNER ? "Toute la famille" : bookingOwnerMember?.display_name ?? "-";
 
   const allBookings: FamilyBookingRow[] = family
     ? [...family.bookings]
@@ -1129,12 +1152,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const activeBookingStatuses = new Set(["BOOKED", "WAITLISTED"]);
 
   const bookingsBySessionAndMember = new Map<string, FamilyBookingRow>();
+  const bookingsBySession = new Map<string, FamilyBookingRow[]>();
   for (const booking of allBookings) {
     const status = normalizeStatus(booking.status);
     if (status === "CANCELLED") {
       continue;
     }
     bookingsBySessionAndMember.set(`${booking.session.id}:${booking.owner_client_id}`, booking);
+    const existing = bookingsBySession.get(booking.session.id) ?? [];
+    existing.push(booking);
+    bookingsBySession.set(booking.session.id, existing);
   }
 
   const upcomingBookings = allBookings
@@ -1354,12 +1381,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const firstHomeBooking = homeCalendarRows[0] ?? upcomingBookings14[0] ?? null;
   const homePlanningHref = withUpdatedQuery(rawParams, {
     tab: "planning",
-    agenda_view: "day",
+    agenda_view: "week",
     agenda_date: firstHomeBooking
       ? dateKeyInTimezone(firstHomeBooking.session.start_at_utc, timezone)
       : todayKeyInTimezone(timezone),
-    session_id: firstHomeBooking?.session.id ?? null,
-    booking_owner_id: firstHomeBooking?.owner_client_id ?? bookingOwnerId,
+    session_id: null,
+    booking_owner_id: FAMILY_BOOKING_OWNER,
   });
 
   const filteredSessions = sessions.filter((session) => {
@@ -1388,7 +1415,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     label: agendaDayLabel(key, agendaView),
     sessions: sessionsByDay.get(key) ?? [],
   }));
-  const selectedMemberUpcomingBookings = upcomingBookings.filter((booking) => booking.owner_client_id === bookingOwnerId);
   const isAlreadyReservedByMember = (status: string): boolean => {
     const normalized = normalizeStatus(status);
     return (
@@ -1399,64 +1425,176 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       || normalized === "EXCUSED_ABSENCE"
     );
   };
-  const canReserveSessionNow = (session: SessionOut, memberBooking: FamilyBookingRow | undefined): boolean => {
+  const isPendingPaymentBooking = (status: string): boolean => normalizeStatus(status) === "PENDING_PAYMENT";
+  const sessionHasDirectPayment = (session: SessionOut): boolean => Number(session.external_booking_price_ttc ?? "0") > 0;
+  const memberPlanningStateForSession = (session: SessionOut, ownerId: string) => {
+    const memberBooking = bookingsBySessionAndMember.get(`${session.id}:${ownerId}`);
+    const bookingStatus = normalizeStatus(memberBooking?.status ?? "");
+    const alreadyReserved = Boolean(memberBooking && isAlreadyReservedByMember(memberBooking.status));
+    const paymentPending = Boolean(memberBooking && isPendingPaymentBooking(memberBooking.status));
     const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
-    const eligibleByPlan = activeEntitlementsByOwner.get(bookingOwnerId)?.has(session.course_type.id) ?? false;
+    const eligibleByPlan = activeEntitlementsByOwner.get(ownerId)?.has(session.course_type.id) ?? false;
+    const hasAnySubscription = activeSubscriptionByOwner.has(ownerId);
     const isFull = session.booked_count >= session.capacity_max;
-    return (
+    const hasDirectPayment = sessionHasDirectPayment(session);
+    const canCheckout =
       normalizeStatus(session.status) === "SCHEDULED"
       && session.online_booking_enabled
       && !sessionIsPastOrStarted
-      && !memberBooking
       && !isFull
-      && eligibleByPlan
-    );
-  };
-  const agendaDaySummary = new Map<string, { reservedCount: number; availableCount: number }>();
-  for (const day of agendaDays) {
-    let reservedCount = 0;
-    let availableCount = 0;
-    for (const session of day.sessions) {
-      const memberBooking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
-      if (memberBooking && isAlreadyReservedByMember(memberBooking.status)) {
-        reservedCount += 1;
-      } else if (canReserveSessionNow(session, memberBooking)) {
-        availableCount += 1;
-      }
+      && (paymentPending || (!memberBooking && (eligibleByPlan || hasDirectPayment)));
+
+    let statusLabel = "Non reservable";
+    if (alreadyReserved) {
+      statusLabel = bookingStatus === "WAITLISTED" ? "Liste d attente" : "Deja reserve";
+    } else if (paymentPending) {
+      statusLabel = "Paiement en attente";
+    } else if (isFull) {
+      statusLabel = "Complet";
+    } else if (sessionIsPastOrStarted) {
+      statusLabel = "Passe";
+    } else if (!session.online_booking_enabled) {
+      statusLabel = "Reservation fermee";
+    } else if (canCheckout) {
+      statusLabel = hasDirectPayment && !eligibleByPlan ? "Paiement requis" : "Disponible";
+    } else if (hasAnySubscription) {
+      statusLabel = "Offre incompatible";
+    } else {
+      statusLabel = "Aucune formule";
     }
-    agendaDaySummary.set(day.key, { reservedCount, availableCount });
-  }
-  const availableSlotsCount = Array.from(agendaDaySummary.values()).reduce((sum, row) => sum + row.availableCount, 0);
-  const activeReservationsCount = selectedMemberUpcomingBookings.filter((booking) => isAlreadyReservedByMember(booking.status)).length;
+
+    const actionLabel = paymentPending
+      ? "Finaliser le paiement"
+      : hasDirectPayment && !eligibleByPlan
+        ? "Payer et reserver"
+        : "Reserver";
+
+    return {
+      memberBooking,
+      bookingStatus,
+      alreadyReserved,
+      paymentPending,
+      sessionIsPastOrStarted,
+      eligibleByPlan,
+      hasAnySubscription,
+      isFull,
+      hasDirectPayment,
+      canCheckout,
+      statusLabel,
+      actionLabel,
+    };
+  };
+  const planningStateForSession = (session: SessionOut) => {
+    const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
+    const hasDirectPayment = sessionHasDirectPayment(session);
+    if (bookingOwnerId !== FAMILY_BOOKING_OWNER) {
+      const ownerState = memberPlanningStateForSession(session, bookingOwnerId);
+      const ownerName = bookingOwnerMember?.display_name ?? "ce membre";
+      const contextLine = ownerState.alreadyReserved
+        ? "Vous etes deja inscrit sur ce creneau"
+        : ownerState.paymentPending
+          ? "Paiement a finaliser pour ce membre"
+          : ownerState.canCheckout
+            ? hasDirectPayment && !ownerState.eligibleByPlan
+              ? "Paiement en ligne requis pour confirmer"
+              : "Disponible pour reservation"
+            : ownerState.statusLabel === "Offre incompatible"
+              ? "La formule de ce membre n est pas compatible"
+              : ownerState.statusLabel === "Aucune formule"
+                ? `Aucune formule active pour ${ownerName}`
+                : ownerState.statusLabel === "Reservation fermee"
+                  ? "Reservation en ligne fermee"
+                  : ownerState.statusLabel === "Passe"
+                    ? "Creneau passe"
+                    : ownerState.statusLabel === "Complet"
+                      ? "Creneau complet"
+                      : `Non reservable pour ${ownerName}`;
+      return {
+        ...ownerState,
+        statusLabel: ownerState.statusLabel,
+        cardStatusLabel: ownerState.statusLabel,
+        contextLine,
+        familyBookings: ownerState.memberBooking ? [ownerState.memberBooking] : [],
+        actionableMembers:
+          ownerState.canCheckout && bookingOwnerMember
+            ? [{ member: bookingOwnerMember, state: ownerState }]
+            : [],
+      };
+    }
+
+    const familyBookings = (bookingsBySession.get(session.id) ?? []).filter(
+      (booking) => normalizeStatus(booking.status) !== "CANCELLED",
+    );
+    const reservedFamilyBookings = familyBookings.filter((booking) => isAlreadyReservedByMember(booking.status));
+    const pendingFamilyBookings = familyBookings.filter((booking) => isPendingPaymentBooking(booking.status));
+    const actionableMembers = members
+      .map((member) => ({ member, state: memberPlanningStateForSession(session, member.id) }))
+      .filter((entry) => entry.state.canCheckout);
+    const reservedNames = reservedFamilyBookings.map((booking) => booking.owner_display_name).join(", ");
+    const pendingNames = pendingFamilyBookings.map((booking) => booking.owner_display_name).join(", ");
+    const hasAnySubscription = members.some((member) => activeSubscriptionByOwner.has(member.id));
+
+    let statusLabel = "Non reservable";
+    let contextLine = "Aucune action disponible pour la famille";
+    if (reservedFamilyBookings.length > 0) {
+      statusLabel = "Deja reserve";
+      contextLine = `Reserve pour ${reservedNames}`;
+    } else if (pendingFamilyBookings.length > 0) {
+      statusLabel = "Paiement en attente";
+      contextLine = `Paiement a finaliser pour ${pendingNames}`;
+    } else if (session.booked_count >= session.capacity_max) {
+      statusLabel = "Complet";
+      contextLine = "Creneau complet";
+    } else if (sessionIsPastOrStarted) {
+      statusLabel = "Passe";
+      contextLine = "Creneau passe";
+    } else if (!session.online_booking_enabled) {
+      statusLabel = "Reservation fermee";
+      contextLine = "Reservation en ligne fermee";
+    } else if (actionableMembers.length > 1) {
+      statusLabel = "Choisir le membre";
+      contextLine = "Choisissez le membre de la famille a inscrire";
+    } else if (actionableMembers.length === 1) {
+      statusLabel = actionableMembers[0].state.statusLabel;
+      contextLine =
+        actionableMembers[0].state.hasDirectPayment && !actionableMembers[0].state.eligibleByPlan
+          ? `Paiement requis pour ${actionableMembers[0].member.display_name}`
+          : `Disponible pour ${actionableMembers[0].member.display_name}`;
+    } else if (hasAnySubscription) {
+      statusLabel = "Offre incompatible";
+      contextLine = "Aucune formule famille compatible";
+    } else if (hasDirectPayment) {
+      statusLabel = "Choisir le membre";
+      contextLine = "Choisissez le membre a rattacher a cette reservation";
+    } else {
+      statusLabel = "Aucune formule";
+      contextLine = "Aucune formule active dans la famille";
+    }
+
+    return {
+      memberBooking: null,
+      bookingStatus: "",
+      alreadyReserved: reservedFamilyBookings.length > 0,
+      paymentPending: pendingFamilyBookings.length > 0,
+      sessionIsPastOrStarted,
+      eligibleByPlan: false,
+      hasAnySubscription,
+      isFull: session.booked_count >= session.capacity_max,
+      hasDirectPayment,
+      canCheckout: actionableMembers.length > 0,
+      statusLabel,
+      cardStatusLabel: statusLabel,
+      contextLine,
+      familyBookings,
+      actionableMembers,
+      actionLabel:
+        actionableMembers.length === 1
+          ? actionableMembers[0].state.actionLabel
+          : "Choisir le membre",
+    };
+  };
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
-  const selectedSessionStart = selectedSession ? safeDate(selectedSession.start_at_utc) : null;
-  const selectedSessionIsPastOrStarted = selectedSessionStart ? selectedSessionStart.getTime() <= now.getTime() : false;
-  const selectedSessionBooking =
-    selectedSession ? bookingsBySessionAndMember.get(`${selectedSession.id}:${bookingOwnerId}`) : null;
-  const selectedSessionOnlineBookingEnabled = selectedSession ? selectedSession.online_booking_enabled : false;
-  const selectedSessionEligibleByPlan = selectedSession
-    ? (activeEntitlementsByOwner.get(bookingOwnerId)?.has(selectedSession.course_type.id) ?? false)
-    : false;
-  const selectedSessionIneligibleReason = !selectedSession
-    ? ""
-    : !selectedSessionOnlineBookingEnabled
-      ? "La reservation en ligne est desactivee pour ce creneau."
-    : activeSubscriptionByOwner.has(bookingOwnerId)
-      ? "Aucune formule active compatible avec ce type de cours."
-      : "Aucun abonnement/carnet actif pour ce membre.";
-  const selectedSessionBookingStatus = selectedSessionBooking ? normalizeStatus(selectedSessionBooking.status) : "";
-  const selectedSessionCanCancel =
-    !!selectedSessionBooking &&
-    (selectedSessionBookingStatus === "BOOKED" || selectedSessionBookingStatus === "WAITLISTED") &&
-    !selectedSessionIsPastOrStarted;
-  const selectedSessionCanBook =
-    !!selectedSession &&
-    normalizeStatus(selectedSession.status) === "SCHEDULED" &&
-    selectedSessionOnlineBookingEnabled &&
-    !selectedSessionIsPastOrStarted &&
-    selectedSessionBooking == null &&
-    selectedSessionEligibleByPlan &&
-    selectedSession.booked_count < selectedSession.capacity_max;
+  const selectedSessionPlanningState = selectedSession ? planningStateForSession(selectedSession) : null;
   const agendaSessionCount = agendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
   const advancedFiltersOpen =
     Boolean(selectedCourseType) ||
@@ -1464,7 +1602,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     selectedTimeBucket !== "ALL" ||
     planningSlotFilter !== "ALL" ||
     timezone !== (me.timezone || DEFAULT_TIMEZONE) ||
-    bookingOwnerId !== me.id;
+    bookingOwnerId !== FAMILY_BOOKING_OWNER;
 
   const allBookingStatuses = Array.from(new Set(allBookings.map((row) => normalizeStatus(row.status)))).sort();
   const allPaymentSources = Array.from(new Set(payments.map((row) => normalizeStatus(row.source)))).sort();
@@ -1541,6 +1679,29 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   } · Communications: Email ${me.email_opt_in ? "ON" : "OFF"} / SMS ${me.sms_opt_in ? "ON" : "OFF"} · Confidentialite: ${
     me.portal_contact_visible ? "ON" : "OFF"
   }`;
+  const planningStatusClass = (statusLabelText: string): string => {
+    switch (statusLabelText) {
+      case "Deja reserve":
+      case "Liste d attente":
+        return "status-booked";
+      case "Paiement en attente":
+        return "status-waitlist";
+      case "Disponible":
+      case "Paiement requis":
+      case "Choisir le membre":
+        return "status-scheduled";
+      case "Complet":
+        return "status-cancelled";
+      case "Passe":
+        return "status-completed";
+      case "Reservation fermee":
+      case "Offre incompatible":
+      case "Aucune formule":
+      case "Non reservable":
+      default:
+        return "status-draft";
+    }
+  };
 
   return (
     <main className="client-portal-shell">
@@ -1980,25 +2141,27 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <div className="client-planning-hero">
                     <label className="client-planning-pill client-planning-pill-location">
                       <span>📍 Planning</span>
-                      <select name="location_id" defaultValue={selectedLocation} aria-label="Planning / lieu">
-                        <option value="">Tous les lieux</option>
-                        {locations.map((location) => (
-                          <option key={location.id} value={location.id}>
-                            {location.name}
-                          </option>
-                        ))}
-                      </select>
+                      <AutoSubmitSelect
+                        name="location_id"
+                        defaultValue={selectedLocation}
+                        options={[
+                          { value: "", label: "Tous les lieux" },
+                          ...locations.map((location) => ({ value: location.id, label: location.name })),
+                        ]}
+                      />
                     </label>
 
                     <label className="client-planning-pill client-planning-pill-date">
                       <span>📅 Date</span>
-                      <input type="date" name="agenda_date" defaultValue={agendaDate} />
+                      <AutoSubmitInput
+                        type="date"
+                        name="agenda_date"
+                        defaultValue={agendaDate}
+                        ariaLabel="Date du planning"
+                      />
                     </label>
 
                     <div className="client-planning-toolbar-actions">
-                      <button className="client-planning-apply" type="submit" title="Appliquer les filtres">
-                        ✅ Appliquer
-                      </button>
                       <a
                         className="client-planning-reset"
                         href={withUpdatedQuery(rawParams, {
@@ -2011,7 +2174,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           timezone: me.timezone || DEFAULT_TIMEZONE,
                           agenda_view: "week",
                           agenda_date: todayKeyInTimezone(timezone),
-                          booking_owner_id: me.id,
+                          booking_owner_id: FAMILY_BOOKING_OWNER,
                         })}
                         title="Reinitialiser"
                       >
@@ -2024,101 +2187,85 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-planning-advanced-grid">
                       <label>
                         Activite
-                        <select name="course_type_id" defaultValue={selectedCourseType}>
-                          <option value="">Toutes</option>
-                          {courseTypes.map((courseType) => (
-                            <option key={courseType.id} value={courseType.id}>
-                              {courseType.name}
-                            </option>
-                          ))}
-                        </select>
+                        <AutoSubmitSelect
+                          name="course_type_id"
+                          defaultValue={selectedCourseType}
+                          options={[
+                            { value: "", label: "Toutes" },
+                            ...courseTypes.map((courseType) => ({ value: courseType.id, label: courseType.name })),
+                          ]}
+                        />
                       </label>
 
                       <label>
                         Coach
-                        <select name="coach_id" defaultValue={selectedCoachId}>
-                          <option value="">Tous</option>
-                          {coachOptions.map((coach) => (
-                            <option key={coach.id} value={coach.id}>
-                              {coach.name}
-                            </option>
-                          ))}
-                        </select>
+                        <AutoSubmitSelect
+                          name="coach_id"
+                          defaultValue={selectedCoachId}
+                          options={[
+                            { value: "", label: "Tous" },
+                            ...coachOptions.map((coach) => ({ value: coach.id, label: coach.name })),
+                          ]}
+                        />
                       </label>
 
                       <label>
                         Horaire
-                        <select name="time_bucket" defaultValue={selectedTimeBucket}>
-                          <option value="ALL">Toutes heures</option>
-                          <option value="MORNING">Matin (6h-12h)</option>
-                          <option value="AFTERNOON">Apres-midi (12h-18h)</option>
-                          <option value="EVENING">Soir (18h-minuit)</option>
-                        </select>
+                        <AutoSubmitSelect
+                          name="time_bucket"
+                          defaultValue={selectedTimeBucket}
+                          options={[
+                            { value: "ALL", label: "Toutes heures" },
+                            { value: "MORNING", label: "Matin (6h-12h)" },
+                            { value: "AFTERNOON", label: "Apres-midi (12h-18h)" },
+                            { value: "EVENING", label: "Soir (18h-minuit)" },
+                          ]}
+                        />
                       </label>
 
                       <label>
                         Fuseau horaire
-                        <select name="timezone" defaultValue={timezone}>
-                          {timezoneOptions.map((item) => (
-                            <option key={item.value} value={item.value}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
+                        <AutoSubmitSelect
+                          name="timezone"
+                          defaultValue={timezone}
+                          options={timezoneOptions.map((item) => ({ value: item.value, label: item.label }))}
+                        />
                       </label>
 
                       <label>
                         Reservation pour
-                        <select name="booking_owner_id" defaultValue={bookingOwnerId}>
-                          {members.map((member) => (
-                            <option key={member.id} value={member.id}>
-                              {member.display_name}
-                            </option>
-                          ))}
-                        </select>
+                        <AutoSubmitSelect
+                          name="booking_owner_id"
+                          defaultValue={bookingOwnerId}
+                          options={[
+                            { value: FAMILY_BOOKING_OWNER, label: "Toute la famille" },
+                            ...members.map((member) => ({ value: member.id, label: member.display_name })),
+                          ]}
+                        />
                       </label>
 
                       <label>
                         Statut creneaux
-                        <select name="planning_slot_filter" defaultValue={planningSlotFilter}>
-                          <option value="ALL">Tous</option>
-                          <option value="AVAILABLE">Disponibles uniquement</option>
-                          <option value="ALREADY_BOOKED">Deja reserves</option>
-                        </select>
+                        <AutoSubmitSelect
+                          name="planning_slot_filter"
+                          defaultValue={planningSlotFilter}
+                          options={[
+                            { value: "ALL", label: "Tous" },
+                            { value: "AVAILABLE", label: "Disponibles uniquement" },
+                            { value: "ALREADY_BOOKED", label: "Deja reserves" },
+                          ]}
+                        />
                       </label>
                     </div>
                   </DrawerFilters>
                 </form>
 
-                <section className="client-planning-summary-banner">
-                  <article className="client-planning-summary-item">
-                    <small>Reservation pour</small>
-                    <strong>{bookingOwnerMember?.display_name ?? "-"}</strong>
-                  </article>
-                  <article className="client-planning-summary-item">
-                    <small>Reservations confirmees</small>
-                    <strong>{activeReservationsCount}</strong>
-                  </article>
-                  <article className="client-planning-summary-item">
-                    <small>Creneaux visibles</small>
-                    <strong>{agendaSessionCount}</strong>
-                  </article>
-                  <article className="client-planning-summary-item">
-                    <small>Creneaux reservables</small>
-                    <strong>{availableSlotsCount}</strong>
-                  </article>
-                  <article className="client-planning-summary-item">
-                    <small>Semaine affichee</small>
-                    <strong>{agendaRange.title}</strong>
-                  </article>
-                </section>
-
                 <div className="client-week-toolbar">
                   <div className="client-week-toolbar-head">
                     <div className="client-week-title-group">
-                      <span className="badge">Vue semaine</span>
+                      <span className="badge">{bookingOwnerLabel}</span>
                       <strong>{agendaRange.title}</strong>
-                      <small>Une seule grille pour reserver, suivre et distinguer vos creneaux deja confirmes.</small>
+                      <small>Une seule grille mobile-first pour suivre les reservations famille et les creneaux reservables.</small>
                     </div>
                     <div className="client-week-toolbar-actions">
                       <a
@@ -2147,11 +2294,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </span>
                     <span className="client-week-legend-item">
                       <span className="client-week-legend-swatch available" />
-                      Reservable en ligne
+                      Reserver ou payer
                     </span>
                     <span className="client-week-legend-item">
                       <span className="client-week-legend-swatch full" />
-                      Complet ou indisponible
+                      Ferme ou complet
                     </span>
                   </div>
                 </div>
@@ -2163,53 +2310,47 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <span className="badge">{agendaSessionCount}</span>
                 </div>
                 <p className="muted">Vos creneaux reserves et les disponibilites en ligne sont reunis sur la meme grille.</p>
-                <div className="row client-planning-quick-filters">
-                  <a
-                    className={`mode-link ${planningSlotFilter === "ALL" ? "mode-active" : ""}`}
-                    href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "ALL" })}
-                  >
-                    Tous
-                  </a>
-                  <a
-                    className={`mode-link ${planningSlotFilter === "AVAILABLE" ? "mode-active" : ""}`}
-                    href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "AVAILABLE" })}
-                  >
-                    Disponibles uniquement
-                  </a>
-                  <a
-                    className={`mode-link ${planningSlotFilter === "ALREADY_BOOKED" ? "mode-active" : ""}`}
-                    href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "ALREADY_BOOKED" })}
-                  >
-                    Mes reservations
-                  </a>
-                </div>
+                <form method="get" className="client-planning-quick-filter-form">
+                  <input type="hidden" name="tab" value="planning" />
+                  <input type="hidden" name="agenda_view" value="week" />
+                  <input type="hidden" name="agenda_date" value={agendaDate} />
+                  <input type="hidden" name="location_id" value={selectedLocation} />
+                  <input type="hidden" name="course_type_id" value={selectedCourseType} />
+                  <input type="hidden" name="coach_id" value={selectedCoachId} />
+                  <input type="hidden" name="time_bucket" value={selectedTimeBucket} />
+                  <input type="hidden" name="timezone" value={timezone} />
+                  <input type="hidden" name="booking_owner_id" value={bookingOwnerId} />
+                  <label className="client-planning-quick-filter-label">
+                    <span>Afficher</span>
+                    <AutoSubmitSelect
+                      name="planning_slot_filter"
+                      defaultValue={planningSlotFilter}
+                      options={[
+                        { value: "ALL", label: "Tous les creneaux" },
+                        { value: "AVAILABLE", label: "A reserver maintenant" },
+                        { value: "ALREADY_BOOKED", label: "Mes reservations" },
+                      ]}
+                    />
+                  </label>
+                </form>
                 <div className={`agenda-grid client-agenda-grid agenda-grid-${agendaView}`}>
                   {agendaDays.map((day) => {
                     const daySessions = day.sessions.filter((session) => {
-                      const memberBooking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
-                      const alreadyReserved = Boolean(memberBooking && isAlreadyReservedByMember(memberBooking.status));
-                      const availableNow = canReserveSessionNow(session, memberBooking);
+                      const sessionState = planningStateForSession(session);
                       if (planningSlotFilter === "AVAILABLE") {
-                        return availableNow;
+                        return sessionState.canCheckout;
                       }
                       if (planningSlotFilter === "ALREADY_BOOKED") {
-                        return alreadyReserved;
+                        return sessionState.alreadyReserved || sessionState.paymentPending;
                       }
                       return true;
                     });
-                    const visibleSessions = daySessions;
-                    const hiddenSessions: SessionOut[] = [];
 
                     return (
                       <article key={day.key} className={`agenda-day client-agenda-day client-agenda-day-${agendaView}`}>
                         <div className="row spread agenda-day-header">
                           <div className="client-agenda-day-headings">
                             <h3>{day.label}</h3>
-                            <small className="client-agenda-day-stats">
-                              {(agendaDaySummary.get(day.key)?.reservedCount ?? 0)} reserve{(agendaDaySummary.get(day.key)?.reservedCount ?? 0) > 1 ? "s" : ""}
-                              {" · "}
-                              {(agendaDaySummary.get(day.key)?.availableCount ?? 0)} disponible{(agendaDaySummary.get(day.key)?.availableCount ?? 0) > 1 ? "s" : ""}
-                            </small>
                           </div>
                           <span className="badge">{daySessions.length}</span>
                         </div>
@@ -2217,10 +2358,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {daySessions.length === 0 ? <p className="muted agenda-empty">Aucun cours</p> : null}
 
                         <div className="agenda-events">
-                          {visibleSessions.map((session) => {
-                            const booking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
-                            const isReservedByMember = Boolean(booking && isAlreadyReservedByMember(booking.status));
-                            const eligibleByPlan = activeEntitlementsByOwner.get(bookingOwnerId)?.has(session.course_type.id) ?? false;
+                          {daySessions.map((session) => {
+                            const sessionState = planningStateForSession(session);
                             const compactAgendaCard = true;
                             const accentColor = accentColorForId(session.course_type.id);
                             const durationMinutes = Math.max(
@@ -2235,30 +2374,27 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               session_ok: null,
                               session_error: null,
                             });
-                            const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
-                            const canReserveNow =
-                              normalizeStatus(session.status) === "SCHEDULED" &&
-                              session.online_booking_enabled &&
-                              !sessionIsPastOrStarted &&
-                              !booking &&
-                              eligibleByPlan &&
-                              session.booked_count < session.capacity_max;
-                            const isFull = session.booked_count >= session.capacity_max;
-                            const cardStatusLabel = isReservedByMember ? "Deja reserve" : isFull ? "Complet" : canReserveNow ? "Disponible" : "Indisponible";
-                            const sessionCtaLabel = isReservedByMember
+                            const reservationFlagLabel =
+                              sessionState.familyBookings.length > 1
+                                ? "Reservations famille"
+                                : bookingOwnerId === FAMILY_BOOKING_OWNER
+                                  ? "Reservation famille"
+                                  : "Mon creneau reserve";
+                            const cardStatusClass = planningStatusClass(sessionState.cardStatusLabel);
+                            const sessionCtaLabel = sessionState.alreadyReserved
                               ? "Voir la reservation"
-                              : canReserveNow
-                                ? "Reserver"
-                                : isFull
+                              : sessionState.paymentPending
+                                ? "Finaliser le paiement"
+                                : sessionState.canCheckout
+                                  ? sessionState.actionableMembers.length > 1
+                                    ? "Choisir le membre"
+                                    : sessionState.actionLabel
+                                  : sessionState.isFull
                                   ? "Complet"
                                   : "Voir details";
-                            const contextLine = isReservedByMember
-                              ? "Vous etes deja inscrit sur ce creneau"
-                              : canReserveNow
-                                ? "Disponible pour reservation"
-                                : isFull
-                                  ? "Creneau complet"
-                                  : `Reserve pour ${bookingOwnerMember?.display_name ?? "ce membre"}`;
+                            const bookingBadges = sessionState.familyBookings.filter((booking) =>
+                              isAlreadyReservedByMember(booking.status) || isPendingPaymentBooking(booking.status),
+                            );
 
                             return (
                               <a
@@ -2268,7 +2404,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 aria-label={`Ouvrir le detail du creneau ${session.title}`}
                               >
                                 <article
-                                  className={`client-session-card ${compactAgendaCard ? "client-session-card-compact" : ""} ${isReservedByMember ? "client-session-card-booked" : ""} ${statusClass(session.status)}`}
+                                  className={`client-session-card ${compactAgendaCard ? "client-session-card-compact" : ""} ${sessionState.alreadyReserved ? "client-session-card-booked" : ""} ${statusClass(session.status)}`}
                                 >
                                   {!compactAgendaCard ? (
                                     <div className="client-session-timebox">
@@ -2279,7 +2415,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   ) : null}
 
                                   <div className={`agenda-event client-agenda-event ${statusClass(session.status)}`}>
-                                    {isReservedByMember ? <span className="client-session-owned-flag">Mon creneau reserve</span> : null}
+                                    {sessionState.alreadyReserved ? <span className="client-session-owned-flag">{reservationFlagLabel}</span> : null}
                                     <div className="row spread client-event-head">
                                       <h3 className="event-title">{session.title}</h3>
                                       <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
@@ -2292,28 +2428,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     </div>
                                     {session.professor ? <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small> : null}
                                     <small className="event-meta event-meta-secondary">📍 {session.location.name}</small>
-                                    <small className="event-meta event-meta-secondary">{contextLine}</small>
+                                    <small className="event-meta event-meta-secondary">{sessionState.contextLine}</small>
 
                                     <div className="row client-event-footer">
                                       <span className={`status-badge ${statusClass(session.status)}`}>{statusLabel(session.status)}</span>
-                                      {booking ? (
-                                        <span className={`status-badge ${statusClass(booking.status)}`}>
-                                          {isReservedByMember ? "Reserve" : statusLabel(booking.status)}
+                                      {bookingBadges.map((booking) => (
+                                        <span key={booking.id} className={`status-badge ${statusClass(booking.status)}`}>
+                                          {bookingOwnerId === FAMILY_BOOKING_OWNER
+                                            ? `${booking.owner_display_name} · ${isPendingPaymentBooking(booking.status) ? "Paiement en attente" : "Reserve"}`
+                                            : isPendingPaymentBooking(booking.status)
+                                              ? "Paiement en attente"
+                                              : "Reserve"}
                                         </span>
-                                      ) : null}
-                                      {!booking && sessionIsPastOrStarted ? <span className="status-badge status-completed">Passe</span> : null}
-                                      <span className={`status-badge ${isReservedByMember ? "status-booked" : canReserveNow ? "status-scheduled" : "status-waitlist"}`}>
-                                        {cardStatusLabel}
+                                      ))}
+                                      <span className={`status-badge ${cardStatusClass}`}>
+                                        {sessionState.cardStatusLabel}
                                       </span>
-                                      <span className={`client-session-cta ${canReserveNow ? "ready" : ""}`}>{sessionCtaLabel}</span>
+                                      <span className={`client-session-cta ${sessionState.canCheckout || sessionState.paymentPending ? "ready" : ""}`}>
+                                        {sessionCtaLabel}
+                                      </span>
                                     </div>
                                   </div>
                                 </article>
                               </a>
                             );
                           })}
-
-                          {hiddenSessions.length > 0 ? null : null}
                         </div>
                       </article>
                     );
@@ -2347,12 +2486,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {selectedSession.booked_count}/{selectedSession.capacity_max}
                         </span>
                         <span className={`status-badge ${statusClass(selectedSession.status)}`}>{statusLabel(selectedSession.status)}</span>
-                        {!selectedSession.online_booking_enabled ? <span className="badge">Reservation en ligne fermee</span> : null}
-                        {selectedSessionBooking ? (
-                          <span className={`status-badge ${statusClass(selectedSessionBooking.status)}`}>
-                            {statusLabel(selectedSessionBooking.status)}
+                        {selectedSessionPlanningState ? (
+                          <span className={`status-badge ${planningStatusClass(selectedSessionPlanningState.cardStatusLabel)}`}>
+                            {selectedSessionPlanningState.cardStatusLabel}
                           </span>
                         ) : null}
+                        {!selectedSession.online_booking_enabled ? <span className="badge">Reservation en ligne fermee</span> : null}
                       </div>
                     </header>
 
@@ -2401,10 +2540,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </section>
                     ) : null}
 
+                    {selectedSessionPlanningState ? (
+                      <section className="modal-card">
+                        <small className="muted">Etat de reservation</small>
+                        <p>{selectedSessionPlanningState.contextLine}</p>
+                      </section>
+                    ) : null}
+
                     {sessionOkMessage ? <section className="flash-ok modal-card">{sessionOkMessage}</section> : null}
                     {sessionErrorMessage ? <section className="flash-err modal-card">{sessionErrorMessage}</section> : null}
 
-                    <footer className="row spread modal-card">
+                    <footer className="modal-card client-session-modal-actions">
                       <a
                         className="reset-link"
                         href={withUpdatedQuery(rawParams, {
@@ -2416,50 +2562,58 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       >
                         Retour au planning
                       </a>
-                      <div className="row">
-                        {selectedSessionCanCancel && selectedSessionBooking ? (
-                          <form action={cancelBookingAction}>
-                            <input type="hidden" name="booking_id" value={selectedSessionBooking.id} />
-                            <input
-                              type="hidden"
-                              name="return_to"
-                              value={withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id })}
-                            />
-                            <button className="danger" type="submit">
-                              Annuler la reservation
-                            </button>
-                          </form>
-                        ) : null}
-                        {selectedSessionCanBook ? (
-                          <form action={bookSessionAction}>
-                            <input type="hidden" name="session_id" value={selectedSession.id} />
-                            <input type="hidden" name="booking_user_id" value={bookingOwnerId} />
-                            <input
-                              type="hidden"
-                              name="return_to"
-                              value={withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id })}
-                            />
-                            <button type="submit">Reserver maintenant</button>
-                          </form>
-                        ) : (
+                      <div className="client-session-modal-action-list">
+                        {(selectedSessionPlanningState?.familyBookings ?? [])
+                          .filter((booking) => ["BOOKED", "WAITLISTED"].includes(normalizeStatus(booking.status)))
+                          .map((booking) => (
+                            <form key={`cancel-${booking.id}`} action={cancelBookingAction}>
+                              <input type="hidden" name="booking_id" value={booking.id} />
+                              <input
+                                type="hidden"
+                                name="return_to"
+                                value={withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id })}
+                              />
+                              <button className="danger" type="submit">
+                                {bookingOwnerId === FAMILY_BOOKING_OWNER
+                                  ? `Annuler pour ${booking.owner_display_name}`
+                                  : "Annuler la reservation"}
+                              </button>
+                            </form>
+                          ))}
+                        {(selectedSessionPlanningState?.actionableMembers ?? []).map(({ member, state }) => {
+                          const planningReturnTo = withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id });
+                          const checkoutReturnTo = buildClientSessionCheckoutHref(selectedSession.id, planningReturnTo, member.id);
+                          const actionLabel =
+                            state.paymentPending
+                              ? `Finaliser le paiement${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`
+                              : state.hasDirectPayment && !state.eligibleByPlan
+                                ? `Payer et reserver${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`
+                                : `Reserver${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`;
+                          return (
+                            <form key={`checkout-${member.id}`} action={submitPublicSessionCheckoutAction}>
+                              <input type="hidden" name="session_id" value={selectedSession.id} />
+                              <input type="hidden" name="booking_user_id" value={member.id} />
+                              <input type="hidden" name="planning_return_to" value={planningReturnTo} />
+                              <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
+                              <button type="submit">{actionLabel}</button>
+                            </form>
+                          );
+                        })}
+                        {!selectedSessionPlanningState?.alreadyReserved &&
+                        !selectedSessionPlanningState?.paymentPending &&
+                        !selectedSessionPlanningState?.canCheckout ? (
                           <div className="stack-sm">
                             <span className="badge">
-                              {selectedSessionIsPastOrStarted
-                                ? "Creneau passe: reservation fermee"
-                                : selectedSessionBooking
-                                  ? "Deja reserve pour ce membre"
-                                  : selectedSessionIneligibleReason || "Reservation indisponible"}
+                              {selectedSessionPlanningState?.contextLine || "Reservation non disponible pour ce creneau"}
                             </span>
-                            {!selectedSessionIsPastOrStarted &&
-                            !selectedSessionBooking &&
-                            selectedSessionOnlineBookingEnabled &&
-                            !selectedSessionEligibleByPlan ? (
+                            {!selectedSessionPlanningState?.hasDirectPayment &&
+                            selectedSessionPlanningState?.statusLabel === "Aucune formule" ? (
                               <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
                                 Voir les offres compatibles
                               </a>
                             ) : null}
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     </footer>
                   </article>
