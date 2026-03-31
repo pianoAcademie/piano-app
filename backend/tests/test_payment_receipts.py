@@ -101,7 +101,7 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
             timezone="Europe/Paris",
         )
 
-    def test_future_service_is_deferred_but_same_day_is_not(self) -> None:
+    def test_future_service_is_deferred_until_completion_even_same_day(self) -> None:
         future_session = SimpleNamespace(
             status=SessionStatus.SCHEDULED,
             start_at_utc=datetime(2026, 9, 23, 9, 0, tzinfo=timezone.utc),
@@ -119,12 +119,13 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
                 now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             should_defer_booking_invoice(
                 same_day_session,
                 now=datetime(2026, 3, 30, 8, 0, tzinfo=timezone.utc),
             )
         )
+        self.assertFalse(should_defer_booking_invoice(self.session_obj))
 
     def test_final_invoice_metadata_can_reconcile_multiple_payments(self) -> None:
         payment_ids = [uuid4(), uuid4()]

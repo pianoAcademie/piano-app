@@ -158,6 +158,7 @@ from app.services.payment_receipts import (
     build_booking_receipt_snapshot,
     completed_payment_receipt_totals,
     generate_final_invoice_for_booking,
+    is_final_booking_invoice_metadata,
     mark_payment_receipt_completed,
     payment_receipt_checkout_urls,
     render_payment_receipt_attachment,
@@ -5538,6 +5539,8 @@ def list_admin_client_bookings(
             metadata = _parse_invoice_range_note_entry(note)
             if metadata is None:
                 continue
+            if not is_final_booking_invoice_metadata(metadata):
+                continue
             final_invoice_by_booking[invoice_line.source_payment_id] = (note, metadata)
 
     return [
@@ -7473,6 +7476,7 @@ def download_admin_client_range_invoice(
             for row in payments
             if ((row.invoice_status or "").strip().upper() not in {"ISSUED", "PAID"})
         ]
+    single_booking_scope = len(normalized_frozen_keys) == 1 and normalized_frozen_keys[0].startswith("BOOKING:")
 
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
@@ -7503,17 +7507,18 @@ def download_admin_client_range_invoice(
         current["total_incl_vat"] = _quantize_money(current["total_incl_vat"] + Decimal(row.total_incl_vat))
 
     opening_balance_by_currency: dict[str, Decimal] = {}
-    for row in all_payments:
-        if row.occurred_at >= start_at:
-            continue
-        if (row.source or "").strip().upper() == "MANUAL" and row.id in reconciled_payment_id_set:
-            continue
-        if not _should_count_in_client_balance(row):
-            continue
-        currency = _normalize_currency(row.currency, fallback="EUR")
-        opening_balance_by_currency[currency] = _quantize_money(
-            opening_balance_by_currency.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
-        )
+    if not single_booking_scope:
+        for row in all_payments:
+            if row.occurred_at >= start_at:
+                continue
+            if (row.source or "").strip().upper() == "MANUAL" and row.id in reconciled_payment_id_set:
+                continue
+            if not _should_count_in_client_balance(row):
+                continue
+            currency = _normalize_currency(row.currency, fallback="EUR")
+            opening_balance_by_currency[currency] = _quantize_money(
+                opening_balance_by_currency.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
+            )
 
     applied_payment_totals_by_currency = _invoice_range_reconciled_manual_payment_totals(
         all_payments,

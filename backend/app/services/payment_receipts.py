@@ -266,11 +266,28 @@ def _session_local_time_label(session_obj: CourseSession) -> str:
     return f"{start_local.strftime('%H:%M')} - {end_local.strftime('%H:%M')}"
 
 
-def should_defer_booking_invoice(session_obj: CourseSession, *, now: datetime | None = None) -> bool:
-    if session_obj.status == SessionStatus.COMPLETED:
+def is_single_booking_invoice_scope(metadata: dict[str, object] | None) -> bool:
+    if not isinstance(metadata, dict):
         return False
-    effective_now = now or _utcnow()
-    return _session_local_date(session_obj) > effective_now.astimezone(_session_zone(session_obj)).date()
+    raw_keys = metadata.get("included_payment_keys")
+    if not isinstance(raw_keys, list):
+        return False
+    normalized_keys = [str(value).strip().upper() for value in raw_keys if str(value).strip()]
+    return len(normalized_keys) == 1 and normalized_keys[0].startswith("BOOKING:")
+
+
+def is_final_booking_invoice_metadata(metadata: dict[str, object] | None) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    generation_mode = str(metadata.get("generation_mode") or "").strip().upper()
+    if generation_mode == "SERVICE_COMPLETED":
+        return True
+    return _normalize_optional(str(metadata.get("service_realized_date") or "")) is not None
+
+
+def should_defer_booking_invoice(session_obj: CourseSession, *, now: datetime | None = None) -> bool:
+    del now
+    return session_obj.status != SessionStatus.COMPLETED
 
 
 def build_booking_receipt_snapshot(
@@ -367,6 +384,8 @@ def _invoice_note_for_booking(db: Session, *, booking_id: UUID) -> tuple[ClientN
         if metadata is None:
             continue
         if str(metadata.get("invoice_status") or "").strip().upper() == "CANCELLED":
+            continue
+        if not is_final_booking_invoice_metadata(metadata):
             continue
         return note, metadata
     return None

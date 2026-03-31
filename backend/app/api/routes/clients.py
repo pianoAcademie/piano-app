@@ -68,6 +68,7 @@ from app.services.payment_checkout import CheckoutCreateRequest, create_checkout
 from app.services.payment_receipts import (
     build_booking_receipt_snapshot,
     get_or_create_pending_booking_payment_receipt,
+    is_single_booking_invoice_scope,
     payment_receipt_public_payment_url,
     remaining_booking_amount_due,
     should_defer_booking_invoice,
@@ -2387,13 +2388,14 @@ def download_client_invoice(
             }
 
         opening_balance_by_currency: dict[str, Decimal] = {}
-        raw_opening = metadata.get("opening_balance_by_currency")
-        if isinstance(raw_opening, dict):
-            for currency_code, value in raw_opening.items():
-                try:
-                    opening_balance_by_currency[str(currency_code).strip().upper() or "EUR"] = Decimal(str(value)).quantize(Decimal("0.01"))
-                except Exception:
-                    continue
+        if not is_single_booking_invoice_scope(metadata):
+            raw_opening = metadata.get("opening_balance_by_currency")
+            if isinstance(raw_opening, dict):
+                for currency_code, value in raw_opening.items():
+                    try:
+                        opening_balance_by_currency[str(currency_code).strip().upper() or "EUR"] = Decimal(str(value)).quantize(Decimal("0.01"))
+                    except Exception:
+                        continue
         total_to_pay_by_currency: dict[str, Decimal] = {}
         raw_total_to_pay = metadata.get("total_to_pay_by_currency")
         if isinstance(raw_total_to_pay, dict):
