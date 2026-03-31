@@ -18,8 +18,6 @@ from app.services.payment_receipts import (
     _parse_invoice_range_note_entry,
     build_booking_receipt_snapshot,
     get_or_create_pending_booking_payment_receipt,
-    is_final_booking_invoice_metadata,
-    is_single_booking_invoice_scope,
 )
 
 SCRIPT_PREFIX = "PROD_FUTURE_BOOKING_INVOICE_CLEANUP"
@@ -39,6 +37,26 @@ def _reconciled_manual_payment_ids(metadata: dict[str, object]) -> list[UUID]:
         except ValueError:
             continue
     return out
+
+
+def _is_single_booking_invoice_scope(metadata: dict[str, object] | None) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    raw_keys = metadata.get("included_payment_keys")
+    if not isinstance(raw_keys, list):
+        return False
+    normalized_keys = [str(value).strip().upper() for value in raw_keys if str(value).strip()]
+    return len(normalized_keys) == 1 and normalized_keys[0].startswith("BOOKING:")
+
+
+def _is_final_booking_invoice_metadata(metadata: dict[str, object] | None) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    generation_mode = str(metadata.get("generation_mode") or "").strip().upper()
+    if generation_mode == "SERVICE_COMPLETED":
+        return True
+    service_realized_date = str(metadata.get("service_realized_date") or "").strip()
+    return bool(service_realized_date)
 
 
 def _invoice_label(note: ClientNoteEntry, metadata: dict[str, object]) -> str:
@@ -87,9 +105,9 @@ def main() -> None:
             metadata = _parse_invoice_range_note_entry(note)
             if metadata is None:
                 continue
-            if is_final_booking_invoice_metadata(metadata):
+            if _is_final_booking_invoice_metadata(metadata):
                 continue
-            if not is_single_booking_invoice_scope(metadata):
+            if not _is_single_booking_invoice_scope(metadata):
                 continue
             if session_obj.status == SessionStatus.COMPLETED:
                 continue
