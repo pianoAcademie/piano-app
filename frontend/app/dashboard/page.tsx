@@ -507,6 +507,43 @@ function formatDateTime(value: string | null | undefined): string {
   });
 }
 
+function formatDateInTimezone(value: string | null | undefined, timezone: string): string {
+  const parsed = safeDate(value);
+  if (!parsed) {
+    return "-";
+  }
+  return parsed.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: resolveTimezone(timezone),
+  });
+}
+
+function formatDateTimeInTimezone(value: string | null | undefined, timezone: string): string {
+  const parsed = safeDate(value);
+  if (!parsed) {
+    return "-";
+  }
+  return parsed.toLocaleString("fr-FR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: resolveTimezone(timezone),
+  });
+}
+
+function formatTimeInTimezone(value: string | null | undefined, timezone: string): string {
+  const parsed = safeDate(value);
+  if (!parsed) {
+    return "--:--";
+  }
+  return parsed.toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: resolveTimezone(timezone),
+  });
+}
+
 function formatTime(value: string | null | undefined): string {
   const parsed = safeDate(value);
   if (!parsed) {
@@ -1713,9 +1750,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {upcomingBookings14.slice(0, 3).map((booking) => (
                           <UpcomingLessonRow
                             key={`home-upcoming-${booking.id}`}
-                            timeLabel={formatTime(booking.session.start_at_utc)}
+                            timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
                             title={booking.session.title}
-                            subtitle={`${formatDate(booking.session.start_at_utc)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
+                            subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
                             action={
                               <a
                                 className="mode-link"
@@ -1836,9 +1873,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {rows.slice(0, 3).map((booking) => (
                             <UpcomingLessonRow
                               key={`home-booking-group-${booking.id}`}
-                              timeLabel={formatTime(booking.session.start_at_utc)}
+                              timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
                               title={booking.session.title}
-                              subtitle={`${formatDate(booking.session.start_at_utc)} · ${statusLabel(booking.status)}`}
+                              subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${statusLabel(booking.status)}`}
                               action={
                                 <a
                                   className="mode-link"
@@ -1864,9 +1901,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {homeCalendarRows.slice(0, 6).map((booking) => (
                       <UpcomingLessonRow
                         key={`home-booking-${booking.id}`}
-                        timeLabel={formatTime(booking.session.start_at_utc)}
+                        timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
                         title={booking.session.title}
-                        subtitle={`${formatDate(booking.session.start_at_utc)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
+                        subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
                         action={
                           <a
                             className="mode-link"
@@ -2236,8 +2273,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   {!compactAgendaCard ? (
                                     <div className="client-session-timebox">
                                       <span aria-hidden="true">🕒</span>
-                                      <strong>{formatTime(session.start_at_local)}</strong>
-                                      <small>{formatTime(session.end_at_local)}</small>
+                                      <strong>{formatTimeInTimezone(session.start_at_utc, timezone)}</strong>
+                                      <small>{formatTimeInTimezone(session.end_at_utc, timezone)}</small>
                                     </div>
                                   ) : null}
 
@@ -2247,7 +2284,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       <h3 className="event-title">{session.title}</h3>
                                       <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
                                     </div>
-                                    {compactAgendaCard ? <small className="event-meta">🕒 {formatTime(session.start_at_local)} - {formatTime(session.end_at_local)}</small> : null}
+                                    {compactAgendaCard ? <small className="event-meta">🕒 {formatTimeInTimezone(session.start_at_utc, timezone)} - {formatTimeInTimezone(session.end_at_utc, timezone)}</small> : null}
                                     <small className="event-meta">🎵 {session.course_type.name}</small>
                                     <div className="row">
                                       <span className="occ-badge">{session.booked_count}/{session.capacity_max}</span>
@@ -2303,7 +2340,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <header className="client-session-modal-header">
                       <h2>{selectedSession.title}</h2>
                       <p className="muted">
-                        {formatDateTime(selectedSession.start_at_local)} - {formatTime(selectedSession.end_at_local)}
+                        {formatDateTimeInTimezone(selectedSession.start_at_utc, timezone)} - {formatTimeInTimezone(selectedSession.end_at_utc, timezone)}
                       </p>
                       <div className="row">
                         <span className="occ-badge">
@@ -2504,7 +2541,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <tr key={booking.id}>
                             <td>{booking.owner_display_name}</td>
                             <td>{booking.session.title}</td>
-                            <td>{formatDateTime(booking.session.start_at_utc)}</td>
+                            <td>{formatDateTimeInTimezone(booking.session.start_at_utc, timezone)}</td>
                             <td>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot)}</td>
                             <td>
                               <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
@@ -2538,7 +2575,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
                         </div>
                         <p className="muted">{booking.session.title}</p>
-                        <p className="muted">{formatDateTime(booking.session.start_at_utc)}</p>
+                        <p className="muted">{formatDateTimeInTimezone(booking.session.start_at_utc, timezone)}</p>
                         <div className="row spread">
                           <strong>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot)}</strong>
                           {canCancel ? (
