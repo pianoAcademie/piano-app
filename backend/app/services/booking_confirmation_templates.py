@@ -2,26 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import logging
-import re
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
-from app.services.messaging_templates import resolve_frontend_base_url, resolve_predefined_template
-
-logger = logging.getLogger(__name__)
+from app.services.messaging_templates import (
+    render_template_content,
+    resolve_frontend_base_url,
+    resolve_predefined_template,
+)
 
 PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION = "CLIENT_BOOKING_CONFIRMATION"
 PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION = "ADMIN_BOOKING_CONFIRMATION"
-
-MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
-
-
-class _SafeTemplateContext(dict[str, str]):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
 
 
 @dataclass(frozen=True)
@@ -32,12 +25,7 @@ class RenderedBookingConfirmationEmail:
 
 
 def _render_template(template: str, context: dict[str, str]) -> str:
-    normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template or "")
-    try:
-        return normalized.format_map(_SafeTemplateContext(context)).strip()
-    except Exception:
-        logger.warning("Unable to render booking confirmation template, returning raw template")
-        return normalized.strip()
+    return render_template_content(template, context)
 
 
 def _frontend_url(path: str) -> str:
@@ -112,7 +100,7 @@ def render_booking_confirmation_email(
         "session_start_local": localized_start.strftime("%d/%m/%Y %H:%M"),
         "location_name": (location_name or "").strip() or "-",
         "teacher_name": (teacher_name or "").strip() or "A confirmer",
-        "account_url": _frontend_url("/dashboard"),
+        "account_url": _frontend_url("/client?tab=planning"),
     }
 
     template_code = (
@@ -139,4 +127,3 @@ def render_booking_confirmation_email(
         body=_render_template(body_template, context),
         body_format=body_format,
     )
-

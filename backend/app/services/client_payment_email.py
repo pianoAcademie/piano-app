@@ -1,26 +1,11 @@
 from __future__ import annotations
 
-import logging
-import re
-
 from app.services.email_delivery import send_email
-
-logger = logging.getLogger(__name__)
-MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
-
-
-class _SafeTemplateContext(dict[str, str]):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
+from app.services.messaging_templates import render_template_content
 
 
 def _render_template(template: str, context: dict[str, str]) -> str:
-    normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template)
-    try:
-        return normalized.format_map(_SafeTemplateContext(context)).strip()
-    except Exception:
-        logger.warning("Unable to render client payment template, returning raw template")
-        return normalized.strip()
+    return render_template_content(template, context)
 
 
 def render_client_payment_email(

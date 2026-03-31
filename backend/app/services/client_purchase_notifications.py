@@ -2,31 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-import logging
-import re
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.services.email_delivery import send_email
-from app.services.messaging_templates import resolve_frontend_base_url, resolve_predefined_template, resolve_sender_profile
-
-logger = logging.getLogger(__name__)
-MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
-
-
-class _SafeTemplateContext(dict[str, str]):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
+from app.services.messaging_templates import (
+    render_template_content,
+    resolve_frontend_base_url,
+    resolve_predefined_template,
+    resolve_sender_profile,
+)
 
 
 def _render_template(template: str, context: dict[str, str]) -> str:
-    normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template)
-    try:
-        return normalized.format_map(_SafeTemplateContext(context)).strip()
-    except Exception:
-        logger.warning("Unable to render purchase template, returning raw template")
-        return normalized.strip()
+    return render_template_content(template, context)
 
 
 def _frontend_url(path: str) -> str:
@@ -134,6 +124,7 @@ def send_payment_success_notifications(
         "payment_url": normalized_payment_url,
         "issued_date": (issued_date or "").strip(),
         "due_date": (due_date or "").strip(),
+        "account_url": _frontend_url("/client?tab=finance"),
     }
 
     return {
@@ -146,10 +137,10 @@ def send_payment_success_notifications(
         ),
         "invoice_message_id": _send_template_email(
             db,
-            template_code="INVOICE",
+            template_code="INVOICE_PAID",
             context=context,
             to_email=to_email,
-            delivery_context="CLIENT_INVOICE",
+            delivery_context="CLIENT_INVOICE_PAID",
         ),
     }
 

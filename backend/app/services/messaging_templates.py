@@ -5,6 +5,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import re
 from typing import Literal
 from uuid import uuid4
 
@@ -485,6 +486,86 @@ def _normalize_body_format(raw: object, *, default: str = "TEXT") -> str:
     return "HTML" if candidate == "HTML" else "TEXT"
 
 
+MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+SINGLE_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+
+def render_template_content(template: str, context: dict[str, object] | None = None) -> str:
+    values = {str(key): "" if value is None else str(value) for key, value in (context or {}).items()}
+
+    def _replace_mustache(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return values.get(key, match.group(0))
+
+    def _replace_single(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return values.get(key, match.group(0))
+
+    normalized = MUSTACHE_PLACEHOLDER_RE.sub(_replace_mustache, template or "")
+    normalized = SINGLE_PLACEHOLDER_RE.sub(_replace_single, normalized)
+    return normalized.strip()
+
+
+def _email_layout(*sections: str) -> str:
+    return (
+        "<div style=\"margin:0;padding:0;background:#f8fafc;\">"
+        "<div style=\"max-width:680px;margin:0 auto;padding:24px 16px;"
+        "font-family:Arial,'Helvetica Neue',sans-serif;color:#172033;line-height:1.6;\">"
+        "<div style=\"background:#ffffff;border:1px solid #e5e7eb;border-radius:18px;padding:28px;\">"
+        "<p style=\"margin:0 0 8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;"
+        "font-weight:700;color:#b7791f;\">Piano Academie</p>"
+        + "".join(sections)
+        + "<p style=\"margin:28px 0 0;font-size:14px;color:#6b7280;\">"
+        "Besoin d aide ? Repondez simplement a cet e-mail."
+        "</p>"
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+
+
+def _email_title(title: str, intro: str) -> str:
+    return (
+        f"<h1 style=\"margin:0 0 12px;font-size:30px;line-height:1.2;color:#172033;\">{title}</h1>"
+        f"<p style=\"margin:0 0 20px;font-size:16px;color:#374151;\">{intro}</p>"
+    )
+
+
+def _email_summary(rows: list[tuple[str, str]]) -> str:
+    html_rows = "".join(
+        (
+            "<tr>"
+            f"<td style=\"padding:8px 0;vertical-align:top;font-weight:700;color:#374151;\">{label}</td>"
+            f"<td style=\"padding:8px 0 8px 18px;vertical-align:top;color:#111827;\">{value}</td>"
+            "</tr>"
+        )
+        for label, value in rows
+    )
+    return (
+        "<div style=\"margin:22px 0;padding:18px 20px;background:#fff8ef;"
+        "border:1px solid #edd7b3;border-radius:14px;\">"
+        "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" "
+        "style=\"border-collapse:collapse;font-size:15px;\">"
+        f"{html_rows}"
+        "</table>"
+        "</div>"
+    )
+
+
+def _email_button(url: str, label: str) -> str:
+    return (
+        "<p style=\"margin:24px 0 0;\">"
+        f"<a href=\"{url}\" style=\"display:inline-block;padding:12px 18px;background:#c98a3d;"
+        "color:#ffffff;text-decoration:none;border-radius:10px;font-weight:700;\">"
+        f"{label}</a>"
+        "</p>"
+    )
+
+
+def _email_secondary(text: str) -> str:
+    return f"<p style=\"margin:18px 0 0;font-size:14px;color:#4b5563;\">{text}</p>"
+
+
 PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
@@ -691,19 +772,25 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         name="Reservation - Confirmation client",
         channel="EMAIL",
         subject="Confirmation de votre reservation - {activity_name}",
-        body=(
-            "<p>Bonjour {recipient_name},</p>"
-            "<p>Votre reservation est confirmee.</p>"
-            "<ul>"
-            "<li><strong>Eleve :</strong> {student_name}</li>"
-            "<li><strong>Activite :</strong> {activity_name}</li>"
-            "<li><strong>Date :</strong> {session_date}</li>"
-            "<li><strong>Heure :</strong> {session_time}</li>"
-            "<li><strong>Lieu :</strong> {location_name}</li>"
-            "<li><strong>Professeur :</strong> {teacher_name}</li>"
-            "</ul>"
-            "<p><a href=\"{account_url}\">Acceder a mon compte</a></p>"
-            "<p>Piano Academie</p>"
+        body=_email_layout(
+            _email_title(
+                "Reservation confirmee",
+                "Bonjour {recipient_name}, nous avons bien enregistre votre reservation.",
+            ),
+            _email_summary(
+                [
+                    ("Eleve", "{student_name}"),
+                    ("Activite", "{activity_name}"),
+                    ("Date", "{session_date}"),
+                    ("Horaire", "{session_time}"),
+                    ("Lieu", "{location_name}"),
+                    ("Professeur", "{teacher_name}"),
+                ]
+            ),
+            _email_button("{account_url}", "Acceder a mon espace client"),
+            _email_secondary(
+                "Vous y retrouverez vos reservations et toutes les informations utiles avant le cours."
+            ),
         ),
         description="Confirmation de reservation envoyee au client ou au responsable legal.",
         variables_hint=(
@@ -760,121 +847,198 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="INVOICE",
         name="Invoice",
         channel="EMAIL",
-        subject="Votre facture Piano Academie",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Votre facture {invoice_number} est disponible.\n"
-            "Telechargement: {invoice_url}\n\n"
-            "Piano Academie"
+        subject="Votre facture {invoice_number} est disponible",
+        body=_email_layout(
+            _email_title(
+                "Votre facture est disponible",
+                "Bonjour {first_name}, vous pouvez consulter votre facture et proceder au reglement en ligne.",
+            ),
+            _email_summary(
+                [
+                    ("Facture", "{invoice_number}"),
+                    ("Date d emission", "{issued_date}"),
+                    ("Echeance", "{due_date}"),
+                    ("Montant a regler", "{amount_due} {currency}"),
+                ]
+            ),
+            _email_button("{payment_url}", "Consulter et regler la facture"),
+            _email_secondary(
+                "Vous pouvez aussi retrouver cette facture a tout moment dans votre espace client : "
+                "<a href=\"{account_url}\">acceder a mon compte</a>."
+            ),
         ),
         description="Envoi de facture.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
-            "{payment_url} {amount_due} {amount_paid} {total_incl_vat} {currency} {due_date} {issued_date} {invoice_status}"
+            "{payment_url} {amount_due} {amount_paid} {total_incl_vat} {currency} {due_date} {issued_date} "
+            "{invoice_status} {account_url}"
         ),
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="INVOICE_PAID",
         name="Invoice Paid",
         channel="EMAIL",
         subject="Votre facture {invoice_number} est disponible et deja reglee",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Votre facture {invoice_number} est disponible.\n"
-            "Cette facture est deja reglee, aucun paiement supplementaire n est attendu.\n\n"
-            "Montant TTC: {total_incl_vat} {currency}\n"
-            "Montant deja regle: {amount_paid} {currency}\n"
-            "Date d emission: {issued_date}\n\n"
-            "Telechargement: {invoice_url}\n\n"
-            "Piano Academie"
+        body=_email_layout(
+            _email_title(
+                "Votre facture est disponible",
+                "Bonjour {first_name}, cette facture est deja reglee. Aucun paiement supplementaire n est attendu.",
+            ),
+            _email_summary(
+                [
+                    ("Facture", "{invoice_number}"),
+                    ("Date d emission", "{issued_date}"),
+                    ("Montant TTC", "{total_incl_vat} {currency}"),
+                    ("Paiement deja recu", "{amount_paid} {currency}"),
+                ]
+            ),
+            _email_button("{invoice_url}", "Telecharger la facture"),
+            _email_secondary(
+                "Retrouvez egalement cette facture dans votre espace client : "
+                "<a href=\"{account_url}\">acceder a mon compte</a>."
+            ),
         ),
         description="Envoi de facture deja integralement reglee.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
-            "{payment_url} {amount_due} {amount_paid} {total_incl_vat} {currency} {due_date} {issued_date} {invoice_status}"
+            "{payment_url} {amount_due} {amount_paid} {total_incl_vat} {currency} {due_date} {issued_date} "
+            "{invoice_status} {account_url}"
         ),
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="INVOICE_REMINDER",
         name="Invoice Reminder",
         channel="EMAIL",
-        subject="Rappel facture",
-        body="Bonjour {first_name},\n\nCeci est un rappel concernant votre facture.\n\nPiano Academie",
+        subject="Rappel - facture {invoice_number}",
+        body=_email_layout(
+            _email_title(
+                "Rappel de facture",
+                "Bonjour {first_name}, votre facture est toujours disponible et reste a regler avant son echeance.",
+            ),
+            _email_summary(
+                [
+                    ("Facture", "{invoice_number}"),
+                    ("Date d emission", "{issued_date}"),
+                    ("Echeance", "{due_date}"),
+                    ("Montant restant du", "{amount_due} {currency}"),
+                ]
+            ),
+            _email_button("{payment_url}", "Regler ma facture"),
+            _email_secondary(
+                "Vous pouvez egalement retrouver cette facture dans votre espace client : "
+                "<a href=\"{account_url}\">acceder a mon compte</a>."
+            ),
+        ),
         description="Relance de facture.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
-            "{payment_url} {amount_due} {total_incl_vat} {currency} {due_date} {issued_date}"
+            "{payment_url} {amount_due} {total_incl_vat} {currency} {due_date} {issued_date} {account_url}"
         ),
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="PAYMENT",
         name="Payment",
         channel="EMAIL",
-        subject="Finalisez votre paiement Piano Academie",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Votre achat {plan_name} a ete prepare.\n"
-            "Montant a regler: {amount_due} {currency}\n"
-            "Mode de reglement: {payment_method}\n\n"
-            "Lien de paiement: {payment_url}\n"
-            "Reference abonnement: {subscription_reference}\n\n"
-            "Consulter les CGV: {legal_terms_url}\n\n"
-            "Piano Academie"
+        subject="Finalisez votre paiement - {plan_name}",
+        body=_email_layout(
+            _email_title(
+                "Votre paiement est pret",
+                "Bonjour {first_name}, vous pouvez finaliser votre reglement en ligne pour confirmer votre achat.",
+            ),
+            _email_summary(
+                [
+                    ("Offre concernee", "{plan_name}"),
+                    ("Montant a regler", "{amount_due} {currency}"),
+                    ("Mode de paiement", "{payment_method}"),
+                    ("Reference", "{subscription_reference}"),
+                ]
+            ),
+            _email_button("{payment_url}", "Payer en ligne"),
+            _email_secondary(
+                "Les conditions generales de vente sont disponibles ici : "
+                "<a href=\"{legal_terms_url}\">consulter les CGV</a>."
+            ),
         ),
         description="Demande de finalisation de paiement.",
         variables_hint=(
             "{first_name} {plan_name} {amount_due} {currency} {payment_method} {payment_url} "
             "{subscription_reference} {legal_terms_url}"
         ),
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="PAYMENT_CONFIRMED",
         name="Payment Confirmed",
         channel="EMAIL",
-        subject="Confirmation de paiement Piano Academie",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Nous confirmons la reception de votre paiement pour {payment_label}.\n"
-            "Montant regle: {amount_paid} {currency}\n"
-            "Reference: {payment_reference}\n"
-            "Date de paiement: {paid_at}\n\n"
-            "Voir vos transactions: {transactions_url}\n"
-            "Telecharger votre facture ({invoice_number}): {invoice_url}\n\n"
-            "Piano Academie"
+        subject="Confirmation de reception de votre paiement - {payment_label}",
+        body=_email_layout(
+            _email_title(
+                "Paiement confirme",
+                "Bonjour {first_name}, nous confirmons la reception de votre paiement.",
+            ),
+            _email_summary(
+                [
+                    ("Prestation / offre", "{payment_label}"),
+                    ("Montant regle", "{amount_paid} {currency}"),
+                    ("Date de paiement", "{paid_at}"),
+                    ("Reference", "{payment_reference}"),
+                ]
+            ),
+            _email_button("{transactions_url}", "Voir mes transactions"),
+            _email_secondary(
+                "Votre facture {invoice_number} est disponible ici : "
+                "<a href=\"{invoice_url}\">telecharger la facture</a>."
+            ),
         ),
         description="Confirmation apres paiement valide.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} "
             "{payment_label} {payment_reference} {plan_name} {subscription_reference} "
             "{amount_paid} {currency} {paid_at} {transactions_url} "
-            "{invoice_number} {invoice_url} {payment_url}"
+            "{invoice_number} {invoice_url} {payment_url} {account_url}"
         ),
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="PAYMENT_RECEIPT",
         name="Payment Receipt",
         channel="EMAIL",
         subject="Confirmation de reception de votre paiement",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Nous confirmons la reception de votre paiement de {amount_paid} {currency} le {paid_at}.\n\n"
-            "Reservation concernee: {reservation_label}\n"
-            "Date prevue: {scheduled_service_date}\n"
-            "Lieu: {location_label}\n"
-            "Reference de paiement: {payment_reference}\n\n"
-            "Ce document est un justificatif de paiement et non une facture de prestation.\n"
-            "La facture definitive sera emise a la realisation de la prestation.\n\n"
-            "Acceder a mon compte: {account_url}\n\n"
-            "Piano Academie"
+        body=_email_layout(
+            _email_title(
+                "Justificatif de paiement",
+                "Bonjour {first_name}, nous confirmons la reception de votre paiement pour une prestation prevue ulterieurement.",
+            ),
+            _email_summary(
+                [
+                    ("Beneficiaire", "{student_name}"),
+                    ("Prestation", "{reservation_label}"),
+                    ("Date prevue", "{scheduled_service_date}"),
+                    ("Horaire", "{session_time_label}"),
+                    ("Lieu", "{location_label}"),
+                    ("Montant recu", "{amount_paid} {currency}"),
+                    ("Reference de paiement", "{payment_reference}"),
+                    ("Reference du justificatif", "{receipt_number}"),
+                ]
+            ),
+            _email_button("{account_url}", "Acceder a mon espace client"),
+            _email_secondary(
+                "Ce document confirme la reception de votre paiement. Il ne constitue pas une facture de prestation. "
+                "La facture definitive sera emise a la realisation de la prestation."
+            ),
         ),
         description="Justificatif de paiement envoye immediatement apres paiement d une prestation future.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} {student_name} "
             "{receipt_number} {amount_paid} {currency} {paid_at} {payment_date} "
             "{payment_method} {payment_provider} {payment_reference} "
-            "{reservation_label} {scheduled_service_date} {location_label} {account_url} "
+            "{reservation_label} {scheduled_service_date} {session_time_label} {location_label} {account_url} "
             "{transactions_url} {payment_document_notice}"
         ),
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="PAYMENT_RECEIPT_ADMIN",

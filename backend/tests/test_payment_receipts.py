@@ -305,6 +305,9 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
             "app.services.payment_receipts.resolve_predefined_template",
             return_value=template,
         ) as resolve_template, patch(
+            "app.services.payment_receipts._frontend_url",
+            return_value="https://app.piano-academie.com/client?tab=finance",
+        ), patch(
             "app.services.payment_receipts.resolve_sender_profile",
             return_value=sender,
         ), patch(

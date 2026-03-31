@@ -23,7 +23,12 @@ from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
 from app.services.invoice_documents import render_payment_receipt_pdf, reserve_next_invoice_number
 from app.services.invoice_number_service import InvoiceNumberService
-from app.services.messaging_templates import resolve_frontend_base_url, resolve_predefined_template, resolve_sender_profile
+from app.services.messaging_templates import (
+    render_template_content,
+    resolve_frontend_base_url,
+    resolve_predefined_template,
+    resolve_sender_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +45,6 @@ PAYMENT_RECEIPT_ADMIN_CONTEXT = "ADMIN_PAYMENT_RECEIPT"
 PAYMENT_RECEIPT_NOTE_TEXT = (
     "Ce document confirme la reception de votre paiement. Le document commercial final de la prestation sera emis a sa realisation."
 )
-MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
-SINGLE_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES = (
     BookingStatus.BOOKED,
     BookingStatus.ATTENDED,
@@ -194,17 +197,7 @@ def _billing_address_label(user: User) -> str:
 
 
 def _render_template(template: str, context: dict[str, str]) -> str:
-    def _replace_mustache(match: re.Match[str]) -> str:
-        key = match.group(1)
-        return str(context.get(key, match.group(0)))
-
-    def _replace_single(match: re.Match[str]) -> str:
-        key = match.group(1)
-        return str(context.get(key, match.group(0)))
-
-    normalized = MUSTACHE_PLACEHOLDER_RE.sub(_replace_mustache, template)
-    normalized = SINGLE_PLACEHOLDER_RE.sub(_replace_single, normalized)
-    return normalized.strip()
+    return render_template_content(template, context)
 
 
 def _frontend_url(path: str) -> str:
@@ -586,6 +579,7 @@ def _receipt_email_context(
         "payment_reference": _normalize_optional(receipt.payment_transaction_reference) or "-",
         "reservation_label": receipt.reservation_label,
         "scheduled_service_date": receipt.scheduled_service_date.strftime("%d/%m/%Y") if receipt.scheduled_service_date else "-",
+        "session_time_label": snapshot.session_time_label,
         "location_label": _normalize_optional(receipt.location_label) or "-",
         "account_url": account_url,
         "transactions_url": account_url,
@@ -830,6 +824,21 @@ def send_final_invoice_email(
     total_incl_vat = str(totals_by_currency.get(currency, "0.00"))
     invoice_status = str(metadata.get("invoice_status") or "").strip().upper() or "ISSUED"
     is_already_paid = invoice_status == "PAID" or amount_due in {"0", "0.0", "0.00"}
+    account_url = _frontend_url("/client?tab=finance")
+
+    def _format_invoice_date(raw_value: object) -> str:
+        raw = str(raw_value or "").strip()
+        if not raw:
+            return "-"
+        try:
+            return datetime.fromisoformat(raw).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+        try:
+            return date.fromisoformat(raw).strftime("%d/%m/%Y")
+        except ValueError:
+            return raw
+
     context = {
         "first_name": (billing_profile.first_name or "").strip() or recipient_email,
         "last_name": (billing_profile.last_name or "").strip(),
@@ -842,9 +851,10 @@ def send_final_invoice_email(
         "amount_paid": amount_paid,
         "total_incl_vat": total_incl_vat,
         "currency": currency,
-        "due_date": str(metadata.get("due_date") or ""),
-        "issued_date": str(metadata.get("issued_date") or ""),
+        "due_date": _format_invoice_date(metadata.get("due_date")),
+        "issued_date": _format_invoice_date(metadata.get("issued_date")),
         "invoice_status": invoice_status,
+        "account_url": account_url,
     }
     try:
         template = resolve_predefined_template(db, code="INVOICE_PAID" if is_already_paid else "INVOICE")
