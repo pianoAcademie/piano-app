@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, SessionStatus
-from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry, PaymentReceipt
+from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry, ClientPaymentRefund, PaymentReceipt
 from app.models.ops import AppSetting
 from app.models.user import User
 from app.services.email_delivery import send_email
@@ -42,6 +42,10 @@ PAYMENT_RECEIPT_CLIENT_TEMPLATE_CODE = "PAYMENT_RECEIPT"
 PAYMENT_RECEIPT_ADMIN_TEMPLATE_CODE = "PAYMENT_RECEIPT_ADMIN"
 PAYMENT_RECEIPT_CONTEXT = "CLIENT_PAYMENT_RECEIPT"
 PAYMENT_RECEIPT_ADMIN_CONTEXT = "ADMIN_PAYMENT_RECEIPT"
+PAYMENT_REFUND_CLIENT_TEMPLATE_CODE = "REFUND_ISSUED"
+PAYMENT_REFUND_ADMIN_TEMPLATE_CODE = "REFUND_ISSUED_ADMIN"
+PAYMENT_REFUND_CONTEXT = "CLIENT_PAYMENT_REFUND"
+PAYMENT_REFUND_ADMIN_CONTEXT = "ADMIN_PAYMENT_REFUND"
 PAYMENT_RECEIPT_NOTE_TEXT = (
     "Ce document confirme la reception de votre paiement. Le document commercial final de la prestation sera emis a sa realisation."
 )
@@ -472,6 +476,8 @@ def mark_payment_receipt_completed(
     payment_method: str | None = "CARD_ONLINE",
     paid_at: datetime | None = None,
 ) -> tuple[PaymentReceipt, ClientManualTransaction, bool]:
+    if (receipt.status or "").strip().upper() == "REFUNDED":
+        raise ValueError("Refunded payment receipts cannot be marked as completed")
     effective_paid_at = paid_at or _utcnow()
     if receipt.manual_transaction_id is not None:
         transaction = db.scalar(
@@ -525,6 +531,87 @@ def mark_payment_receipt_completed(
     db.add(receipt)
     db.flush()
     return receipt, transaction, True
+
+
+def refund_payment_receipt(
+    db: Session,
+    *,
+    receipt: PaymentReceipt,
+    actor_user_id: UUID | None,
+    reason: str | None = None,
+    refunded_at: datetime | None = None,
+) -> tuple[PaymentReceipt, ClientPaymentRefund, ClientManualTransaction | None, bool]:
+    effective_refunded_at = refunded_at or _utcnow()
+    existing_refund = db.scalar(
+        select(ClientPaymentRefund)
+        .where(
+            ClientPaymentRefund.user_id == receipt.customer_id,
+            ClientPaymentRefund.source == "PAYMENT_RECEIPT",
+            ClientPaymentRefund.source_payment_id == receipt.id,
+        )
+        .with_for_update()
+    )
+    normalized_reason = _normalize_optional(reason)
+    amount_paid = _quantize_money(Decimal(receipt.amount_paid or 0))
+    if amount_paid <= Decimal("0.00"):
+        raise ValueError("Only paid payment receipts can be refunded")
+
+    created = False
+    refund_transaction: ClientManualTransaction | None = None
+    if existing_refund is None:
+        refund_transaction = ClientManualTransaction(
+            user_id=receipt.customer_id,
+            student_user_id=receipt.student_id,
+            actor_user_id=actor_user_id,
+            transaction_type="REFUND",
+            status="COMPLETED",
+            label=f"Remboursement - {receipt.reservation_label}",
+            description=(
+                f"Remboursement du justificatif {receipt.receipt_number or receipt.id}"
+                + (f" | Motif: {normalized_reason}" if normalized_reason else "")
+            ),
+            category="BOOKING_PAYMENT_RECEIPT_REFUND",
+            occurred_at=effective_refunded_at,
+            amount_excl_vat=amount_paid,
+            vat_rate=Decimal("0.00"),
+            vat_amount=Decimal("0.00"),
+            total_incl_vat=amount_paid,
+            currency=((receipt.currency or "EUR").strip().upper() or "EUR"),
+            reference=f"PAYMENT_RECEIPT_REFUND:{receipt.receipt_number or receipt.id}",
+            legal_entity_id=receipt.legal_entity_id,
+        )
+        db.add(refund_transaction)
+        db.flush()
+        existing_refund = ClientPaymentRefund(
+            user_id=receipt.customer_id,
+            source="PAYMENT_RECEIPT",
+            source_payment_id=receipt.id,
+            amount_incl_vat=amount_paid,
+            reason=normalized_reason,
+            actor_user_id=actor_user_id,
+            refunded_at=effective_refunded_at,
+            updated_at=effective_refunded_at,
+        )
+        db.add(existing_refund)
+        created = True
+    else:
+        existing_refund.amount_incl_vat = amount_paid
+        existing_refund.reason = normalized_reason
+        existing_refund.actor_user_id = actor_user_id
+        existing_refund.refunded_at = effective_refunded_at
+        existing_refund.updated_at = effective_refunded_at
+
+    metadata = dict(receipt.receipt_metadata or {})
+    metadata["refund_recorded_at"] = effective_refunded_at.isoformat()
+    metadata["refund_reason"] = normalized_reason
+    if refund_transaction is not None:
+        metadata["refund_manual_transaction_id"] = str(refund_transaction.id)
+    receipt.status = "REFUNDED"
+    receipt.receipt_metadata = metadata
+    receipt.updated_at = effective_refunded_at
+    db.add(receipt)
+    db.flush()
+    return receipt, existing_refund, refund_transaction, created
 
 
 def render_payment_receipt_attachment(
@@ -584,6 +671,40 @@ def _receipt_email_context(
         "account_url": account_url,
         "transactions_url": account_url,
         "payment_document_notice": PAYMENT_RECEIPT_NOTE_TEXT,
+    }
+
+
+def _payment_refund_email_context(
+    *,
+    receipt: PaymentReceipt,
+    snapshot: BookingReceiptSnapshot,
+    refunded_at: datetime,
+    refund_reason: str | None,
+) -> dict[str, str]:
+    account_url = _frontend_url("/client?tab=finance&finance_view=transactions")
+    refund_amount = _quantize_money(Decimal(receipt.amount_paid or 0))
+    return {
+        "first_name": (snapshot.customer_first_name or "").strip() or snapshot.customer_name,
+        "last_name": (snapshot.customer_last_name or "").strip(),
+        "full_name": snapshot.customer_name,
+        "client_name": snapshot.customer_name,
+        "student_name": snapshot.student_name,
+        "receipt_number": receipt.receipt_number or "-",
+        "refund_amount": f"{refund_amount:.2f}",
+        "amount_paid": f"{refund_amount:.2f}",
+        "currency": receipt.currency,
+        "refund_date": refunded_at.strftime("%d/%m/%Y %H:%M"),
+        "refunded_at": refunded_at.strftime("%d/%m/%Y %H:%M"),
+        "payment_method": _normalize_optional(receipt.payment_method) or "-",
+        "payment_provider": _normalize_optional(receipt.payment_provider) or "-",
+        "payment_reference": _normalize_optional(receipt.payment_transaction_reference) or "-",
+        "refund_reason": refund_reason or "-",
+        "reservation_label": receipt.reservation_label,
+        "scheduled_service_date": receipt.scheduled_service_date.strftime("%d/%m/%Y") if receipt.scheduled_service_date else "-",
+        "session_time_label": snapshot.session_time_label,
+        "location_label": _normalize_optional(receipt.location_label) or "-",
+        "account_url": account_url,
+        "transactions_url": account_url,
     }
 
 
@@ -667,6 +788,57 @@ def send_payment_receipt_notifications(
                     context=context,
                     delivery_context=PAYMENT_RECEIPT_ADMIN_CONTEXT,
                     attachment=attachment,
+                ):
+                    sent_any = True
+    return sent_any
+
+
+def send_payment_refund_notifications(
+    db: Session,
+    *,
+    receipt: PaymentReceipt,
+    snapshot: BookingReceiptSnapshot,
+    refunded_at: datetime,
+    refund_reason: str | None = None,
+    send_admin_copy: bool = True,
+) -> bool:
+    recipient_email = snapshot.customer_email
+    if recipient_email is None:
+        return False
+    context = _payment_refund_email_context(
+        receipt=receipt,
+        snapshot=snapshot,
+        refunded_at=refunded_at,
+        refund_reason=refund_reason,
+    )
+    sent_any = False
+    if _send_template_email_with_optional_attachment(
+        db,
+        template_code=PAYMENT_REFUND_CLIENT_TEMPLATE_CODE,
+        to_email=recipient_email,
+        context=context,
+        delivery_context=PAYMENT_REFUND_CONTEXT,
+    ):
+        sent_any = True
+
+    if send_admin_copy:
+        try:
+            template = resolve_predefined_template(db, code=PAYMENT_REFUND_ADMIN_TEMPLATE_CODE)
+        except KeyError:
+            template = None
+        if template is not None and bool(template.get("active", True)):
+            from app.services.notifications.application.recipients import resolve_admin_booking_notification_recipients
+
+            for admin_recipient in resolve_admin_booking_notification_recipients(db, is_cancellation=True):
+                admin_email = _normalize_optional(admin_recipient.email)
+                if admin_email is None:
+                    continue
+                if _send_template_email_with_optional_attachment(
+                    db,
+                    template_code=PAYMENT_REFUND_ADMIN_TEMPLATE_CODE,
+                    to_email=admin_email,
+                    context=context,
+                    delivery_context=PAYMENT_REFUND_ADMIN_CONTEXT,
                 ):
                     sent_any = True
     return sent_any

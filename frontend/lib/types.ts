@@ -326,6 +326,11 @@ export type AdminClientBookingOut = {
   payment_received: boolean;
   payment_received_at: string | null;
   payment_received_amount: string | null;
+  payment_refunded: boolean;
+  payment_refunded_at: string | null;
+  payment_refunded_amount: string | null;
+  payment_refund_reason: string | null;
+  payment_refund_email_sent_at: string | null;
   payment_receipt_id: string | null;
   payment_receipt_number: string | null;
   payment_receipt_status: string | null;

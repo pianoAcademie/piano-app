@@ -4271,6 +4271,42 @@ export async function refundAdminClientPaymentAction(formData: FormData): Promis
   redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Avoir%20enregistre`);
 }
 
+export async function refundAdminClientPaymentReceiptAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const receiptId = String(formData.get("receipt_id") ?? "").trim();
+  const reason = optionalField(formData, "reason");
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "reservations" ? "reservations" : "reservations";
+
+  if (!clientId || !receiptId) {
+    redirect("/admin/clients?error=Justificatif%20invalide");
+  }
+
+  const result = await backendRequest<{ source: string; payment_id: string }>(
+    `/api/v1/admin/clients/${clientId}/payment-receipts/${receiptId}/refund`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        reason,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Reservation%20remboursee`);
+}
+
 export async function cancelAdminClientInvoiceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

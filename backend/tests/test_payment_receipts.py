@@ -12,14 +12,17 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.models.catalog import BookingStatus, SessionStatus
-from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
+from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry, ClientPaymentRefund
 from app.services.invoice_documents import CompanyIdentity, preview_invoice_number, render_payment_receipt_pdf
 from app.services.payment_receipts import (
     BookingReceiptSnapshot,
     _format_receipt_number,
     build_final_invoice_metadata,
     generate_final_invoice_for_booking,
+    mark_payment_receipt_completed,
+    refund_payment_receipt,
     send_final_invoice_email,
+    send_payment_refund_notifications,
     should_defer_booking_invoice,
 )
 
@@ -33,13 +36,19 @@ class _ScalarResult:
 
 
 class _FakeSession:
-    def __init__(self, rows: list[object] | None = None) -> None:
+    def __init__(self, rows: list[object] | None = None, scalar_values: list[object] | None = None) -> None:
         self._rows = rows or []
+        self._scalar_values = list(scalar_values or [])
         self.added: list[object] = []
         self.flush_calls = 0
 
     def scalars(self, _query: object) -> _ScalarResult:
         return _ScalarResult(self._rows)
+
+    def scalar(self, _query: object) -> object | None:
+        if self._scalar_values:
+            return self._scalar_values.pop(0)
+        return None
 
     def add(self, obj: object) -> None:
         self.added.append(obj)
@@ -273,6 +282,99 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
 
         self.assertIn(b"JUSTIFICATIF DE PAIEMENT", content)
         self.assertNotIn(b"FACTURE", content)
+
+    def test_refund_payment_receipt_records_refund_and_manual_transaction(self) -> None:
+        receipt = SimpleNamespace(
+            id=uuid4(),
+            customer_id=self.customer_id,
+            student_id=self.student_id,
+            amount_paid=Decimal("30.00"),
+            currency="EUR",
+            reservation_label=self.snapshot.reservation_label,
+            receipt_number="PAY-2026-0041",
+            legal_entity_id=None,
+            receipt_metadata={},
+            status="COMPLETED",
+            updated_at=None,
+        )
+        fake_db = _FakeSession(scalar_values=[None])
+
+        updated_receipt, refund_row, refund_transaction, created = refund_payment_receipt(
+            fake_db,
+            receipt=receipt,
+            actor_user_id=uuid4(),
+            reason="Annulation du cours d essai",
+            refunded_at=datetime(2026, 3, 30, 17, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(updated_receipt.status, "REFUNDED")
+        self.assertIsInstance(refund_row, ClientPaymentRefund)
+        self.assertEqual(refund_row.source, "PAYMENT_RECEIPT")
+        self.assertEqual(refund_row.amount_incl_vat, Decimal("30.00"))
+        self.assertIsInstance(refund_transaction, ClientManualTransaction)
+        self.assertEqual(refund_transaction.transaction_type, "REFUND")
+        self.assertEqual(refund_transaction.total_incl_vat, Decimal("30.00"))
+        self.assertEqual(updated_receipt.receipt_metadata["refund_reason"], "Annulation du cours d essai")
+
+    def test_refunded_payment_receipt_cannot_be_completed_again(self) -> None:
+        receipt = SimpleNamespace(status="REFUNDED")
+        with self.assertRaisesRegex(ValueError, "Refunded payment receipts cannot be marked as completed"):
+            mark_payment_receipt_completed(
+                _FakeSession(),
+                receipt=receipt,
+                provider_reference="pay_123",
+                payment_provider="PAYPLUG",
+            )
+
+    def test_payment_refund_notifications_use_refund_templates(self) -> None:
+        receipt = SimpleNamespace(
+            receipt_number="PAY-2026-0041",
+            amount_paid=Decimal("30.00"),
+            currency="EUR",
+            payment_method="CARD_ONLINE",
+            payment_provider="PAYPLUG",
+            payment_transaction_reference="pay_123",
+            reservation_label=self.snapshot.reservation_label,
+            scheduled_service_date=date(2026, 9, 23),
+            location_label="Rue de la Pompe",
+        )
+        template = {
+            "subject": "Remboursement {receipt_number}",
+            "body": "<div>{first_name} {refund_amount} {currency}</div>",
+            "body_format": "HTML",
+            "active": True,
+        }
+
+        with patch("app.services.payment_receipts.resolve_predefined_template", return_value=template), patch(
+            "app.services.payment_receipts.resolve_sender_profile",
+            return_value=SimpleNamespace(
+                from_email="contact@piano-academie.com",
+                from_name="Piano Academie",
+                reply_to=None,
+                subject_prefix=None,
+            ),
+        ), patch(
+            "app.services.payment_receipts.send_email",
+            side_effect=["client-msg", "admin-msg"],
+        ) as send_email_mock, patch(
+            "app.services.notifications.application.recipients.resolve_admin_booking_notification_recipients",
+            return_value=[SimpleNamespace(email="admin@piano-academie.com")],
+        ):
+            sent = send_payment_refund_notifications(
+                _FakeSession(),
+                receipt=receipt,
+                snapshot=self.snapshot,
+                refunded_at=datetime(2026, 3, 30, 17, 0, tzinfo=timezone.utc),
+                refund_reason="Cours annule",
+                send_admin_copy=True,
+            )
+
+        self.assertTrue(sent)
+        self.assertEqual(send_email_mock.call_count, 2)
+        self.assertEqual(send_email_mock.call_args_list[0].kwargs["context"], "CLIENT_PAYMENT_REFUND")
+        self.assertEqual(send_email_mock.call_args_list[1].kwargs["context"], "ADMIN_PAYMENT_REFUND")
+        self.assertIn("PAY-2026-0041", send_email_mock.call_args_list[0].kwargs["subject"])
 
     def test_paid_final_invoice_email_uses_paid_template_and_renders_placeholders(self) -> None:
         customer = SimpleNamespace(

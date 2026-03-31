@@ -20,6 +20,7 @@ import {
   deleteAdminClientManualTransactionAction,
   generateAdminClientBookingFinalInvoiceAction,
   refundAdminClientPaymentAction,
+  refundAdminClientPaymentReceiptAction,
   sendAdminClientPaymentReceiptAction,
   sendAdminClientRangeInvoiceEmailAction,
   sendAdminClientMessageAction,
@@ -469,7 +470,7 @@ function normalizedSessionStatus(row: AdminClientBookingOut): string {
 
 function bookingCannotGenerateFinalInvoice(row: AdminClientBookingOut): boolean {
   const bookingStatus = normalizedBookingStatus(row);
-  return bookingStatus === "CANCELLED" || bookingStatus === "EXCUSED_ABSENCE";
+  return bookingStatus === "CANCELLED" || bookingStatus === "EXCUSED_ABSENCE" || row.payment_refunded;
 }
 
 function canGenerateFinalInvoiceForBooking(row: AdminClientBookingOut): boolean {
@@ -485,6 +486,37 @@ function bookingWorkflowSteps(row: AdminClientBookingOut): BookingWorkflowStep[]
   const sessionStatus = normalizedSessionStatus(row);
   const receiptStatus = (row.payment_receipt_status || "").trim().toUpperCase();
   const finalInvoiceStatus = (row.final_invoice_status || "").trim().toUpperCase();
+
+  if (row.payment_refunded) {
+    const refundedAmount = formatMoney(
+      row.payment_refunded_amount ?? row.payment_received_amount ?? row.total_incl_vat_snapshot,
+      row.currency_snapshot,
+    );
+    return [
+      {
+        label: "Paiement",
+        value: "Rembourse",
+        toneClass: "status-cancelled",
+        helper: `${refundedAmount}${row.payment_refunded_at ? ` · ${formatDate(row.payment_refunded_at)}` : ""}`,
+      },
+      {
+        label: "Remboursement",
+        value: row.payment_refund_email_sent_at ? "Envoye" : "A notifier",
+        toneClass: row.payment_refund_email_sent_at ? "status-ok" : "status-warn",
+        helper:
+          row.payment_refund_reason ||
+          (row.payment_refund_email_sent_at
+            ? "Le client a recu la confirmation du remboursement."
+            : "Confirmation client a envoyer."),
+      },
+      {
+        label: "Facture finale",
+        value: "Non facturee",
+        toneClass: "status-off",
+        helper: "Reservation annulee et paiement rembourse.",
+      },
+    ];
+  }
 
   const paymentStep: BookingWorkflowStep = row.payment_received
     ? {
@@ -881,6 +913,11 @@ function paymentsHref(clientId: string, params: Record<string, string>): string 
 
 function invoicesHref(clientId: string, params: Record<string, string>): string {
   const search = new URLSearchParams({ tab: "factures", ...params });
+  return `/admin/clients/${clientId}?${search.toString()}`;
+}
+
+function reservationsHref(clientId: string, params: Record<string, string>): string {
+  const search = new URLSearchParams({ tab: "reservations", ...params });
   return `/admin/clients/${clientId}?${search.toString()}`;
 }
 
@@ -1644,6 +1681,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     paymentModalAction === "refund"
       ? payments.find((row) => row.id === paymentModalId && row.source.toUpperCase() === paymentModalSource) ?? null
       : null;
+  const selectedBookingReceiptForRefund =
+    currentTab === "reservations" && paymentModalAction === "receipt_refund"
+      ? bookings.find((row) => row.payment_receipt_id === paymentModalId) ?? null
+      : null;
   const selectedManualTransactionForEdit =
     paymentModalAction === "edit_manual"
       ? payments.find((row) => row.id === paymentModalId && row.source.toUpperCase() === "MANUAL") ?? null
@@ -1734,6 +1775,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const reservationRows = [...upcomingBookings, ...pastBookings];
   const paymentsReceivedCount = bookings.filter((row) => row.payment_received).length;
   const receiptsSentCount = bookings.filter((row) => Boolean(row.payment_receipt_sent_at)).length;
+  const refundsRecordedCount = bookings.filter((row) => row.payment_refunded).length;
   const finalInvoicesGeneratedCount = bookings.filter((row) => row.final_invoice_generated).length;
   const finalInvoicesReadyCount = bookings.filter((row) => canGenerateFinalInvoiceForBooking(row)).length;
   const finalInvoicesWaitingCount = bookings.filter((row) => waitsForServiceCompletion(row) && row.payment_received).length;
@@ -5545,6 +5587,51 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
+      {currentTab === "reservations" && selectedBookingReceiptForRefund ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, "reservations")} aria-label="Fermer">
+              ×
+            </Link>
+            <h3 className="modal-title">Annuler et rembourser la reservation</h3>
+            <p className="muted">
+              {selectedBookingReceiptForRefund.session_title} |{" "}
+              {formatMoney(
+                selectedBookingReceiptForRefund.payment_received_amount ??
+                  selectedBookingReceiptForRefund.total_incl_vat_snapshot,
+                selectedBookingReceiptForRefund.currency_snapshot,
+              )}
+            </p>
+            <div className="stack-xs">
+              <small className="muted">
+                Cette action enregistre le remboursement du justificatif de paiement, annule la reservation si elle est encore
+                active et empeche toute facture finale.
+              </small>
+              <small className="muted">
+                Le client recevra un email de confirmation du remboursement si une adresse est disponible.
+              </small>
+            </div>
+            <form action={refundAdminClientPaymentReceiptAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="receipt_id" value={selectedBookingReceiptForRefund.payment_receipt_id ?? ""} />
+              <input type="hidden" name="return_tab" value="reservations" />
+              <label>
+                Motif (optionnel)
+                <textarea name="reason" rows={3} maxLength={1000} placeholder="Ex: annulation du cours d essai" />
+              </label>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={tabHref(client.id, "reservations")}>
+                  Annuler
+                </Link>
+                <button type="submit" className="danger">
+                  Confirmer l annulation et le remboursement
+                </button>
+              </div>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
       {currentTab === "reservations" ? (
         <section className="admin-page-grid">
           <section className="grid cols-2">
@@ -5625,8 +5712,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <div className="stack-xs">
                 <h3>Suivi paiements / justificatifs / factures finales</h3>
                 <p className="muted">
-                  Pour chaque reservation, l&apos;admin voit si le paiement est recu, si le justificatif a ete envoye et si la
-                  facture finale a deja ete emise.
+                  Pour chaque reservation, l&apos;admin voit si le paiement est recu, si un remboursement a ete traite, si le
+                  justificatif a ete envoye et si la facture finale a deja ete emise.
                 </p>
               </div>
             </div>
@@ -5641,6 +5728,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <span className="booking-billing-card-label">Justificatifs envoyes</span>
                 <strong className="booking-billing-card-value">{receiptsSentCount}</strong>
                 <small className="muted">Recu de paiement deja envoye au client.</small>
+              </article>
+              <article className="booking-billing-card">
+                <span className="booking-billing-card-label">Remboursements enregistres</span>
+                <strong className="booking-billing-card-value">{refundsRecordedCount}</strong>
+                <small className="muted">Reservations annulees avec remboursement client.</small>
               </article>
               <article className="booking-billing-card">
                 <span className="booking-billing-card-label">Factures finales emises</span>
@@ -5718,7 +5810,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           </td>
                           <td>
                             <div className="row payment-row-actions">
-                              {row.payment_receipt_id && row.payment_receipt_status === "COMPLETED" ? (
+                              {row.payment_receipt_id &&
+                              (row.payment_receipt_status === "COMPLETED" || row.payment_receipt_status === "REFUNDED") ? (
                                 <>
                                   <a
                                     className="client-action-icon"
@@ -5727,15 +5820,32 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   >
                                     ↓
                                   </a>
-                                  <form action={sendAdminClientPaymentReceiptAction}>
-                                    <input type="hidden" name="client_id" value={client.id} />
-                                    <input type="hidden" name="receipt_id" value={row.payment_receipt_id} />
-                                    <input type="hidden" name="return_tab" value="reservations" />
-                                    <button type="submit" className="client-action-icon" title="Renvoyer le justificatif">
-                                      ✉
-                                    </button>
-                                  </form>
+                                  {row.payment_receipt_status === "COMPLETED" ? (
+                                    <form action={sendAdminClientPaymentReceiptAction}>
+                                      <input type="hidden" name="client_id" value={client.id} />
+                                      <input type="hidden" name="receipt_id" value={row.payment_receipt_id} />
+                                      <input type="hidden" name="return_tab" value="reservations" />
+                                      <button type="submit" className="client-action-icon" title="Renvoyer le justificatif">
+                                        ✉
+                                      </button>
+                                    </form>
+                                  ) : null}
                                 </>
+                              ) : null}
+                              {row.payment_receipt_id &&
+                              row.payment_receipt_status === "COMPLETED" &&
+                              !row.payment_refunded &&
+                              !row.final_invoice_generated ? (
+                                <Link
+                                  className="client-action-icon danger"
+                                  href={reservationsHref(client.id, {
+                                    payment_modal: "receipt_refund",
+                                    payment_id: row.payment_receipt_id,
+                                  })}
+                                  title="Annuler et rembourser la reservation"
+                                >
+                                  ↺
+                                </Link>
                               ) : null}
                               {row.final_invoice_generated && row.final_invoice_note_id ? (
                                 <>

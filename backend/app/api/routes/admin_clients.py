@@ -115,6 +115,7 @@ from app.schemas.admin import (
     AdminPaymentReceiptOut,
 )
 from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut
+from app.api.routes.bookings import _promote_waitlist_if_possible
 from app.services.client_password_email import (
     generate_temporary_password,
     render_client_password_email,
@@ -155,14 +156,18 @@ from app.services.payment_receipts import (
     mark_payment_receipt_completed,
     payment_receipt_checkout_urls,
     render_payment_receipt_attachment,
+    refund_payment_receipt,
     send_final_invoice_email,
+    send_payment_refund_notifications,
     send_payment_receipt_notifications,
 )
 from app.services.session_teachers import effective_teacher_id_for_session, professor_display_name
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
+from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.security import create_access_token, hash_password
+from app.services.session_audience import resolve_session_booking_scopes, scopes_allow_planless_booking
 from app.services.subscriptions import (
     add_months_utc,
     apply_suspension,
@@ -331,6 +336,16 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _parse_optional_datetime(raw: object) -> datetime | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _billing_entity_text(value: str | None) -> str | None:
@@ -2639,6 +2654,8 @@ def _payment_source_label(source: str) -> str:
         return "Achat formule"
     if normalized == "BOOKING":
         return "Reservation"
+    if normalized == "PAYMENT_RECEIPT":
+        return "Justificatif paiement reservation"
     if normalized == "MANUAL":
         return "Transaction manuelle"
     return normalized or "Paiement"
@@ -5475,6 +5492,20 @@ def list_admin_client_bookings(
                 paid_totals_by_booking[receipt.booking_id] = _quantize_money(
                     paid_totals_by_booking.get(receipt.booking_id, Decimal("0.00")) + Decimal(receipt.amount_paid)
                 )
+    latest_refund_by_receipt_id: dict[UUID, ClientPaymentRefund] = {}
+    if latest_receipt_by_booking:
+        receipt_ids = [receipt.id for receipt in latest_receipt_by_booking.values()]
+        refund_rows = db.scalars(
+            select(ClientPaymentRefund)
+            .where(
+                ClientPaymentRefund.user_id == client_id,
+                ClientPaymentRefund.source == "PAYMENT_RECEIPT",
+                ClientPaymentRefund.source_payment_id.in_(receipt_ids),
+            )
+            .order_by(ClientPaymentRefund.refunded_at.desc(), ClientPaymentRefund.id.desc())
+        ).all()
+        for refund in refund_rows:
+            latest_refund_by_receipt_id.setdefault(refund.source_payment_id, refund)
 
     final_invoice_by_booking: dict[UUID, tuple[ClientNoteEntry, dict[str, object]]] = {}
     if booking_ids:
@@ -5496,69 +5527,73 @@ def list_admin_client_bookings(
             final_invoice_by_booking[invoice_line.source_payment_id] = (note, metadata)
 
     return [
-        AdminClientBookingOut(
-            id=booking.id,
-            session_id=session_obj.id,
-            session_title=session_obj.title,
-            session_status=session_obj.status,
-            session_start_at_utc=session_obj.start_at_utc,
-            session_end_at_utc=session_obj.end_at_utc,
-            course_type_name=course_type.name,
-            location_name=location.name,
-            client_plan_subscription_id=booking.client_plan_subscription_id,
-            plan_name=plan.name if plan is not None else None,
-            status=booking.status.value,
-            booked_at=booking.booked_at,
-            cancelled_at=booking.cancelled_at,
-            cancellation_reason=booking.cancellation_reason,
-            price_excl_vat_snapshot=booking.price_excl_vat_snapshot,
-            vat_rate_snapshot=booking.vat_rate_snapshot,
-            vat_amount_snapshot=booking.vat_amount_snapshot,
-            total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
-            currency_snapshot=booking.currency_snapshot,
-            scheduled_service_date=latest_receipt_by_booking.get(booking.id).scheduled_service_date
+        (
+            lambda latest_receipt, latest_refund: AdminClientBookingOut(
+                id=booking.id,
+                session_id=session_obj.id,
+                session_title=session_obj.title,
+                session_status=session_obj.status,
+                session_start_at_utc=session_obj.start_at_utc,
+                session_end_at_utc=session_obj.end_at_utc,
+                course_type_name=course_type.name,
+                location_name=location.name,
+                client_plan_subscription_id=booking.client_plan_subscription_id,
+                plan_name=plan.name if plan is not None else None,
+                status=booking.status.value,
+                booked_at=booking.booked_at,
+                cancelled_at=booking.cancelled_at,
+                cancellation_reason=booking.cancellation_reason,
+                price_excl_vat_snapshot=booking.price_excl_vat_snapshot,
+                vat_rate_snapshot=booking.vat_rate_snapshot,
+                vat_amount_snapshot=booking.vat_amount_snapshot,
+                total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
+                currency_snapshot=booking.currency_snapshot,
+                scheduled_service_date=(
+                    latest_receipt.scheduled_service_date
+                    if latest_receipt is not None
+                    else session_obj.start_at_utc.date()
+                ),
+                service_completed_at=session_obj.start_at_utc if session_obj.status == SessionStatus.COMPLETED else None,
+                payment_received=booking.id in paid_totals_by_booking,
+                payment_received_at=(
+                    latest_completed_receipt_by_booking.get(booking.id).paid_at
+                    if latest_completed_receipt_by_booking.get(booking.id) is not None
+                    else None
+                ),
+                payment_received_amount=paid_totals_by_booking.get(booking.id),
+                payment_refunded=latest_refund is not None,
+                payment_refunded_at=latest_refund.refunded_at if latest_refund is not None else None,
+                payment_refunded_amount=latest_refund.amount_incl_vat if latest_refund is not None else None,
+                payment_refund_reason=latest_refund.reason if latest_refund is not None else None,
+                payment_refund_email_sent_at=(
+                    _parse_optional_datetime((latest_receipt.receipt_metadata or {}).get("refund_email_sent_at"))
+                    if latest_receipt is not None
+                    else None
+                ),
+                payment_receipt_id=latest_receipt.id if latest_receipt is not None else None,
+                payment_receipt_number=latest_receipt.receipt_number if latest_receipt is not None else None,
+                payment_receipt_status=latest_receipt.status if latest_receipt is not None else None,
+                payment_receipt_sent_at=latest_receipt.email_sent_at if latest_receipt is not None else None,
+                final_invoice_generated=booking.id in final_invoice_by_booking,
+                final_invoice_note_id=(
+                    final_invoice_by_booking[booking.id][0].id if booking.id in final_invoice_by_booking else None
+                ),
+                final_invoice_number=(
+                    str(final_invoice_by_booking[booking.id][1].get("invoice_number") or "")
+                    if booking.id in final_invoice_by_booking
+                    else None
+                ),
+                final_invoice_status=(
+                    str(final_invoice_by_booking[booking.id][1].get("invoice_status") or "")
+                    if booking.id in final_invoice_by_booking
+                    else None
+                ),
+            )
+        )(
+            latest_receipt_by_booking.get(booking.id),
+            latest_refund_by_receipt_id.get(latest_receipt_by_booking.get(booking.id).id)
             if latest_receipt_by_booking.get(booking.id) is not None
-            else session_obj.start_at_utc.date(),
-            service_completed_at=session_obj.start_at_utc if session_obj.status == SessionStatus.COMPLETED else None,
-            payment_received=booking.id in paid_totals_by_booking,
-            payment_received_at=(
-                latest_completed_receipt_by_booking.get(booking.id).paid_at
-                if latest_completed_receipt_by_booking.get(booking.id) is not None
-                else None
-            ),
-            payment_received_amount=paid_totals_by_booking.get(booking.id),
-            payment_receipt_id=(
-                latest_receipt_by_booking.get(booking.id).id if latest_receipt_by_booking.get(booking.id) is not None else None
-            ),
-            payment_receipt_number=(
-                latest_receipt_by_booking.get(booking.id).receipt_number
-                if latest_receipt_by_booking.get(booking.id) is not None
-                else None
-            ),
-            payment_receipt_status=(
-                latest_receipt_by_booking.get(booking.id).status
-                if latest_receipt_by_booking.get(booking.id) is not None
-                else None
-            ),
-            payment_receipt_sent_at=(
-                latest_receipt_by_booking.get(booking.id).email_sent_at
-                if latest_receipt_by_booking.get(booking.id) is not None
-                else None
-            ),
-            final_invoice_generated=booking.id in final_invoice_by_booking,
-            final_invoice_note_id=(
-                final_invoice_by_booking[booking.id][0].id if booking.id in final_invoice_by_booking else None
-            ),
-            final_invoice_number=(
-                str(final_invoice_by_booking[booking.id][1].get("invoice_number") or "")
-                if booking.id in final_invoice_by_booking
-                else None
-            ),
-            final_invoice_status=(
-                str(final_invoice_by_booking[booking.id][1].get("invoice_status") or "")
-                if booking.id in final_invoice_by_booking
-                else None
-            ),
+            else None,
         )
         for booking, session_obj, course_type, location, plan in rows
     ]
@@ -7152,6 +7187,121 @@ def send_admin_client_payment_receipt_email(
     db.add(receipt)
     db.commit()
     return AdminPaymentReceiptEmailOut(receipt_id=receipt.id, sent_at=now)
+
+
+@router.post("/{client_id}/payment-receipts/{receipt_id}/refund", response_model=AdminClientPaymentRefundOut)
+def refund_admin_client_payment_receipt(
+    client_id: UUID,
+    receipt_id: UUID,
+    payload: AdminClientPaymentRefundRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientPaymentRefundOut:
+    _require_client(db, client_id)
+    receipt = _load_payment_receipt(db, client_id=client_id, receipt_id=receipt_id, for_update=True)
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
+    if owner.id != client_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Justificatif introuvable")
+
+    receipt_status = (receipt.status or "").strip().upper()
+    if receipt_status == "REFUNDED":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Ce justificatif a deja ete rembourse",
+        )
+    if receipt_status != "COMPLETED":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le remboursement n est possible qu apres confirmation du paiement",
+        )
+    if receipt.final_invoice_note_id is not None or receipt.final_invoice_generated_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une facture finale existe deja pour cette reservation",
+        )
+    now = _utcnow()
+    if session_obj.status == SessionStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La prestation a deja ete realisee; utilisez un avoir ou une facture d annulation si necessaire",
+        )
+    if session_obj.start_at_utc <= now and booking.status != BookingStatus.CANCELLED:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le remboursement automatique est reserve aux prestations futures non realisees",
+        )
+
+    reason = _normalize_optional(payload.reason)
+    receipt, refund_row, _, _ = refund_payment_receipt(
+        db,
+        receipt=receipt,
+        actor_user_id=actor.id,
+        reason=reason,
+        refunded_at=now,
+    )
+
+    if booking.status != BookingStatus.CANCELLED:
+        booking.status = BookingStatus.CANCELLED
+        booking.cancelled_at = now
+        booking.cancellation_reason = "ADMIN_REFUND"
+        db.add(booking)
+        skip_pending_reminders_for_booking(
+            db,
+            booking_id=booking.id,
+            reason="Reservation annulee apres remboursement",
+            now=now,
+        )
+        _promote_waitlist_if_possible(
+            db,
+            session_obj,
+            now,
+            allow_planless_promotion=scopes_allow_planless_booking(resolve_session_booking_scopes(session_obj)),
+        )
+
+    snapshot = build_booking_receipt_snapshot(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+        owner=owner,
+    )
+    refund_email_sent_at: datetime | None = None
+    if send_payment_refund_notifications(
+        db,
+        receipt=receipt,
+        snapshot=snapshot,
+        refunded_at=refund_row.refunded_at,
+        refund_reason=refund_row.reason,
+        send_admin_copy=True,
+    ):
+        refund_email_sent_at = now
+        receipt_metadata = dict(receipt.receipt_metadata or {})
+        receipt_metadata["refund_email_sent_at"] = refund_email_sent_at.isoformat()
+        receipt.receipt_metadata = receipt_metadata
+        receipt.updated_at = now
+        db.add(receipt)
+
+    _create_client_note(
+        db,
+        client_id=client_id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=(
+            f"Reservation {booking.id} annulee et remboursement enregistre "
+            f"pour le justificatif {receipt.receipt_number or receipt.id}."
+            + (f" Motif: {refund_row.reason}." if refund_row.reason else "")
+            + (" Email de remboursement envoye." if refund_email_sent_at is not None else "")
+        ),
+    )
+    db.commit()
+    return AdminClientPaymentRefundOut(
+        client_id=client_id,
+        source="PAYMENT_RECEIPT",
+        payment_id=receipt.id,
+        refunded_at=refund_row.refunded_at,
+        reason=refund_row.reason,
+    )
 
 
 @router.post("/{client_id}/bookings/{booking_id}/final-invoice", response_model=AdminRangeInvoiceOut)

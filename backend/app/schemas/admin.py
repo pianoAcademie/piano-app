@@ -1238,6 +1238,11 @@ class AdminClientBookingOut(BaseModel):
     payment_received: bool = False
     payment_received_at: datetime | None = None
     payment_received_amount: Decimal | None = None
+    payment_refunded: bool = False
+    payment_refunded_at: datetime | None = None
+    payment_refunded_amount: Decimal | None = None
+    payment_refund_reason: str | None = None
+    payment_refund_email_sent_at: datetime | None = None
     payment_receipt_id: UUID | None = None
     payment_receipt_number: str | None = None
     payment_receipt_status: str | None = None

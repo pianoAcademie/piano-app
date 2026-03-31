@@ -1067,10 +1067,63 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="REFUND_ISSUED",
         name="Refund Issued",
         channel="EMAIL",
-        subject="Confirmation de remboursement",
-        body="Bonjour {first_name},\n\nVotre remboursement a ete valide.\n\nPiano Academie",
-        description="Confirmation de remboursement.",
-        variables_hint="{first_name}",
+        subject="Confirmation de votre remboursement Piano Academie",
+        body=_email_layout(
+            _email_title(
+                "Remboursement confirme",
+                "Bonjour {first_name}, nous confirmons l enregistrement de votre remboursement.",
+            ),
+            _email_summary(
+                [
+                    ("Beneficiaire", "{student_name}"),
+                    ("Prestation", "{reservation_label}"),
+                    ("Date prevue", "{scheduled_service_date}"),
+                    ("Horaire", "{session_time_label}"),
+                    ("Lieu", "{location_label}"),
+                    ("Montant rembourse", "{refund_amount} {currency}"),
+                    ("Date du remboursement", "{refund_date}"),
+                    ("Reference du paiement", "{payment_reference}"),
+                    ("Motif", "{refund_reason}"),
+                ]
+            ),
+            _email_button("{account_url}", "Acceder a mon espace client"),
+            _email_secondary(
+                "Votre reservation est desormais cloturee sur le plan financier. "
+                "Vous pouvez retrouver le detail dans votre espace client."
+            ),
+        ),
+        description="Confirmation de remboursement d une reservation ou d un paiement client.",
+        variables_hint=(
+            "{first_name} {last_name} {full_name} {client_name} {student_name} "
+            "{reservation_label} {scheduled_service_date} {session_time_label} {location_label} "
+            "{refund_amount} {currency} {refund_date} {refunded_at} {payment_reference} {refund_reason} "
+            "{account_url} {transactions_url} {receipt_number}"
+        ),
+        body_format="HTML",
+    ),
+    MessagingTemplateDefinition(
+        code="REFUND_ISSUED_ADMIN",
+        name="Refund Issued Admin",
+        channel="EMAIL",
+        subject="Remboursement enregistre - {reservation_label}",
+        body=(
+            "Un remboursement a ete enregistre.\n\n"
+            "Client: {client_name}\n"
+            "Eleve / beneficiaire: {student_name}\n"
+            "Prestation: {reservation_label}\n"
+            "Date prevue: {scheduled_service_date}\n"
+            "Lieu: {location_label}\n"
+            "Montant rembourse: {refund_amount} {currency}\n"
+            "Date du remboursement: {refund_date}\n"
+            "Reference du paiement: {payment_reference}\n"
+            "Motif: {refund_reason}\n\n"
+            "Piano Academie"
+        ),
+        description="Notification interne lors d un remboursement de reservation.",
+        variables_hint=(
+            "{client_name} {student_name} {reservation_label} {scheduled_service_date} {location_label} "
+            "{refund_amount} {currency} {refund_date} {payment_reference} {refund_reason}"
+        ),
     ),
     MessagingTemplateDefinition(
         code="AUTOMATIC_PAYMENT_FAILED",
