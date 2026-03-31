@@ -50,12 +50,12 @@ export default function AdminIntegrationPlanningEmbed({
   if (selectedStartDate) {
     embedParams.set("date", selectedStartDate);
   }
-  const embedPath = selectedActivity && selectedLocation ? `/embed/planning?${embedParams.toString()}` : "";
+  const embedPath = selectedActivity ? `/embed/planning?${embedParams.toString()}` : "";
   const normalizedBaseUrl = normalizeBaseUrl(accountWebsite);
   const absoluteEmbedUrl = embedPath && normalizedBaseUrl ? `${normalizedBaseUrl}${embedPath}` : "";
   const iframeTitle =
-    selectedActivity && selectedLocation
-      ? `Reservations ${selectedActivity.name} - ${selectedLocation.name}`
+    selectedActivity
+      ? `Reservations ${selectedActivity.name}${selectedLocation ? ` - ${selectedLocation.name}` : " - tous les lieux"}`
       : "Planning externe";
   const iframeHtml = absoluteEmbedUrl
     ? `<iframe src="${absoluteEmbedUrl}" title="${iframeTitle}" width="100%" height="840" style="width:100%;min-height:840px;border:0;border-radius:16px;overflow:hidden;" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`
@@ -87,7 +87,7 @@ export default function AdminIntegrationPlanningEmbed({
         <label>
           Lieu
           <select name="integration_location_id" defaultValue={selectedLocationId}>
-            <option value="">Choisir un lieu</option>
+            <option value="">Tous les lieux</option>
             {activeLocations.map((location) => (
               <option key={location.id} value={location.id}>
                 {location.name}
@@ -134,7 +134,8 @@ export default function AdminIntegrationPlanningEmbed({
             <div>
               <h4>Resultat</h4>
               <p className="muted">
-                {selectedActivity?.name} · {selectedLocation?.name}
+                {selectedActivity?.name}
+                {selectedLocation ? ` · ${selectedLocation.name}` : " · Tous les lieux"}
                 {selectedStartDate ? ` · debut ${selectedStartDate}` : ""}
               </p>
             </div>

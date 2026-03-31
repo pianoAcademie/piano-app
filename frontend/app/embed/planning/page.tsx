@@ -153,13 +153,15 @@ function buildPlanningHref({
   sessionId,
 }: {
   courseTypeId: string;
-  locationId: string;
+  locationId?: string | null;
   date: string;
   sessionId?: string | null;
 }): string {
   const params = new URLSearchParams();
   params.set("course_type_id", courseTypeId);
-  params.set("location_id", locationId);
+  if (locationId) {
+    params.set("location_id", locationId);
+  }
   params.set("date", date);
   if (sessionId) {
     params.set("session_id", sessionId);
@@ -202,13 +204,13 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const sessionOkMessage = readParam(searchParams, "session_ok");
   const sessionErrorMessage = readParam(searchParams, "session_error");
 
-  if (!courseTypeId || !locationId) {
+  if (!courseTypeId) {
     return (
       <main className="embed-planning-page">
         <section className="embed-planning-shell">
           <article className="card embed-planning-card">
             <h1>Integration planning</h1>
-            <p className="flash-err">Parametres manquants. Ajoutez `course_type_id` et `location_id` dans l URL de l iframe.</p>
+            <p className="flash-err">Parametre manquant. Ajoutez `course_type_id` dans l URL de l iframe.</p>
           </article>
         </section>
       </main>
@@ -216,7 +218,9 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   }
 
   const [courseTypesResult, locationsResult] = await Promise.all([
-    backendRequest<CourseTypeOut[]>(`/api/v1/course-types?active=true&location_id=${encodeURIComponent(locationId)}`),
+    backendRequest<CourseTypeOut[]>(
+      `/api/v1/course-types?active=true${locationId ? `&location_id=${encodeURIComponent(locationId)}` : ""}`,
+    ),
     backendRequest<LocationOut[]>("/api/v1/locations?active=true"),
   ]);
 
@@ -226,7 +230,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const selectedLocation = locations.find((row) => row.id === locationId) ?? null;
   const timezone = resolveTimezone(selectedLocation?.timezone || "Europe/Paris");
 
-  if (!selectedCourseType || !selectedLocation) {
+  if (!selectedCourseType || (locationId && !selectedLocation)) {
     return (
       <main className="embed-planning-page">
         <section className="embed-planning-shell">
@@ -256,7 +260,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const portalToken = getPortalToken();
   const [sessionsResult, bookingsResult] = await Promise.all([
     backendRequest<SessionOut[]>(
-      `/api/v1/sessions?course_type_id=${encodeURIComponent(courseTypeId)}&location_id=${encodeURIComponent(locationId)}&timezone=${encodeURIComponent(timezone)}&from=${encodeURIComponent(queryFrom)}&to=${encodeURIComponent(queryTo)}`,
+      `/api/v1/sessions?course_type_id=${encodeURIComponent(courseTypeId)}${locationId ? `&location_id=${encodeURIComponent(locationId)}` : ""}&timezone=${encodeURIComponent(timezone)}&from=${encodeURIComponent(queryFrom)}&to=${encodeURIComponent(queryTo)}`,
     ),
     portalToken ? backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, portalToken) : Promise.resolve(null),
   ]);
@@ -342,7 +346,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
               />
               <h1>{selectedCourseType.name}</h1>
               <p className="muted">
-                {selectedLocation.name} · vue semaine
+                {selectedLocation ? `${selectedLocation.name} · vue semaine` : "Tous les lieux · vue semaine"}
               </p>
             </div>
             <div className="embed-planning-nav">
@@ -383,6 +387,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                             {isReserved ? <span className="badge">Reserve</span> : null}
                           </div>
                           <p>{session.title}</p>
+                          {!selectedLocation ? <small>{session.location?.name || "Lieu a confirmer"}</small> : null}
                           <small>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency)}</small>
                           <small>{externalAvailabilityLabel(session)}</small>
                         </Link>
@@ -403,7 +408,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
             </div>
 
             <p className="muted">
-              {formatDateTime(selectedSession.start_at_utc, timezone)} · {selectedLocation.name}
+              {formatDateTime(selectedSession.start_at_utc, timezone)} · {selectedLocation?.name || selectedSession.location?.name || "Lieu a confirmer"}
             </p>
 
             <div className="embed-planning-detail-grid">

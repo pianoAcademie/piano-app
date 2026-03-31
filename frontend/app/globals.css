@@ -13082,3 +13082,194 @@ button.danger:focus-visible {
     padding: 14px;
   }
 }
+
+@media (max-width: 640px) {
+  .auth-page,
+  .public-buy-page,
+  .embed-planning-page {
+    padding: 10px 0 18px;
+    background:
+      linear-gradient(150deg, #120d0b 0%, #1c140f 18%, #f3e7d5 18%, #fbf5ec 100%);
+  }
+
+  .auth-shell,
+  .public-buy-shell {
+    width: min(100%, 100%);
+    padding: 12px 14px 20px;
+    gap: 12px;
+  }
+
+  .auth-header,
+  .auth-card,
+  .public-buy-card,
+  .embed-planning-card,
+  .embed-planning-detail {
+    border-radius: 20px;
+  }
+
+  .auth-header {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .auth-brand-lockup {
+    margin-bottom: 2px;
+  }
+
+  .portal-brand-lockup {
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .portal-brand-lockup-logo {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    box-shadow: 0 12px 22px rgba(0, 0, 0, 0.14);
+  }
+
+  .portal-brand-lockup-copy {
+    gap: 2px;
+  }
+
+  .portal-brand-lockup-eyebrow {
+    font-size: 9px;
+    letter-spacing: 0.18em;
+  }
+
+  .portal-brand-lockup-copy strong {
+    font-size: 18px;
+    line-height: 1.02;
+  }
+
+  .portal-brand-lockup-copy small {
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .auth-header-copy {
+    gap: 8px;
+    max-width: none;
+  }
+
+  .auth-header-copy h1 {
+    font-size: clamp(18px, 8vw, 34px);
+    line-height: 0.98;
+    max-width: 12ch;
+  }
+
+  .auth-header-copy p {
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: none;
+  }
+
+  .auth-card,
+  .public-buy-card {
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .auth-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .auth-tab {
+    min-height: 44px;
+    border-radius: 14px;
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+
+  .auth-section h2,
+  .public-buy-header h1,
+  .embed-planning-header h1 {
+    font-size: clamp(18px, 7vw, 30px);
+    line-height: 1.04;
+  }
+
+  .auth-section .muted,
+  .public-buy-header p,
+  .embed-planning-header .muted {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .auth-form {
+    gap: 12px;
+  }
+
+  .auth-form input,
+  .auth-form select,
+  .auth-form textarea {
+    min-height: 46px;
+  }
+
+  .auth-form button,
+  .public-buy-form button,
+  .embed-planning-primary-link,
+  .embed-planning-book-form button {
+    min-height: 48px;
+  }
+
+  .auth-shell > .flash-ok,
+  .auth-shell > .flash-err,
+  .auth-shell > .flash-warn {
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .client-content {
+    padding: 10px 10px 84px;
+    gap: 10px;
+  }
+
+  .client-topbar {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .client-topbar h1 {
+    font-size: 24px;
+  }
+
+  .teacher-shell {
+    padding: 10px;
+  }
+
+  .teacher-brand-banner {
+    padding: 14px;
+    gap: 12px;
+    margin-top: 6px;
+  }
+
+  .prof-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 8px;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 420px) {
+  .auth-shell,
+  .public-buy-shell {
+    padding-inline: 10px;
+  }
+
+  .auth-header,
+  .auth-card,
+  .public-buy-card,
+  .embed-planning-card,
+  .embed-planning-detail {
+    border-radius: 18px;
+  }
+
+  .auth-header-copy h1 {
+    max-width: none;
+  }
+
+  .portal-brand-lockup-copy small {
+    max-width: 22ch;
+  }
+}
