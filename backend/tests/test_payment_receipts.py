@@ -19,6 +19,7 @@ from app.services.payment_receipts import (
     _format_receipt_number,
     build_final_invoice_metadata,
     generate_final_invoice_for_booking,
+    send_final_invoice_email,
     should_defer_booking_invoice,
 )
 
@@ -272,6 +273,59 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
 
         self.assertIn(b"JUSTIFICATIF DE PAIEMENT", content)
         self.assertNotIn(b"FACTURE", content)
+
+    def test_paid_final_invoice_email_uses_paid_template_and_renders_placeholders(self) -> None:
+        customer = SimpleNamespace(
+            email="hector@example.com",
+            first_name="Hector",
+            last_name="Souza",
+        )
+        metadata = {
+            "invoice_number": "PA26-0006",
+            "invoice_status": "PAID",
+            "totals_by_currency": {"EUR": "30.00"},
+            "applied_payment_totals_by_currency": {"EUR": "30.00"},
+            "total_to_pay_by_currency": {"EUR": "0.00"},
+            "due_date": "2026-09-23",
+            "issued_date": "2026-09-23",
+        }
+        template = {
+            "subject": "Facture {invoice_number} deja reglee",
+            "body": "<div>Bonjour {first_name} - reglee {amount_paid} {currency} - {invoice_url}</div>",
+            "body_format": "HTML",
+        }
+        sender = SimpleNamespace(
+            from_email="contact@piano-academie.com",
+            from_name="Piano Academie",
+            reply_to=None,
+            subject_prefix=None,
+        )
+
+        with patch("app.services.payment_receipts.resolve_billing_profile", return_value=customer), patch(
+            "app.services.payment_receipts.resolve_predefined_template",
+            return_value=template,
+        ) as resolve_template, patch(
+            "app.services.payment_receipts.resolve_sender_profile",
+            return_value=sender,
+        ), patch(
+            "app.services.payment_receipts.send_email",
+            return_value="msg-123",
+        ) as send_email_mock:
+            result = send_final_invoice_email(
+                _FakeSession(),
+                customer=customer,
+                note_id=uuid4(),
+                metadata=metadata,
+            )
+
+        self.assertEqual(result, "msg-123")
+        self.assertEqual(resolve_template.call_args.kwargs["code"], "INVOICE_PAID")
+        kwargs = send_email_mock.call_args.kwargs
+        self.assertEqual(kwargs["context"], "CLIENT_FINAL_INVOICE_PAID")
+        self.assertIn("PA26-0006", kwargs["subject"])
+        self.assertIn("Bonjour Hector", kwargs["body"])
+        self.assertIn("30.00", kwargs["body"])
+        self.assertNotIn("{invoice_number}", kwargs["body"])
 
 
 if __name__ == "__main__":

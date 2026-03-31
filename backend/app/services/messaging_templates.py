@@ -770,7 +770,28 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         description="Envoi de facture.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
-            "{payment_url} {amount_due} {total_incl_vat} {currency} {due_date} {issued_date}"
+            "{payment_url} {amount_due} {amount_paid} {total_incl_vat} {currency} {due_date} {issued_date} {invoice_status}"
+        ),
+    ),
+    MessagingTemplateDefinition(
+        code="INVOICE_PAID",
+        name="Invoice Paid",
+        channel="EMAIL",
+        subject="Votre facture {invoice_number} est disponible et deja reglee",
+        body=(
+            "Bonjour {first_name},\n\n"
+            "Votre facture {invoice_number} est disponible.\n"
+            "Cette facture est deja reglee, aucun paiement supplementaire n est attendu.\n\n"
+            "Montant TTC: {total_incl_vat} {currency}\n"
+            "Montant deja regle: {amount_paid} {currency}\n"
+            "Date d emission: {issued_date}\n\n"
+            "Telechargement: {invoice_url}\n\n"
+            "Piano Academie"
+        ),
+        description="Envoi de facture deja integralement reglee.",
+        variables_hint=(
+            "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
+            "{payment_url} {amount_due} {amount_paid} {total_incl_vat} {currency} {due_date} {issued_date} {invoice_status}"
         ),
     ),
     MessagingTemplateDefinition(

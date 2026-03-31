@@ -41,6 +41,7 @@ PAYMENT_RECEIPT_NOTE_TEXT = (
     "Ce document confirme la reception de votre paiement. Le document commercial final de la prestation sera emis a sa realisation."
 )
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+SINGLE_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES = (
     BookingStatus.BOOKED,
     BookingStatus.ATTENDED,
@@ -193,12 +194,17 @@ def _billing_address_label(user: User) -> str:
 
 
 def _render_template(template: str, context: dict[str, str]) -> str:
-    normalized = MUSTACHE_PLACEHOLDER_RE.sub(r"{\1}", template)
-    try:
-        return normalized.format_map(_SafeTemplateContext(context)).strip()
-    except Exception:
-        logger.warning("Unable to render payment receipt template, returning raw template")
-        return normalized.strip()
+    def _replace_mustache(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return str(context.get(key, match.group(0)))
+
+    def _replace_single(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return str(context.get(key, match.group(0)))
+
+    normalized = MUSTACHE_PLACEHOLDER_RE.sub(_replace_mustache, template)
+    normalized = SINGLE_PLACEHOLDER_RE.sub(_replace_single, normalized)
+    return normalized.strip()
 
 
 def _frontend_url(path: str) -> str:
@@ -815,6 +821,15 @@ def send_final_invoice_email(
     billing_profile = resolve_billing_profile(db, customer)
     invoice_number = str(metadata.get("invoice_number") or "").strip() or str(note_id)
     invoice_url = _frontend_url(f"/client/invoices/invoice-range:{note_id}/download")
+    totals_by_currency = metadata.get("totals_by_currency") or {"EUR": "0.00"}
+    total_to_pay_by_currency = metadata.get("total_to_pay_by_currency") or {"EUR": "0.00"}
+    applied_payment_totals_by_currency = metadata.get("applied_payment_totals_by_currency") or {"EUR": "0.00"}
+    currency = next(iter(totals_by_currency.keys()))
+    amount_due = str(total_to_pay_by_currency.get(currency, "0.00"))
+    amount_paid = str(applied_payment_totals_by_currency.get(currency, "0.00"))
+    total_incl_vat = str(totals_by_currency.get(currency, "0.00"))
+    invoice_status = str(metadata.get("invoice_status") or "").strip().upper() or "ISSUED"
+    is_already_paid = invoice_status == "PAID" or amount_due in {"0", "0.0", "0.00"}
     context = {
         "first_name": (billing_profile.first_name or "").strip() or recipient_email,
         "last_name": (billing_profile.last_name or "").strip(),
@@ -822,25 +837,17 @@ def send_final_invoice_email(
         "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email),
         "invoice_number": invoice_number,
         "invoice_url": invoice_url,
-        "payment_url": invoice_url,
-        "amount_due": str(
-            (
-                metadata.get("total_to_pay_by_currency")
-                or {}
-            ).get(next(iter((metadata.get("total_to_pay_by_currency") or {"EUR": "0.00"}).keys())), "0.00")
-        ),
-        "total_incl_vat": str(
-            (
-                metadata.get("totals_by_currency")
-                or {}
-            ).get(next(iter((metadata.get("totals_by_currency") or {"EUR": "0.00"}).keys())), "0.00")
-        ),
-        "currency": next(iter((metadata.get("totals_by_currency") or {"EUR": "0.00"}).keys())),
+        "payment_url": "" if is_already_paid else invoice_url,
+        "amount_due": amount_due,
+        "amount_paid": amount_paid,
+        "total_incl_vat": total_incl_vat,
+        "currency": currency,
         "due_date": str(metadata.get("due_date") or ""),
         "issued_date": str(metadata.get("issued_date") or ""),
+        "invoice_status": invoice_status,
     }
     try:
-        template = resolve_predefined_template(db, code="INVOICE")
+        template = resolve_predefined_template(db, code="INVOICE_PAID" if is_already_paid else "INVOICE")
     except KeyError:
         return None
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
@@ -849,7 +856,7 @@ def send_final_invoice_email(
         subject=_render_template(str(template.get("subject") or "").strip(), context),
         body=_render_template(str(template.get("body") or "").strip(), context),
         body_format="HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT",
-        context="CLIENT_FINAL_INVOICE",
+        context="CLIENT_FINAL_INVOICE_PAID" if is_already_paid else "CLIENT_FINAL_INVOICE",
         from_email=sender.from_email,
         from_name=sender.from_name,
         reply_to=sender.reply_to,
