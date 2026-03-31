@@ -220,8 +220,6 @@ export default function MonthEventChip({
   const capacityUsed = resolveCapacityUsed(event);
   const capacityMax = Math.max(0, Math.floor(event.capacity_max || 0));
   const capacityLabel = event.capacity_label?.trim() || `${capacityUsed}/${capacityMax}`;
-  const showTypeBadge = !showLocationBadge || !compact;
-
   return (
     <a
       className={`month-event-chip ${expanded ? "expanded" : ""} ${compact ? "compact" : ""} ${showLocationBadge ? `has-location-cue ${locationTone}` : ""}`}
@@ -237,7 +235,6 @@ export default function MonthEventChip({
               {locationBadgeLabel}
             </span>
           ) : null}
-          {showTypeBadge ? <span className="month-badge month-badge-type">{typeLabel}</span> : null}
           {showStatusBadge ? <span className={`month-badge ${statusBadgeClass(event.status)}`}>{event.status_label}</span> : null}
         </span>
       </div>
