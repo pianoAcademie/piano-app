@@ -1811,6 +1811,65 @@ button.danger:focus-visible {
   cursor: pointer;
 }
 
+.booking-billing-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.booking-billing-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid #dce3eb;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fcfdff 0%, #f6f8fb 100%);
+}
+
+.booking-billing-card-label {
+  color: #526072;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.booking-billing-card-value {
+  color: #1f2937;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.booking-billing-progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+  gap: 10px;
+  min-width: 620px;
+}
+
+.booking-billing-step {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #dce3eb;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.booking-billing-step-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.booking-billing-step-label {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .balance-date-form {
   align-items: end;
   gap: 8px;
@@ -11800,6 +11859,23 @@ button.danger:focus-visible {
 .status-pill.status-cancelled {
   background: #f9dfdc;
   color: #8a1f1a;
+}
+
+@media (max-width: 1280px) {
+  .booking-billing-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .booking-billing-progress {
+    grid-template-columns: 1fr;
+    min-width: 340px;
+  }
+}
+
+@media (max-width: 760px) {
+  .booking-billing-overview {
+    grid-template-columns: 1fr;
+  }
 }
 
 .quote-list-refine-card {

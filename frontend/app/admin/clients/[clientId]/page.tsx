@@ -78,6 +78,13 @@ type PageProps = {
 };
 
 type ClientTab = "fiche" | "infos" | "famille" | "messages" | "paiements" | "factures" | "reservations";
+type BookingWorkflowTone = "status-ok" | "status-warn" | "status-off" | "status-info" | "status-cancelled";
+type BookingWorkflowStep = {
+  label: string;
+  value: string;
+  toneClass: BookingWorkflowTone;
+  helper: string;
+};
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -450,6 +457,152 @@ function invoiceStatusLabel(status: string | null): string {
     return "Facture en attente";
   }
   return "Facture";
+}
+
+function normalizedBookingStatus(row: AdminClientBookingOut): string {
+  return (row.status || "").trim().toUpperCase();
+}
+
+function normalizedSessionStatus(row: AdminClientBookingOut): string {
+  return (row.session_status || "").trim().toUpperCase();
+}
+
+function bookingCannotGenerateFinalInvoice(row: AdminClientBookingOut): boolean {
+  const bookingStatus = normalizedBookingStatus(row);
+  return bookingStatus === "CANCELLED" || bookingStatus === "EXCUSED_ABSENCE";
+}
+
+function canGenerateFinalInvoiceForBooking(row: AdminClientBookingOut): boolean {
+  return !row.final_invoice_generated && !bookingCannotGenerateFinalInvoice(row) && normalizedSessionStatus(row) === "COMPLETED";
+}
+
+function waitsForServiceCompletion(row: AdminClientBookingOut): boolean {
+  return !row.final_invoice_generated && !bookingCannotGenerateFinalInvoice(row) && normalizedSessionStatus(row) !== "COMPLETED";
+}
+
+function bookingWorkflowSteps(row: AdminClientBookingOut): BookingWorkflowStep[] {
+  const bookingStatus = normalizedBookingStatus(row);
+  const sessionStatus = normalizedSessionStatus(row);
+  const receiptStatus = (row.payment_receipt_status || "").trim().toUpperCase();
+  const finalInvoiceStatus = (row.final_invoice_status || "").trim().toUpperCase();
+
+  const paymentStep: BookingWorkflowStep = row.payment_received
+    ? {
+        label: "Paiement",
+        value: "Recu",
+        toneClass: "status-ok",
+        helper: `${formatMoney(row.payment_received_amount ?? row.total_incl_vat_snapshot, row.currency_snapshot)}${
+          row.payment_received_at ? ` · ${formatDate(row.payment_received_at)}` : ""
+        }`,
+      }
+    : bookingStatus === "CANCELLED"
+      ? {
+          label: "Paiement",
+          value: "Sans objet",
+          toneClass: "status-off",
+          helper: "Reservation annulee avant paiement.",
+        }
+      : {
+          label: "Paiement",
+          value: "En attente",
+          toneClass: "status-warn",
+          helper: "Aucun paiement confirme pour l instant.",
+        };
+
+  let receiptStep: BookingWorkflowStep;
+  if (row.payment_receipt_sent_at) {
+    receiptStep = {
+      label: "Justificatif",
+      value: "Envoye",
+      toneClass: "status-ok",
+      helper: `${row.payment_receipt_number || "Justificatif cree"} · ${formatDate(row.payment_receipt_sent_at)}`,
+    };
+  } else if (receiptStatus === "COMPLETED") {
+    receiptStep = {
+      label: "Justificatif",
+      value: "A renvoyer",
+      toneClass: "status-warn",
+      helper: row.payment_receipt_number || "Paiement confirme, justificatif pret.",
+    };
+  } else if (row.payment_received) {
+    receiptStep = {
+      label: "Justificatif",
+      value: "A creer",
+      toneClass: "status-warn",
+      helper: "Paiement recu, justificatif non envoye.",
+    };
+  } else if (bookingStatus === "CANCELLED") {
+    receiptStep = {
+      label: "Justificatif",
+      value: "Sans objet",
+      toneClass: "status-off",
+      helper: "Pas de justificatif tant que le paiement n est pas recu.",
+    };
+  } else {
+    receiptStep = {
+      label: "Justificatif",
+      value: "En attente",
+      toneClass: "status-off",
+      helper: "Le justificatif sera disponible apres paiement.",
+    };
+  }
+
+  let invoiceStep: BookingWorkflowStep;
+  if (row.final_invoice_generated) {
+    invoiceStep = {
+      label: "Facture finale",
+      value:
+        finalInvoiceStatus === "PAID"
+          ? "Emise / payee"
+          : finalInvoiceStatus === "CANCELLED"
+            ? "Annulee"
+            : "Emise",
+      toneClass:
+        finalInvoiceStatus === "PAID"
+          ? "status-ok"
+          : finalInvoiceStatus === "CANCELLED"
+            ? "status-cancelled"
+            : "status-info",
+      helper: row.final_invoice_number || invoiceStatusLabel(row.final_invoice_status),
+    };
+  } else if (bookingStatus === "EXCUSED_ABSENCE") {
+    invoiceStep = {
+      label: "Facture finale",
+      value: "Non facturee",
+      toneClass: "status-off",
+      helper: "Absence excusee: aucune facture finale.",
+    };
+  } else if (bookingStatus === "CANCELLED") {
+    invoiceStep = {
+      label: "Facture finale",
+      value: "Non facturee",
+      toneClass: "status-off",
+      helper: "Reservation annulee: aucune facture finale.",
+    };
+  } else if (sessionStatus === "COMPLETED") {
+    invoiceStep = {
+      label: "Facture finale",
+      value: "A emettre",
+      toneClass: "status-warn",
+      helper: "Prestation realisee, facture finale prete.",
+    };
+  } else if (row.payment_received) {
+    invoiceStep = {
+      label: "Facture finale",
+      value: "A la realisation",
+      toneClass: "status-info",
+      helper: "La facture finale sera emise quand la prestation sera realisee.",
+    };
+  } else {
+    invoiceStep = {
+      label: "Facture finale",
+      value: "En attente",
+      toneClass: "status-off",
+      helper: "La facturation finale suit la realisation de la prestation.",
+    };
+  }
+
+  return [paymentStep, receiptStep, invoiceStep];
 }
 
 const INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::";
@@ -1579,6 +1732,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .filter((row) => Date.parse(row.session_start_at_utc) < Date.now())
     .sort((a, b) => b.session_start_at_utc.localeCompare(a.session_start_at_utc));
   const reservationRows = [...upcomingBookings, ...pastBookings];
+  const paymentsReceivedCount = bookings.filter((row) => row.payment_received).length;
+  const receiptsSentCount = bookings.filter((row) => Boolean(row.payment_receipt_sent_at)).length;
+  const finalInvoicesGeneratedCount = bookings.filter((row) => row.final_invoice_generated).length;
+  const finalInvoicesReadyCount = bookings.filter((row) => canGenerateFinalInvoiceForBooking(row)).length;
+  const finalInvoicesWaitingCount = bookings.filter((row) => waitsForServiceCompletion(row) && row.payment_received).length;
 
   const paymentsAsOfDate = payments.filter((row) => {
     const occurredAtMs = Date.parse(row.occurred_at);
@@ -5407,11 +5565,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </article>
                 <article className="item row spread">
                   <span className="muted">Paiements recus</span>
-                  <strong>{bookings.filter((row) => row.payment_received).length}</strong>
+                  <strong>{paymentsReceivedCount}</strong>
                 </article>
                 <article className="item row spread">
                   <span className="muted">Factures finales generees</span>
-                  <strong>{bookings.filter((row) => row.final_invoice_generated).length}</strong>
+                  <strong>{finalInvoicesGeneratedCount}</strong>
                 </article>
               </div>
 
@@ -5471,10 +5629,31 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   facture finale a deja ete emise.
                 </p>
               </div>
-              <div className="row">
-                <span className="badge">Justificatifs envoyes: {bookings.filter((row) => Boolean(row.payment_receipt_sent_at)).length}</span>
-                <span className="badge">Prestations realisees: {bookings.filter((row) => Boolean(row.service_completed_at)).length}</span>
-              </div>
+            </div>
+
+            <div className="booking-billing-overview">
+              <article className="booking-billing-card">
+                <span className="booking-billing-card-label">Paiements recus</span>
+                <strong className="booking-billing-card-value">{paymentsReceivedCount}</strong>
+                <small className="muted">Reservations deja reglees ou partiellement reglees.</small>
+              </article>
+              <article className="booking-billing-card">
+                <span className="booking-billing-card-label">Justificatifs envoyes</span>
+                <strong className="booking-billing-card-value">{receiptsSentCount}</strong>
+                <small className="muted">Recu de paiement deja envoye au client.</small>
+              </article>
+              <article className="booking-billing-card">
+                <span className="booking-billing-card-label">Factures finales emises</span>
+                <strong className="booking-billing-card-value">{finalInvoicesGeneratedCount}</strong>
+                <small className="muted">Factures definitives deja generees.</small>
+              </article>
+              <article className="booking-billing-card">
+                <span className="booking-billing-card-label">Factures a emettre</span>
+                <strong className="booking-billing-card-value">{finalInvoicesReadyCount}</strong>
+                <small className="muted">
+                  {finalInvoicesWaitingCount} en attente de realisation, {finalInvoicesReadyCount} deja prêtes.
+                </small>
+              </article>
             </div>
 
             {reservationRows.length === 0 ? (
@@ -5487,22 +5666,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <th>Date</th>
                       <th>Prestation</th>
                       <th>Reservation</th>
-                      <th>Paiement recu</th>
-                      <th>Justificatif</th>
-                      <th>Facture finale</th>
+                      <th>Suivi financier</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {reservationRows.map((row) => {
-                      const canGenerateFinalInvoice =
-                        !row.final_invoice_generated &&
-                        row.status.toUpperCase() !== "CANCELLED" &&
-                        row.session_status.toUpperCase() === "COMPLETED";
-                      const waitingForService =
-                        !row.final_invoice_generated &&
-                        row.status.toUpperCase() !== "CANCELLED" &&
-                        row.session_status.toUpperCase() !== "COMPLETED";
+                      const canGenerateFinalInvoice = canGenerateFinalInvoiceForBooking(row);
+                      const workflowSteps = bookingWorkflowSteps(row);
                       return (
                         <tr key={row.id}>
                           <td>
@@ -5533,59 +5704,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             </div>
                           </td>
                           <td>
-                            <div className="stack-xs">
-                              <span className={`status-pill ${row.payment_received ? "status-ok" : "status-warn"}`}>
-                                {row.payment_received ? "Oui" : "Non"}
-                              </span>
-                              <small className="muted">
-                                {row.payment_received
-                                  ? `${formatMoney(row.payment_received_amount ?? row.total_incl_vat_snapshot, row.currency_snapshot)}${
-                                      row.payment_received_at ? ` | ${formatDate(row.payment_received_at)}` : ""
-                                    }`
-                                  : "Aucun paiement confirme"}
-                              </small>
-                            </div>
-                          </td>
-                          <td>
-                            <div className="stack-xs">
-                              <span
-                                className={`status-pill ${
-                                  row.payment_receipt_sent_at
-                                    ? "status-ok"
-                                    : row.payment_receipt_status === "COMPLETED"
-                                      ? "status-warn"
-                                      : "status-off"
-                                }`}
-                              >
-                                {row.payment_receipt_sent_at
-                                  ? "Envoye"
-                                  : row.payment_receipt_status === "COMPLETED"
-                                    ? "A renvoyer"
-                                    : row.payment_receipt_status || "Non cree"}
-                              </span>
-                              <small className="muted">
-                                {row.payment_receipt_number
-                                  ? row.payment_receipt_number
-                                  : row.payment_received
-                                    ? "Justificatif en attente de numero"
-                                    : "Pas de justificatif pour l instant"}
-                              </small>
-                            </div>
-                          </td>
-                          <td>
-                            <div className="stack-xs">
-                              <span className={`status-pill ${row.final_invoice_generated ? "status-ok" : "status-off"}`}>
-                                {row.final_invoice_generated ? row.final_invoice_status || "Generee" : "Non generee"}
-                              </span>
-                              <small className="muted">
-                                {row.final_invoice_number
-                                  ? row.final_invoice_number
-                                  : waitingForService
-                                    ? "Emission a la realisation"
-                                    : canGenerateFinalInvoice
-                                      ? "Prete a etre emise"
-                                      : "Aucune facture finale"}
-                              </small>
+                            <div className="booking-billing-progress">
+                              {workflowSteps.map((step) => (
+                                <article key={step.label} className="booking-billing-step">
+                                  <div className="booking-billing-step-head">
+                                    <span className="booking-billing-step-label">{step.label}</span>
+                                    <span className={`status-pill ${step.toneClass}`}>{step.value}</span>
+                                  </div>
+                                  <small className="muted">{step.helper}</small>
+                                </article>
+                              ))}
                             </div>
                           </td>
                           <td>
