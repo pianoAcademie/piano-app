@@ -30,6 +30,7 @@ This keeps the semantic split explicit and avoids polluting the invoice numberin
 - admins also have a manual fallback action from the booking row
 - no double billing: a second generation request returns the existing final invoice
 - cancelled bookings never generate a final invoice
+- bookings marked `EXCUSED_ABSENCE` never generate a final invoice
 
 ## Email and PDF outputs
 

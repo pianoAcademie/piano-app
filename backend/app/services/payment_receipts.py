@@ -41,6 +41,11 @@ PAYMENT_RECEIPT_NOTE_TEXT = (
     "Ce document confirme la reception de votre paiement. Le document commercial final de la prestation sera emis a sa realisation."
 )
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES = (
+    BookingStatus.BOOKED,
+    BookingStatus.ATTENDED,
+    BookingStatus.NO_SHOW,
+)
 
 
 @dataclass(frozen=True)
@@ -724,6 +729,10 @@ def generate_final_invoice_for_booking(
         return note, metadata, False
     if booking.status == BookingStatus.CANCELLED:
         raise ValueError("Cancelled bookings cannot generate a final invoice")
+    if booking.status == BookingStatus.EXCUSED_ABSENCE:
+        raise ValueError("Excused absences cannot generate a final invoice")
+    if booking.status not in FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES:
+        raise ValueError("Booking status is not eligible for final invoicing")
     if session_obj.status != SessionStatus.COMPLETED:
         raise ValueError("Final invoice can only be generated once the service is completed")
 

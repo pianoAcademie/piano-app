@@ -51,7 +51,11 @@ from app.models.user import ClientStatus, User, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_slot_cancelled_notifications
-from app.services.payment_receipts import generate_final_invoice_for_booking, send_final_invoice_email
+from app.services.payment_receipts import (
+    FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES,
+    generate_final_invoice_for_booking,
+    send_final_invoice_email,
+)
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
 from app.services.session_audience import (
     coerce_session_scope_sets,
@@ -3409,12 +3413,6 @@ def update_session(
             )
 
     if sessions_completed_for_invoicing:
-        invoice_eligible_statuses = {
-            BookingStatus.BOOKED,
-            BookingStatus.ATTENDED,
-            BookingStatus.NO_SHOW,
-            BookingStatus.EXCUSED_ABSENCE,
-        }
         completed_booking_rows = db.execute(
             select(Booking, CourseSession, CourseType, Location, User)
             .join(CourseSession, CourseSession.id == Booking.session_id)
@@ -3423,7 +3421,7 @@ def update_session(
             .join(User, User.id == Booking.user_id)
             .where(
                 Booking.session_id.in_(sessions_completed_for_invoicing),
-                Booking.status.in_(invoice_eligible_statuses),
+                Booking.status.in_(FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES),
             )
         ).all()
         for booking, completed_session, completed_course_type, completed_location, booking_owner in completed_booking_rows:

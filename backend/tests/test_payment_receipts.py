@@ -149,6 +149,20 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
                     author_user_id=None,
                 )
 
+    def test_excused_absence_never_generates_final_invoice(self) -> None:
+        excused_booking = SimpleNamespace(id=self.booking_id, status=BookingStatus.EXCUSED_ABSENCE)
+        with patch("app.services.payment_receipts._invoice_note_for_booking", return_value=None):
+            with self.assertRaisesRegex(ValueError, "Excused absences cannot generate a final invoice"):
+                generate_final_invoice_for_booking(
+                    _FakeSession(),
+                    booking=excused_booking,
+                    session_obj=self.session_obj,
+                    course_type=SimpleNamespace(),
+                    location=SimpleNamespace(),
+                    owner=SimpleNamespace(),
+                    author_user_id=None,
+                )
+
     def test_duplicate_generation_returns_existing_invoice(self) -> None:
         existing_note = SimpleNamespace(id=uuid4(), message="existing")
         existing_metadata = {"invoice_number": "PA26-0009", "invoice_status": "ISSUED"}

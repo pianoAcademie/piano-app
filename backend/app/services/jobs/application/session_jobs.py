@@ -17,18 +17,16 @@ from app.services.notifications.infrastructure.repository import (
     start_job_run,
     upsert_job_cursor,
 )
-from app.services.payment_receipts import generate_final_invoice_for_booking, send_final_invoice_email
+from app.services.payment_receipts import (
+    FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES,
+    generate_final_invoice_for_booking,
+    send_final_invoice_email,
+)
 from app.services.shared.locks.redis_lock import redis_lock
 
 JOB_NAME = "session_auto_completion_job"
 JOB_LOCK_KEY = "lock:job:session_auto_completion"
 JOB_MIN_INTERVAL = timedelta(minutes=5)
-INVOICE_ELIGIBLE_BOOKING_STATUSES = (
-    BookingStatus.BOOKED,
-    BookingStatus.ATTENDED,
-    BookingStatus.NO_SHOW,
-    BookingStatus.EXCUSED_ABSENCE,
-)
 
 
 @dataclass(frozen=True)
@@ -113,7 +111,7 @@ def run_session_auto_completion_job(
                     .join(User, User.id == Booking.user_id)
                     .where(
                         Booking.session_id.in_(list(session_context.keys())),
-                        Booking.status.in_(INVOICE_ELIGIBLE_BOOKING_STATUSES),
+                        Booking.status.in_(FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES),
                     )
                     .order_by(Booking.booked_at.asc())
                 ).all()
