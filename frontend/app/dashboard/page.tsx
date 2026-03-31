@@ -672,8 +672,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
   }
 
   if (view === "week") {
-    // Week view is anchored on the selected day for mobile UX consistency.
-    const from = focusDate;
+    const from = startOfWeekUtc(focusDate);
     const dayKeys: string[] = [];
 
     for (let i = 0; i < 7; i += 1) {
@@ -726,30 +725,6 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
       timeZone: "UTC",
     }).format(monthStart),
   };
-}
-
-function agendaStripToken(dayKey: string): { weekday: string; day: string; month: string } {
-  const date = keyToUtcDate(dayKey);
-  const weekday = new Intl.DateTimeFormat("fr-FR", {
-    weekday: "short",
-    timeZone: "UTC",
-  })
-    .format(date)
-    .replace(".", "")
-    .toUpperCase();
-  const day = new Intl.DateTimeFormat("fr-FR", {
-    day: "2-digit",
-    timeZone: "UTC",
-  }).format(date);
-  const month = new Intl.DateTimeFormat("fr-FR", {
-    month: "short",
-    timeZone: "UTC",
-  })
-    .format(date)
-    .replace(".", "")
-    .toUpperCase();
-
-  return { weekday, day, month };
 }
 
 function hourInTimezone(value: string | null | undefined, timezone: string): number {
@@ -845,9 +820,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedTimeBucket = parseTimeBucket(readParam(searchParams, "time_bucket"));
   const planningSlotFilter = parsePlanningSlotFilter(readParam(searchParams, "planning_slot_filter"));
   const timezone = resolveTimezone(readParam(searchParams, "timezone") || me.timezone || DEFAULT_TIMEZONE);
-  const agendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
+  const requestedAgendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
   const inputAgendaDate = readParam(searchParams, "agenda_date");
   const agendaDate = isDateKey(inputAgendaDate) ? inputAgendaDate : todayKeyInTimezone(timezone);
+  const agendaView: AgendaView = tab === "planning" ? "week" : requestedAgendaView;
   const agendaRange = buildAgendaRange(agendaView, agendaDate);
 
   const reservationScope = readParam(searchParams, "reservation_scope") || "CURRENT";
@@ -1415,13 +1391,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
   const availableSlotsCount = Array.from(agendaDaySummary.values()).reduce((sum, row) => sum + row.availableCount, 0);
   const activeReservationsCount = selectedMemberUpcomingBookings.filter((booking) => isAlreadyReservedByMember(booking.status)).length;
-  const selectedAgendaDateLabel = new Intl.DateTimeFormat("fr-FR", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(keyToUtcDate(agendaDate));
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
   const selectedSessionStart = selectedSession ? safeDate(selectedSession.start_at_utc) : null;
   const selectedSessionIsPastOrStarted = selectedSessionStart ? selectedSessionStart.getTime() <= now.getTime() : false;
@@ -1452,8 +1421,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     selectedSessionEligibleByPlan &&
     selectedSession.booked_count < selectedSession.capacity_max;
   const agendaSessionCount = agendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
-  const stripStart = addUtcDays(keyToUtcDate(agendaDate), -2);
-  const stripDayKeys = Array.from({ length: 7 }, (_, index) => utcDateToKey(addUtcDays(stripStart, index)));
   const advancedFiltersOpen =
     Boolean(selectedCourseType) ||
     Boolean(selectedCoachId) ||
@@ -1961,8 +1928,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <Card className="client-planning-shell">
                 <div className="row spread client-planning-heading">
                   <div>
-                    <h2>Planning des creneaux</h2>
-                    <p className="muted">Version mobile optimisee: navigation compacte + filtres progressifs.</p>
+                    <h2>Planning hebdomadaire</h2>
+                    <p className="muted">Une seule grille semaine pour distinguer vos reservations et les disponibilites en ligne.</p>
                   </div>
                   <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
                     🛍️ Offres
@@ -1971,6 +1938,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                 <form method="get" className="client-planning-filter-form">
                   <input type="hidden" name="tab" value="planning" />
+                  <input type="hidden" name="agenda_view" value="week" />
 
                   <div className="client-planning-hero">
                     <label className="client-planning-pill client-planning-pill-location">
@@ -2004,7 +1972,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           time_bucket: null,
                           planning_slot_filter: null,
                           timezone: me.timezone || DEFAULT_TIMEZONE,
-                          agenda_view: "agenda",
+                          agenda_view: "week",
                           agenda_date: todayKeyInTimezone(timezone),
                           booking_owner_id: me.id,
                         })}
@@ -2052,15 +2020,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </label>
 
                       <label>
-                        Vue
-                        <select name="agenda_view" defaultValue={agendaView}>
-                          <option value="agenda">Agenda</option>
-                          <option value="week">Semaine</option>
-                          <option value="day">Journee</option>
-                        </select>
-                      </label>
-
-                      <label>
                         Fuseau horaire
                         <select name="timezone" defaultValue={timezone}>
                           {timezoneOptions.map((item) => (
@@ -2100,123 +2059,73 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <strong>{bookingOwnerMember?.display_name ?? "-"}</strong>
                   </article>
                   <article className="client-planning-summary-item">
-                    <small>Reservations actives</small>
+                    <small>Reservations confirmees</small>
                     <strong>{activeReservationsCount}</strong>
                   </article>
                   <article className="client-planning-summary-item">
-                    <small>Creneaux disponibles</small>
+                    <small>Creneaux visibles</small>
+                    <strong>{agendaSessionCount}</strong>
+                  </article>
+                  <article className="client-planning-summary-item">
+                    <small>Creneaux reservables</small>
                     <strong>{availableSlotsCount}</strong>
                   </article>
                   <article className="client-planning-summary-item">
-                    <small>Date selectionnee</small>
-                    <strong>{selectedAgendaDateLabel}</strong>
+                    <small>Semaine affichee</small>
+                    <strong>{agendaRange.title}</strong>
                   </article>
                 </section>
 
-                <div className="client-planning-date-nav">
-                  <a
-                    className="client-date-nav-btn"
-                    href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, -1) })}
-                    aria-label="Jour precedent"
-                  >
-                    ←
-                  </a>
-                  <div className="client-date-strip">
-                    {stripDayKeys.map((dayKey) => {
-                      const token = agendaStripToken(dayKey);
-                      const active = dayKey === agendaDate;
-                      const daySummary = agendaDaySummary.get(dayKey) ?? { reservedCount: 0, availableCount: 0 };
-                      return (
-                        <a
-                          key={dayKey}
-                          className={`client-date-pill ${active ? "active" : ""}`}
-                          href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: dayKey })}
-                        >
-                          <span>{token.weekday}</span>
-                          <strong>{token.day}</strong>
-                          <small>{token.month}</small>
-                          <small className="client-date-pill-meta">
-                            R {daySummary.reservedCount} · D {daySummary.availableCount}
-                          </small>
-                        </a>
-                      );
-                    })}
+                <div className="client-week-toolbar">
+                  <div className="client-week-toolbar-head">
+                    <div className="client-week-title-group">
+                      <span className="badge">Vue semaine</span>
+                      <strong>{agendaRange.title}</strong>
+                      <small>Une seule grille pour reserver, suivre et distinguer vos creneaux deja confirmes.</small>
+                    </div>
+                    <div className="client-week-toolbar-actions">
+                      <a
+                        className="client-date-nav-btn"
+                        href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, -7), agenda_view: "week" })}
+                        aria-label="Semaine precedente"
+                      >
+                        ←
+                      </a>
+                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}>
+                        Aujourd'hui
+                      </a>
+                      <a
+                        className="client-date-nav-btn"
+                        href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}
+                        aria-label="Semaine suivante"
+                      >
+                        →
+                      </a>
+                    </div>
                   </div>
-                  <a
-                    className="client-date-nav-btn"
-                    href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, 1) })}
-                    aria-label="Jour suivant"
-                  >
-                    →
-                  </a>
-                </div>
-
-                <div className="row spread client-planning-modes">
-                  <div className="row">
-                    <a className={`mode-link ${agendaView === "day" ? "mode-active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "day" })}>
-                      Jour
-                    </a>
-                    <a className={`mode-link ${agendaView === "week" ? "mode-active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "week" })}>
-                      Semaine
-                    </a>
-                    <a className={`mode-link ${agendaView === "agenda" ? "mode-active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "planning", agenda_view: "agenda" })}>
-                      Agenda
-                    </a>
-                  </div>
-                  <div className="row">
-                    <span className="badge">{agendaRange.title}</span>
-                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: todayKeyInTimezone(timezone) })}>
-                      Aujourd'hui
-                    </a>
+                  <div className="client-week-legend">
+                    <span className="client-week-legend-item">
+                      <span className="client-week-legend-swatch reserved" />
+                      Mes reservations
+                    </span>
+                    <span className="client-week-legend-item">
+                      <span className="client-week-legend-swatch available" />
+                      Reservable en ligne
+                    </span>
+                    <span className="client-week-legend-item">
+                      <span className="client-week-legend-swatch full" />
+                      Complet ou indisponible
+                    </span>
                   </div>
                 </div>
               </Card>
 
-              <Card className="client-reserved-section">
+              <Card className="client-available-section client-week-planning-board">
                 <div className="row spread">
-                  <h2>Mes creneaux reserves</h2>
-                  <span className="badge">{selectedMemberUpcomingBookings.length}</span>
-                </div>
-                <p className="muted">Creneaux deja reserves pour le membre selectionne.</p>
-                {selectedMemberUpcomingBookings.length === 0 ? (
-                  <p className="muted">Aucune reservation active pour ce membre.</p>
-                ) : (
-                  <div className="list client-mobile-list client-planning-reserved-list">
-                    {selectedMemberUpcomingBookings.map((booking) => (
-                      <article key={`reserved-${booking.id}`} className="item client-mobile-card client-planning-reserved-card">
-                        <div className="row spread">
-                          <strong>{booking.owner_display_name}</strong>
-                          <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
-                        </div>
-                        <p className="muted">{booking.session.title}</p>
-                        <p className="muted">{formatDateTime(booking.session.start_at_utc)}</p>
-                        <div className="row spread">
-                          <span className="badge">Deja reserve</span>
-                          <a
-                            className="mode-link"
-                            href={withUpdatedQuery(rawParams, {
-                              tab: "planning",
-                              agenda_view: "day",
-                              agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
-                              session_id: booking.session.id,
-                              booking_owner_id: booking.owner_client_id,
-                            })}
-                          >
-                            Voir la reservation
-                          </a>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </Card>
-
-              <Card className="client-available-section">
-                <div className="row spread">
-                  <h2>Creneaux disponibles a reserver</h2>
+                  <h2>Ma semaine de reservation</h2>
                   <span className="badge">{agendaSessionCount}</span>
                 </div>
-                <p className="muted">Statuts explicites: Disponible, Deja reserve, Complet.</p>
+                <p className="muted">Vos creneaux reserves et les disponibilites en ligne sont reunis sur la meme grille.</p>
                 <div className="row client-planning-quick-filters">
                   <a
                     className={`mode-link ${planningSlotFilter === "ALL" ? "mode-active" : ""}`}
@@ -2234,7 +2143,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     className={`mode-link ${planningSlotFilter === "ALREADY_BOOKED" ? "mode-active" : ""}`}
                     href={withUpdatedQuery(rawParams, { tab: "planning", planning_slot_filter: "ALREADY_BOOKED" })}
                   >
-                    Deja reserves
+                    Mes reservations
                   </a>
                 </div>
                 <div className={`agenda-grid client-agenda-grid agenda-grid-${agendaView}`}>
@@ -2251,13 +2160,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       }
                       return true;
                     });
-                    const visibleSessions = agendaView === "day" ? daySessions : daySessions.slice(0, 4);
-                    const hiddenSessions = agendaView === "day" ? [] : daySessions.slice(4);
+                    const visibleSessions = daySessions;
+                    const hiddenSessions: SessionOut[] = [];
 
                     return (
                       <article key={day.key} className={`agenda-day client-agenda-day client-agenda-day-${agendaView}`}>
                         <div className="row spread agenda-day-header">
-                          <h3>{day.label}</h3>
+                          <div className="client-agenda-day-headings">
+                            <h3>{day.label}</h3>
+                            <small className="client-agenda-day-stats">
+                              {(agendaDaySummary.get(day.key)?.reservedCount ?? 0)} reserve{(agendaDaySummary.get(day.key)?.reservedCount ?? 0) > 1 ? "s" : ""}
+                              {" · "}
+                              {(agendaDaySummary.get(day.key)?.availableCount ?? 0)} disponible{(agendaDaySummary.get(day.key)?.availableCount ?? 0) > 1 ? "s" : ""}
+                            </small>
+                          </div>
                           <span className="badge">{daySessions.length}</span>
                         </div>
 
@@ -2268,7 +2184,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             const booking = bookingsBySessionAndMember.get(`${session.id}:${bookingOwnerId}`);
                             const isReservedByMember = Boolean(booking && isAlreadyReservedByMember(booking.status));
                             const eligibleByPlan = activeEntitlementsByOwner.get(bookingOwnerId)?.has(session.course_type.id) ?? false;
-                            const compactAgendaCard = agendaView !== "day";
+                            const compactAgendaCard = true;
                             const accentColor = accentColorForId(session.course_type.id);
                             const durationMinutes = Math.max(
                               1,
@@ -2326,6 +2242,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   ) : null}
 
                                   <div className={`agenda-event client-agenda-event ${statusClass(session.status)}`}>
+                                    {isReservedByMember ? <span className="client-session-owned-flag">Mon creneau reserve</span> : null}
                                     <div className="row spread client-event-head">
                                       <h3 className="event-title">{session.title}</h3>
                                       <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
@@ -2336,7 +2253,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       <span className="occ-badge">{session.booked_count}/{session.capacity_max}</span>
                                       <small className="event-meta">⏱ {durationMinutes} min</small>
                                     </div>
-                                    <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small>
+                                    {session.professor ? <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small> : null}
                                     <small className="event-meta event-meta-secondary">📍 {session.location.name}</small>
                                     <small className="event-meta event-meta-secondary">{contextLine}</small>
 
@@ -2359,35 +2276,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             );
                           })}
 
-                          {hiddenSessions.length > 0 ? (
-                            <details className="agenda-more-block client-more-block">
-                              <summary>+{hiddenSessions.length} autres</summary>
-                              <div className="agenda-events">
-                                {hiddenSessions.map((session) => {
-                                  const href = withUpdatedQuery(rawParams, {
-                                    tab: "planning",
-                                    session_id: session.id,
-                                    ok: null,
-                                    error: null,
-                                    session_ok: null,
-                                    session_error: null,
-                                  });
-                                  return (
-                                    <a key={`${day.key}-${session.id}`} className="client-session-link client-session-link-compact" href={href}>
-                                      <article className={`agenda-event client-agenda-event ${statusClass(session.status)}`}>
-                                        <p className="muted">
-                                          {formatTime(session.start_at_local)} - {formatTime(session.end_at_local)}
-                                        </p>
-                                        <h3 className="event-title">{session.title}</h3>
-                                        <small className="event-meta">🎵 {session.course_type.name}</small>
-                                        <small className="event-meta">📍 {session.location.name}</small>
-                                      </article>
-                                    </a>
-                                  );
-                                })}
-                              </div>
-                            </details>
-                          ) : null}
+                          {hiddenSessions.length > 0 ? null : null}
                         </div>
                       </article>
                     );

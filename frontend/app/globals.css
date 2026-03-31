@@ -9398,6 +9398,82 @@ button.danger:focus-visible {
   color: #1f3550;
 }
 
+.client-week-toolbar {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid #e8dcc7;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fff9ef 0%, #ffffff 100%);
+}
+
+.client-week-toolbar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.client-week-title-group {
+  display: grid;
+  gap: 4px;
+}
+
+.client-week-title-group strong {
+  font-size: 18px;
+  line-height: 1.15;
+  color: #23180d;
+}
+
+.client-week-title-group small {
+  color: #6f6252;
+}
+
+.client-week-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.client-week-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.client-week-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid #eadfce;
+  background: rgba(255, 255, 255, 0.9);
+  color: #594a37;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.client-week-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.client-week-legend-swatch.reserved {
+  background: #2c7a4b;
+}
+
+.client-week-legend-swatch.available {
+  background: #d4af37;
+}
+
+.client-week-legend-swatch.full {
+  background: #8d9aae;
+}
+
 .client-date-pill-meta {
   font-size: 10px;
   color: #60738b;
@@ -9413,6 +9489,10 @@ button.danger:focus-visible {
   background: linear-gradient(180deg, #fffaf1 0%, #ffffff 100%);
 }
 
+.client-week-planning-board {
+  border-radius: 18px;
+}
+
 .client-planning-quick-filters {
   gap: 8px;
   flex-wrap: wrap;
@@ -9425,6 +9505,29 @@ button.danger:focus-visible {
 .client-planning-reserved-card {
   border: 1px solid #d8e6f8;
   background: #f8fbff;
+}
+
+.client-agenda-day-headings {
+  display: grid;
+  gap: 4px;
+}
+
+.client-agenda-day-stats {
+  font-size: 11px;
+  color: #776553;
+  font-weight: 700;
+}
+
+.client-session-owned-flag {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #1f6a3b;
+  color: #f3fff6;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
 @media (max-width: 980px) {
@@ -9576,6 +9679,25 @@ button.danger:focus-visible {
 
   .client-planning-summary-banner {
     grid-template-columns: 1fr;
+  }
+
+  .client-week-toolbar {
+    padding: 12px;
+  }
+
+  .client-week-toolbar-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .client-week-toolbar-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .client-week-toolbar-actions .mode-link {
+    flex: 1 1 auto;
+    text-align: center;
   }
 
   .client-planning-toolbar-actions {
