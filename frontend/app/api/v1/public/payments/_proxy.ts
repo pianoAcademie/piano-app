@@ -43,12 +43,6 @@ export async function proxyGet(request: Request): Promise<Response> {
     cache: "no-store",
     redirect: "manual",
   });
-
-  const location = upstream.headers.get("location");
-  if (location && upstream.status >= 300 && upstream.status < 400) {
-    return Response.redirect(location, upstream.status);
-  }
-
   return passthroughTextResponse(upstream);
 }
 
