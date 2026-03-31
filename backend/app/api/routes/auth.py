@@ -47,14 +47,17 @@ logger = logging.getLogger(__name__)
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 DEFAULT_FORGOT_PASSWORD_MESSAGE = "Si ce compte existe, un email de reinitialisation vient d etre envoye."
-DEFAULT_PASSWORD_RESET_SUBJECT = "Reinitialisation de votre mot de passe Piano Academie"
+DEFAULT_PASSWORD_RESET_SUBJECT = "Reinitialisez votre mot de passe Piano Academie"
 DEFAULT_PASSWORD_RESET_BODY = (
     "Bonjour {first_name},\n\n"
-    "Nous avons recu une demande de reinitialisation de mot de passe.\n"
-    "Pour definir un nouveau mot de passe, cliquez sur ce lien:\n"
+    "Vous avez demande la reinitialisation de votre mot de passe pour votre espace Piano Academie.\n\n"
+    "Pour choisir un nouveau mot de passe, cliquez sur le lien ci-dessous :\n"
     "{reset_url}\n\n"
-    "Si vous n etes pas a l origine de cette demande, ignorez simplement cet email.\n\n"
-    "Piano Academie"
+    "Par mesure de securite, ce lien est personnel et valable pendant une duree limitee.\n\n"
+    "Si vous n etes pas a l origine de cette demande, vous pouvez simplement ignorer cet email. "
+    "Aucun changement ne sera effectue sur votre compte.\n\n"
+    "Bien a vous,\n\n"
+    "L equipe Piano Academie"
 )
 
 

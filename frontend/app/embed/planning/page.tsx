@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { reservePublicPlanningSessionAction } from "../../../lib/actions";
+import PortalBrandLockup from "../../../components/portal-brand-lockup";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
 import type { ClientBookingOut, CourseTypeOut, LocationOut, SessionOut } from "../../../lib/types";
@@ -333,6 +334,12 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
         <article className="card embed-planning-card">
           <header className="embed-planning-header">
             <div>
+              <PortalBrandLockup
+                title="Piano Academie"
+                subtitle="Reservations en ligne"
+                eyebrow="Mi-Young Lee"
+                className="embed-brand-lockup"
+              />
               <h1>{selectedCourseType.name}</h1>
               <p className="muted">
                 {selectedLocation.name} · vue semaine

@@ -12522,3 +12522,563 @@ button.danger:focus-visible {
     display: none;
   }
 }
+
+/* Premium brand refresh: client, teacher and online booking portals */
+:root {
+  --brand-onyx: #0e0a09;
+  --brand-onyx-soft: #1a1411;
+  --brand-gold: #c48a3a;
+  --brand-gold-deep: #8f5a1a;
+  --brand-gold-soft: #e7c48d;
+  --brand-ivory: #f7f0e6;
+  --brand-cream: #efe4d2;
+  --brand-paper: #fffaf3;
+  --brand-line: #d9bc90;
+  --brand-shadow: rgba(23, 15, 8, 0.16);
+  --brand-copy: #1f1712;
+  --brand-muted-copy: #6d5a45;
+  --brand-serif: "Iowan Old Style", "Baskerville Old Face", "Palatino Linotype", "Book Antiqua", serif;
+  --brand-sans: "Avenir Next", "Optima", "Segoe UI", sans-serif;
+}
+
+:where(.auth-page, .public-buy-page, .embed-planning-page, .client-portal-shell, .teacher-shell) {
+  color: var(--brand-copy);
+  font-family: var(--brand-sans);
+}
+
+:where(.auth-page, .public-buy-page, .embed-planning-page, .client-portal-shell, .teacher-shell) h1,
+:where(.auth-page, .public-buy-page, .embed-planning-page, .client-portal-shell, .teacher-shell) h2,
+:where(.auth-page, .public-buy-page, .embed-planning-page, .client-portal-shell, .teacher-shell) h3 {
+  font-family: var(--brand-serif);
+  letter-spacing: 0.01em;
+  color: #1d140f;
+}
+
+.portal-brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.portal-brand-lockup-logo {
+  width: 78px;
+  height: 78px;
+  object-fit: contain;
+  border-radius: 18px;
+  box-shadow: 0 18px 32px rgba(0, 0, 0, 0.16);
+  background: #090605;
+}
+
+.portal-brand-lockup-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.portal-brand-lockup-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #8a724d;
+}
+
+.portal-brand-lockup-copy strong {
+  font-family: var(--brand-serif);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.portal-brand-lockup-copy small {
+  color: var(--brand-muted-copy);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.portal-brand-lockup.tone-dark .portal-brand-lockup-copy strong,
+.portal-brand-lockup.tone-dark .portal-brand-lockup-copy small,
+.portal-brand-lockup.tone-dark .portal-brand-lockup-eyebrow {
+  color: #f3e6d1;
+}
+
+.portal-brand-lockup.is-compact {
+  gap: 12px;
+}
+
+.portal-brand-lockup.is-compact .portal-brand-lockup-logo {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+}
+
+.portal-brand-lockup.is-compact .portal-brand-lockup-copy strong {
+  font-size: 22px;
+}
+
+.auth-page,
+.public-buy-page,
+.embed-planning-page {
+  background:
+    radial-gradient(circle at top left, rgba(196, 138, 58, 0.18), transparent 24%),
+    radial-gradient(circle at top right, rgba(255, 247, 232, 0.72), transparent 32%),
+    linear-gradient(135deg, #0e0a09 0%, #19120e 24%, #f2e7d7 24%, #f8f1e7 100%);
+}
+
+.auth-shell,
+.public-buy-shell {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: clamp(20px, 4vw, 40px) 0;
+  display: grid;
+  gap: 18px;
+}
+
+.auth-header,
+.public-buy-card,
+.embed-planning-card,
+.embed-planning-detail {
+  border-radius: 28px;
+  border: 1px solid rgba(217, 188, 144, 0.9);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 247, 0.98), rgba(244, 233, 216, 0.96)),
+    var(--brand-paper);
+  box-shadow: 0 30px 60px var(--brand-shadow);
+}
+
+.auth-header {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.auth-brand-lockup {
+  align-self: start;
+}
+
+.auth-header-copy {
+  display: grid;
+  gap: 10px;
+  max-width: 560px;
+}
+
+.auth-header-copy h1 {
+  margin: 0;
+  font-size: clamp(34px, 5vw, 54px);
+  line-height: 0.96;
+}
+
+.auth-header-copy p,
+.public-buy-header p,
+.embed-planning-header .muted {
+  margin: 0;
+  color: var(--brand-muted-copy);
+  line-height: 1.65;
+  max-width: 56ch;
+}
+
+.auth-card,
+.public-buy-card {
+  display: grid;
+  gap: 18px;
+  padding: clamp(20px, 3vw, 28px);
+}
+
+.auth-tabs {
+  gap: 10px;
+}
+
+.auth-tab {
+  min-height: 50px;
+  border-radius: 16px;
+  border: 1px solid #e7d9c3;
+  background: rgba(255, 255, 255, 0.72);
+  color: #473321;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.auth-tab.active {
+  border-color: rgba(196, 138, 58, 0.55);
+  background: linear-gradient(135deg, rgba(196, 138, 58, 0.18), rgba(143, 90, 26, 0.08));
+  color: #2d1f10;
+}
+
+.auth-section h2,
+.public-buy-header h1,
+.embed-planning-header h1 {
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.02;
+}
+
+.auth-form input,
+.auth-form select,
+.auth-form textarea,
+.public-buy-form button,
+.embed-planning-book-form button {
+  border-radius: 14px;
+}
+
+.auth-form input,
+.auth-form select,
+.auth-form textarea,
+.public-buy-summary,
+.embed-slot-card,
+.embed-planning-day,
+.embed-planning-detail .item {
+  border-color: #e0caa7;
+  background: rgba(255, 253, 249, 0.88);
+}
+
+.auth-form button,
+.public-buy-form button,
+.embed-planning-primary-link,
+.embed-planning-book-form button {
+  min-height: 52px;
+  border: 1px solid rgba(96, 60, 18, 0.28);
+  background: linear-gradient(135deg, var(--brand-gold), var(--brand-gold-deep));
+  color: #fff8ef;
+  box-shadow: 0 16px 30px rgba(143, 90, 26, 0.22);
+}
+
+.auth-links a,
+.public-buy-card a,
+.embed-planning-card a,
+.embed-planning-detail a {
+  color: #6a471c;
+}
+
+.auth-step-card {
+  border-radius: 18px;
+  border-color: #e5d2b4;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 245, 237, 0.92));
+}
+
+.auth-consent-option {
+  border-radius: 16px;
+  border-color: #e2d2b8;
+}
+
+.auth-shell > .flash-ok,
+.auth-shell > .flash-err,
+.auth-shell > .flash-warn,
+.public-buy-shell .flash-ok,
+.public-buy-shell .flash-err,
+.public-buy-shell .flash-warn {
+  border: 1px solid rgba(196, 138, 58, 0.18);
+  box-shadow: 0 18px 36px rgba(31, 23, 18, 0.08);
+}
+
+.client-portal-shell {
+  min-height: 100vh;
+  grid-template-columns: 290px minmax(0, 1fr);
+  background:
+    radial-gradient(circle at top right, rgba(196, 138, 58, 0.15), transparent 26%),
+    linear-gradient(180deg, #f4ecdf 0%, #efe4d2 100%);
+}
+
+.client-portal-sidebar {
+  background:
+    radial-gradient(circle at top, rgba(196, 138, 58, 0.16), transparent 28%),
+    linear-gradient(180deg, #0b0807 0%, #18110d 40%, #231913 100%);
+  color: #f7ebd8;
+  padding: 22px 18px;
+  border-right: 1px solid rgba(196, 138, 58, 0.18);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03);
+}
+
+.client-brand {
+  padding-bottom: 4px;
+}
+
+.client-user-card {
+  border-radius: 22px;
+  border: 1px solid rgba(231, 196, 141, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  padding: 14px;
+}
+
+.client-user-card strong {
+  color: #fff7ec;
+}
+
+.client-user-card small {
+  color: #d9cbb5;
+}
+
+.client-nav-link {
+  border-radius: 16px;
+  padding: 12px 14px;
+  color: #e6d8c4;
+}
+
+.client-nav-link:hover {
+  border-color: rgba(231, 196, 141, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.client-nav-link.active {
+  border-color: rgba(231, 196, 141, 0.26);
+  background: linear-gradient(90deg, rgba(196, 138, 58, 0.24), rgba(196, 138, 58, 0.06));
+  color: #fffaf2;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.client-topbar {
+  background:
+    radial-gradient(circle at top right, rgba(196, 138, 58, 0.16), transparent 20%),
+    linear-gradient(135deg, #120d0b, #231913 70%);
+  color: #f7ebd8;
+  border-bottom: 1px solid rgba(196, 138, 58, 0.2);
+  padding: 18px 24px;
+}
+
+.client-topbar h1 {
+  color: #fff7ec;
+}
+
+.client-topbar .muted {
+  color: #d8cab7;
+}
+
+.client-topbar .badge {
+  background: rgba(255, 248, 236, 0.08);
+  border: 1px solid rgba(231, 196, 141, 0.22);
+  color: #f0dcc0;
+}
+
+.client-content {
+  padding: 20px;
+  gap: 16px;
+}
+
+.client-portal-main .card,
+.client-portal-main .item,
+.client-portal-main .section-card,
+.client-portal-main .list-row {
+  border-radius: 22px;
+  border-color: #dfc39a;
+  box-shadow: 0 18px 40px rgba(31, 23, 18, 0.08);
+}
+
+.teacher-shell {
+  max-width: 1320px;
+  background:
+    radial-gradient(circle at top left, rgba(196, 138, 58, 0.14), transparent 18%),
+    linear-gradient(180deg, #f5ede1 0%, #eee1cf 100%);
+}
+
+.teacher-shell .card,
+.teacher-shell .item,
+.teacher-shell .teacher-alert-card,
+.teacher-shell .teacher-accordion {
+  border-radius: 22px;
+  border-color: #dfc49e;
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.96), rgba(246, 236, 221, 0.96));
+  box-shadow: 0 20px 44px rgba(31, 23, 18, 0.08);
+}
+
+.teacher-brand-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 18px 22px;
+  margin-top: 12px;
+  background:
+    radial-gradient(circle at top right, rgba(196, 138, 58, 0.18), transparent 26%),
+    linear-gradient(135deg, #0f0a08, #22170f 72%);
+  border-color: rgba(196, 138, 58, 0.26) !important;
+}
+
+.teacher-brand-banner-copy {
+  display: grid;
+  gap: 4px;
+  text-align: right;
+}
+
+.teacher-brand-banner-copy strong {
+  color: #fff4e3;
+  font-size: 18px;
+}
+
+.teacher-brand-banner-copy small {
+  color: #dcc8ab;
+}
+
+.teacher-page-header {
+  top: 10px;
+  padding: 14px 18px;
+  border: 1px solid rgba(223, 196, 158, 0.92);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.96), rgba(248, 241, 232, 0.96));
+  box-shadow: 0 18px 42px rgba(31, 23, 18, 0.08);
+}
+
+.teacher-status-pill {
+  border: 1px solid rgba(196, 138, 58, 0.24);
+  background: rgba(196, 138, 58, 0.14);
+  color: #5a3710;
+}
+
+.prof-nav {
+  gap: 10px;
+  padding: 12px;
+}
+
+.prof-nav-link {
+  border-radius: 16px;
+  border-color: #e1c59c;
+  background: rgba(255, 255, 255, 0.76);
+  color: #4b341a;
+}
+
+.prof-nav-link:hover {
+  background: rgba(255, 247, 233, 0.96);
+}
+
+.prof-nav-link.active {
+  background: linear-gradient(135deg, rgba(196, 138, 58, 0.18), rgba(196, 138, 58, 0.08));
+  border-color: rgba(196, 138, 58, 0.35);
+}
+
+.embed-planning-page {
+  padding: 18px;
+}
+
+.embed-planning-shell {
+  gap: 18px;
+  max-width: 1340px;
+}
+
+.embed-planning-card,
+.embed-planning-detail {
+  padding: clamp(18px, 3vw, 26px);
+}
+
+.embed-planning-header {
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.embed-brand-lockup {
+  margin-bottom: 10px;
+}
+
+.embed-planning-nav .mode-link,
+.public-buy-card .ghost.small-btn,
+.embed-planning-detail .reset-link {
+  border: 1px solid rgba(196, 138, 58, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #65421a;
+}
+
+.embed-planning-day {
+  border-radius: 22px;
+}
+
+.embed-planning-day-head {
+  background: linear-gradient(180deg, rgba(231, 196, 141, 0.48), rgba(245, 233, 214, 0.74));
+}
+
+.embed-slot-card {
+  border-radius: 18px;
+  gap: 8px;
+  box-shadow: 0 12px 26px rgba(31, 23, 18, 0.05);
+}
+
+.embed-slot-card:hover,
+.embed-slot-card.is-selected {
+  border-color: rgba(196, 138, 58, 0.5);
+  box-shadow: 0 18px 36px rgba(31, 23, 18, 0.12);
+}
+
+.embed-slot-card p {
+  font-family: var(--brand-serif);
+  font-size: 19px;
+  line-height: 1.08;
+}
+
+.public-buy-page {
+  padding: 18px 0;
+}
+
+.public-buy-header {
+  gap: 16px;
+}
+
+.public-buy-brand-lockup {
+  margin-bottom: 8px;
+}
+
+.public-buy-summary {
+  border-radius: 20px;
+  padding: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.public-buy-line {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(217, 188, 144, 0.35);
+}
+
+.public-buy-line:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+@media (max-width: 1080px) {
+  .client-portal-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .client-portal-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid rgba(196, 138, 58, 0.18);
+  }
+}
+
+@media (max-width: 820px) {
+  .teacher-brand-banner {
+    grid-template-columns: 1fr;
+    display: grid;
+    text-align: left;
+  }
+
+  .teacher-brand-banner-copy {
+    text-align: left;
+  }
+
+  .portal-brand-lockup {
+    align-items: flex-start;
+  }
+
+  .portal-brand-lockup-logo {
+    width: 64px;
+    height: 64px;
+  }
+
+  .portal-brand-lockup-copy strong {
+    font-size: 24px;
+  }
+}
+
+@media (max-width: 720px) {
+  .auth-shell,
+  .public-buy-shell {
+    width: min(100%, 560px);
+  }
+
+  .auth-header,
+  .auth-card,
+  .public-buy-card,
+  .embed-planning-card,
+  .embed-planning-detail {
+    border-radius: 22px;
+  }
+
+  .client-content,
+  .embed-planning-page {
+    padding: 14px;
+  }
+}

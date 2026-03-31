@@ -45,6 +45,7 @@ import MobileTabs from "../../components/client-ui/mobile-tabs";
 import CopyIdButton from "../../components/client-ui/copy-id-button";
 import StatChip from "../../components/client-ui/stat-chip";
 import Toast from "../../components/client-ui/toast";
+import PortalBrandLockup from "../../components/portal-brand-lockup";
 import CompactInvoiceRow from "../../components/ui-client/compact-invoice-row";
 import FilterChipsBar from "../../components/ui-client/filter-chips-bar";
 import KPIBlock from "../../components/ui-client/kpi-block";
@@ -1541,8 +1542,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     <main className="client-portal-shell">
       <aside className="client-portal-sidebar">
         <div className="client-brand">
-          <strong>Piano Academie</strong>
-          <small>Portail client</small>
+          <PortalBrandLockup
+            title="Piano Academie"
+            subtitle="Portail client"
+            eyebrow="Mi-Young Lee"
+            tone="dark"
+            compact
+          />
         </div>
 
         <article className="client-user-card">

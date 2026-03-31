@@ -588,14 +588,17 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
         name="Password Reset",
         channel="EMAIL",
-        subject="Reinitialisation de votre mot de passe Piano Academie",
+        subject="Reinitialisez votre mot de passe Piano Academie",
         body=(
             "Bonjour {first_name},\n\n"
-            "Nous avons recu une demande de reinitialisation de mot de passe.\n"
-            "Pour definir un nouveau mot de passe, cliquez sur ce lien:\n"
+            "Vous avez demande la reinitialisation de votre mot de passe pour votre espace Piano Academie.\n\n"
+            "Pour choisir un nouveau mot de passe, cliquez sur le lien ci-dessous :\n"
             "{reset_url}\n\n"
-            "Si vous n etes pas a l origine de cette demande, ignorez simplement cet email.\n\n"
-            "Piano Academie"
+            "Par mesure de securite, ce lien est personnel et valable pendant une duree limitee.\n\n"
+            "Si vous n etes pas a l origine de cette demande, vous pouvez simplement ignorer cet email. "
+            "Aucun changement ne sera effectue sur votre compte.\n\n"
+            "Bien a vous,\n\n"
+            "L equipe Piano Academie"
         ),
         description="Lien de reinitialisation de mot de passe client.",
         variables_hint="{first_name} {last_name} {full_name} {email} {reset_url} {login_url}",

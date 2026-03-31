@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { forgotPasswordAction, loginAction, registerAction, resetPasswordAction } from "../../lib/actions";
 import AuthSignupFields from "../../components/auth-signup-fields";
+import PortalBrandLockup from "../../components/portal-brand-lockup";
 import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from "../../lib/reference-data";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -50,8 +51,16 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
     <main className="page auth-page">
       <section className="auth-shell">
         <header className="auth-header">
-          <h1>Piano Academie</h1>
-          <p>Accedez a votre espace client pour reserver vos cours, gerer vos informations et suivre vos inscriptions.</p>
+          <PortalBrandLockup
+            title="Piano Academie"
+            subtitle="Portail eleves, parents et reservations en ligne"
+            eyebrow="Maison de piano"
+            className="auth-brand-lockup"
+          />
+          <div className="auth-header-copy">
+            <h1>Un espace plus elegant, plus clair, plus fluide.</h1>
+            <p>Accedez a votre espace client pour reserver vos cours, gerer vos informations et suivre vos inscriptions avec une experience a la hauteur de la marque.</p>
+          </div>
         </header>
 
         {okMessage ? <section className="flash-ok">{okMessage}</section> : null}

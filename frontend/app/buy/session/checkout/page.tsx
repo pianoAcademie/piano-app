@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
@@ -128,6 +129,12 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
       <section className="public-buy-shell">
         <article className="card public-buy-card">
           <header className="public-buy-header">
+            <PortalBrandLockup
+              title="Piano Academie"
+              subtitle="Reservation en ligne"
+              eyebrow="Mi-Young Lee"
+              className="public-buy-brand-lockup"
+            />
             <h1>Reservation du creneau</h1>
             <p className="muted">Verifie les informations puis continue vers le paiement securise.</p>
           </header>

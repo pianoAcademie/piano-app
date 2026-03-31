@@ -19,6 +19,7 @@ import AlertCard from "../../components/teacher-ui/alert-card";
 import BottomTabs from "../../components/teacher-ui/bottom-tabs";
 import ListRow from "../../components/teacher-ui/list-row";
 import PageHeaderMobile from "../../components/teacher-ui/page-header-mobile";
+import PortalBrandLockup from "../../components/portal-brand-lockup";
 import SectionAccordion from "../../components/teacher-ui/section-accordion";
 import StatCard from "../../components/teacher-ui/stat-card";
 import StatChip from "../../components/teacher-ui/stat-chip";
@@ -640,6 +641,20 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           </div>
         }
       />
+
+      <section className="teacher-brand-banner card">
+        <PortalBrandLockup
+          title="Piano Academie"
+          subtitle="Portail professeur"
+          eyebrow="Mi-Young Lee"
+          tone="dark"
+          compact
+        />
+        <div className="teacher-brand-banner-copy">
+          <strong>{fullName || "Professeur"}</strong>
+          <small>{profile.email}</small>
+        </div>
+      </section>
 
       <section className="card prof-nav teacher-desktop-nav">
         {navTabs.map((tab) => (
