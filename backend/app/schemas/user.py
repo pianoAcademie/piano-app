@@ -179,9 +179,9 @@ class ClientMessageOut(BaseModel):
     owner_client_id: UUID
     owner_display_name: str
     channel: str
-    booking_id: UUID
-    session_id: UUID
-    session_title: str
+    booking_id: UUID | None = None
+    session_id: UUID | None = None
+    session_title: str | None = None
     scheduled_for_utc: datetime
     sent_at: datetime | None
     status: str

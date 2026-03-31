@@ -623,9 +623,9 @@ export type ClientMessageOut = {
   owner_client_id: string;
   owner_display_name: string;
   channel: string;
-  booking_id: string;
-  session_id: string;
-  session_title: string;
+  booking_id: string | null;
+  session_id: string | null;
+  session_title: string | null;
   scheduled_for_utc: string;
   sent_at: string | null;
   status: string;

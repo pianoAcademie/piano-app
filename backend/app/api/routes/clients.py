@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import json
 import logging
+import re
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -33,7 +34,15 @@ from app.models.catalog import (
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
-from app.models.ops import AppSetting, EmailReminder, LegalEntity
+from app.models.ops import (
+    AppSetting,
+    CommunicationChannel,
+    CommunicationDeliveryStatus,
+    CommunicationLog,
+    EmailReminder,
+    LegalEntity,
+    MessageFormat,
+)
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.booking import BookingCreateRequest
@@ -85,6 +94,7 @@ from app.services.session_audience import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
@@ -238,6 +248,37 @@ def _member_out(user: User) -> FamilyMemberOut:
 def _display_name(user: User) -> str:
     full_name = " ".join(part for part in [user.first_name, user.last_name] if part)
     return full_name or user.email
+
+
+def _message_preview(value: str | None, *, max_length: int = 180) -> str | None:
+    normalized = " ".join((value or "").split()).strip()
+    if not normalized:
+        return None
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[:max_length].rstrip()}..."
+
+
+def _message_preview_from_html(value: str | None, *, max_length: int = 180) -> str | None:
+    if not value:
+        return None
+    text_value = HTML_TAG_RE.sub(" ", value)
+    return _message_preview(text_value, max_length=max_length)
+
+
+def _client_message_context_label(source: str | None) -> str:
+    normalized = (source or "").strip().upper()
+    if "PAYMENT_RECEIPT" in normalized:
+        return "Justificatif de paiement"
+    if "FINAL_INVOICE" in normalized or normalized.startswith("CLIENT_INVOICE"):
+        return "Facture"
+    if "PAYMENT" in normalized:
+        return "Paiement"
+    if "BOOKING" in normalized:
+        return "Reservation"
+    if "REMINDER" in normalized:
+        return "Rappel"
+    return "Message transactionnel"
 
 
 def _country_display_name(raw: str | None) -> str:
@@ -1485,8 +1526,38 @@ def list_client_messages(
     managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
     owners = db.scalars(select(User).where(User.id.in_(managed_client_ids))).all()
     owners_by_id = {owner.id: owner for owner in owners}
+    owners_by_email = {
+        (owner.email or "").strip().lower(): owner
+        for owner in owners
+        if (owner.email or "").strip()
+    }
     since = _message_scope_since(scope)
     now = _utcnow()
+    billing_profile = resolve_billing_profile(db, current_user)
+    recipient_emails = set(owners_by_email.keys())
+    billing_email = (billing_profile.email or "").strip().lower()
+    if billing_email:
+        recipient_emails.add(billing_email)
+
+    communication_filters = [CommunicationLog.recipient_user_id.in_(managed_client_ids)]
+    if recipient_emails:
+        communication_filters.append(func.lower(CommunicationLog.recipient).in_(list(recipient_emails)))
+
+    communication_stmt = (
+        select(CommunicationLog)
+        .where(or_(*communication_filters))
+        .where(CommunicationLog.occurred_at <= now)
+    )
+    if since is not None:
+        communication_stmt = communication_stmt.where(CommunicationLog.occurred_at >= since)
+    communication_rows = db.scalars(
+        communication_stmt.order_by(CommunicationLog.occurred_at.desc()).limit(max(limit * 4, limit))
+    ).all()
+    communication_provider_ids = {
+        (row.provider_message_id or "").strip()
+        for row in communication_rows
+        if (row.provider_message_id or "").strip()
+    }
 
     stmt = (
         select(EmailReminder, Booking, CourseSession, CourseType, Location, User)
@@ -1498,8 +1569,8 @@ def list_client_messages(
         .where(Booking.user_id.in_(managed_client_ids))
         .where(EmailReminder.sent_at.is_not(None))
         .where(EmailReminder.sent_at <= now)
-        .order_by(EmailReminder.sent_at.desc())
-        .limit(limit)
+        .order_by(EmailReminder.created_at.desc())
+        .limit(max(limit * 4, limit))
     )
     if since is not None:
         stmt = stmt.where(EmailReminder.sent_at >= since)
@@ -1507,7 +1578,46 @@ def list_client_messages(
     rows = db.execute(stmt).all()
     payload: list[ClientMessageOut] = []
 
+    for row in communication_rows:
+        recipient_user = owners_by_id.get(row.recipient_user_id) if row.recipient_user_id is not None else None
+        if recipient_user is None:
+            recipient_user = owners_by_email.get((row.recipient or "").strip().lower())
+        if recipient_user is None:
+            recipient_user = current_user
+        owner_display = _display_name(recipient_user)
+        content_preview = (
+            _message_preview_from_html(row.content)
+            if row.content_format == MessageFormat.HTML or str(row.content_format or "").strip().upper() == "HTML"
+            else _message_preview(row.content)
+        )
+        status_value = (
+            row.delivery_status.value
+            if isinstance(row.delivery_status, CommunicationDeliveryStatus)
+            else str(row.delivery_status or "UNKNOWN").strip().upper()
+        )
+        payload.append(
+            ClientMessageOut(
+                id=row.id,
+                owner_client_id=recipient_user.id,
+                owner_display_name=owner_display,
+                channel=row.channel.value if isinstance(row.channel, CommunicationChannel) else str(row.channel or "EMAIL").strip().upper(),
+                booking_id=None,
+                session_id=None,
+                session_title=_client_message_context_label(row.source),
+                scheduled_for_utc=row.occurred_at,
+                sent_at=row.delivered_at or row.failed_at or row.occurred_at,
+                status=status_value or "UNKNOWN",
+                provider_message_id=row.provider_message_id,
+                error_message=row.error_message,
+                subject_preview=(row.subject or "").strip() or _client_message_context_label(row.source),
+                content_preview=content_preview,
+            )
+        )
+
     for reminder, booking, session_obj, course_type, location, owner in rows:
+        provider_message_id = (reminder.provider_message_id or "").strip()
+        if provider_message_id and provider_message_id in communication_provider_ids:
+            continue
         owner_display = _display_name(owners_by_id.get(owner.id, owner))
         start_human = _format_session_datetime(session_obj, owner.timezone)
         subject_preview = f"Rappel cours: {course_type.name} - {start_human}"
@@ -1539,7 +1649,14 @@ def list_client_messages(
             )
         )
 
-    return payload
+    payload.sort(
+        key=lambda item: (
+            item.sent_at or item.scheduled_for_utc,
+            item.scheduled_for_utc,
+        ),
+        reverse=True,
+    )
+    return payload[:limit]
 
 
 def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymentOut]:

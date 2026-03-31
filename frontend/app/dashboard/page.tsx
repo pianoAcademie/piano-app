@@ -3389,7 +3389,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <th>Canal</th>
                         <th>Sujet</th>
                         <th>Statut</th>
-                        <th>Creneau</th>
+                        <th>Contexte</th>
                         <th>Action</th>
                       </tr>
                     </thead>
@@ -3403,7 +3403,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <td>
                             <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status)}</span>
                           </td>
-                          <td>{msg.session_title}</td>
+                          <td>{msg.session_title ?? "Message transactionnel"}</td>
                           <td>
                             <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages", message_id: msg.id })}>
                               Lire

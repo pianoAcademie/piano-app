@@ -1367,10 +1367,13 @@ def render_payment_receipt_pdf(
     ]
     current_top = section_top + 18.0
     for label, value in payment_rows:
-        pdf.rect(x=left, top_y=current_top, width=right - left, height=22.0, stroke_color=(0.90, 0.92, 0.95))
+        lines = _wrap_text(value, 52)
+        row_height = max(22.0, 12.0 * len(lines) + 8.0)
+        pdf.rect(x=left, top_y=current_top, width=right - left, height=row_height, stroke_color=(0.90, 0.92, 0.95))
         pdf.text(x=left + 10.0, top_y=current_top + 14.0, value=label, size=9, bold=True)
-        pdf.text_right(right_x=right - 10.0, top_y=current_top + 14.0, value=value, size=9)
-        current_top += 22.0
+        for index, line in enumerate(lines):
+            pdf.text(x=260.0, top_y=current_top + 14.0 + (index * 12.0), value=line, size=9)
+        current_top += row_height
 
     current_top += 18.0
     pdf.text(x=left, top_y=current_top, value="Reservation concernee", size=11, bold=True)
