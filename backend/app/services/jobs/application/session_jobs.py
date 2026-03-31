@@ -27,6 +27,7 @@ from app.services.shared.locks.redis_lock import redis_lock
 JOB_NAME = "session_auto_completion_job"
 JOB_LOCK_KEY = "lock:job:session_auto_completion"
 JOB_MIN_INTERVAL = timedelta(minutes=5)
+AUTO_EMPTY_SESSION_CANCEL_REASON = "AUTO_NO_BOOKINGS"
 
 
 @dataclass(frozen=True)
@@ -98,13 +99,12 @@ def run_session_auto_completion_job(
             ).all()
             checked = len(session_rows)
 
-            session_context: dict[UUID, tuple[CourseSession, CourseType, Location]] = {}
-            for session_obj, course_type, location in session_rows:
-                session_obj.status = SessionStatus.COMPLETED
-                session_obj.updated_at = ts
-                session_context[session_obj.id] = (session_obj, course_type, location)
-                completed += 1
+            session_context: dict[UUID, tuple[CourseSession, CourseType, Location]] = {
+                session_obj.id: (session_obj, course_type, location)
+                for session_obj, course_type, location in session_rows
+            }
 
+            booking_rows: list[tuple[Booking, User]] = []
             if session_context:
                 booking_rows = db.execute(
                     select(Booking, User)
@@ -115,6 +115,19 @@ def run_session_auto_completion_job(
                     )
                     .order_by(Booking.booked_at.asc())
                 ).all()
+
+            sessions_with_billable_bookings = {booking.session_id for booking, _owner in booking_rows}
+
+            for session_id, (session_obj, _course_type, _location) in session_context.items():
+                session_obj.updated_at = ts
+                if session_id not in sessions_with_billable_bookings:
+                    session_obj.status = SessionStatus.CANCELLED
+                    session_obj.cancel_reason = AUTO_EMPTY_SESSION_CANCEL_REASON
+                    continue
+                session_obj.status = SessionStatus.COMPLETED
+                completed += 1
+
+            if session_context:
                 for booking, owner in booking_rows:
                     session_obj, course_type, location = session_context[booking.session_id]
                     try:

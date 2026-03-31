@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,8 @@ from app.services.jobs.application.notification_jobs import run_scheduled_notifi
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.session_automation import run_auto_cancel_empty_sessions_job, run_expire_pending_payment_bookings_job
 
+logger = logging.getLogger(__name__)
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -24,34 +27,24 @@ def main() -> None:
     while True:
         db = SessionLocal()
         try:
-            run_scheduled_notification_dispatch_job(
-                db,
-                now=utcnow(),
-                limit=500,
+            jobs = (
+                ("scheduled_notification_dispatch", run_scheduled_notification_dispatch_job),
+                ("quote_daily_lifecycle", run_quote_daily_lifecycle_job),
+                ("expire_pending_payment_bookings", run_expire_pending_payment_bookings_job),
+                ("auto_cancel_empty_sessions", run_auto_cancel_empty_sessions_job),
+                ("session_auto_completion", run_session_auto_completion_job),
             )
-            run_quote_daily_lifecycle_job(
-                db,
-                now=utcnow(),
-                limit=500,
-            )
-            run_expire_pending_payment_bookings_job(
-                db,
-                now=utcnow(),
-                limit=500,
-            )
-            run_auto_cancel_empty_sessions_job(
-                db,
-                now=utcnow(),
-                limit=500,
-            )
-            run_session_auto_completion_job(
-                db,
-                now=utcnow(),
-                limit=500,
-            )
-            db.commit()
-        except Exception:
-            db.rollback()
+            for job_name, job_fn in jobs:
+                try:
+                    job_fn(
+                        db,
+                        now=utcnow(),
+                        limit=500,
+                    )
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception("Scheduled worker job failed", extra={"job_name": job_name})
         finally:
             db.close()
         time.sleep(5)
