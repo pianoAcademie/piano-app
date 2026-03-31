@@ -53,13 +53,15 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
         <header className="auth-header">
           <PortalBrandLockup
             title="Piano Academie"
-            subtitle="Portail eleves, parents et reservations en ligne"
+            subtitle="Portail eleves, parents et reservations"
             eyebrow="Maison de piano"
+            tone="light"
+            compact
             className="auth-brand-lockup"
           />
           <div className="auth-header-copy">
-            <h1>Votre espace client Piano Academie</h1>
-            <p>Retrouvez ici vos reservations, vos informations de compte et l ensemble de vos demarches en ligne.</p>
+            <h1>Espace client</h1>
+            <p>Reservations, documents et informations de compte.</p>
           </div>
         </header>
 
