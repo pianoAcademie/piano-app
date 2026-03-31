@@ -54,7 +54,6 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
           <PortalBrandLockup
             title="Piano Academie"
             subtitle="Portail eleves, parents et reservations"
-            eyebrow="Maison de piano"
             tone="light"
             compact
             className="auth-brand-lockup"
