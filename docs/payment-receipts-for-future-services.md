@@ -26,6 +26,7 @@ This keeps the semantic split explicit and avoids polluting the invoice numberin
 - a `payment_receipt` uses its own numbering sequence (`PAY-%YYYY%-%NNNN%`)
 - the final invoice keeps the usual invoice sequence
 - the final invoice is generated automatically when the session status becomes `COMPLETED`
+- scheduled sessions that pass their end time without being cancelled are auto-promoted to `COMPLETED` by the scheduler, so the final invoice can still be generated without a manual admin action
 - admins also have a manual fallback action from the booking row
 - no double billing: a second generation request returns the existing final invoice
 - cancelled bookings never generate a final invoice
