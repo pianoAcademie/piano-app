@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db
 from app.models.catalog import (
+    BOOKING_STATUSES_CONSUMING_CAPACITY,
     Booking,
-    BookingStatus,
     CourseSession,
     CourseType,
     CreditType,
@@ -241,7 +241,7 @@ def list_sessions(
             Booking.session_id.label("session_id"),
             func.count(Booking.id).label("booked_count"),
         )
-        .where(Booking.status == BookingStatus.BOOKED)
+        .where(Booking.status.in_(BOOKING_STATUSES_CONSUMING_CAPACITY))
         .group_by(Booking.session_id)
         .subquery()
     )
@@ -316,7 +316,7 @@ def get_session(
             Booking.session_id.label("session_id"),
             func.count(Booking.id).label("booked_count"),
         )
-        .where(Booking.status == BookingStatus.BOOKED)
+        .where(Booking.status.in_(BOOKING_STATUSES_CONSUMING_CAPACITY))
         .group_by(Booking.session_id)
         .subquery()
     )

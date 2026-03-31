@@ -362,7 +362,7 @@ function paymentStatusLabel(status: string): string {
   if (normalized === "FAILED") {
     return "Echec";
   }
-  if (normalized === "PENDING" || normalized === "WAITLISTED" || normalized === "TRIAL") {
+  if (normalized === "PENDING" || normalized === "PENDING_PAYMENT" || normalized === "WAITLISTED" || normalized === "TRIAL") {
     return "En attente";
   }
   if (normalized === "ACTIVE") {
@@ -415,6 +415,7 @@ function paymentStatusDisplayLabel(row: AdminClientPaymentOut): string {
 const PAID_PAYMENT_STATUSES = new Set(["PAID", "SUCCEEDED", "COMPLETED"]);
 const PENDING_PAYMENT_STATUSES = new Set([
   "PENDING",
+  "PENDING_PAYMENT",
   "WAITLISTED",
   "TRIAL",
   "OPEN",
@@ -528,13 +529,20 @@ function bookingWorkflowSteps(row: AdminClientBookingOut): BookingWorkflowStep[]
           row.payment_received_at ? ` · ${formatDate(row.payment_received_at)}` : ""
         }`,
       }
-    : bookingStatus === "CANCELLED"
+      : bookingStatus === "CANCELLED"
       ? {
           label: "Paiement",
           value: "Sans objet",
           toneClass: "status-off",
           helper: "Reservation annulee avant paiement.",
         }
+      : bookingStatus === "PENDING_PAYMENT"
+        ? {
+            label: "Paiement",
+            value: "En attente",
+            toneClass: "status-warn",
+            helper: "Reservation provisoire en attente de validation PSP.",
+          }
       : {
           label: "Paiement",
           value: "En attente",
@@ -570,6 +578,13 @@ function bookingWorkflowSteps(row: AdminClientBookingOut): BookingWorkflowStep[]
       value: "Sans objet",
       toneClass: "status-off",
       helper: "Pas de justificatif tant que le paiement n est pas recu.",
+    };
+  } else if (bookingStatus === "PENDING_PAYMENT") {
+    receiptStep = {
+      label: "Justificatif",
+      value: "En attente",
+      toneClass: "status-off",
+      helper: "Le justificatif sera envoye apres validation du paiement.",
     };
   } else {
     receiptStep = {
@@ -611,6 +626,13 @@ function bookingWorkflowSteps(row: AdminClientBookingOut): BookingWorkflowStep[]
       value: "Non facturee",
       toneClass: "status-off",
       helper: "Reservation annulee: aucune facture finale.",
+    };
+  } else if (bookingStatus === "PENDING_PAYMENT") {
+    invoiceStep = {
+      label: "Facture finale",
+      value: "En attente",
+      toneClass: "status-off",
+      helper: "La reservation doit d abord etre payee puis realisee.",
     };
   } else if (sessionStatus === "COMPLETED") {
     invoiceStep = {
@@ -961,7 +983,13 @@ function statusClass(status: string): string {
   if (normalized === "RESPONSABLE") {
     return "status-info";
   }
-  if (normalized === "WAITLISTED" || normalized === "PENDING" || normalized === "TRIAL" || normalized === "FAILED") {
+  if (
+    normalized === "WAITLISTED" ||
+    normalized === "PENDING" ||
+    normalized === "PENDING_PAYMENT" ||
+    normalized === "TRIAL" ||
+    normalized === "FAILED"
+  ) {
     return "status-warn";
   }
   return "status-off";

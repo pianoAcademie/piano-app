@@ -115,7 +115,12 @@ from app.schemas.admin import (
     AdminPaymentReceiptOut,
 )
 from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut
-from app.api.routes.bookings import _promote_waitlist_if_possible
+from app.api.routes.bookings import (
+    PAYMENT_TIMEOUT_CANCELLATION_REASON,
+    _promote_waitlist_if_possible,
+    payment_hold_expiration,
+    promote_pending_payment_booking,
+)
 from app.services.client_password_email import (
     generate_temporary_password,
     render_client_password_email,
@@ -180,6 +185,7 @@ router = APIRouter(prefix="/admin/clients")
 PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
 PENDING_PAYMENT_STATUSES = {
     "PENDING",
+    "PENDING_PAYMENT",
     "WAITLISTED",
     "TRIAL",
     "OPEN",
@@ -1179,6 +1185,14 @@ def _booking_context_for_receipt(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation introuvable")
     return row
+
+
+def _booking_payment_hold_expired(booking: Booking, *, now: datetime) -> bool:
+    return (
+        booking.status == BookingStatus.PENDING_PAYMENT
+        and booking.payment_hold_expires_at is not None
+        and booking.payment_hold_expires_at <= now
+    )
 
 
 def _payment_receipt_out(receipt: PaymentReceipt) -> AdminPaymentReceiptOut:
@@ -8277,10 +8291,33 @@ def start_admin_client_payment_receipt_public_payment(
 ) -> RedirectResponse:
     client = _require_client(db, client_id)
     receipt = _load_payment_receipt(db, client_id=client_id, receipt_id=receipt_id, for_update=True)
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
     try:
         assert_payment_receipt_public_token(token=token, client_id=client_id, receipt_id=receipt_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    now = _utcnow()
+    if _booking_payment_hold_expired(booking, now=now):
+        booking.status = BookingStatus.CANCELLED
+        booking.cancelled_at = now
+        booking.cancellation_reason = PAYMENT_TIMEOUT_CANCELLATION_REASON
+        booking.payment_hold_expires_at = None
+        receipt.status = "EXPIRED"
+        metadata = dict(receipt.receipt_metadata or {})
+        metadata["booking_hold_expired_at"] = now.isoformat()
+        receipt.receipt_metadata = metadata
+        receipt.updated_at = now
+        db.add(booking)
+        db.add(receipt)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce lien de paiement a expire")
+
+    if receipt.status == "EXPIRED" or (
+        booking.status == BookingStatus.CANCELLED
+        and (booking.cancellation_reason or "").strip().upper() == PAYMENT_TIMEOUT_CANCELLATION_REASON
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce lien de paiement a expire")
 
     if receipt.status == "COMPLETED" and receipt.payment_transaction_reference:
         return RedirectResponse(
@@ -8291,6 +8328,10 @@ def start_admin_client_payment_receipt_public_payment(
     amount_due = _quantize_money(Decimal(receipt.amount_paid or 0))
     if amount_due <= Decimal("0.00"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun montant a encaisser")
+
+    if booking.status == BookingStatus.PENDING_PAYMENT:
+        booking.payment_hold_expires_at = payment_hold_expiration(now=now)
+        db.add(booking)
 
     success_return_url, cancel_return_url, webhook_url = payment_receipt_checkout_urls(
         client_id=client_id,
@@ -8329,7 +8370,7 @@ def start_admin_client_payment_receipt_public_payment(
     metadata["payment_last_attempt_at"] = _utcnow().isoformat()
     metadata["payment_checkout_status"] = (checkout.status or "").strip().upper() or "CREATED"
     receipt.receipt_metadata = metadata
-    receipt.updated_at = _utcnow()
+    receipt.updated_at = now
     db.add(receipt)
     db.commit()
     return RedirectResponse(url=checkout.checkout_url, status_code=status.HTTP_302_FOUND)
@@ -8362,14 +8403,29 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
     lookup = lookup_payment(db, provider=provider, payment_reference=provider_reference)
     metadata = dict(receipt.receipt_metadata or {})
     metadata["payment_lookup_status"] = (lookup.status or "").strip().upper() or "UNKNOWN"
-    metadata["payment_last_lookup_at"] = _utcnow().isoformat()
+    now = _utcnow()
+    metadata["payment_last_lookup_at"] = now.isoformat()
     receipt.receipt_metadata = metadata
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
+    hold_expired = False
+    if _booking_payment_hold_expired(booking, now=now):
+        hold_expired = True
+        booking.status = BookingStatus.CANCELLED
+        booking.cancelled_at = now
+        booking.cancellation_reason = PAYMENT_TIMEOUT_CANCELLATION_REASON
+        booking.payment_hold_expires_at = None
+    elif booking.status == BookingStatus.CANCELLED and (booking.cancellation_reason or "").strip().upper() == PAYMENT_TIMEOUT_CANCELLATION_REASON:
+        hold_expired = True
     if not lookup.paid:
+        if hold_expired and receipt.status == "PENDING":
+            metadata["booking_hold_expired_at"] = now.isoformat()
+            receipt.status = "EXPIRED"
+            receipt.updated_at = now
+            db.add(booking)
         db.add(receipt)
         db.commit()
         return {"ok": True, "processed": True, "paid": False, "status": lookup.status}
 
-    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
     snapshot = build_booking_receipt_snapshot(
         db,
         booking=booking,
@@ -8385,9 +8441,25 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
         payment_provider=provider.value,
         payment_method="CARD_ONLINE",
     )
+    booking_promoted = False
+    if not hold_expired:
+        try:
+            booking_promoted = promote_pending_payment_booking(
+                db,
+                booking=booking,
+                booking_owner=owner,
+                session_obj=session_obj,
+                actor_user_id=None,
+                occurred_at=now,
+            )
+        except ValueError:
+            logger.exception("Unable to promote pending-payment booking=%s after payment receipt=%s", booking.id, receipt.id)
+            metadata["booking_confirmation_blocked"] = "PROMOTION_FAILED"
+    else:
+        metadata["payment_received_after_hold_expired"] = True
     if receipt.email_sent_at is None:
         try:
-            if _send_invoice_range_booking_confirmation_emails(
+            if (booking_promoted or booking.status == BookingStatus.BOOKED) and _send_invoice_range_booking_confirmation_emails(
                 db,
                 metadata={"included_payment_keys": [f"BOOKING:{booking.id}"]},
             ):
@@ -8405,7 +8477,8 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
         except Exception:
             logger.exception("Unable to send payment receipt emails for receipt=%s", receipt.id)
     receipt.receipt_metadata = metadata
-    receipt.updated_at = _utcnow()
+    receipt.updated_at = now
+    db.add(booking)
     db.add(receipt)
     db.commit()
     return {
@@ -8415,6 +8488,7 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
         "receipt_id": str(receipt.id),
         "receipt_number": receipt.receipt_number,
         "transaction_id": str(transaction.id),
+        "booking_confirmed": booking.status == BookingStatus.BOOKED,
     }
 
 
@@ -8460,9 +8534,25 @@ def return_admin_client_payment_receipt_public_payment(
     lookup = lookup_payment(db, provider=provider, payment_reference=provider_reference)
     metadata = dict(receipt.receipt_metadata or {})
     metadata["payment_lookup_status"] = (lookup.status or "").strip().upper() or "UNKNOWN"
-    metadata["payment_last_lookup_at"] = _utcnow().isoformat()
+    now = _utcnow()
+    metadata["payment_last_lookup_at"] = now.isoformat()
     receipt.receipt_metadata = metadata
+    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
+    hold_expired = False
+    if _booking_payment_hold_expired(booking, now=now):
+        hold_expired = True
+        booking.status = BookingStatus.CANCELLED
+        booking.cancelled_at = now
+        booking.cancellation_reason = PAYMENT_TIMEOUT_CANCELLATION_REASON
+        booking.payment_hold_expires_at = None
+    elif booking.status == BookingStatus.CANCELLED and (booking.cancellation_reason or "").strip().upper() == PAYMENT_TIMEOUT_CANCELLATION_REASON:
+        hold_expired = True
     if not lookup.paid:
+        if hold_expired and receipt.status == "PENDING":
+            metadata["booking_hold_expired_at"] = now.isoformat()
+            receipt.status = "EXPIRED"
+            receipt.updated_at = now
+            db.add(booking)
         db.add(receipt)
         db.commit()
         return _public_payment_result_html(
@@ -8473,7 +8563,6 @@ def return_admin_client_payment_receipt_public_payment(
             transaction_reference=provider_reference,
         )
 
-    booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
     snapshot = build_booking_receipt_snapshot(
         db,
         booking=booking,
@@ -8489,12 +8578,29 @@ def return_admin_client_payment_receipt_public_payment(
         payment_provider=provider.value,
         payment_method="CARD_ONLINE",
     )
+    booking_promoted = False
+    if not hold_expired:
+        try:
+            booking_promoted = promote_pending_payment_booking(
+                db,
+                booking=booking,
+                booking_owner=owner,
+                session_obj=session_obj,
+                actor_user_id=None,
+                occurred_at=now,
+            )
+        except ValueError:
+            logger.exception("Unable to promote pending-payment booking=%s after payment receipt=%s", booking.id, receipt.id)
+            metadata["booking_confirmation_blocked"] = "PROMOTION_FAILED"
+    else:
+        metadata["payment_received_after_hold_expired"] = True
     if receipt.email_sent_at is None:
         try:
-            _send_invoice_range_booking_confirmation_emails(
-                db,
-                metadata={"included_payment_keys": [f"BOOKING:{booking.id}"]},
-            )
+            if booking_promoted or booking.status == BookingStatus.BOOKED:
+                _send_invoice_range_booking_confirmation_emails(
+                    db,
+                    metadata={"included_payment_keys": [f"BOOKING:{booking.id}"]},
+                )
         except Exception:
             logger.exception("Unable to send booking confirmation email for receipt=%s", receipt.id)
         try:
@@ -8508,15 +8614,20 @@ def return_admin_client_payment_receipt_public_payment(
         except Exception:
             logger.exception("Unable to send receipt emails for receipt=%s", receipt.id)
     receipt.receipt_metadata = metadata
-    receipt.updated_at = _utcnow()
+    receipt.updated_at = now
+    db.add(booking)
     db.add(receipt)
     db.commit()
 
+    booking_confirmed = booking.status == BookingStatus.BOOKED
     return _public_payment_result_html(
-        title="Paiement confirme",
+        title="Paiement confirme" if booking_confirmed else "Paiement recu",
         subtitle=(
             "Votre paiement a bien ete enregistre. Un justificatif de paiement vous a ete envoye. "
             "La facture finale sera emise a la realisation de la prestation."
+            if booking_confirmed
+            else "Votre paiement a bien ete enregistre, mais la reservation n'a pas pu etre confirmee automatiquement. "
+            "L'administration va verifier la situation avec vous."
         ),
         invoice_number=receipt.receipt_number or str(receipt.id),
         document_label="Justificatif",

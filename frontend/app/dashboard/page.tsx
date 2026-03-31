@@ -296,6 +296,7 @@ function statusLabel(value: string): string {
   }
   if (
     normalized === "PENDING" ||
+    normalized === "PENDING_PAYMENT" ||
     normalized === "OPEN" ||
     normalized === "CREATED" ||
     normalized === "PROCESSING" ||

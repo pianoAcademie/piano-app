@@ -13,7 +13,7 @@ from app.db.session import SessionLocal
 from app.services.jobs.application.session_jobs import run_session_auto_completion_job
 from app.services.jobs.application.notification_jobs import run_scheduled_notification_dispatch_job
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
-from app.services.session_automation import run_auto_cancel_empty_sessions_job
+from app.services.session_automation import run_auto_cancel_empty_sessions_job, run_expire_pending_payment_bookings_job
 
 
 def utcnow() -> datetime:
@@ -30,6 +30,11 @@ def main() -> None:
                 limit=500,
             )
             run_quote_daily_lifecycle_job(
+                db,
+                now=utcnow(),
+                limit=500,
+            )
+            run_expire_pending_payment_bookings_job(
                 db,
                 now=utcnow(),
                 limit=500,

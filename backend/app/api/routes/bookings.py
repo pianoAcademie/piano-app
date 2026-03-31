@@ -10,7 +10,18 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, PlanningConfig, SessionAudienceScope, SessionStatus
+from app.models.catalog import (
+    BOOKING_STATUSES_CONSUMING_CAPACITY,
+    Booking,
+    BookingStatus,
+    CourseSession,
+    CourseType,
+    DeliveryMode,
+    Location,
+    PlanningConfig,
+    SessionAudienceScope,
+    SessionStatus,
+)
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting
 from app.models.plan import (
@@ -47,6 +58,8 @@ PLANNING_RULE_DEFAULTS = {
     "block_client_cancellation": False,
 }
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
+PAYMENT_HOLD_MINUTES = 15
+PAYMENT_TIMEOUT_CANCELLATION_REASON = "PAYMENT_TIMEOUT"
 
 
 def _utcnow() -> datetime:
@@ -96,14 +109,83 @@ def _effective_session_booking_rules(
     )
 
 
-def _count_booked(db: Session, session_id: UUID) -> int:
-    value = db.scalar(
-        select(func.count(Booking.id)).where(
-            Booking.session_id == session_id,
-            Booking.status == BookingStatus.BOOKED,
-        )
+def _count_booked(db: Session, session_id: UUID, *, exclude_booking_id: UUID | None = None) -> int:
+    stmt = select(func.count(Booking.id)).where(
+        Booking.session_id == session_id,
+        Booking.status.in_(BOOKING_STATUSES_CONSUMING_CAPACITY),
     )
+    if exclude_booking_id is not None:
+        stmt = stmt.where(Booking.id != exclude_booking_id)
+    value = db.scalar(stmt)
     return int(value or 0)
+
+
+def payment_hold_expiration(*, now: datetime | None = None) -> datetime:
+    ts = now or _utcnow()
+    return ts + timedelta(minutes=PAYMENT_HOLD_MINUTES)
+
+
+def _activate_confirmed_booking(
+    db: Session,
+    *,
+    booking: Booking,
+    booking_owner: User,
+    session_obj: CourseSession,
+    actor_user_id: UUID | None,
+    occurred_at: datetime,
+) -> list[object]:
+    booking.payment_hold_expires_at = None
+    _mark_first_course_if_needed(booking_owner, session_obj)
+    ensure_booking_reminder(
+        db,
+        booking=booking,
+        session_obj=session_obj,
+        now=occurred_at,
+    )
+    if actor_user_id is None:
+        return []
+    return schedule_booking_created_notifications(
+        db,
+        booking=booking,
+        actor_user_id=actor_user_id,
+        occurred_at=occurred_at,
+    )
+
+
+def promote_pending_payment_booking(
+    db: Session,
+    *,
+    booking: Booking,
+    booking_owner: User,
+    session_obj: CourseSession,
+    actor_user_id: UUID | None,
+    occurred_at: datetime | None = None,
+) -> bool:
+    ts = occurred_at or _utcnow()
+    if booking.status == BookingStatus.BOOKED:
+        booking.payment_hold_expires_at = None
+        return False
+    if booking.status != BookingStatus.PENDING_PAYMENT:
+        return False
+    if session_obj.status != SessionStatus.SCHEDULED:
+        raise ValueError("Only scheduled sessions can be confirmed")
+    reserved_count = _count_booked(db, session_obj.id, exclude_booking_id=booking.id)
+    if reserved_count >= session_obj.capacity_max:
+        raise ValueError("Session is no longer available")
+    booking.status = BookingStatus.BOOKED
+    booking.cancelled_at = None
+    booking.cancellation_reason = None
+    notifications = _activate_confirmed_booking(
+        db,
+        booking=booking,
+        booking_owner=booking_owner,
+        session_obj=session_obj,
+        actor_user_id=actor_user_id,
+        occurred_at=ts,
+    )
+    if notifications:
+        enqueue_notifications(notifications)
+    return True
 
 
 def _mark_first_course_if_needed(user: User, session_obj: CourseSession) -> None:
@@ -836,12 +918,13 @@ def _promote_waitlist_if_possible(
         db.flush()
 
 
-@router.post("/sessions/{session_id}/book", response_model=BookingOut, status_code=status.HTTP_201_CREATED)
-def book_session(
+def _book_session_internal(
+    *,
     session_id: UUID,
-    payload: BookingCreateRequest | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+    payload: BookingCreateRequest | None,
+    db: Session,
+    current_user: User,
+    allow_pending_payment_hold: bool = False,
 ) -> BookingOut:
     now = _utcnow()
     orchestrated_notifications = []
@@ -908,11 +991,22 @@ def book_session(
         .with_for_update()
     )
 
+    reusable_existing = existing
     if existing is not None:
         if existing.status == BookingStatus.BOOKED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already booked")
         if existing.status == BookingStatus.WAITLISTED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already in waitlist")
+        if existing.status == BookingStatus.PENDING_PAYMENT:
+            if not allow_pending_payment_hold:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Payment pending")
+            if existing.payment_hold_expires_at is not None and existing.payment_hold_expires_at <= now:
+                existing.status = BookingStatus.CANCELLED
+                existing.cancelled_at = now
+                existing.cancellation_reason = PAYMENT_TIMEOUT_CANCELLATION_REASON
+                existing.payment_hold_expires_at = None
+            else:
+                reusable_existing = existing
         if existing.status in (BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking already closed")
 
@@ -947,92 +1041,16 @@ def book_session(
         plan=plan,
     )
 
-    booked_count = _count_booked(db, session_id)
-    booking_status = BookingStatus.BOOKED if booked_count < session_obj.capacity_max else BookingStatus.WAITLISTED
-
-    if existing is not None:
-        existing.status = booking_status
-        existing.client_plan_subscription_id = subscription.id if subscription is not None else None
-        existing.booked_at = now
-        existing.cancelled_at = None
-        existing.cancellation_reason = None
-        existing.price_excl_vat_snapshot = price
-        existing.vat_rate_snapshot = vat_rate
-        existing.vat_amount_snapshot = vat_amount
-        existing.total_incl_vat_snapshot = total
-        existing.currency_snapshot = currency
-
-        if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None and not _consume_pack_credit(subscription, plan):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No remaining credits on selected pack",
-            )
-
-        if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None:
-            _enforce_plan_restrictions(
-                db,
-                subscription=subscription,
-                plan=plan,
-                session_obj=session_obj,
-            )
-
-        if booking_status == BookingStatus.BOOKED:
-            _mark_first_course_if_needed(booking_owner, session_obj)
-            ensure_booking_reminder(
-                db,
-                booking=existing,
-                session_obj=session_obj,
-                now=now,
-            )
-            orchestrated_notifications.extend(
-                schedule_booking_created_notifications(
-                    db,
-                    booking=existing,
-                    actor_user_id=current_user.id,
-                    occurred_at=now,
-                )
-            )
-        else:
-            skip_pending_reminders_for_booking(
-                db,
-                booking_id=existing.id,
-                reason="Booking moved to waitlist",
-                now=now,
-            )
-
-        db.commit()
-        if orchestrated_notifications:
-            enqueue_notifications(orchestrated_notifications)
-        db.refresh(existing)
-
-        return BookingOut(
-            id=existing.id,
-            session_id=existing.session_id,
-            client_plan_subscription_id=existing.client_plan_subscription_id,
-            status=existing.status,
-            booked_at=existing.booked_at,
-            cancelled_at=existing.cancelled_at,
-            cancellation_reason=existing.cancellation_reason,
-            price_excl_vat_snapshot=existing.price_excl_vat_snapshot,
-            vat_rate_snapshot=existing.vat_rate_snapshot,
-            vat_amount_snapshot=existing.vat_amount_snapshot,
-            total_incl_vat_snapshot=existing.total_incl_vat_snapshot,
-            currency_snapshot=existing.currency_snapshot,
-            waitlist_position=_waitlist_position(db, existing),
-        )
-
-    booking = Booking(
-        session_id=session_id,
-        user_id=booking_owner.id,
-        client_plan_subscription_id=subscription.id if subscription is not None else None,
-        status=booking_status,
-        booked_at=now,
-        price_excl_vat_snapshot=price,
-        vat_rate_snapshot=vat_rate,
-        vat_amount_snapshot=vat_amount,
-        total_incl_vat_snapshot=total,
-        currency_snapshot=currency,
+    should_create_payment_hold = allow_pending_payment_hold and subscription is None and total > Decimal("0.00")
+    booked_count = _count_booked(
+        db,
+        session_id,
+        exclude_booking_id=reusable_existing.id if reusable_existing is not None and reusable_existing.status in BOOKING_STATUSES_CONSUMING_CAPACITY else None,
     )
+    if booked_count < session_obj.capacity_max:
+        booking_status = BookingStatus.PENDING_PAYMENT if should_create_payment_hold else BookingStatus.BOOKED
+    else:
+        booking_status = BookingStatus.WAITLISTED
 
     if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None and not _consume_pack_credit(subscription, plan):
         raise HTTPException(
@@ -1048,24 +1066,57 @@ def book_session(
             session_obj=session_obj,
         )
 
-    db.add(booking)
+    if reusable_existing is not None:
+        booking = reusable_existing
+        booking.session_id = session_id
+        booking.user_id = booking_owner.id
+        booking.client_plan_subscription_id = subscription.id if subscription is not None else None
+        booking.status = booking_status
+        booking.booked_at = now
+        booking.cancelled_at = None
+        booking.cancellation_reason = None
+        booking.price_excl_vat_snapshot = price
+        booking.vat_rate_snapshot = vat_rate
+        booking.vat_amount_snapshot = vat_amount
+        booking.total_incl_vat_snapshot = total
+        booking.currency_snapshot = currency
+        booking.payment_hold_expires_at = payment_hold_expiration(now=now) if booking_status == BookingStatus.PENDING_PAYMENT else None
+    else:
+        booking = Booking(
+            session_id=session_id,
+            user_id=booking_owner.id,
+            client_plan_subscription_id=subscription.id if subscription is not None else None,
+            status=booking_status,
+            booked_at=now,
+            payment_hold_expires_at=payment_hold_expiration(now=now) if booking_status == BookingStatus.PENDING_PAYMENT else None,
+            price_excl_vat_snapshot=price,
+            vat_rate_snapshot=vat_rate,
+            vat_amount_snapshot=vat_amount,
+            total_incl_vat_snapshot=total,
+            currency_snapshot=currency,
+        )
+        db.add(booking)
 
     if booking_status == BookingStatus.BOOKED:
         db.flush()
-        _mark_first_course_if_needed(booking_owner, session_obj)
-        ensure_booking_reminder(
-            db,
-            booking=booking,
-            session_obj=session_obj,
-            now=now,
-        )
         orchestrated_notifications.extend(
-            schedule_booking_created_notifications(
+            _activate_confirmed_booking(
                 db,
                 booking=booking,
+                booking_owner=booking_owner,
+                session_obj=session_obj,
                 actor_user_id=current_user.id,
                 occurred_at=now,
             )
+        )
+    else:
+        if reusable_existing is None:
+            db.flush()
+        skip_pending_reminders_for_booking(
+            db,
+            booking_id=booking.id,
+            reason="Booking pending payment" if booking_status == BookingStatus.PENDING_PAYMENT else "Booking moved to waitlist",
+            now=now,
         )
 
     db.commit()
@@ -1087,6 +1138,38 @@ def book_session(
         total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
         currency_snapshot=booking.currency_snapshot,
         waitlist_position=_waitlist_position(db, booking),
+    )
+
+
+@router.post("/sessions/{session_id}/book", response_model=BookingOut, status_code=status.HTTP_201_CREATED)
+def book_session(
+    session_id: UUID,
+    payload: BookingCreateRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> BookingOut:
+    return _book_session_internal(
+        session_id=session_id,
+        payload=payload,
+        db=db,
+        current_user=current_user,
+        allow_pending_payment_hold=False,
+    )
+
+
+def create_or_refresh_pending_payment_booking(
+    *,
+    session_id: UUID,
+    payload: BookingCreateRequest | None,
+    db: Session,
+    current_user: User,
+) -> BookingOut:
+    return _book_session_internal(
+        session_id=session_id,
+        payload=payload,
+        db=db,
+        current_user=current_user,
+        allow_pending_payment_hold=True,
     )
 
 

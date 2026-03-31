@@ -15,9 +15,21 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
-from app.api.routes.bookings import book_session
+from app.api.routes.bookings import book_session, create_or_refresh_pending_payment_booking
 from app.core.config import settings
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, Professor, SessionAudienceScope, SessionStatus
+from app.models.catalog import (
+    BOOKING_STATUSES_CONFIRMED,
+    BOOKING_STATUSES_CONSUMING_CAPACITY,
+    Booking,
+    BookingStatus,
+    CourseSession,
+    CourseType,
+    DeliveryMode,
+    Location,
+    Professor,
+    SessionAudienceScope,
+    SessionStatus,
+)
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
@@ -77,6 +89,7 @@ PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
 CANCELLED_PAYMENT_STATUSES = {"CANCELLED", "EXPIRED", "INACTIVE", "ARCHIVED"}
 PENDING_PAYMENT_STATUSES = {
     "PENDING",
+    "PENDING_PAYMENT",
     "WAITLISTED",
     "TRIAL",
     "OPEN",
@@ -1033,7 +1046,7 @@ def list_client_visible_sessions(
         select(Booking.session_id)
         .where(
             Booking.user_id.in_(managed_client_ids),
-            Booking.status != BookingStatus.CANCELLED,
+            Booking.status.in_(BOOKING_STATUSES_CONFIRMED),
         )
         .distinct()
     )
@@ -1075,7 +1088,7 @@ def list_client_visible_sessions(
             Booking.session_id.label("session_id"),
             func.count(Booking.id).label("booked_count"),
         )
-        .where(Booking.status == BookingStatus.BOOKED)
+        .where(Booking.status.in_(BOOKING_STATUSES_CONSUMING_CAPACITY))
         .group_by(Booking.session_id)
         .subquery()
     )
@@ -1796,19 +1809,35 @@ def create_client_session_checkout(
         .limit(1)
     )
 
+    session_for_checkout = db.scalar(select(CourseSession).where(CourseSession.id == session_id))
+    uses_payment_hold = session_for_checkout is not None and should_defer_booking_invoice(session_for_checkout)
+
     booking_id: UUID | None = None
-    if existing_booking is None or existing_booking.status == BookingStatus.CANCELLED:
+    should_create_or_refresh = (
+        existing_booking is None
+        or existing_booking.status == BookingStatus.CANCELLED
+        or (uses_payment_hold and existing_booking.status == BookingStatus.PENDING_PAYMENT)
+    )
+    if should_create_or_refresh:
         try:
-            booking_out = book_session(
-                session_id=session_id,
-                payload=BookingCreateRequest(user_id=requested_user_id),
-                db=db,
-                current_user=current_user,
-            )
+            if uses_payment_hold:
+                booking_out = create_or_refresh_pending_payment_booking(
+                    session_id=session_id,
+                    payload=BookingCreateRequest(user_id=requested_user_id),
+                    db=db,
+                    current_user=current_user,
+                )
+            else:
+                booking_out = book_session(
+                    session_id=session_id,
+                    payload=BookingCreateRequest(user_id=requested_user_id),
+                    db=db,
+                    current_user=current_user,
+                )
             booking_id = booking_out.id
         except HTTPException as exc:
             detail = str(exc.detail or "").strip()
-            if exc.status_code not in {status.HTTP_409_CONFLICT} or detail not in {"Already booked", "Already in waitlist"}:
+            if exc.status_code not in {status.HTTP_409_CONFLICT} or detail not in {"Already booked", "Already in waitlist", "Payment pending"}:
                 raise
             existing_booking = db.scalar(
                 select(Booking)
@@ -1849,6 +1878,39 @@ def create_client_session_checkout(
             booking_status=booking_status,
             checkout_url=None,
             invoice_status=None,
+        )
+
+    if booking.status == BookingStatus.PENDING_PAYMENT and should_defer_booking_invoice(session_obj):
+        amount_due = remaining_booking_amount_due(db, booking=booking)
+        if amount_due <= Decimal("0.00"):
+            return ClientSessionCheckoutOut(
+                booking_id=booking.id,
+                booking_status=booking_status,
+                checkout_url=None,
+                invoice_status="PAID",
+            )
+        receipt_snapshot = build_booking_receipt_snapshot(
+            db,
+            booking=booking,
+            session_obj=session_obj,
+            course_type=course_type,
+            location=location,
+            owner=owner,
+        )
+        receipt = get_or_create_pending_booking_payment_receipt(
+            db,
+            booking=booking,
+            snapshot=receipt_snapshot,
+        )
+        db.commit()
+        return ClientSessionCheckoutOut(
+            booking_id=booking.id,
+            booking_status=booking_status,
+            checkout_url=payment_receipt_public_payment_url(
+                client_id=receipt_snapshot.customer_id,
+                receipt_id=receipt.id,
+            ),
+            invoice_status="PAYMENT_PENDING",
         )
 
     if booking.status != BookingStatus.BOOKED:

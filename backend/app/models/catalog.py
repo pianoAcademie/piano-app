@@ -44,11 +44,26 @@ class SessionStatus(str, enum.Enum):
 
 class BookingStatus(str, enum.Enum):
     BOOKED = "BOOKED"
+    PENDING_PAYMENT = "PENDING_PAYMENT"
     WAITLISTED = "WAITLISTED"
     CANCELLED = "CANCELLED"
     ATTENDED = "ATTENDED"
     NO_SHOW = "NO_SHOW"
     EXCUSED_ABSENCE = "EXCUSED_ABSENCE"
+
+
+BOOKING_STATUSES_CONSUMING_CAPACITY: tuple[BookingStatus, ...] = (
+    BookingStatus.BOOKED,
+    BookingStatus.PENDING_PAYMENT,
+)
+
+BOOKING_STATUSES_CONFIRMED: tuple[BookingStatus, ...] = (
+    BookingStatus.BOOKED,
+    BookingStatus.WAITLISTED,
+    BookingStatus.ATTENDED,
+    BookingStatus.NO_SHOW,
+    BookingStatus.EXCUSED_ABSENCE,
+)
 
 
 class SessionAudienceScope(str, enum.Enum):
@@ -412,6 +427,7 @@ class Booking(Base):
         nullable=False,
         server_default=text("now()"),
     )
+    payment_hold_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     price_excl_vat_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))

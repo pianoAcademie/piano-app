@@ -130,6 +130,7 @@ PLANNING_DEFAULTS = {
 
 BOOKING_STATUSES_COUNTED_AS_RESERVED = (
     BookingStatus.BOOKED,
+    BookingStatus.PENDING_PAYMENT,
     BookingStatus.ATTENDED,
     BookingStatus.NO_SHOW,
     BookingStatus.EXCUSED_ABSENCE,
@@ -2084,7 +2085,7 @@ def list_admin_sessions(
         stmt = (
             stmt.join(Booking, Booking.session_id == CourseSession.id)
             .join(User, User.id == Booking.user_id)
-            .where(Booking.status != BookingStatus.CANCELLED)
+            .where(Booking.status.in_(BOOKING_STATUSES_ACTIVE))
         )
         if client_status is not None:
             stmt = stmt.where(User.client_status == client_status)
@@ -2156,7 +2157,7 @@ def list_admin_session_bookings(
         .join(User, User.id == Booking.user_id)
         .where(
             Booking.session_id == session_id,
-            Booking.status != BookingStatus.CANCELLED,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
         )
     ).all()
 
@@ -2481,7 +2482,7 @@ def update_admin_session_booking_note(
         .where(
             Booking.id == booking_id,
             Booking.session_id == session_id,
-            Booking.status != BookingStatus.CANCELLED,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
         )
         .with_for_update()
     )
@@ -2536,6 +2537,7 @@ def add_admin_session_booking(
 
         blocked_statuses = {
             BookingStatus.BOOKED,
+            BookingStatus.PENDING_PAYMENT,
             BookingStatus.WAITLISTED,
             BookingStatus.ATTENDED,
             BookingStatus.NO_SHOW,

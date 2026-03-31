@@ -7,7 +7,7 @@ from sqlalchemy import distinct, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import Booking, BookingStatus, CourseSession, Location
+from app.models.catalog import BOOKING_STATUSES_CONFIRMED, Booking, CourseSession, Location
 from app.models.catalog import Professor as ProfessorModel
 from app.models.product_catalog import CatalogProduct, ProductCategory, ProductLocationStock, ProductRequest, ProductRequestSource, ProductRequestStatus
 from app.models.user import User, UserRole
@@ -36,7 +36,7 @@ def _student_ids_for_professor(db: Session, *, professor_id: UUID) -> set[UUID]:
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .where(
             CourseSession.professor_id == professor_id,
-            Booking.status != BookingStatus.CANCELLED,
+            Booking.status.in_(BOOKING_STATUSES_CONFIRMED),
         )
     ).all()
     return {value for value in rows if value is not None}
