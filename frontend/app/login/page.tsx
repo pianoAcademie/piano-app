@@ -58,8 +58,8 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
             className="auth-brand-lockup"
           />
           <div className="auth-header-copy">
-            <h1>Un espace plus elegant, plus clair, plus fluide.</h1>
-            <p>Accedez a votre espace client pour reserver vos cours, gerer vos informations et suivre vos inscriptions avec une experience a la hauteur de la marque.</p>
+            <h1>Votre espace client Piano Academie</h1>
+            <p>Retrouvez ici vos reservations, vos informations de compte et l ensemble de vos demarches en ligne.</p>
           </div>
         </header>
 
