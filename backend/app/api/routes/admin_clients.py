@@ -8298,22 +8298,19 @@ def start_admin_client_payment_receipt_public_payment(
     )
     checkout = create_checkout_session(
         db,
-        payload=with_webhook_secret(
-            CheckoutCreateRequest(
-                amount=amount_due,
-                currency=_normalize_currency(receipt.currency, fallback="EUR"),
-                description=f"Justificatif paiement reservation {receipt.reservation_label} ({client.email})",
-                customer_email=client.email,
-                success_return_url=success_return_url,
-                cancel_return_url=cancel_return_url,
-                webhook_url=webhook_url,
-                metadata={
-                    "client_id": str(client_id),
-                    "receipt_id": str(receipt_id),
-                    "booking_id": str(receipt.booking_id),
-                },
-            ),
-            legal_entity_id=receipt.legal_entity_id,
+        CheckoutCreateRequest(
+            amount=amount_due,
+            currency=_normalize_currency(receipt.currency, fallback="EUR"),
+            description=f"Justificatif paiement reservation {receipt.reservation_label} ({client.email})",
+            customer_email=client.email,
+            success_return_url=success_return_url,
+            cancel_return_url=cancel_return_url,
+            webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
+            metadata={
+                "client_id": str(client_id),
+                "receipt_id": str(receipt_id),
+                "booking_id": str(receipt.booking_id),
+            },
         ),
         legal_entity_id=receipt.legal_entity_id,
     )
