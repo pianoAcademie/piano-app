@@ -37,6 +37,7 @@ PAYMENT_RECEIPT_NUMBER_FORMAT_SETTING_KEY = "config_payment_receipt_number_forma
 PAYMENT_RECEIPT_NUMBER_NEXT_SETTING_KEY = "config_payment_receipt_number_next_v1"
 DEFAULT_PAYMENT_RECEIPT_NUMBER_FORMAT = "PAY-%YYYY%-%NNNN%"
 DEFAULT_PAYMENT_RECEIPT_NUMBER_NEXT = 1
+INVOICE_RANGE_PUBLIC_DOWNLOAD_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
 PAYMENT_RECEIPT_PUBLIC_PAYMENT_TOKEN_SCOPE = "PAYMENT_RECEIPT_PUBLIC_PAY"
 PAYMENT_RECEIPT_CLIENT_TEMPLATE_CODE = "PAYMENT_RECEIPT"
 PAYMENT_RECEIPT_ADMIN_TEMPLATE_CODE = "PAYMENT_RECEIPT_ADMIN"
@@ -209,6 +210,40 @@ def _frontend_url(path: str) -> str:
     if not candidate.startswith("http://") and not candidate.startswith("https://"):
         candidate = "https://" + candidate
     return candidate.rstrip("/") + path
+
+
+def _create_invoice_range_public_download_token(
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    invoice_number: str,
+) -> str:
+    payload = {
+        "scope": INVOICE_RANGE_PUBLIC_DOWNLOAD_TOKEN_SCOPE,
+        "client_id": str(client_id),
+        "note_id": str(note_id),
+        "invoice_number": invoice_number,
+        "exp": int((_utcnow() + timedelta(days=365)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def _public_invoice_range_download_url(
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    invoice_number: str,
+    inline: bool = True,
+) -> str:
+    token = _create_invoice_range_public_download_token(
+        client_id=client_id,
+        note_id=note_id,
+        invoice_number=invoice_number,
+    )
+    return _frontend_url(
+        "/api/v1/admin/clients/"
+        f"{client_id}/invoices/range/{note_id}/public-pdf?token={token}&inline={'true' if inline else 'false'}"
+    )
 
 
 def _session_zone(session_obj: CourseSession) -> ZoneInfo | timezone:
@@ -986,7 +1021,12 @@ def send_final_invoice_email(
         return None
     billing_profile = resolve_billing_profile(db, customer)
     invoice_number = str(metadata.get("invoice_number") or "").strip() or str(note_id)
-    invoice_url = _frontend_url(f"/client/invoices/invoice-range:{note_id}/download")
+    invoice_url = _public_invoice_range_download_url(
+        client_id=customer.id,
+        note_id=note_id,
+        invoice_number=invoice_number,
+        inline=False,
+    )
     totals_by_currency = metadata.get("totals_by_currency") or {"EUR": "0.00"}
     total_to_pay_by_currency = metadata.get("total_to_pay_by_currency") or {"EUR": "0.00"}
     applied_payment_totals_by_currency = metadata.get("applied_payment_totals_by_currency") or {"EUR": "0.00"}

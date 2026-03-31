@@ -355,6 +355,9 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
                 subject_prefix=None,
             ),
         ), patch(
+            "app.services.payment_receipts._frontend_url",
+            return_value="https://app.piano-academie.com/client?tab=finance&finance_view=transactions",
+        ), patch(
             "app.services.payment_receipts.send_email",
             side_effect=["client-msg", "admin-msg"],
         ) as send_email_mock, patch(
@@ -378,6 +381,7 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
 
     def test_paid_final_invoice_email_uses_paid_template_and_renders_placeholders(self) -> None:
         customer = SimpleNamespace(
+            id=uuid4(),
             email="hector@example.com",
             first_name="Hector",
             last_name="Souza",
@@ -407,6 +411,9 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
             "app.services.payment_receipts.resolve_predefined_template",
             return_value=template,
         ) as resolve_template, patch(
+            "app.services.payment_receipts._public_invoice_range_download_url",
+            return_value="https://app.piano-academie.com/api/v1/admin/clients/client-1/invoices/range/note-1/public-pdf?token=test",
+        ), patch(
             "app.services.payment_receipts._frontend_url",
             return_value="https://app.piano-academie.com/client?tab=finance",
         ), patch(
@@ -430,6 +437,7 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
         self.assertIn("PA26-0006", kwargs["subject"])
         self.assertIn("Bonjour Hector", kwargs["body"])
         self.assertIn("30.00", kwargs["body"])
+        self.assertIn("public-pdf?token=test", kwargs["body"])
         self.assertNotIn("{invoice_number}", kwargs["body"])
 
 

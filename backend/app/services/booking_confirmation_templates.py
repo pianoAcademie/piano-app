@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import re
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -49,6 +50,7 @@ def _default_rendered_email(
     audience: Literal["CLIENT", "ADMIN"],
     context: dict[str, str],
 ) -> RenderedBookingConfirmationEmail:
+    teacher_name = context.get("teacher_name", "").strip()
     if audience == "ADMIN":
         subject = f"Nouvelle reservation confirmee - {context['activity_name']}"
         body = (
@@ -58,8 +60,9 @@ def _default_rendered_email(
             f"Date: {context['session_date']}\n"
             f"Heure: {context['session_time']}\n"
             f"Lieu: {context['location_name']}\n"
-            f"Professeur: {context['teacher_name']}\n"
         )
+        if teacher_name:
+            body += f"Professeur: {teacher_name}\n"
         return RenderedBookingConfirmationEmail(subject=subject, body=body, body_format="TEXT")
 
     subject = f"Confirmation de votre reservation - {context['activity_name']}"
@@ -71,11 +74,44 @@ def _default_rendered_email(
         f"Date: {context['session_date']}\n"
         f"Heure: {context['session_time']}\n"
         f"Lieu: {context['location_name']}\n"
-        f"Professeur: {context['teacher_name']}\n"
         f"Mon compte: {context['account_url']}\n\n"
         "Piano Academie"
     )
+    if teacher_name:
+        body = body.replace(
+            f"Lieu: {context['location_name']}\n",
+            f"Lieu: {context['location_name']}\nProfesseur: {teacher_name}\n",
+            1,
+        )
     return RenderedBookingConfirmationEmail(subject=subject, body=body, body_format="TEXT")
+
+
+def _normalize_teacher_name(teacher_name: str | None) -> str:
+    candidate = (teacher_name or "").strip()
+    lowered = candidate.casefold()
+    if lowered in {"", "a confirmer", "à confirmer", "sans professeur"}:
+        return ""
+    return candidate
+
+
+def _strip_teacher_field(body: str, *, body_format: str) -> str:
+    if body_format == "HTML":
+        normalized = re.sub(
+            r"<li>\s*<strong>\s*Professeur\s*:\s*</strong>\s*(?:A confirmer)?\s*</li>",
+            "",
+            body,
+            flags=re.IGNORECASE,
+        )
+        normalized = re.sub(
+            r"<div class=\"email-summary-row\">\s*<span[^>]*>\s*Professeur\s*</span>\s*<strong[^>]*>\s*(?:A confirmer)?\s*</strong>\s*</div>",
+            "",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        return normalized
+
+    normalized = re.sub(r"^Professeur:\s*(?:A confirmer)?\s*$\n?", "", body, flags=re.IGNORECASE | re.MULTILINE)
+    return re.sub(r"\n{3,}", "\n\n", normalized).strip()
 
 
 def render_booking_confirmation_email(
@@ -91,6 +127,7 @@ def render_booking_confirmation_email(
     teacher_name: str | None,
 ) -> RenderedBookingConfirmationEmail | None:
     localized_start = _localized_start_at(start_at, timezone_name)
+    normalized_teacher_name = _normalize_teacher_name(teacher_name)
     context = {
         "recipient_name": (recipient_name or "").strip() or ("Administration" if audience == "ADMIN" else "Client"),
         "student_name": student_name.strip() or "-",
@@ -99,7 +136,7 @@ def render_booking_confirmation_email(
         "session_time": localized_start.strftime("%H:%M"),
         "session_start_local": localized_start.strftime("%d/%m/%Y %H:%M"),
         "location_name": (location_name or "").strip() or "-",
-        "teacher_name": (teacher_name or "").strip() or "A confirmer",
+        "teacher_name": normalized_teacher_name,
         "account_url": _frontend_url("/client?tab=planning"),
     }
 
@@ -122,8 +159,15 @@ def render_booking_confirmation_email(
         return _default_rendered_email(audience=audience, context=context)
 
     body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
-    return RenderedBookingConfirmationEmail(
+    rendered = RenderedBookingConfirmationEmail(
         subject=_render_template(subject_template, context),
         body=_render_template(body_template, context),
         body_format=body_format,
+    )
+    if normalized_teacher_name:
+        return rendered
+    return RenderedBookingConfirmationEmail(
+        subject=rendered.subject,
+        body=_strip_teacher_field(rendered.body, body_format=body_format),
+        body_format=rendered.body_format,
     )
