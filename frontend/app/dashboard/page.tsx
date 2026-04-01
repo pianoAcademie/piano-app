@@ -1748,10 +1748,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     { id: "planning", label: "Planning", icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
     { id: "courses", label: "Cours", icon: "📚", href: withUpdatedQuery(rawParams, { tab: "courses" }) },
     { id: "reservations", label: "Réservations", icon: "✅", href: withUpdatedQuery(rawParams, { tab: "reservations" }) },
-    { id: "finance", label: "Finance", icon: "💳", href: withUpdatedQuery(rawParams, { tab: "finance" }) },
+    { id: "offers", label: "Forfaits", icon: "🧾", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
     { id: "account", label: "Compte", icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
-  const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab) ? tab : "home";
+  const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab)
+    ? tab
+    : tab === "messages" || tab === "finance"
+      ? "account"
+      : "home";
 
   const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email });
   const impersonationDisplayName = impersonationNameHint || displayName;
@@ -1861,11 +1865,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           subtitle={`${displayName} · ${timezone}`}
           menu={
             <div className="client-mobile-menu-items">
-              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
-                Messages
-              </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "home" })}>
                 Accueil
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>
+                Planning
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "reservations" })}>
+                Réservations
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
+                Forfaits
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "finance" })}>
+                Finance
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
+                Messages
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "courses" })}>
                 Mes cours

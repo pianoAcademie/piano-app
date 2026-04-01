@@ -11252,6 +11252,11 @@ button.danger:focus-visible {
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  .client-mobile-tab-label {
+    font-size: 10px;
+    line-height: 12px;
+  }
+
   .client-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -11307,6 +11312,146 @@ button.danger:focus-visible {
     position: sticky;
     bottom: calc(76px + env(safe-area-inset-bottom) + 8px);
     z-index: 30;
+  }
+
+  .client-planning-shell,
+  .client-week-planning-board {
+    gap: 8px;
+    border-radius: 16px;
+  }
+
+  .client-planning-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .client-planning-heading h2,
+  .client-week-planning-board h2 {
+    font-size: 1.05rem;
+  }
+
+  .client-planning-heading p,
+  .client-week-planning-board > .muted {
+    display: none;
+  }
+
+  .client-planning-heading .mode-link {
+    min-height: 34px;
+    padding: 0 12px;
+  }
+
+  .client-planning-hero {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .client-planning-pill {
+    gap: 3px;
+    padding: 6px 8px;
+    border-radius: 12px;
+  }
+
+  .client-planning-pill > span {
+    font-size: 11px;
+  }
+
+  .client-planning-pill select,
+  .client-planning-pill input {
+    min-height: 40px;
+    padding: 8px 9px;
+  }
+
+  .client-planning-advanced {
+    padding: 4px 8px 8px;
+  }
+
+  .client-planning-advanced > summary {
+    padding: 6px 10px;
+  }
+
+  .client-week-toolbar {
+    margin-top: 6px;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .client-week-toolbar-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .client-week-title-group strong {
+    font-size: 16px;
+  }
+
+  .client-week-title-group small {
+    display: none;
+  }
+
+  .client-week-toolbar-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .client-week-toolbar-actions .mode-link {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+
+  .client-week-legend {
+    gap: 6px;
+  }
+
+  .client-week-legend-item {
+    padding: 5px 8px;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .client-planning-toolbar-actions {
+    width: 100%;
+  }
+
+  .client-planning-reset {
+    min-height: 40px;
+  }
+
+  .client-planning-quick-filter-form {
+    margin-top: 4px;
+  }
+
+  .client-planning-quick-filter-label {
+    max-width: none;
+  }
+
+  .client-agenda-grid.agenda-grid-month,
+  .client-agenda-grid.agenda-grid-week {
+    gap: 8px;
+  }
+
+  .client-agenda-day {
+    gap: 6px;
+  }
+
+  .client-agenda-day .agenda-day-header h3 {
+    font-size: 16px;
+  }
+
+  .client-agenda-event .event-meta-secondary {
+    display: none;
+  }
+
+  .client-agenda-event .row {
+    flex-wrap: nowrap;
+  }
+
+  .client-agenda-event .event-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
