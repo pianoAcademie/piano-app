@@ -80,6 +80,8 @@ from app.services.family_billing import resolve_billing_profile
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
 from app.services.invoice_documents import (
     InvoicePeriodLine,
+    build_company_identity_snapshot,
+    company_identity_from_snapshot,
     render_invoice_period_pdf,
     reserve_next_invoice_number,
     summarize_invoice_period_lines,
@@ -310,6 +312,22 @@ def _billing_address_label(user: User) -> str:
     country = _country_display_name(user.address_country or user.residence_country)
     parts = [line_1, city_line, country]
     return ", ".join(part for part in parts if part) or "-"
+
+
+def _invoice_recipient_snapshot_for_user(db: Session, user: User) -> dict[str, str]:
+    billing_profile = resolve_billing_profile(db, user)
+    return {
+        "client_name": _display_name(billing_profile),
+        "client_billing_address": _billing_address_label(billing_profile),
+    }
+
+
+def _invoice_recipient_name_from_metadata(metadata: dict[str, object], *, fallback: str) -> str:
+    return (str(metadata.get("client_name") or "").strip() or fallback)
+
+
+def _invoice_recipient_address_from_metadata(metadata: dict[str, object], *, fallback: str) -> str:
+    return (str(metadata.get("client_billing_address") or "").strip() or fallback)
 
 
 def _is_failed_payment_status(status_value: str) -> bool:
@@ -605,6 +623,7 @@ def _create_booking_invoice_note(
     resolved_billing_entity = _billing_entity_text(billing_entity) or "ENTITE_NON_DEFINIE"
     currency = (booking.currency_snapshot or "EUR").upper()
     total_incl_vat = Decimal(booking.total_incl_vat_snapshot).quantize(Decimal("0.01"))
+    recipient_snapshot = _invoice_recipient_snapshot_for_user(db, owner)
     invoice_number = _allocate_invoice_number_for_seller_entity(
         db,
         seller_legal_entity_id=seller_legal_entity_id,
@@ -632,6 +651,13 @@ def _create_booking_invoice_note(
         "total_to_pay_by_currency": {currency: f"{total_incl_vat:.2f}"},
         "invoice_status": "ISSUED",
         "public_note": f"Reservation {course_type.name} - {location.name}",
+        "client_name": recipient_snapshot["client_name"],
+        "client_billing_address": recipient_snapshot["client_billing_address"],
+        "issuer_snapshot": build_company_identity_snapshot(
+            db,
+            legal_entity_id=seller_legal_entity_id,
+            billing_entity=resolved_billing_entity,
+        ),
     }
 
     note = ClientNoteEntry(
@@ -2755,7 +2781,7 @@ def download_client_invoice(
         owner = db.scalar(select(User).where(User.id == note.user_id, User.role == UserRole.CLIENT))
         if owner is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
-        billing_profile = resolve_billing_profile(db, owner)
+        recipient_snapshot = _invoice_recipient_snapshot_for_user(db, owner)
 
         invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or f"INV-{note.id}"
         issued_date_text = str(metadata.get("issued_date") or "").strip()
@@ -2808,6 +2834,7 @@ def download_client_invoice(
         public_note = _normalize_optional(str(metadata.get("public_note") or ""))
         legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
         billing_entity = _billing_entity_text(str(metadata.get("billing_entity") or "")) if metadata.get("billing_entity") else None
+        frozen_company_identity = company_identity_from_snapshot(metadata.get("issuer_snapshot"))
         payment_link_url = _invoice_range_public_payment_url(
             client_id=note.user_id,
             note_id=note.id,
@@ -2820,12 +2847,15 @@ def download_client_invoice(
             invoice_number=invoice_number,
             issued_at=issued_at,
             client_id=str(note.user_id),
-            client_name=_display_name(billing_profile),
+            client_name=_invoice_recipient_name_from_metadata(metadata, fallback=recipient_snapshot["client_name"]),
             period_label=_invoice_range_label(metadata),
             lines=invoice_lines,
             totals_by_currency=totals_by_currency,
             note=public_note,
-            client_billing_address=_billing_address_label(billing_profile),
+            client_billing_address=_invoice_recipient_address_from_metadata(
+                metadata,
+                fallback=recipient_snapshot["client_billing_address"],
+            ),
             due_date=due_date_value,
             opening_balance_by_currency=opening_balance_by_currency,
             applied_payment_totals_by_currency=applied_payment_totals_by_currency,
@@ -2834,6 +2864,7 @@ def download_client_invoice(
             watermark=("PAYE" if invoice_status == "PAID" else None),
             legal_entity_id=legal_entity_id,
             billing_entity=billing_entity,
+            company_identity_override=frozen_company_identity,
         )
 
         file_name = f"{invoice_number}.pdf".replace('"', "")

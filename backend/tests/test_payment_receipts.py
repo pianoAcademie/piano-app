@@ -129,6 +129,17 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
 
     def test_final_invoice_metadata_can_reconcile_multiple_payments(self) -> None:
         payment_ids = [uuid4(), uuid4()]
+        issuer_snapshot = {
+            "company_name": "Piano Academie",
+            "company_email": "compta@example.com",
+            "company_phone": "+33 1 86 47 60 88",
+            "company_siren": "828051417",
+            "company_siret": "82805141700032",
+            "company_vat_number": "FR74828051417",
+            "company_address": "1, rue de Richelieu, 75001 Paris (France)",
+            "company_legal_form": "SAS",
+            "company_share_capital": "5000 EUR",
+        }
         metadata = build_final_invoice_metadata(
             booking=self.booking,
             snapshot=self.snapshot,
@@ -136,6 +147,7 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
             invoice_number="PA26-0187",
             reconciled_manual_payment_ids=payment_ids,
             total_paid=Decimal("30.00"),
+            issuer_snapshot=issuer_snapshot,
         )
 
         self.assertEqual(metadata["invoice_number"], "PA26-0187")
@@ -145,6 +157,9 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
         self.assertEqual(metadata["total_to_pay_by_currency"], {"EUR": "0.00"})
         self.assertEqual(metadata["reconciled_manual_payment_ids"], [str(value) for value in payment_ids])
         self.assertEqual(metadata["service_realized_date"], "2026-09-23")
+        self.assertEqual(metadata["client_name"], "Hector Souza")
+        self.assertEqual(metadata["client_billing_address"], "1 rue de Richelieu 75001 Paris (France)")
+        self.assertEqual(metadata["issuer_snapshot"]["company_name"], "Piano Academie")
 
     def test_cancelled_booking_never_generates_final_invoice(self) -> None:
         cancelled_booking = SimpleNamespace(id=self.booking_id, status=BookingStatus.CANCELLED)

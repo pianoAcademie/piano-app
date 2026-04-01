@@ -21,7 +21,11 @@ from app.models.ops import AppSetting
 from app.models.user import User
 from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
-from app.services.invoice_documents import render_payment_receipt_pdf, reserve_next_invoice_number
+from app.services.invoice_documents import (
+    build_company_identity_snapshot,
+    render_payment_receipt_pdf,
+    reserve_next_invoice_number,
+)
 from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import (
     render_template_content,
@@ -936,6 +940,7 @@ def build_final_invoice_metadata(
     invoice_number: str,
     reconciled_manual_payment_ids: list[UUID],
     total_paid: Decimal,
+    issuer_snapshot: dict[str, object] | None = None,
 ) -> dict[str, object]:
     total_amount = _quantize_money(Decimal(booking.total_incl_vat_snapshot))
     total_to_pay = _quantize_money(max(total_amount - total_paid, Decimal("0.00")))
@@ -964,7 +969,11 @@ def build_final_invoice_metadata(
         "public_note": snapshot.reservation_label,
         "reconciled_manual_payment_ids": [str(value) for value in reconciled_manual_payment_ids],
         "service_realized_date": snapshot.service_date.isoformat() if snapshot.service_date is not None else None,
+        "client_name": snapshot.customer_name,
+        "client_billing_address": snapshot.customer_billing_address,
     }
+    if issuer_snapshot:
+        metadata["issuer_snapshot"] = issuer_snapshot
     return metadata
 
 
@@ -1010,6 +1019,11 @@ def generate_final_invoice_for_booking(
             issued_at=effective_issued_at,
         )
     total_paid, _, reconciled_manual_payment_ids = completed_payment_receipt_totals(db, booking_id=booking.id)
+    issuer_snapshot = build_company_identity_snapshot(
+        db,
+        legal_entity_id=snapshot.legal_entity_id,
+        billing_entity="PIANO_ACADEMIE",
+    )
     metadata = build_final_invoice_metadata(
         booking=booking,
         snapshot=snapshot,
@@ -1017,6 +1031,7 @@ def generate_final_invoice_for_booking(
         invoice_number=invoice_number,
         reconciled_manual_payment_ids=reconciled_manual_payment_ids,
         total_paid=total_paid,
+        issuer_snapshot=issuer_snapshot,
     )
     note = ClientNoteEntry(
         user_id=snapshot.customer_id,

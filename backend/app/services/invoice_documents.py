@@ -639,6 +639,19 @@ class CompanyIdentity:
     company_logo_height_px: int | None
 
 
+COMPANY_IDENTITY_SNAPSHOT_FIELDS = (
+    "company_name",
+    "company_email",
+    "company_phone",
+    "company_siren",
+    "company_siret",
+    "company_vat_number",
+    "company_address",
+    "company_legal_form",
+    "company_share_capital",
+)
+
+
 def _decode_jpeg_data_url(value: str | None) -> bytes | None:
     raw = (value or "").strip()
     if not raw:
@@ -795,6 +808,54 @@ def _company_identity(
     )
 
 
+def build_company_identity_snapshot(
+    db: Session,
+    *,
+    legal_entity_id: UUID | None = None,
+    billing_entity: str | None = None,
+) -> dict[str, str | None]:
+    identity = _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
+    return {
+        "company_name": identity.company_name,
+        "company_email": identity.company_email,
+        "company_phone": identity.company_phone,
+        "company_siren": identity.company_siren,
+        "company_siret": identity.company_siret,
+        "company_vat_number": identity.company_vat_number,
+        "company_address": identity.company_address,
+        "company_legal_form": identity.company_legal_form,
+        "company_share_capital": identity.company_share_capital,
+    }
+
+
+def company_identity_from_snapshot(snapshot: object) -> CompanyIdentity | None:
+    if not isinstance(snapshot, dict):
+        return None
+    normalized: dict[str, str | None] = {}
+    for field in COMPANY_IDENTITY_SNAPSHOT_FIELDS:
+        value = snapshot.get(field)
+        if value is None:
+            normalized[field] = None
+            continue
+        normalized[field] = str(value).strip() or None
+    if not normalized.get("company_name"):
+        return None
+    return CompanyIdentity(
+        company_name=normalized["company_name"] or "Societe",
+        company_email=normalized["company_email"] or "-",
+        company_phone=normalized["company_phone"] or "-",
+        company_siren=normalized["company_siren"] or "-",
+        company_siret=normalized["company_siret"] or "-",
+        company_vat_number=normalized["company_vat_number"] or "-",
+        company_address=normalized["company_address"] or "-",
+        company_legal_form=normalized["company_legal_form"],
+        company_share_capital=normalized["company_share_capital"],
+        company_logo_jpeg=None,
+        company_logo_width_px=None,
+        company_logo_height_px=None,
+    )
+
+
 def _company_legal_summary(identity: CompanyIdentity) -> str:
     parts = [
         identity.company_legal_form or "",
@@ -857,8 +918,13 @@ def render_invoice_period_pdf(
     watermark: str | None = None,
     legal_entity_id: UUID | None = None,
     billing_entity: str | None = None,
+    company_identity_override: CompanyIdentity | None = None,
 ) -> bytes:
-    identity = _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
+    identity = company_identity_override or _company_identity(
+        db,
+        legal_entity_id=legal_entity_id,
+        billing_entity=billing_entity,
+    )
     pdf = _SimplePdfDocument()
     logo_resource_name: str | None = None
     logo_width = 0.0

@@ -137,6 +137,8 @@ from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
 from app.services.invoice_documents import (
     InvoicePeriodLine,
+    build_company_identity_snapshot,
+    company_identity_from_snapshot,
     render_invoice_period_pdf,
     reserve_next_invoice_number,
 )
@@ -858,6 +860,22 @@ def _billing_address_label(user: User) -> str:
     country = _country_display_name(user.address_country or user.residence_country)
     parts = [line_1, city_line, country]
     return ", ".join(part for part in parts if part) or "-"
+
+
+def _invoice_recipient_snapshot_for_client(db: Session, client: User) -> dict[str, str]:
+    billing_profile = resolve_billing_profile(db, client)
+    return {
+        "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "client_billing_address": _billing_address_label(billing_profile),
+    }
+
+
+def _invoice_recipient_name_from_metadata(metadata: dict[str, object], *, fallback: str) -> str:
+    return _normalize_optional(str(metadata.get("client_name") or "")) or fallback
+
+
+def _invoice_recipient_address_from_metadata(metadata: dict[str, object], *, fallback: str) -> str:
+    return _normalize_optional(str(metadata.get("client_billing_address") or "")) or fallback
 
 
 def _note_author_display_name(author: User | None) -> str:
@@ -1898,6 +1916,35 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         normalized["public_note"] = public_note
     if private_note:
         normalized["private_note"] = private_note
+
+    client_name = _normalize_optional(str(payload.get("client_name") or ""))
+    client_billing_address = _normalize_optional(str(payload.get("client_billing_address") or ""))
+    if client_name:
+        normalized["client_name"] = client_name
+    if client_billing_address:
+        normalized["client_billing_address"] = client_billing_address
+
+    issuer_snapshot_raw = payload.get("issuer_snapshot")
+    if isinstance(issuer_snapshot_raw, dict):
+        issuer_snapshot: dict[str, str | None] = {}
+        for field in (
+            "company_name",
+            "company_email",
+            "company_phone",
+            "company_siren",
+            "company_siret",
+            "company_vat_number",
+            "company_address",
+            "company_legal_form",
+            "company_share_capital",
+        ):
+            raw_value = issuer_snapshot_raw.get(field)
+            if raw_value is None:
+                issuer_snapshot[field] = None
+                continue
+            issuer_snapshot[field] = _normalize_optional(str(raw_value))
+        if issuer_snapshot.get("company_name"):
+            normalized["issuer_snapshot"] = issuer_snapshot
 
     for field in (
         "payment_provider",
@@ -6889,6 +6936,7 @@ def create_admin_client_range_invoice(
                 seller_legal_entity_id=resolved_seller_legal_entity_id,
                 issued_at=issued_at,
             )
+        recipient_snapshot = _invoice_recipient_snapshot_for_client(db, client)
 
         metadata: dict[str, object] = {
             "kind": "INVOICE_RANGE",
@@ -6921,6 +6969,13 @@ def create_admin_client_range_invoice(
             "split_part_index": split_part_index,
             "split_part_count": split_part_count,
             "billing_entity_label": _billing_entity_label(billing_entity),
+            "client_name": recipient_snapshot["client_name"],
+            "client_billing_address": recipient_snapshot["client_billing_address"],
+            "issuer_snapshot": build_company_identity_snapshot(
+                db,
+                legal_entity_id=resolved_seller_legal_entity_id,
+                billing_entity=billing_entity,
+            ),
         }
         if split_group_id is not None:
             metadata["split_group_id"] = split_group_id
@@ -7088,6 +7143,9 @@ def send_admin_client_range_invoice_email(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
+        client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),
+        issuer_snapshot=metadata.get("issuer_snapshot") if isinstance(metadata.get("issuer_snapshot"), dict) else None,
         inline=False,
         db=db,
         actor=actor,
@@ -7419,6 +7477,9 @@ def download_admin_client_range_invoice(
     private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
     invoice_status: str | None = Query(default=None, max_length=20),
+    client_name_snapshot: str | None = Query(default=None, max_length=255),
+    client_billing_address_snapshot: str | None = Query(default=None, max_length=1000),
+    issuer_snapshot: dict[str, object] | None = None,
     inline: bool = Query(default=False),
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
@@ -7756,8 +7817,11 @@ def download_admin_client_range_invoice(
     normalized_public_note = _normalize_optional(public_note) or _normalize_optional(note) or normalized_auto_footer_note
     normalized_private_note = _normalize_optional(private_note)
     billing_profile = resolve_billing_profile(db, client)
-    client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
-    client_billing_address = _billing_address_label(billing_profile)
+    client_label_live = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
+    client_billing_address_live = _billing_address_label(billing_profile)
+    client_label = client_name_snapshot or client_label_live
+    client_billing_address = client_billing_address_snapshot or client_billing_address_live
+    frozen_company_identity = company_identity_from_snapshot(issuer_snapshot)
     persisted_note_id = note_id
 
     if persist_note:
@@ -7805,6 +7869,13 @@ def download_admin_client_range_invoice(
             "opening_balance_by_currency": opening_balance_payload,
             "total_to_pay_by_currency": total_to_pay_payload,
             "invoice_status": "ISSUED",
+            "client_name": client_label_live,
+            "client_billing_address": client_billing_address_live,
+            "issuer_snapshot": build_company_identity_snapshot(
+                db,
+                legal_entity_id=resolved_seller_legal_entity_id,
+                billing_entity=resolved_billing_entity,
+            ),
         }
         if normalized_auto_footer_note:
             metadata["auto_footer_note"] = normalized_auto_footer_note
@@ -7874,6 +7945,7 @@ def download_admin_client_range_invoice(
         ),
         legal_entity_id=resolved_seller_legal_entity_id,
         billing_entity=resolved_billing_entity,
+        company_identity_override=frozen_company_identity,
     )
     file_name = f"{resolved_invoice_number}.pdf".replace('"', "")
     return Response(
@@ -7963,6 +8035,9 @@ def download_admin_client_range_invoice_from_note(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
+        client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),
+        issuer_snapshot=metadata.get("issuer_snapshot") if isinstance(metadata.get("issuer_snapshot"), dict) else None,
         inline=inline,
         db=db,
         actor=actor,
@@ -8052,6 +8127,9 @@ def download_admin_client_range_invoice_public(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
+        client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),
+        issuer_snapshot=metadata.get("issuer_snapshot") if isinstance(metadata.get("issuer_snapshot"), dict) else None,
         inline=inline,
         db=db,
         actor=client,
