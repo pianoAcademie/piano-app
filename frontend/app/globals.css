@@ -281,6 +281,7 @@ button.danger:focus-visible {
 .agenda-events {
   display: grid;
   gap: 4px;
+  align-content: start;
 }
 
 .agenda-event-shell {
@@ -6773,6 +6774,7 @@ button.danger:focus-visible {
   min-height: 0;
   display: grid;
   gap: 8px;
+  align-content: start;
 }
 
 .client-agenda-day .agenda-day-header h3 {
@@ -6816,6 +6818,12 @@ button.danger:focus-visible {
 .client-session-card-booked .client-agenda-event {
   background: #e9f7ec;
   border-color: #a7d9b1;
+}
+
+.client-session-card-booked .client-session-cta {
+  background: rgba(255, 255, 255, 0.92);
+  color: #28563d;
+  border-color: rgba(40, 86, 61, 0.16);
 }
 
 .client-session-link {
@@ -6871,6 +6879,7 @@ button.danger:focus-visible {
   border-color: #ece8dd;
   padding: 10px;
   gap: 6px;
+  align-content: start;
 }
 
 .client-session-card-compact .client-agenda-event {
@@ -6881,6 +6890,14 @@ button.danger:focus-visible {
 
 .client-event-head {
   align-items: flex-start;
+}
+
+.client-event-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .client-event-head .event-title {
@@ -6908,6 +6925,20 @@ button.danger:focus-visible {
   width: 26px;
   height: 26px;
   border-radius: 8px;
+}
+
+.client-session-location-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid #e2d7c3;
+  background: rgba(255, 251, 244, 0.92);
+  color: #5d4b31;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .client-agenda-event .event-meta {
@@ -6943,6 +6974,7 @@ button.danger:focus-visible {
 
 .client-event-footer {
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .modal-client-session-details {
@@ -6955,6 +6987,7 @@ button.danger:focus-visible {
   display: grid;
   gap: 6px;
   padding: 6px 10px 0;
+  position: relative;
 }
 
 .client-session-modal-header h2 {
@@ -9728,6 +9761,12 @@ button.danger:focus-visible {
   gap: 12px;
 }
 
+.client-session-modal-back-link {
+  justify-self: start;
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
 .client-session-modal-action-list {
   display: grid;
   gap: 10px;
@@ -9742,6 +9781,32 @@ button.danger:focus-visible {
 .client-session-modal-action-list .mode-link {
   width: 100%;
   justify-content: center;
+}
+
+.client-session-primary-button,
+.client-session-secondary-button,
+.client-session-cancel-button {
+  min-height: 44px;
+  border-radius: 12px;
+  font-weight: 700;
+}
+
+.client-session-primary-button {
+  border: 1px solid var(--client-gold);
+  background: var(--client-gold);
+  color: #111827;
+}
+
+.client-session-secondary-button {
+  border: 1px solid #d4c2a3;
+  background: #fffaf2;
+  color: #4b3716;
+}
+
+.client-session-cancel-button {
+  background: #fff4f0;
+  color: #9b2d23;
+  border: 1px solid #efc3bc;
 }
 
 @media (max-width: 980px) {

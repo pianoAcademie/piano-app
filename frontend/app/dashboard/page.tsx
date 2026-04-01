@@ -1611,7 +1611,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       statusLabel = "Reservation fermee";
       contextLine = "Reservation en ligne fermee";
     } else if (actionableMembers.length > 1) {
-      statusLabel = "Choisir le membre";
+      statusLabel = "Reservation possible";
       contextLine = "Choisissez le membre de la famille a inscrire";
     } else if (actionableMembers.length === 1) {
       statusLabel = actionableMembers[0].state.statusLabel;
@@ -1623,7 +1623,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       statusLabel = "Offre incompatible";
       contextLine = "Aucune formule famille compatible";
     } else if (hasDirectPayment) {
-      statusLabel = "Choisir le membre";
+      statusLabel = "Reservation possible";
       contextLine = "Choisissez le membre a rattacher a cette reservation";
     } else {
       statusLabel = "Aucune formule";
@@ -1642,14 +1642,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       hasDirectPayment,
       canCheckout: actionableMembers.length > 0,
       statusLabel,
-      cardStatusLabel: statusLabel,
+      cardStatusLabel: actionableMembers.length > 1 ? "Reserver" : statusLabel,
       contextLine,
       familyBookings,
       actionableMembers,
       actionLabel:
         actionableMembers.length === 1
           ? actionableMembers[0].state.actionLabel
-          : "Choisir le membre",
+          : "Reserver",
     };
   };
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
@@ -1745,6 +1745,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       case "Deja reserve":
       case "Liste d attente":
         return "status-booked";
+      case "Reservation possible":
+      case "Reserver":
+        return "status-scheduled";
       case "Paiement en attente":
         return "status-waitlist";
       case "Disponible":
@@ -2440,10 +2443,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             });
                             const reservationFlagLabel =
                               sessionState.familyBookings.length > 1
-                                ? "Reservations famille"
-                                : bookingOwnerId === FAMILY_BOOKING_OWNER
-                                  ? "Reservation famille"
-                                  : "Mon creneau reserve";
+                                ? `${sessionState.familyBookings.length} reservations`
+                                : null;
                             const cardStatusClass = planningStatusClass(sessionState.cardStatusLabel);
                             const sessionCtaLabel = sessionState.alreadyReserved
                               ? "Voir la reservation"
@@ -2451,7 +2452,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 ? "Finaliser le paiement"
                                 : sessionState.canCheckout
                                   ? sessionState.actionableMembers.length > 1
-                                    ? "Choisir le membre"
+                                    ? "Reserver"
                                     : sessionState.actionLabel
                                   : sessionState.isFull
                                   ? "Complet"
@@ -2479,7 +2480,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   ) : null}
 
                                   <div className={`agenda-event client-agenda-event ${statusClass(session.status)}`}>
-                                    {sessionState.alreadyReserved ? <span className="client-session-owned-flag">{reservationFlagLabel}</span> : null}
+                                    <div className="client-event-topline">
+                                      {sessionState.alreadyReserved ? <span className="client-session-owned-flag">{reservationFlagLabel}</span> : null}
+                                      <span className="client-session-location-chip">{session.location.name}</span>
+                                    </div>
                                     <div className="row spread client-event-head">
                                       <h3 className="event-title">{session.title}</h3>
                                       <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
@@ -2499,15 +2503,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       {bookingBadges.map((booking) => (
                                         <span key={booking.id} className={`status-badge ${statusClass(booking.status)}`}>
                                           {bookingOwnerId === FAMILY_BOOKING_OWNER
-                                            ? `${booking.owner_display_name} · ${isPendingPaymentBooking(booking.status) ? "Paiement en attente" : "Reserve"}`
+                                            ? isPendingPaymentBooking(booking.status)
+                                              ? `${booking.owner_display_name} · Paiement`
+                                              : booking.owner_display_name
                                             : isPendingPaymentBooking(booking.status)
                                               ? "Paiement en attente"
                                               : "Reserve"}
                                         </span>
                                       ))}
-                                      <span className={`status-badge ${cardStatusClass}`}>
-                                        {sessionState.cardStatusLabel}
-                                      </span>
+                                      {!sessionState.alreadyReserved ? (
+                                        <span className={`status-badge ${cardStatusClass}`}>
+                                          {sessionState.cardStatusLabel}
+                                        </span>
+                                      ) : null}
                                       <span className={`client-session-cta ${sessionState.canCheckout || sessionState.paymentPending ? "ready" : ""}`}>
                                         {sessionCtaLabel}
                                       </span>
@@ -2527,20 +2535,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               {selectedSession ? (
                 <section className="modal-overlay">
                   <article className="modal-panel modal-client-session-details">
-                    <a
-                      className="close-link"
-                      href={withUpdatedQuery(rawParams, {
-                        tab: "planning",
-                        session_id: null,
-                        session_ok: null,
-                        session_error: null,
-                      })}
-                      aria-label="Fermer le detail du creneau"
-                    >
-                      ✕
-                    </a>
-
                     <header className="client-session-modal-header">
+                      <a
+                        className="modal-close-x"
+                        href={withUpdatedQuery(rawParams, {
+                          tab: "planning",
+                          session_id: null,
+                          session_ok: null,
+                          session_error: null,
+                        })}
+                        aria-label="Fermer le detail du creneau"
+                      >
+                        ×
+                      </a>
                       <h2>{selectedSession.title}</h2>
                       <p className="muted">
                         {formatDateTimeInTimezone(selectedSession.start_at_utc, timezone)} - {formatTimeInTimezone(selectedSession.end_at_utc, timezone)}
@@ -2616,7 +2623,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                     <footer className="modal-card client-session-modal-actions">
                       <a
-                        className="reset-link"
+                        className="mode-link client-session-modal-back-link"
                         href={withUpdatedQuery(rawParams, {
                           tab: "planning",
                           session_id: null,
@@ -2637,7 +2644,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 name="return_to"
                                 value={withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id })}
                               />
-                              <button className="danger" type="submit">
+                              <button className="client-session-cancel-button" type="submit">
                                 {bookingOwnerId === FAMILY_BOOKING_OWNER
                                   ? `Annuler pour ${booking.owner_display_name}`
                                   : "Annuler la reservation"}
@@ -2659,7 +2666,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <input type="hidden" name="booking_user_id" value={member.id} />
                               <input type="hidden" name="planning_return_to" value={planningReturnTo} />
                               <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
-                              <button type="submit">{actionLabel}</button>
+                              <button
+                                type="submit"
+                                className={
+                                  state.paymentPending || (state.hasDirectPayment && !state.eligibleByPlan)
+                                    ? "client-session-primary-button"
+                                    : "client-session-secondary-button"
+                                }
+                              >
+                                {actionLabel}
+                              </button>
                             </form>
                           );
                         })}
