@@ -81,6 +81,21 @@ If `courses_endpoint` is not set, the service uses:
 
 - `{base_url}/wp-json/piano/v1/courses`
 
+The admin back-office also exposes these settings directly in `Configuration > Activites`, so editing
+`app_settings` manually is optional.
+
+## WordPress plugin
+
+A minimal WordPress plugin is bundled in this repository:
+
+- `wordpress/plugins/piano-academie-learndash-bridge`
+
+It exposes:
+
+- `/wp-json/piano/v1/courses`
+
+and can protect the endpoint with a bearer token configured from the WordPress admin.
+
 ## Current limits
 
 - read-only content sync
@@ -99,10 +114,11 @@ The back-office now exposes two building blocks for V1:
 
 Recommended sequence:
 
-1. configure the WordPress / LearnDash endpoint in `app_settings`
-2. run the catalog sync from the BO
-3. open an activity such as `Cours de solfege en ligne - Niveau 1`
-4. attach one or more synced content courses
+1. install the WordPress plugin `piano-academie-learndash-bridge`
+2. configure the WordPress / LearnDash connection in `Configuration > Activites`
+3. run the catalog sync from the BO
+4. open an activity such as `Cours de solfege en ligne - Niveau 1`
+5. attach one or more synced content courses
 
 The intended business rule remains:
 

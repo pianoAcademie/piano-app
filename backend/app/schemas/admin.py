@@ -701,6 +701,24 @@ class AdminExternalContentSyncOut(BaseModel):
     lessons_deleted: int
 
 
+class AdminExternalContentSettingsOut(BaseModel):
+    base_url: str
+    courses_endpoint: str
+    resolved_endpoint_url: str | None = None
+    bearer_token_configured: bool
+    bearer_token_masked: str
+    timeout_seconds: int
+    updated_at: datetime | None = None
+
+
+class AdminExternalContentSettingsUpdateRequest(BaseModel):
+    base_url: str = Field(default="", max_length=500)
+    courses_endpoint: str = Field(default="", max_length=500)
+    bearer_token: str | None = Field(default=None, max_length=500)
+    clear_bearer_token: bool = False
+    timeout_seconds: int = Field(default=20, ge=5, le=120)
+
+
 class AdminClientOut(BaseModel):
     id: UUID
     email: str

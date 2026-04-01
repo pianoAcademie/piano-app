@@ -25,6 +25,7 @@ import {
   updateAdminCreditTypeAction,
   updateAdminLegalEntityAction,
   updateAdminConfigAccountAction,
+  updateAdminConfigExternalContentSettingsAction,
   updateAdminConfigMessagingSettingsAction,
   updateAdminConfigInvoiceNumberingAction,
   updateAdminConfigInvoiceTemplateAction,
@@ -48,6 +49,7 @@ import type {
   AdminPlanningActivitiesOut,
   AdminConfigAccountOut,
   AdminExternalContentCourseOut,
+  AdminExternalContentSettingsOut,
   AdminMessagingSettingsOut,
   AdminMessagingTemplateOut,
   AdminInvoiceTemplateOut,
@@ -594,6 +596,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     activitiesResult,
     legalEntitiesResult,
     creditTypesResult,
+    externalContentSettingsResult,
     externalContentCoursesResult,
     catalogCategoriesResult,
     catalogProductsResult,
@@ -623,6 +626,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=true", {}, token),
     backendRequest<AdminCreditTypeOut[]>("/api/v1/admin/credit-types?include_inactive=true", {}, token),
+    backendRequest<AdminExternalContentSettingsOut>("/api/v1/admin/config/external-content/wordpress-learndash", {}, token),
     backendRequest<AdminExternalContentCourseOut[]>("/api/v1/admin/external-content/courses", {}, token),
     backendRequest<AdminCatalogCategoryOut[]>("/api/v1/admin/config/catalog/categories?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
@@ -753,6 +757,20 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     : (() => {
         loadErrors.push(`Types de credit: ${creditTypesResult.message}`);
         return [] as AdminCreditTypeOut[];
+      })();
+  const externalContentSettings = externalContentSettingsResult.ok
+    ? externalContentSettingsResult.data
+    : (() => {
+        loadErrors.push(`Connexion WordPress/LearnDash: ${externalContentSettingsResult.message}`);
+        return {
+          base_url: "",
+          courses_endpoint: "",
+          resolved_endpoint_url: null,
+          bearer_token_configured: false,
+          bearer_token_masked: "",
+          timeout_seconds: 20,
+          updated_at: null,
+        } as AdminExternalContentSettingsOut;
       })();
   const externalContentCourses = externalContentCoursesResult.ok
     ? externalContentCoursesResult.data
@@ -3017,6 +3035,76 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
           {section === "activities" ? (
             <>
+              <section className="card">
+                <div className="row between">
+                  <h3>Connexion WordPress / LearnDash</h3>
+                  <small className="muted">
+                    {externalContentSettings.bearer_token_configured ? "Token configure" : "Token non configure"}
+                  </small>
+                </div>
+                <p className="muted">
+                  Renseignez ici l URL de votre site WordPress et, si besoin, un token bearer pour permettre la
+                  synchronisation du catalogue e-learning.
+                </p>
+                <form action={updateAdminConfigExternalContentSettingsAction} className="grid cols-2 config-form-grid">
+                  <label>
+                    URL du site WordPress
+                    <input
+                      type="url"
+                      name="base_url"
+                      defaultValue={externalContentSettings.base_url}
+                      placeholder="https://votre-site.fr"
+                    />
+                  </label>
+                  <label>
+                    Endpoint cours (optionnel)
+                    <input
+                      type="url"
+                      name="courses_endpoint"
+                      defaultValue={externalContentSettings.courses_endpoint}
+                      placeholder="https://votre-site.fr/wp-json/piano/v1/courses"
+                    />
+                    <small className="muted">Laissez vide pour utiliser /wp-json/piano/v1/courses a partir de l URL du site.</small>
+                  </label>
+                  <label>
+                    Token API bearer (optionnel)
+                    <input type="password" name="bearer_token" placeholder="Laissez vide pour conserver le token actuel" />
+                    <small className="muted">
+                      {externalContentSettings.bearer_token_configured
+                        ? `Token actuel: ${externalContentSettings.bearer_token_masked}`
+                        : "Aucun token configure pour le moment."}
+                    </small>
+                  </label>
+                  <label>
+                    Delai d appel (secondes)
+                    <input
+                      type="number"
+                      name="timeout_seconds"
+                      min={5}
+                      max={120}
+                      defaultValue={externalContentSettings.timeout_seconds}
+                      required
+                    />
+                  </label>
+                  <label className="row center gap-sm">
+                    <input type="checkbox" name="clear_bearer_token" />
+                    <span>Supprimer le token actuel</span>
+                  </label>
+                  <div className="item">
+                    <strong>Endpoint utilise</strong>
+                    <p className="muted top-gap-sm">
+                      {externalContentSettings.resolved_endpoint_url ?? "Renseignez l URL du site ou l endpoint explicite pour activer la synchro."}
+                    </p>
+                    <p className="muted">
+                      Plugin a installer sur WordPress: <code>wordpress/plugins/piano-academie-learndash-bridge</code>
+                    </p>
+                  </div>
+                  <div className="span-2 row end">
+                    <button type="submit">Sauvegarder la connexion</button>
+                  </div>
+                </form>
+              </section>
+
               <section className="card">
                 <div className="row between">
                   <h3>Referentiel des activites</h3>

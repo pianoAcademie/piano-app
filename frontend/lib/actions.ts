@@ -67,6 +67,7 @@ import type {
   AdminSubscriptionSettingsOut,
   AdminConfigAccountOut,
   AdminExternalContentCourseOut,
+  AdminExternalContentSettingsOut,
   AdminExternalContentSyncOut,
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
@@ -8808,6 +8809,40 @@ export async function updateAdminConfigPaymentProviderAction(formData: FormData)
 
   revalidatePath("/admin/config");
   redirect("/admin/config?section=params-payments&ok=Configuration%20PSP%20mise%20a%20jour");
+}
+
+export async function updateAdminConfigExternalContentSettingsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const timeoutSeconds = Number.parseInt(String(formData.get("timeout_seconds") ?? "").trim() || "20", 10);
+  const payload = {
+    base_url: String(formData.get("base_url") ?? "").trim(),
+    courses_endpoint: String(formData.get("courses_endpoint") ?? "").trim(),
+    bearer_token: optionalField(formData, "bearer_token"),
+    clear_bearer_token: checkboxField(formData, "clear_bearer_token"),
+    timeout_seconds: Number.isFinite(timeoutSeconds) ? timeoutSeconds : 20,
+  };
+
+  const result = await backendRequest<AdminExternalContentSettingsOut>(
+    "/api/v1/admin/config/external-content/wordpress-learndash",
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(`/admin/config?section=activities&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/admin/config");
+  redirect("/admin/config?section=activities&ok=Connexion%20WordPress%20LearnDash%20mise%20a%20jour");
 }
 
 function normalizeMessagingConfigTab(raw: string, fallback = "settings"): string {

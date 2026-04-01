@@ -1863,6 +1863,16 @@ export type AdminExternalContentSyncOut = {
   lessons_deleted: number;
 };
 
+export type AdminExternalContentSettingsOut = {
+  base_url: string;
+  courses_endpoint: string;
+  resolved_endpoint_url: string | null;
+  bearer_token_configured: boolean;
+  bearer_token_masked: string;
+  timeout_seconds: number;
+  updated_at: string | null;
+};
+
 export type AdminLegalEntityOut = {
   id: string;
   name: string;

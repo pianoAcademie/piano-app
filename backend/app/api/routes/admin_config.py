@@ -46,6 +46,8 @@ from app.schemas.admin import (
     AdminConfigAccountOut,
     AdminConfigAccountUpdateRequest,
     AdminExternalContentCourseOut,
+    AdminExternalContentSettingsOut,
+    AdminExternalContentSettingsUpdateRequest,
     AdminExternalContentSyncOut,
     AdminFormulaOut,
     AdminFormulaCreditGrantIn,
@@ -90,8 +92,14 @@ from app.schemas.admin import (
     AdminSubscriptionSettingsUpdateRequest,
 )
 from app.services.external_content import (
+    DEFAULT_WORDPRESS_LEARNDASH_COURSES_PATH,
+    WORDPRESS_LEARNDASH_BASE_URL_SETTING_KEY,
+    WORDPRESS_LEARNDASH_BEARER_TOKEN_SETTING_KEY,
+    WORDPRESS_LEARNDASH_COURSES_ENDPOINT_SETTING_KEY,
+    WORDPRESS_LEARNDASH_TIMEOUT_SECONDS_SETTING_KEY,
     list_content_course_mappings_for_course_type,
     replace_course_type_content_mappings,
+    resolve_wordpress_learndash_sync_endpoint,
     sync_wordpress_learndash_catalog,
 )
 from app.services.professor_contracts import contract_mode_from_course_type
@@ -624,6 +632,41 @@ def _as_int_or_none(value: str | None) -> int | None:
     except ValueError:
         return None
     return parsed
+
+
+def _external_content_settings_updated_at(db: Session) -> datetime | None:
+    keys = (
+        WORDPRESS_LEARNDASH_BASE_URL_SETTING_KEY,
+        WORDPRESS_LEARNDASH_COURSES_ENDPOINT_SETTING_KEY,
+        WORDPRESS_LEARNDASH_BEARER_TOKEN_SETTING_KEY,
+        WORDPRESS_LEARNDASH_TIMEOUT_SECONDS_SETTING_KEY,
+    )
+    rows = db.scalars(select(AppSetting).where(AppSetting.key.in_(keys))).all()
+    if not rows:
+        return None
+    return max((row.updated_at for row in rows if row.updated_at is not None), default=None)
+
+
+def _serialize_external_content_settings(db: Session) -> AdminExternalContentSettingsOut:
+    base_url = _get_setting_value(db, WORDPRESS_LEARNDASH_BASE_URL_SETTING_KEY, "").strip()
+    courses_endpoint = _get_setting_value(db, WORDPRESS_LEARNDASH_COURSES_ENDPOINT_SETTING_KEY, "").strip()
+    bearer_token = _get_setting_value(db, WORDPRESS_LEARNDASH_BEARER_TOKEN_SETTING_KEY, "").strip()
+    timeout_seconds = _as_int_or_none(_get_setting_value(db, WORDPRESS_LEARNDASH_TIMEOUT_SECONDS_SETTING_KEY, "")) or 20
+    resolved_endpoint_url: str | None = None
+    try:
+        resolved_endpoint_url, _, _ = resolve_wordpress_learndash_sync_endpoint(db)
+    except ValueError:
+        if base_url:
+            resolved_endpoint_url = f"{base_url.rstrip('/')}{DEFAULT_WORDPRESS_LEARNDASH_COURSES_PATH}"
+    return AdminExternalContentSettingsOut(
+        base_url=base_url,
+        courses_endpoint=courses_endpoint,
+        resolved_endpoint_url=resolved_endpoint_url,
+        bearer_token_configured=bool(bearer_token),
+        bearer_token_masked=mask_payment_secret(bearer_token),
+        timeout_seconds=max(5, timeout_seconds),
+        updated_at=_external_content_settings_updated_at(db),
+    )
 
 
 def _default_subscription_retry_policy(db: Session) -> SubscriptionRetryPolicy:
@@ -1430,6 +1473,39 @@ def list_admin_external_content_courses(
         )
         for row in rows
     ]
+
+
+@router.get("/config/external-content/wordpress-learndash", response_model=AdminExternalContentSettingsOut)
+def get_admin_external_content_wordpress_learndash_settings(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminExternalContentSettingsOut:
+    return _serialize_external_content_settings(db)
+
+
+@router.put("/config/external-content/wordpress-learndash", response_model=AdminExternalContentSettingsOut)
+def update_admin_external_content_wordpress_learndash_settings(
+    payload: AdminExternalContentSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminExternalContentSettingsOut:
+    base_url = payload.base_url.strip().rstrip("/")
+    courses_endpoint = payload.courses_endpoint.strip()
+    timeout_seconds = max(5, payload.timeout_seconds)
+    current_token = _get_setting_value(db, WORDPRESS_LEARNDASH_BEARER_TOKEN_SETTING_KEY, "").strip()
+    next_token = ""
+    if payload.clear_bearer_token:
+        next_token = ""
+    else:
+        submitted_token = (payload.bearer_token or "").strip()
+        next_token = submitted_token or current_token
+
+    _set_setting(db, WORDPRESS_LEARNDASH_BASE_URL_SETTING_KEY, base_url)
+    _set_setting(db, WORDPRESS_LEARNDASH_COURSES_ENDPOINT_SETTING_KEY, courses_endpoint)
+    _set_setting(db, WORDPRESS_LEARNDASH_BEARER_TOKEN_SETTING_KEY, next_token)
+    _set_setting(db, WORDPRESS_LEARNDASH_TIMEOUT_SECONDS_SETTING_KEY, str(timeout_seconds))
+    db.commit()
+    return _serialize_external_content_settings(db)
 
 
 @router.post("/external-content/sync/wordpress-learndash", response_model=AdminExternalContentSyncOut)
