@@ -572,17 +572,25 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         name="Student Portal Login Setup",
         channel="EMAIL",
         subject="Activation de votre compte client Piano Academie",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Votre acces client est pret.\n"
-            "Identifiant: {email}\n"
-            "Mot de passe temporaire: {temporary_password}\n"
-            "Connexion: {login_url}\n\n"
-            "Merci de vous connecter puis de modifier ce mot de passe.\n\n"
-            "Piano Academie"
+        body=_email_layout(
+            _email_title(
+                "Votre espace client est pret",
+                "Bonjour {first_name}, votre acces Piano Academie est maintenant active.",
+            ),
+            _email_summary(
+                [
+                    ("Identifiant", "{email}"),
+                    ("Mot de passe temporaire", "{temporary_password}"),
+                ]
+            ),
+            _email_button("{login_url}", "Acceder a mon espace client"),
+            _email_secondary(
+                "Lors de votre premiere connexion, nous vous invitons a modifier ce mot de passe afin de securiser votre compte."
+            ),
         ),
         description="Activation du portail client et envoi du mot de passe temporaire.",
         variables_hint="{first_name} {last_name} {full_name} {email} {temporary_password} {login_url}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,

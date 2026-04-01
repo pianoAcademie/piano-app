@@ -11,13 +11,12 @@ MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 DEFAULT_CLIENT_PASSWORD_EMAIL_SUBJECT = "Activation de votre compte client Piano Academie"
 DEFAULT_CLIENT_PASSWORD_EMAIL_BODY = (
-    "Bonjour {first_name},\n\n"
-    "Votre acces client est pret.\n"
-    "Identifiant: {email}\n"
-    "Mot de passe temporaire: {temporary_password}\n"
-    "Connexion: {login_url}\n\n"
-    "Merci de vous connecter puis de modifier ce mot de passe.\n\n"
-    "Piano Academie"
+    "<h1>Votre espace client est pret</h1>"
+    "<p>Bonjour {first_name}, votre acces Piano Academie est maintenant active.</p>"
+    "<p><strong>Identifiant :</strong> {email}<br>"
+    "<strong>Mot de passe temporaire :</strong> {temporary_password}</p>"
+    "<p><a href=\"{login_url}\">Acceder a mon espace client</a></p>"
+    "<p>Lors de votre premiere connexion, nous vous invitons a modifier ce mot de passe afin de securiser votre compte.</p>"
 )
 
 
