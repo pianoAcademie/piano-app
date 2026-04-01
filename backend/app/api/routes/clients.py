@@ -32,6 +32,13 @@ from app.models.catalog import (
     SessionStatus,
 )
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
+from app.models.external_content import (
+    CourseTypeContentMapping,
+    ExternalContentCourse,
+    ExternalContentLesson,
+    ExternalContentSection,
+    ExternalContentStatus,
+)
 from app.models.family import ClientFamilyLink
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
 from app.models.ops import (
@@ -47,6 +54,10 @@ from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.booking import BookingCreateRequest
 from app.schemas.user import (
+    ClientContentCourseOut,
+    ClientContentLessonOut,
+    ClientContentMemberAccessOut,
+    ClientContentSectionOut,
     ClientFamilyOverviewOut,
     ClientInvoiceOut,
     ClientPaymentConfirmOut,
@@ -973,6 +984,214 @@ def _managed_client_ids_for_sessions(db: Session, current_user: User) -> set[UUI
     return managed_ids
 
 
+def _client_content_lesson_out(lesson: ExternalContentLesson) -> ClientContentLessonOut:
+    return ClientContentLessonOut(
+        id=lesson.id,
+        external_id=lesson.external_id,
+        slug=lesson.slug,
+        title=lesson.title,
+        position=lesson.position,
+        summary=lesson.summary,
+        content_html=lesson.content_html,
+        video_url=lesson.video_url,
+        resource_url=lesson.resource_url,
+        status=lesson.status.value if hasattr(lesson.status, "value") else str(lesson.status),
+    )
+
+
+def _client_content_courses(
+    db: Session,
+    *,
+    current_user: User,
+    member_id: UUID | None = None,
+) -> list[ClientContentCourseOut]:
+    managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
+    target_member_ids = managed_client_ids
+    if member_id is not None:
+        if member_id not in managed_client_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+        target_member_ids = {member_id}
+
+    member_rows = db.scalars(select(User).where(User.id.in_(target_member_ids))).all() if target_member_ids else []
+    members_by_id = {member.id: member for member in member_rows}
+    if not members_by_id:
+        return []
+
+    now = _utcnow()
+    entitlement_rows = db.execute(
+        select(
+            ClientPlanSubscription.user_id,
+            PlanEntitlement.course_type_id,
+            CourseType.name,
+        )
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .join(PlanEntitlement, PlanEntitlement.plan_id == ClientPlanSubscription.plan_id)
+        .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
+        .where(
+            ClientPlanSubscription.user_id.in_(target_member_ids),
+            ClientPlanSubscription.status.in_([
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.PAYMENT_ALERT,
+                SubscriptionStatus.PAUSED,
+            ]),
+            ClientPlanSubscription.started_at <= now,
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
+            Plan.active.is_(True),
+        )
+    ).all()
+
+    course_type_ids_by_member: dict[UUID, set[UUID]] = defaultdict(set)
+    course_type_names_by_member: dict[UUID, dict[UUID, str]] = defaultdict(dict)
+    for owner_id, course_type_id, course_type_name in entitlement_rows:
+        course_type_ids_by_member[owner_id].add(course_type_id)
+        course_type_names_by_member[owner_id][course_type_id] = course_type_name
+
+    all_course_type_ids = sorted(
+        {course_type_id for values in course_type_ids_by_member.values() for course_type_id in values},
+        key=lambda value: str(value),
+    )
+    if not all_course_type_ids:
+        return []
+
+    mapping_rows = db.execute(
+        select(CourseTypeContentMapping, ExternalContentCourse, CourseType)
+        .join(ExternalContentCourse, ExternalContentCourse.id == CourseTypeContentMapping.content_course_id)
+        .join(CourseType, CourseType.id == CourseTypeContentMapping.course_type_id)
+        .where(
+            CourseTypeContentMapping.course_type_id.in_(all_course_type_ids),
+            CourseTypeContentMapping.active.is_(True),
+            ExternalContentCourse.status == ExternalContentStatus.PUBLISHED,
+        )
+        .order_by(
+            ExternalContentCourse.level_code.asc().nulls_last(),
+            CourseTypeContentMapping.sort_order.asc(),
+            ExternalContentCourse.title.asc(),
+        )
+    ).all()
+    if not mapping_rows:
+        return []
+
+    course_ids = [course.id for _, course, _ in mapping_rows]
+    section_rows = db.scalars(
+        select(ExternalContentSection)
+        .where(ExternalContentSection.course_id.in_(course_ids))
+        .order_by(
+            ExternalContentSection.course_id.asc(),
+            ExternalContentSection.position.asc(),
+            ExternalContentSection.title.asc(),
+        )
+    ).all()
+    lesson_rows = db.scalars(
+        select(ExternalContentLesson)
+        .where(
+            ExternalContentLesson.course_id.in_(course_ids),
+            ExternalContentLesson.status == ExternalContentStatus.PUBLISHED,
+        )
+        .order_by(
+            ExternalContentLesson.course_id.asc(),
+            ExternalContentLesson.section_id.asc().nulls_first(),
+            ExternalContentLesson.position.asc(),
+            ExternalContentLesson.title.asc(),
+        )
+    ).all()
+
+    sections_by_course: dict[UUID, list[ExternalContentSection]] = defaultdict(list)
+    for section in section_rows:
+        sections_by_course[section.course_id].append(section)
+
+    lessons_by_section: dict[UUID, list[ExternalContentLesson]] = defaultdict(list)
+    standalone_lessons_by_course: dict[UUID, list[ExternalContentLesson]] = defaultdict(list)
+    for lesson in lesson_rows:
+        if lesson.section_id is None:
+            standalone_lessons_by_course[lesson.course_id].append(lesson)
+        else:
+            lessons_by_section[lesson.section_id].append(lesson)
+
+    course_entries: dict[UUID, dict[str, object]] = {}
+    for mapping, course, course_type in mapping_rows:
+        entitled_member_ids = [
+            member_uuid
+            for member_uuid, member_course_type_ids in course_type_ids_by_member.items()
+            if mapping.course_type_id in member_course_type_ids
+        ]
+        if not entitled_member_ids:
+            continue
+
+        if course.id not in course_entries:
+            course_entries[course.id] = {
+                "course": course,
+                "member_accesses": {},
+            }
+        access_map: dict[UUID, dict[str, object]] = course_entries[course.id]["member_accesses"]  # type: ignore[assignment]
+
+        for member_uuid in entitled_member_ids:
+            member = members_by_id.get(member_uuid)
+            if member is None:
+                continue
+            access_entry = access_map.get(member_uuid)
+            if access_entry is None:
+                access_entry = {
+                    "member": member,
+                    "course_type_ids": [],
+                    "course_type_names": [],
+                }
+                access_map[member_uuid] = access_entry
+            course_type_ids_list: list[UUID] = access_entry["course_type_ids"]  # type: ignore[assignment]
+            course_type_names_list: list[str] = access_entry["course_type_names"]  # type: ignore[assignment]
+            if mapping.course_type_id not in course_type_ids_list:
+                course_type_ids_list.append(mapping.course_type_id)
+            if course_type.name not in course_type_names_list:
+                course_type_names_list.append(course_type.name)
+
+    payload: list[ClientContentCourseOut] = []
+    for entry in course_entries.values():
+        course: ExternalContentCourse = entry["course"]  # type: ignore[assignment]
+        access_map: dict[UUID, dict[str, object]] = entry["member_accesses"]  # type: ignore[assignment]
+        section_payload = [
+            ClientContentSectionOut(
+                id=section.id,
+                external_id=section.external_id,
+                title=section.title,
+                position=section.position,
+                lessons=[_client_content_lesson_out(lesson) for lesson in lessons_by_section.get(section.id, [])],
+            )
+            for section in sections_by_course.get(course.id, [])
+        ]
+        member_accesses = sorted(
+            [
+                ClientContentMemberAccessOut(
+                    member_id=member_uuid,
+                    member_display_name=_display_name(access_entry["member"]),  # type: ignore[arg-type]
+                    member_email=access_entry["member"].email,  # type: ignore[index]
+                    course_type_ids=sorted(access_entry["course_type_ids"], key=lambda value: str(value)),  # type: ignore[arg-type]
+                    course_type_names=sorted(access_entry["course_type_names"], key=str.lower),  # type: ignore[arg-type]
+                )
+                for member_uuid, access_entry in access_map.items()
+            ],
+            key=lambda row: row.member_display_name.lower(),
+        )
+        payload.append(
+            ClientContentCourseOut(
+                id=course.id,
+                provider=course.provider.value if hasattr(course.provider, "value") else str(course.provider),
+                external_id=course.external_id,
+                slug=course.slug,
+                title=course.title,
+                summary=course.summary,
+                level_code=course.level_code,
+                status=course.status.value if hasattr(course.status, "value") else str(course.status),
+                cover_image_url=course.cover_image_url,
+                last_synced_at=course.last_synced_at,
+                member_accesses=member_accesses,
+                sections=section_payload,
+                standalone_lessons=[_client_content_lesson_out(lesson) for lesson in standalone_lessons_by_course.get(course.id, [])],
+            )
+        )
+
+    payload.sort(key=lambda row: ((row.level_code or "").lower(), row.title.lower()))
+    return payload
+
+
 def _message_scope_since(scope: ClientMessageScope) -> datetime | None:
     now = _utcnow()
     if scope == ClientMessageScope.LAST_3_MONTHS:
@@ -1513,6 +1732,19 @@ def get_client_family_overview(
             )
             for booking, session, owner in rows_bookings
         ],
+    )
+
+
+@router.get("/clients/me/content-courses", response_model=list[ClientContentCourseOut])
+def list_client_content_courses(
+    member_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> list[ClientContentCourseOut]:
+    return _client_content_courses(
+        db,
+        current_user=current_user,
+        member_id=member_id,
     )
 
 

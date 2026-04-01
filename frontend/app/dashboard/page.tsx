@@ -24,6 +24,8 @@ import {
 } from "../../lib/reference-data";
 import type {
   ClientBookingOut,
+  ClientContentCourseOut,
+  ClientContentLessonOut,
   ClientFamilyOverviewOut,
   ClientPaymentConfirmOut,
   ClientInvoiceOut,
@@ -59,7 +61,7 @@ import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
-type DashboardTab = "home" | "planning" | "reservations" | "offers" | "finance" | "messages" | "account";
+type DashboardTab = "home" | "planning" | "courses" | "reservations" | "offers" | "finance" | "messages" | "account";
 type MessageScope = "LAST_3_MONTHS" | "CURRENT_YEAR" | "ALL";
 type TimeBucket = "ALL" | "MORNING" | "AFTERNOON" | "EVENING";
 type PlanningSlotFilter = "ALL" | "AVAILABLE" | "ALREADY_BOOKED";
@@ -157,7 +159,7 @@ function parseTab(value: string): DashboardTab {
   if (value === "transactions") {
     return "finance";
   }
-  if (value === "planning" || value === "reservations" || value === "offers" || value === "finance" || value === "messages" || value === "account") {
+  if (value === "planning" || value === "courses" || value === "reservations" || value === "offers" || value === "finance" || value === "messages" || value === "account") {
     return value;
   }
   return "home";
@@ -815,6 +817,34 @@ function memberDisplayName(member: { first_name: string | null; last_name: strin
   return fullName || member.email;
 }
 
+function flattenCourseLessons(
+  course: ClientContentCourseOut | null,
+): Array<{ lesson: ClientContentLessonOut; sectionTitle: string | null }> {
+  if (!course) {
+    return [];
+  }
+  const rows: Array<{ lesson: ClientContentLessonOut; sectionTitle: string | null }> = [];
+  for (const section of course.sections) {
+    for (const lesson of section.lessons) {
+      rows.push({ lesson, sectionTitle: section.title });
+    }
+  }
+  for (const lesson of course.standalone_lessons) {
+    rows.push({ lesson, sectionTitle: null });
+  }
+  return rows;
+}
+
+function courseAudienceLabel(course: ClientContentCourseOut): string {
+  if (course.member_accesses.length === 0) {
+    return "Acces non determine";
+  }
+  if (course.member_accesses.length === 1) {
+    return course.member_accesses[0].member_display_name;
+  }
+  return `${course.member_accesses.length} membres de la famille`;
+}
+
 function emptyAsAll(value: string): string {
   return value.trim() || "ALL";
 }
@@ -881,8 +911,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const reservationScope = readParam(searchParams, "reservation_scope") || "CURRENT";
   const reservationStatusFilter = readParam(searchParams, "reservation_status");
   const selectedMemberFilter = emptyAsAll(readParam(searchParams, "member_id"));
+  const selectedContentMemberFilter = emptyAsAll(readParam(searchParams, "content_member_id"));
   const selectedBookingOwner = readParam(searchParams, "booking_owner_id") || FAMILY_BOOKING_OWNER;
   const selectedSessionId = readParam(searchParams, "session_id");
+  const selectedContentCourseId = readParam(searchParams, "content_course_id");
+  const selectedContentLessonId = readParam(searchParams, "content_lesson_id");
   const selectedOfferDetailId = readParam(searchParams, "offer_detail_id");
   const messageScope = parseMessageScope(readParam(searchParams, "message_scope"));
   const financeSourceFilter = readParam(searchParams, "finance_source") || "ALL";
@@ -944,6 +977,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     subscriptionsResult,
     ownBookingsResult,
     familyResult,
+    contentCoursesResult,
     messagesResult,
     paymentsResult,
     invoicesResult,
@@ -955,6 +989,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     backendRequest<SubscriptionOut[]>("/api/v1/clients/me/subscriptions", {}, token),
     backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, token),
     backendRequest<ClientFamilyOverviewOut>("/api/v1/clients/me/family", {}, token),
+    backendRequest<ClientContentCourseOut[]>("/api/v1/clients/me/content-courses", {}, token),
     backendRequest<ClientMessageOut[]>(`/api/v1/clients/me/messages?scope=${messageScope}`, {}, token),
     backendRequest<ClientPaymentOut[]>("/api/v1/clients/me/payments", {}, token),
     backendRequest<ClientInvoiceOut[]>("/api/v1/clients/me/invoices", {}, token),
@@ -1022,6 +1057,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : (() => {
         errors.push(`family: ${familyResult.message}`);
         return null;
+      })();
+
+  const contentCourses = contentCoursesResult.ok
+    ? contentCoursesResult.data
+    : (() => {
+        errors.push(`content-courses: ${contentCoursesResult.message}`);
+        return [] as ClientContentCourseOut[];
       })();
 
   const messages = messagesResult.ok
@@ -1109,6 +1151,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const members = [...memberMap.values()].sort((a, b) => a.display_name.localeCompare(b.display_name, "fr"));
   const linkedMembers = members.filter((member) => member.id !== me.id);
   const validMemberIds = new Set(members.map((member) => member.id));
+  const contentMemberFilter = selectedContentMemberFilter === "ALL" || validMemberIds.has(selectedContentMemberFilter)
+    ? selectedContentMemberFilter
+    : "ALL";
   const isFamilyBookingOwner = selectedBookingOwner === FAMILY_BOOKING_OWNER;
   const bookingOwnerId = isFamilyBookingOwner
     ? FAMILY_BOOKING_OWNER
@@ -1119,6 +1164,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ? null
     : members.find((member) => member.id === bookingOwnerId) ?? members[0] ?? null;
   const bookingOwnerLabel = bookingOwnerId === FAMILY_BOOKING_OWNER ? "Toute la famille" : bookingOwnerMember?.display_name ?? "-";
+  const filteredContentCourses = contentCourses.filter((course) =>
+    contentMemberFilter === "ALL"
+      ? true
+      : course.member_accesses.some((access) => access.member_id === contentMemberFilter),
+  );
+  const selectedContentCourse =
+    filteredContentCourses.find((course) => course.id === selectedContentCourseId)
+    ?? filteredContentCourses[0]
+    ?? null;
+  const selectedContentLessons = flattenCourseLessons(selectedContentCourse);
+  const selectedContentLesson =
+    selectedContentLessons.find((entry) => entry.lesson.id === selectedContentLessonId)
+    ?? selectedContentLessons[0]
+    ?? null;
 
   const allBookings: FamilyBookingRow[] = family
     ? [...family.bookings]
@@ -1648,6 +1707,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const tabLinks: Array<{ id: DashboardTab; label: string; icon: string }> = [
     { id: "home", label: "Accueil", icon: "🏠" },
     { id: "planning", label: "Planning", icon: "📅" },
+    { id: "courses", label: "Mes cours", icon: "📚" },
     { id: "reservations", label: "Réservations", icon: "✅" },
     { id: "offers", label: "Forfaits", icon: "🧾" },
     { id: "finance", label: "Finance", icon: "💳" },
@@ -1657,6 +1717,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const mobileTabLinks = [
     { id: "home", label: "Accueil", icon: "🏠", href: withUpdatedQuery(rawParams, { tab: "home" }) },
     { id: "planning", label: "Planning", icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
+    { id: "courses", label: "Cours", icon: "📚", href: withUpdatedQuery(rawParams, { tab: "courses" }) },
     { id: "reservations", label: "Réservations", icon: "✅", href: withUpdatedQuery(rawParams, { tab: "reservations" }) },
     { id: "finance", label: "Finance", icon: "💳", href: withUpdatedQuery(rawParams, { tab: "finance" }) },
     { id: "account", label: "Compte", icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
@@ -1761,6 +1822,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "home" })}>
                 Accueil
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "courses" })}>
+                Mes cours
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>
                 Compte
@@ -2620,6 +2684,233 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </section>
               ) : null}
 
+            </>
+          ) : null}
+
+          {tab === "courses" ? (
+            <>
+              <Card className="client-content-shell">
+                <div className="row spread client-content-heading">
+                  <div>
+                    <h2>Mes cours en ligne</h2>
+                    <p className="muted">Retrouvez ici les contenus de solfege rattaches a vos activites actives.</p>
+                  </div>
+                  <span className="badge">{filteredContentCourses.length} cours</span>
+                </div>
+                <form method="get" className="client-content-filter-form">
+                  <input type="hidden" name="tab" value="courses" />
+                  <label className="client-content-member-filter">
+                    <span>Afficher pour</span>
+                    <AutoSubmitSelect
+                      name="content_member_id"
+                      defaultValue={contentMemberFilter}
+                      options={[
+                        { value: "ALL", label: "Toute la famille" },
+                        ...members.map((member) => ({ value: member.id, label: member.display_name })),
+                      ]}
+                    />
+                  </label>
+                </form>
+              </Card>
+
+              <div className="client-content-layout">
+                <SectionCard
+                  title="Cours accessibles"
+                  className="client-content-course-list-card"
+                  action={selectedContentCourse ? <span className="badge">{courseAudienceLabel(selectedContentCourse)}</span> : undefined}
+                >
+                  {filteredContentCourses.length === 0 ? (
+                    <div className="client-content-empty-state">
+                      <strong>Aucun cours en ligne disponible pour le moment.</strong>
+                      <p className="muted">
+                        Des qu une activite en ligne avec contenu pedagogique sera active sur votre compte, elle apparaitra ici.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="client-content-course-list">
+                      {filteredContentCourses.map((course) => {
+                        const totalLessons =
+                          course.standalone_lessons.length +
+                          course.sections.reduce((sum, section) => sum + section.lessons.length, 0);
+                        return (
+                          <a
+                            key={course.id}
+                            className={`client-content-course-card ${selectedContentCourse?.id === course.id ? "active" : ""}`}
+                            href={withUpdatedQuery(rawParams, {
+                              tab: "courses",
+                              content_member_id: contentMemberFilter === "ALL" ? null : contentMemberFilter,
+                              content_course_id: course.id,
+                              content_lesson_id: null,
+                            })}
+                          >
+                            <div className="client-content-course-card-top">
+                              <div>
+                                {course.level_code ? <span className="badge">{course.level_code}</span> : null}
+                                <h3>{course.title}</h3>
+                              </div>
+                              <span className="badge">{totalLessons} lecons</span>
+                            </div>
+                            {course.summary ? <p>{course.summary}</p> : null}
+                            <div className="client-content-course-card-meta">
+                              <span>{courseAudienceLabel(course)}</span>
+                              <span>
+                                {course.member_accesses
+                                  .flatMap((access) => access.course_type_names)
+                                  .filter((value, index, array) => array.indexOf(value) === index)
+                                  .join(" · ")}
+                              </span>
+                            </div>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  )}
+                </SectionCard>
+
+                <SectionCard
+                  title={selectedContentCourse ? selectedContentCourse.title : "Selectionnez un cours"}
+                  className="client-content-course-detail-card"
+                  action={selectedContentCourse?.level_code ? <span className="badge">{selectedContentCourse.level_code}</span> : undefined}
+                >
+                  {!selectedContentCourse ? (
+                    <div className="client-content-empty-state">
+                      <strong>Choisissez un cours pour afficher son contenu.</strong>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="client-content-course-hero">
+                        <div className="client-content-course-hero-copy">
+                          <FilterChipsBar className="client-content-access-chips">
+                            {selectedContentCourse.member_accesses.map((access) => (
+                              <span key={`course-member-${access.member_id}`} className="badge">
+                                {access.member_display_name}
+                              </span>
+                            ))}
+                          </FilterChipsBar>
+                          {selectedContentCourse.summary ? (
+                            <p className="client-content-course-summary">{selectedContentCourse.summary}</p>
+                          ) : null}
+                          <p className="muted client-content-course-bridge">
+                            Accessible via{" "}
+                            {selectedContentCourse.member_accesses
+                              .flatMap((access) => access.course_type_names)
+                              .filter((value, index, array) => array.indexOf(value) === index)
+                              .join(", ")}
+                          </p>
+                        </div>
+                        {selectedContentCourse.cover_image_url ? (
+                          <img
+                            className="client-content-course-cover"
+                            src={selectedContentCourse.cover_image_url}
+                            alt={`Illustration ${selectedContentCourse.title}`}
+                          />
+                        ) : null}
+                      </div>
+
+                      <div className="client-content-detail-grid">
+                        <aside className="client-content-outline">
+                          {selectedContentCourse.sections.map((section) => (
+                            <section key={`section-${section.id}`} className="client-content-outline-section">
+                              <header>
+                                <span className="badge">{section.lessons.length}</span>
+                                <h3>{section.title}</h3>
+                              </header>
+                              <div className="client-content-outline-lessons">
+                                {section.lessons.map((lesson) => (
+                                  <a
+                                    key={`lesson-${lesson.id}`}
+                                    className={`client-content-lesson-link ${selectedContentLesson?.lesson.id === lesson.id ? "active" : ""}`}
+                                    href={withUpdatedQuery(rawParams, {
+                                      tab: "courses",
+                                      content_member_id: contentMemberFilter === "ALL" ? null : contentMemberFilter,
+                                      content_course_id: selectedContentCourse.id,
+                                      content_lesson_id: lesson.id,
+                                    })}
+                                  >
+                                    <strong>{lesson.title}</strong>
+                                    {lesson.summary ? <span>{lesson.summary}</span> : null}
+                                  </a>
+                                ))}
+                              </div>
+                            </section>
+                          ))}
+
+                          {selectedContentCourse.standalone_lessons.length > 0 ? (
+                            <section className="client-content-outline-section">
+                              <header>
+                                <span className="badge">{selectedContentCourse.standalone_lessons.length}</span>
+                                <h3>Lecons</h3>
+                              </header>
+                              <div className="client-content-outline-lessons">
+                                {selectedContentCourse.standalone_lessons.map((lesson) => (
+                                  <a
+                                    key={`standalone-${lesson.id}`}
+                                    className={`client-content-lesson-link ${selectedContentLesson?.lesson.id === lesson.id ? "active" : ""}`}
+                                    href={withUpdatedQuery(rawParams, {
+                                      tab: "courses",
+                                      content_member_id: contentMemberFilter === "ALL" ? null : contentMemberFilter,
+                                      content_course_id: selectedContentCourse.id,
+                                      content_lesson_id: lesson.id,
+                                    })}
+                                  >
+                                    <strong>{lesson.title}</strong>
+                                    {lesson.summary ? <span>{lesson.summary}</span> : null}
+                                  </a>
+                                ))}
+                              </div>
+                            </section>
+                          ) : null}
+                        </aside>
+
+                        <article className="client-content-lesson-panel">
+                          {selectedContentLesson ? (
+                            <>
+                              <header className="client-content-lesson-header">
+                                {selectedContentLesson.sectionTitle ? (
+                                  <span className="badge">{selectedContentLesson.sectionTitle}</span>
+                                ) : null}
+                                <h3>{selectedContentLesson.lesson.title}</h3>
+                                {selectedContentLesson.lesson.summary ? (
+                                  <p className="muted">{selectedContentLesson.lesson.summary}</p>
+                                ) : null}
+                              </header>
+
+                              <div className="client-content-lesson-actions">
+                                {selectedContentLesson.lesson.video_url ? (
+                                  <a className="mode-link" href={selectedContentLesson.lesson.video_url} target="_blank" rel="noreferrer">
+                                    Ouvrir la video
+                                  </a>
+                                ) : null}
+                                {selectedContentLesson.lesson.resource_url ? (
+                                  <a className="mode-link" href={selectedContentLesson.lesson.resource_url} target="_blank" rel="noreferrer">
+                                    Ressource jointe
+                                  </a>
+                                ) : null}
+                              </div>
+
+                              {selectedContentLesson.lesson.content_html ? (
+                                <div
+                                  className="client-content-lesson-body"
+                                  dangerouslySetInnerHTML={{ __html: selectedContentLesson.lesson.content_html }}
+                                />
+                              ) : (
+                                <div className="client-content-empty-state">
+                                  <strong>Le contenu detaille de cette lecon n est pas encore disponible.</strong>
+                                  <p className="muted">Le titre et les ressources sont deja synchronises depuis WordPress / LearnDash.</p>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="client-content-empty-state">
+                              <strong>Ce cours ne contient pas encore de lecon publiee.</strong>
+                            </div>
+                          )}
+                        </article>
+                      </div>
+                    </>
+                  )}
+                </SectionCard>
+              </div>
             </>
           ) : null}
 

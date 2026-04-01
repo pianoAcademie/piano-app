@@ -168,6 +168,51 @@ class ClientFamilyOverviewOut(BaseModel):
     bookings: list[FamilyBookingOut]
 
 
+class ClientContentLessonOut(BaseModel):
+    id: UUID
+    external_id: str
+    slug: str | None
+    title: str
+    position: int
+    summary: str | None
+    content_html: str | None
+    video_url: str | None
+    resource_url: str | None
+    status: str
+
+
+class ClientContentSectionOut(BaseModel):
+    id: UUID
+    external_id: str
+    title: str
+    position: int
+    lessons: list[ClientContentLessonOut] = Field(default_factory=list)
+
+
+class ClientContentMemberAccessOut(BaseModel):
+    member_id: UUID
+    member_display_name: str
+    member_email: str
+    course_type_ids: list[UUID] = Field(default_factory=list)
+    course_type_names: list[str] = Field(default_factory=list)
+
+
+class ClientContentCourseOut(BaseModel):
+    id: UUID
+    provider: str
+    external_id: str
+    slug: str | None
+    title: str
+    summary: str | None
+    level_code: str | None
+    status: str
+    cover_image_url: str | None
+    last_synced_at: datetime | None
+    member_accesses: list[ClientContentMemberAccessOut] = Field(default_factory=list)
+    sections: list[ClientContentSectionOut] = Field(default_factory=list)
+    standalone_lessons: list[ClientContentLessonOut] = Field(default_factory=list)
+
+
 class ClientMessageScope(str, enum.Enum):
     LAST_3_MONTHS = "LAST_3_MONTHS"
     CURRENT_YEAR = "CURRENT_YEAR"

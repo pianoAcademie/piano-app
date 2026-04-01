@@ -85,8 +85,7 @@ If `courses_endpoint` is not set, the service uses:
 
 - read-only content sync
 - BO mapping is limited to the admin configuration screen for activities
-- no client-facing "Mes cours" UI yet
-- no public/client API yet for "Mes cours"
+- client access is derived from active subscriptions / enrollments only
 - no progress tracking
 - no deletion of missing courses globally, because a sync endpoint may expose only a subset
 - missing sections and lessons **inside a synced course** are removed during sync, because WordPress is the source of truth for that course outline
@@ -110,3 +109,19 @@ The intended business rule remains:
 - WordPress / LearnDash stores the pedagogical catalog
 - Piano Academie decides which students can access which content
 - access is derived from the student's active enrollment on the mapped activity
+
+## Client portal usage
+
+The client portal now exposes a `Mes cours` tab.
+
+This tab:
+
+- lists the synced courses available for the family
+- lets the user filter by family member
+- shows the course outline with sections and lessons
+- renders lesson HTML synced from WordPress / LearnDash
+
+Current access rule for the portal:
+
+- a content course is visible when one of the user's active subscriptions exposes a `course_type`
+- and this `course_type` is mapped to one or more external content courses

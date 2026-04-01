@@ -635,6 +635,51 @@ export type ClientMessageOut = {
   content_preview: string | null;
 };
 
+export type ClientContentLessonOut = {
+  id: string;
+  external_id: string;
+  slug: string | null;
+  title: string;
+  position: number;
+  summary: string | null;
+  content_html: string | null;
+  video_url: string | null;
+  resource_url: string | null;
+  status: string;
+};
+
+export type ClientContentSectionOut = {
+  id: string;
+  external_id: string;
+  title: string;
+  position: number;
+  lessons: ClientContentLessonOut[];
+};
+
+export type ClientContentMemberAccessOut = {
+  member_id: string;
+  member_display_name: string;
+  member_email: string;
+  course_type_ids: string[];
+  course_type_names: string[];
+};
+
+export type ClientContentCourseOut = {
+  id: string;
+  provider: string;
+  external_id: string;
+  slug: string | null;
+  title: string;
+  summary: string | null;
+  level_code: string | null;
+  status: string;
+  cover_image_url: string | null;
+  last_synced_at: string | null;
+  member_accesses: ClientContentMemberAccessOut[];
+  sections: ClientContentSectionOut[];
+  standalone_lessons: ClientContentLessonOut[];
+};
+
 export type ClientPaymentOut = {
   id: string;
   owner_client_id: string;
