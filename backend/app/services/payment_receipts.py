@@ -228,6 +228,22 @@ def _create_invoice_range_public_download_token(
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
+def _create_invoice_range_public_payment_token(
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    invoice_number: str,
+) -> str:
+    payload = {
+        "scope": "INVOICE_RANGE_PUBLIC_PAY",
+        "client_id": str(client_id),
+        "note_id": str(note_id),
+        "invoice_number": invoice_number,
+        "exp": int((_utcnow() + timedelta(days=365)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
 def _public_invoice_range_download_url(
     *,
     client_id: UUID,
@@ -244,6 +260,20 @@ def _public_invoice_range_download_url(
         "/api/v1/admin/clients/"
         f"{client_id}/invoices/range/{note_id}/public-pdf?token={token}&inline={'true' if inline else 'false'}"
     )
+
+
+def _public_invoice_range_payment_url(
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    invoice_number: str,
+) -> str:
+    token = _create_invoice_range_public_payment_token(
+        client_id=client_id,
+        note_id=note_id,
+        invoice_number=invoice_number,
+    )
+    return _frontend_url(f"/api/v1/public/payments/invoices/range/{client_id}/{note_id}?token={token}")
 
 
 def _session_zone(session_obj: CourseSession) -> ZoneInfo | timezone:
@@ -1077,7 +1107,15 @@ def send_final_invoice_email(
         "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email),
         "invoice_number": invoice_number,
         "invoice_url": invoice_url,
-        "payment_url": "" if is_already_paid else invoice_url,
+        "payment_url": (
+            ""
+            if is_already_paid
+            else _public_invoice_range_payment_url(
+                client_id=customer.id,
+                note_id=note_id,
+                invoice_number=invoice_number,
+            )
+        ),
         "amount_due": amount_due,
         "amount_paid": amount_paid,
         "total_incl_vat": total_incl_vat,

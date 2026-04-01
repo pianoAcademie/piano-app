@@ -441,6 +441,68 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
         self.assertIn("public-pdf?token=test", kwargs["body"])
         self.assertNotIn("{invoice_number}", kwargs["body"])
 
+    def test_unpaid_final_invoice_email_uses_public_payment_url(self) -> None:
+        customer = SimpleNamespace(
+            id=uuid4(),
+            email="albert@example.com",
+            first_name="Albert",
+            last_name="Einstein",
+        )
+        note_id = uuid4()
+        metadata = {
+            "invoice_number": "PA26-0029",
+            "invoice_status": "ISSUED",
+            "totals_by_currency": {"EUR": "38.00"},
+            "applied_payment_totals_by_currency": {"EUR": "0.00"},
+            "total_to_pay_by_currency": {"EUR": "38.00"},
+            "due_date": "2026-04-01",
+            "issued_date": "2026-04-01",
+        }
+        template = {
+            "subject": "Facture {invoice_number}",
+            "body": "<div><a href=\"{payment_url}\">payer</a> <a href=\"{invoice_url}\">pdf</a></div>",
+            "body_format": "HTML",
+        }
+        sender = SimpleNamespace(
+            from_email="contact@piano-academie.com",
+            from_name="Piano Academie",
+            reply_to=None,
+            subject_prefix=None,
+        )
+
+        with patch("app.services.payment_receipts.resolve_billing_profile", return_value=customer), patch(
+            "app.services.payment_receipts.resolve_predefined_template",
+            return_value=template,
+        ), patch(
+            "app.services.payment_receipts._public_invoice_range_download_url",
+            return_value="https://app.piano-academie.com/api/v1/admin/clients/client-1/invoices/range/note-1/public-pdf?token=pdf",
+        ), patch(
+            "app.services.payment_receipts._public_invoice_range_payment_url",
+            return_value="https://app.piano-academie.com/api/v1/public/payments/invoices/range/client-1/note-1?token=pay",
+        ), patch(
+            "app.services.payment_receipts._frontend_url",
+            return_value="https://app.piano-academie.com/client?tab=finance",
+        ), patch(
+            "app.services.payment_receipts.resolve_sender_profile",
+            return_value=sender,
+        ), patch(
+            "app.services.payment_receipts.send_email",
+            return_value="msg-456",
+        ) as send_email_mock:
+            result = send_final_invoice_email(
+                _FakeSession(),
+                customer=customer,
+                note_id=note_id,
+                metadata=metadata,
+            )
+
+        self.assertEqual(result, "msg-456")
+        kwargs = send_email_mock.call_args.kwargs
+        self.assertEqual(kwargs["context"], "CLIENT_FINAL_INVOICE")
+        self.assertIn("/api/v1/public/payments/invoices/range/client-1/note-1?token=pay", kwargs["body"])
+        self.assertIn("/public-pdf?token=pdf", kwargs["body"])
+        self.assertNotIn("{payment_url}", kwargs["body"])
+
 
 if __name__ == "__main__":
     unittest.main()
