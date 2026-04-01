@@ -593,6 +593,8 @@ class AdminActivityOut(BaseModel):
     exclude_holidays_in_recurrence: bool
     exclude_school_vacations_in_recurrence: bool
     active: bool
+    content_course_ids: list[UUID] = Field(default_factory=list)
+    content_course_titles: list[str] = Field(default_factory=list)
 
 
 class AdminActivityUpsertRequest(BaseModel):
@@ -647,6 +649,56 @@ class AdminActivityUpdateRequest(BaseModel):
     exclude_holidays_in_recurrence: bool | None = None
     exclude_school_vacations_in_recurrence: bool | None = None
     active: bool | None = None
+
+
+class AdminExternalContentCourseOut(BaseModel):
+    id: UUID
+    provider: str
+    external_id: str
+    slug: str | None
+    title: str
+    summary: str | None
+    level_code: str | None
+    status: str
+    cover_image_url: str | None
+    sections_count: int
+    lessons_count: int
+    last_synced_at: datetime | None
+
+
+class AdminActivityContentMappingsReplaceRequest(BaseModel):
+    content_course_ids: list[UUID] = Field(default_factory=list)
+    access_rule: Literal["ACTIVE_ENROLLMENT", "MANUAL_OVERRIDE"] = "ACTIVE_ENROLLMENT"
+
+
+class AdminActivityContentMappingOut(BaseModel):
+    id: UUID
+    course_type_id: UUID
+    content_course_id: UUID
+    access_rule: str
+    sort_order: int
+    active: bool
+    content_course_title: str
+    content_course_level_code: str | None
+    content_course_status: str
+    content_course_provider: str
+    content_course_external_id: str
+
+
+class AdminExternalContentSyncOut(BaseModel):
+    provider: str
+    fetched_at: datetime
+    courses_seen: int
+    courses_created: int
+    courses_updated: int
+    sections_seen: int
+    sections_created: int
+    sections_updated: int
+    sections_deleted: int
+    lessons_seen: int
+    lessons_created: int
+    lessons_updated: int
+    lessons_deleted: int
 
 
 class AdminClientOut(BaseModel):

@@ -523,6 +523,62 @@ def upsert_course_type_content_mapping(
     return mapping
 
 
+def replace_course_type_content_mappings(
+    db: Session,
+    *,
+    course_type_id: UUID,
+    content_course_ids: Sequence[UUID],
+    access_rule: ContentAccessRule | str = ContentAccessRule.ACTIVE_ENROLLMENT,
+) -> list[CourseTypeContentMapping]:
+    validate_course_type_exists(db, course_type_id)
+    try:
+        normalized_access_rule = (
+            access_rule if isinstance(access_rule, ContentAccessRule) else ContentAccessRule(str(access_rule).strip().upper())
+        )
+    except ValueError as exc:
+        raise ValueError("Unknown content access_rule") from exc
+
+    normalized_ids: list[UUID] = []
+    seen_ids: set[UUID] = set()
+    for value in content_course_ids:
+        if value in seen_ids:
+            continue
+        seen_ids.add(value)
+        normalized_ids.append(value)
+
+    if normalized_ids:
+        existing_courses = db.scalars(select(ExternalContentCourse).where(ExternalContentCourse.id.in_(normalized_ids))).all()
+        existing_course_ids = {row.id for row in existing_courses}
+        missing_course_ids = [str(value) for value in normalized_ids if value not in existing_course_ids]
+        if missing_course_ids:
+            raise ValueError(f"Unknown content_course_id(s): {', '.join(missing_course_ids)}")
+
+    existing_mappings = db.scalars(
+        select(CourseTypeContentMapping).where(CourseTypeContentMapping.course_type_id == course_type_id)
+    ).all()
+    desired_ids = set(normalized_ids)
+
+    for row in existing_mappings:
+        if row.content_course_id not in desired_ids:
+            db.delete(row)
+
+    ordered_rows: list[CourseTypeContentMapping] = []
+    for index, content_course_id in enumerate(normalized_ids):
+        ordered_rows.append(
+            upsert_course_type_content_mapping(
+                db,
+                course_type_id=course_type_id,
+                content_course_id=content_course_id,
+                access_rule=normalized_access_rule,
+                sort_order=index,
+                active=True,
+            )
+        )
+
+    db.flush()
+    return ordered_rows
+
+
 def list_content_courses_for_course_type_ids(
     db: Session,
     course_type_ids: Sequence[UUID],

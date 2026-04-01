@@ -12,6 +12,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CourseType, CreditType, DeliveryMode
+from app.models.external_content import (
+    CourseTypeContentMapping,
+    ExternalContentCourse,
+    ExternalContentLesson,
+    ExternalContentProvider,
+    ExternalContentSection,
+    ExternalContentStatus,
+)
 from app.models.ops import AppSetting, LegalEntity
 from app.models.payout import ProfessorPayGridBracket, ProfessorPayGridPeriod, ProfessorPayGridRule
 from app.models.product_catalog import ProductCategory
@@ -28,6 +36,8 @@ from app.models.subscription_engine import SubscriptionNotificationPolicy, Subsc
 from app.models.user import User, UserRole
 from app.schemas.admin import (
     AdminActivityOut,
+    AdminActivityContentMappingOut,
+    AdminActivityContentMappingsReplaceRequest,
     AdminActivityUpdateRequest,
     AdminActivityUpsertRequest,
     AdminCreditTypeOut,
@@ -35,6 +45,8 @@ from app.schemas.admin import (
     AdminCreditTypeUpsertRequest,
     AdminConfigAccountOut,
     AdminConfigAccountUpdateRequest,
+    AdminExternalContentCourseOut,
+    AdminExternalContentSyncOut,
     AdminFormulaOut,
     AdminFormulaCreditGrantIn,
     AdminFormulaCreditGrantOut,
@@ -76,6 +88,11 @@ from app.schemas.admin import (
     AdminProfessorPayGridPeriodUpdateRequest,
     AdminSubscriptionSettingsOut,
     AdminSubscriptionSettingsUpdateRequest,
+)
+from app.services.external_content import (
+    list_content_course_mappings_for_course_type,
+    replace_course_type_content_mappings,
+    sync_wordpress_learndash_catalog,
 )
 from app.services.professor_contracts import contract_mode_from_course_type
 from app.services.professor_default_grid import (
@@ -287,6 +304,7 @@ def _serialize_activity(
     *,
     credit_type_by_id: dict[UUID, CreditType],
     legal_entity_by_id: dict[UUID, LegalEntity],
+    content_course_rows: list[tuple[UUID, str]] | None = None,
 ) -> AdminActivityOut:
     credit_type = credit_type_by_id.get(activity.credit_type_id) if activity.credit_type_id is not None else None
     legal_entity = (
@@ -325,6 +343,8 @@ def _serialize_activity(
         exclude_holidays_in_recurrence=bool(activity.exclude_holidays_in_recurrence),
         exclude_school_vacations_in_recurrence=bool(activity.exclude_school_vacations_in_recurrence),
         active=activity.active,
+        content_course_ids=[content_course_id for content_course_id, _ in (content_course_rows or [])],
+        content_course_titles=[content_course_title for _, content_course_title in (content_course_rows or [])],
     )
 
 
@@ -364,6 +384,74 @@ def _activities_by_credit_type_id(
     for credit_type_id in result:
         result[credit_type_id].sort(key=lambda row: row[1].casefold())
     return result
+
+
+def _content_courses_by_activity_id(
+    db: Session,
+    *,
+    active_only: bool = True,
+) -> dict[UUID, list[tuple[UUID, str]]]:
+    stmt = (
+        select(
+            CourseTypeContentMapping.course_type_id,
+            ExternalContentCourse.id,
+            ExternalContentCourse.title,
+        )
+        .join(ExternalContentCourse, ExternalContentCourse.id == CourseTypeContentMapping.content_course_id)
+        .order_by(
+            CourseTypeContentMapping.course_type_id.asc(),
+            CourseTypeContentMapping.sort_order.asc(),
+            ExternalContentCourse.title.asc(),
+        )
+    )
+    if active_only:
+        stmt = stmt.where(CourseTypeContentMapping.active.is_(True))
+    rows = db.execute(stmt).all()
+    result: dict[UUID, list[tuple[UUID, str]]] = {}
+    for course_type_id, content_course_id, title in rows:
+        result.setdefault(course_type_id, []).append((content_course_id, title))
+    return result
+
+
+def _serialize_external_content_course(
+    course: ExternalContentCourse,
+    *,
+    sections_count: int,
+    lessons_count: int,
+) -> AdminExternalContentCourseOut:
+    return AdminExternalContentCourseOut(
+        id=course.id,
+        provider=course.provider.value,
+        external_id=course.external_id,
+        slug=course.slug,
+        title=course.title,
+        summary=course.summary,
+        level_code=course.level_code,
+        status=course.status.value,
+        cover_image_url=course.cover_image_url,
+        sections_count=sections_count,
+        lessons_count=lessons_count,
+        last_synced_at=course.last_synced_at,
+    )
+
+
+def _serialize_activity_content_mapping(
+    mapping: CourseTypeContentMapping,
+    course: ExternalContentCourse,
+) -> AdminActivityContentMappingOut:
+    return AdminActivityContentMappingOut(
+        id=mapping.id,
+        course_type_id=mapping.course_type_id,
+        content_course_id=mapping.content_course_id,
+        access_rule=mapping.access_rule.value,
+        sort_order=mapping.sort_order,
+        active=bool(mapping.active),
+        content_course_title=course.title,
+        content_course_level_code=course.level_code,
+        content_course_status=course.status.value,
+        content_course_provider=course.provider.value,
+        content_course_external_id=course.external_id,
+    )
 
 
 def _credit_type_by_id(db: Session) -> dict[UUID, CreditType]:
@@ -1286,14 +1374,91 @@ def list_admin_activities(
     rows = db.scalars(stmt).all()
     credit_type_by_id = _credit_type_by_id(db)
     legal_entity_by_id = _legal_entity_by_id(db)
+    content_courses_by_activity_id = _content_courses_by_activity_id(db, active_only=True)
     return [
         _serialize_activity(
             row,
             credit_type_by_id=credit_type_by_id,
             legal_entity_by_id=legal_entity_by_id,
+            content_course_rows=content_courses_by_activity_id.get(row.id, []),
         )
         for row in rows
     ]
+
+
+@router.get("/external-content/courses", response_model=list[AdminExternalContentCourseOut])
+def list_admin_external_content_courses(
+    provider: str = Query(default=ExternalContentProvider.WORDPRESS_LEARNDASH.value),
+    include_archived: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminExternalContentCourseOut]:
+    normalized_provider = (provider or ExternalContentProvider.WORDPRESS_LEARNDASH.value).strip().upper()
+    try:
+        provider_enum = ExternalContentProvider(normalized_provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown external content provider") from exc
+
+    stmt = select(ExternalContentCourse).where(ExternalContentCourse.provider == provider_enum).order_by(
+        ExternalContentCourse.level_code.asc().nulls_last(),
+        ExternalContentCourse.title.asc(),
+    )
+    if not include_archived:
+        stmt = stmt.where(ExternalContentCourse.status != ExternalContentStatus.ARCHIVED)
+    rows = db.scalars(stmt).all()
+    course_ids = [row.id for row in rows]
+    section_counts_by_course_id: dict[UUID, int] = {}
+    lesson_counts_by_course_id: dict[UUID, int] = {}
+    if course_ids:
+        section_count_rows = db.execute(
+            select(ExternalContentSection.course_id, func.count(ExternalContentSection.id))
+            .where(ExternalContentSection.course_id.in_(course_ids))
+            .group_by(ExternalContentSection.course_id)
+        ).all()
+        lesson_count_rows = db.execute(
+            select(ExternalContentLesson.course_id, func.count(ExternalContentLesson.id))
+            .where(ExternalContentLesson.course_id.in_(course_ids))
+            .group_by(ExternalContentLesson.course_id)
+        ).all()
+        section_counts_by_course_id = {course_id: int(count) for course_id, count in section_count_rows}
+        lesson_counts_by_course_id = {course_id: int(count) for course_id, count in lesson_count_rows}
+    return [
+        _serialize_external_content_course(
+            row,
+            sections_count=section_counts_by_course_id.get(row.id, 0),
+            lessons_count=lesson_counts_by_course_id.get(row.id, 0),
+        )
+        for row in rows
+    ]
+
+
+@router.post("/external-content/sync/wordpress-learndash", response_model=AdminExternalContentSyncOut)
+def sync_admin_external_content_wordpress_learndash(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminExternalContentSyncOut:
+    try:
+        summary = sync_wordpress_learndash_catalog(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    db.commit()
+    return AdminExternalContentSyncOut(
+        provider=summary.provider.value,
+        fetched_at=summary.fetched_at,
+        courses_seen=summary.courses_seen,
+        courses_created=summary.courses_created,
+        courses_updated=summary.courses_updated,
+        sections_seen=summary.sections_seen,
+        sections_created=summary.sections_created,
+        sections_updated=summary.sections_updated,
+        sections_deleted=summary.sections_deleted,
+        lessons_seen=summary.lessons_seen,
+        lessons_created=summary.lessons_created,
+        lessons_updated=summary.lessons_updated,
+        lessons_deleted=summary.lessons_deleted,
+    )
 
 
 @router.get("/legal-entities", response_model=list[AdminLegalEntityOut])
@@ -1648,6 +1813,7 @@ def create_admin_activity(
         activity,
         credit_type_by_id=_credit_type_by_id(db),
         legal_entity_by_id=_legal_entity_by_id(db),
+        content_course_rows=[],
     )
 
 
@@ -1668,6 +1834,7 @@ def update_admin_activity(
             activity,
             credit_type_by_id=_credit_type_by_id(db),
             legal_entity_by_id=_legal_entity_by_id(db),
+            content_course_rows=_content_courses_by_activity_id(db, active_only=True).get(activity.id, []),
         )
 
     if "code" in changes:
@@ -1800,7 +1967,54 @@ def update_admin_activity(
         activity,
         credit_type_by_id=_credit_type_by_id(db),
         legal_entity_by_id=_legal_entity_by_id(db),
+        content_course_rows=_content_courses_by_activity_id(db, active_only=True).get(activity.id, []),
     )
+
+
+@router.get("/activities/{activity_id}/content-mappings", response_model=list[AdminActivityContentMappingOut])
+def list_admin_activity_content_mappings(
+    activity_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminActivityContentMappingOut]:
+    activity = db.scalar(select(CourseType.id).where(CourseType.id == activity_id))
+    if activity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+    return [
+        _serialize_activity_content_mapping(mapping, course)
+        for mapping, course in list_content_course_mappings_for_course_type(
+            db,
+            course_type_id=activity_id,
+            active_only=False,
+        )
+    ]
+
+
+@router.put("/activities/{activity_id}/content-mappings", response_model=list[AdminActivityContentMappingOut])
+def replace_admin_activity_content_mappings(
+    activity_id: UUID,
+    payload: AdminActivityContentMappingsReplaceRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminActivityContentMappingOut]:
+    try:
+        replace_course_type_content_mappings(
+            db,
+            course_type_id=activity_id,
+            content_course_ids=payload.content_course_ids,
+            access_rule=payload.access_rule,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    return [
+        _serialize_activity_content_mapping(mapping, course)
+        for mapping, course in list_content_course_mappings_for_course_type(
+            db,
+            course_type_id=activity_id,
+            active_only=False,
+        )
+    ]
 
 
 @router.get("/config/account", response_model=AdminConfigAccountOut)

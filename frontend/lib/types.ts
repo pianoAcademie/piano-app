@@ -1769,6 +1769,53 @@ export type AdminActivityOut = {
   exclude_holidays_in_recurrence: boolean;
   exclude_school_vacations_in_recurrence: boolean;
   active: boolean;
+  content_course_ids: string[];
+  content_course_titles: string[];
+};
+
+export type AdminExternalContentCourseOut = {
+  id: string;
+  provider: string;
+  external_id: string;
+  slug: string | null;
+  title: string;
+  summary: string | null;
+  level_code: string | null;
+  status: string;
+  cover_image_url: string | null;
+  sections_count: number;
+  lessons_count: number;
+  last_synced_at: string | null;
+};
+
+export type AdminActivityContentMappingOut = {
+  id: string;
+  course_type_id: string;
+  content_course_id: string;
+  access_rule: string;
+  sort_order: number;
+  active: boolean;
+  content_course_title: string;
+  content_course_level_code: string | null;
+  content_course_status: string;
+  content_course_provider: string;
+  content_course_external_id: string;
+};
+
+export type AdminExternalContentSyncOut = {
+  provider: string;
+  fetched_at: string;
+  courses_seen: number;
+  courses_created: number;
+  courses_updated: number;
+  sections_seen: number;
+  sections_created: number;
+  sections_updated: number;
+  sections_deleted: number;
+  lessons_seen: number;
+  lessons_created: number;
+  lessons_updated: number;
+  lessons_deleted: number;
 };
 
 export type AdminLegalEntityOut = {

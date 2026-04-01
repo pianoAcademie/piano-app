@@ -31,6 +31,7 @@ import {
 } from "./quote-transformation";
 import type {
   AdminActivityOut,
+  AdminActivityContentMappingOut,
   AdminClientOut,
   AdminLegalEntityOut,
   AdminInvoiceNumberingOut,
@@ -65,6 +66,8 @@ import type {
   AdminProfessorUpdateResult,
   AdminSubscriptionSettingsOut,
   AdminConfigAccountOut,
+  AdminExternalContentCourseOut,
+  AdminExternalContentSyncOut,
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProfessorDefaultGridOut,
@@ -6534,6 +6537,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const excludeSchoolVacationsInRecurrence = checkboxField(formData, "exclude_school_vacations_in_recurrence");
   const planningLocationIds = parseStringList(formData.getAll("planning_location_ids"));
   const planningScopeLocationIds = parseStringList(formData.getAll("planning_scope_location_ids"));
+  const contentCourseIds = parseStringList(formData.getAll("content_course_ids"));
 
   if (!name) {
     redirect(appendQueryMessage(returnTo, "error", "Nom activite obligatoire"));
@@ -6617,6 +6621,21 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
+  const contentSyncResult = await syncActivityContentMappings({
+    token,
+    activityId: result.data.id,
+    contentCourseIds,
+  });
+  if (!contentSyncResult.ok) {
+    redirect(
+      appendQueryMessage(
+        `/admin/config?section=activities&activity_id=${encodeURIComponent(result.data.id)}`,
+        "error",
+        `Activite creee, mais liaison contenu impossible: ${contentSyncResult.message}`,
+      ),
+    );
+  }
+
   const syncResult = await syncActivityPlanningAssignments({
     token,
     activityId: result.data.id,
@@ -6688,6 +6707,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const excludeSchoolVacationsInRecurrence = checkboxField(formData, "exclude_school_vacations_in_recurrence");
   const planningLocationIds = parseStringList(formData.getAll("planning_location_ids"));
   const planningScopeLocationIds = parseStringList(formData.getAll("planning_scope_location_ids"));
+  const contentCourseIds = parseStringList(formData.getAll("content_course_ids"));
 
   if (!name) {
     redirect(appendQueryMessage(returnTo, "error", "Nom activite obligatoire"));
@@ -6767,6 +6787,21 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
 
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  const contentSyncResult = await syncActivityContentMappings({
+    token,
+    activityId,
+    contentCourseIds,
+  });
+  if (!contentSyncResult.ok) {
+    redirect(
+      appendQueryMessage(
+        returnTo,
+        "error",
+        `Activite enregistree, mais liaison contenu impossible: ${contentSyncResult.message}`,
+      ),
+    );
   }
 
   const syncResult = await syncActivityPlanningAssignments({
@@ -9406,6 +9441,64 @@ async function syncActivityPlanningAssignments(params: {
   }
 
   return { ok: true };
+}
+
+async function syncActivityContentMappings(params: {
+  token: string;
+  activityId: string;
+  contentCourseIds: string[];
+}): Promise<{ ok: true; data: AdminActivityContentMappingOut[] } | { ok: false; message: string }> {
+  const activityId = params.activityId.trim();
+  if (!activityId) {
+    return { ok: false, message: "Activite invalide" };
+  }
+  const contentCourseIds = Array.from(new Set(params.contentCourseIds.map((value) => value.trim()).filter(Boolean)));
+  const result = await backendRequest<AdminActivityContentMappingOut[]>(
+    `/api/v1/admin/activities/${activityId}/content-mappings`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        content_course_ids: contentCourseIds,
+        access_rule: "ACTIVE_ENROLLMENT",
+      }),
+    },
+    params.token,
+  );
+  if (!result.ok) {
+    return { ok: false, message: result.message };
+  }
+  return { ok: true, data: result.data };
+}
+
+export async function syncAdminExternalContentCatalogAction(): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+
+  await ensureAdmin(token);
+
+  const result = await backendRequest<AdminExternalContentSyncOut>(
+    "/api/v1/admin/external-content/sync/wordpress-learndash",
+    {
+      method: "POST",
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage("/admin/config?section=activities", "error", result.message));
+  }
+
+  revalidatePath("/admin/config");
+  revalidatePath("/admin");
+  redirect(
+    appendQueryMessage(
+      "/admin/config?section=activities",
+      "ok",
+      `Catalogue LearnDash synchronise (${result.data.courses_seen} cours)`,
+    ),
+  );
 }
 
 type QuoteWizardLinePayload = {

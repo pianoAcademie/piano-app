@@ -35,6 +35,7 @@ import {
   deleteAdminConfigMessagingTemplateAction,
   resetAdminConfigPredefinedMessagingTemplateAction,
   saveAdminConfigMessagingTemplateAction,
+  syncAdminExternalContentCatalogAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import type {
@@ -46,6 +47,7 @@ import type {
   AdminLegalEntityOut,
   AdminPlanningActivitiesOut,
   AdminConfigAccountOut,
+  AdminExternalContentCourseOut,
   AdminMessagingSettingsOut,
   AdminMessagingTemplateOut,
   AdminInvoiceTemplateOut,
@@ -190,6 +192,16 @@ type ActivityPlanningLocationOption = {
   selectedForCurrentActivity: boolean;
 };
 
+type ActivityContentCourseOption = {
+  id: string;
+  title: string;
+  levelCode: string | null;
+  status: string;
+  sectionsCount: number;
+  lessonsCount: number;
+  summary: string | null;
+};
+
 function ActivityModalSection({ title, description, children, accent = false }: ActivityModalSectionProps) {
   return (
     <section className={`activity-modal-section${accent ? " is-accent" : ""}`}>
@@ -253,6 +265,55 @@ function ActivityPlanningAssignments({
             <small>
               {location.selectedActivityCount} activite(s) actuellement visibles sur ce planning.
             </small>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function ActivityContentAssignments({
+  courses,
+  defaultSelectedCourseIds,
+}: {
+  courses: ActivityContentCourseOption[];
+  defaultSelectedCourseIds: string[];
+}) {
+  const defaultSelected = new Set(defaultSelectedCourseIds);
+
+  if (courses.length === 0) {
+    return (
+      <div className="activity-content-empty">
+        <p className="muted">Aucun contenu synchronise pour le moment.</p>
+        <p className="muted">
+          Synchronisez d abord le catalogue WordPress / LearnDash, puis revenez ici pour rattacher les cours eleves.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="activity-content-grid">
+      {courses.map((course) => (
+        <label key={course.id} className="activity-content-card">
+          <span className="activity-planning-checkbox">
+            <input
+              type="checkbox"
+              name="content_course_ids"
+              value={course.id}
+              defaultChecked={defaultSelected.has(course.id)}
+            />
+          </span>
+          <span className="activity-content-copy">
+            <strong>{course.title}</strong>
+            <small>
+              {course.levelCode ? `Niveau ${course.levelCode}` : "Niveau non precise"} · {course.sectionsCount} section(s) ·{" "}
+              {course.lessonsCount} lecon(s)
+            </small>
+            {course.summary ? <small>{course.summary}</small> : null}
+          </span>
+          <span className={`status-pill ${course.status === "PUBLISHED" ? "status-ok" : "status-warn"}`}>
+            {course.status === "PUBLISHED" ? "Publie" : course.status}
           </span>
         </label>
       ))}
@@ -533,6 +594,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     activitiesResult,
     legalEntitiesResult,
     creditTypesResult,
+    externalContentCoursesResult,
     catalogCategoriesResult,
     catalogProductsResult,
     catalogKitsResult,
@@ -561,6 +623,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
     backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=true", {}, token),
     backendRequest<AdminCreditTypeOut[]>("/api/v1/admin/credit-types?include_inactive=true", {}, token),
+    backendRequest<AdminExternalContentCourseOut[]>("/api/v1/admin/external-content/courses", {}, token),
     backendRequest<AdminCatalogCategoryOut[]>("/api/v1/admin/config/catalog/categories?include_inactive=true", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=true", {}, token),
     backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
@@ -691,6 +754,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
         loadErrors.push(`Types de credit: ${creditTypesResult.message}`);
         return [] as AdminCreditTypeOut[];
       })();
+  const externalContentCourses = externalContentCoursesResult.ok
+    ? externalContentCoursesResult.data
+    : (() => {
+        loadErrors.push(`Contenu WordPress/LearnDash: ${externalContentCoursesResult.message}`);
+        return [] as AdminExternalContentCourseOut[];
+      })();
   const catalogCategories = catalogCategoriesResult.ok
     ? catalogCategoriesResult.data
     : (() => {
@@ -741,6 +810,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const selectedActivityPlanningLocationIds = activityPlanningLocations
     .filter((location) => location.selectedForCurrentActivity)
     .map((location) => location.locationId);
+  const selectedActivityContentCourseIds = selectedActivity?.content_course_ids ?? [];
+  const contentCourseOptions: ActivityContentCourseOption[] = externalContentCourses.map((course) => ({
+    id: course.id,
+    title: course.title,
+    levelCode: course.level_code,
+    status: course.status,
+    sectionsCount: course.sections_count,
+    lessonsCount: course.lessons_count,
+    summary: course.summary,
+  }));
   const createLegalEntityModalOpen = readParam(params, "new_legal_entity") === "1";
   const selectedLegalEntityId = readParam(params, "legal_entity_id");
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === selectedLegalEntityId) ?? null;
@@ -2941,13 +3020,24 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               <section className="card">
                 <div className="row between">
                   <h3>Referentiel des activites</h3>
-                  <Link className="mode-link" href={buildConfigHref("activities", { new_activity: "1" })}>
-                    Ajouter une activite
-                  </Link>
+                  <div className="row wrap gap-sm">
+                    <form action={syncAdminExternalContentCatalogAction}>
+                      <button type="submit" className="ghost">
+                        Synchroniser LearnDash
+                      </button>
+                    </form>
+                    <Link className="mode-link" href={buildConfigHref("activities", { new_activity: "1" })}>
+                      Ajouter une activite
+                    </Link>
+                  </div>
                 </div>
                 <p className="muted">
                   Une activite definit le titre, la description, la duree, la couleur, la capacite maximum et le tarif
                   (horaire TTC ou par cours TTC).
+                </p>
+                <p className="muted">
+                  Catalogue e-learning synchronise: <strong>{externalContentCourses.length}</strong> cours WordPress / LearnDash disponibles
+                  pour rattacher du contenu aux activites eleves.
                 </p>
                 {activeCreditTypes.length === 0 ? (
                   <p className="flash-err">Aucun type de credit actif: ajoutez/activez d abord un type de credit.</p>
@@ -2989,6 +3079,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           </small>
                           <small className="muted">
                             Entite: {activity.seller_legal_entity_name ?? "Non definie"}
+                          </small>
+                          <small className="muted">
+                            Contenu eleve: {activity.content_course_titles.length > 0 ? activity.content_course_titles.join(", ") : "Aucun rattachement"}
                           </small>
                           {activityPlanningLocations.length > 0 ? (
                             <small className="muted">
@@ -3082,6 +3175,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <ActivityPlanningAssignments
                             locations={activityPlanningLocations}
                             defaultSelectedLocationIds={createActivityDefaultPlanningLocationIds}
+                          />
+                        </ActivityModalSection>
+
+                        <ActivityModalSection
+                          title="Contenu pedagogique en ligne"
+                          description="Associez les cours WordPress / LearnDash qui doivent apparaitre dans le portail eleve quand cette activite est active."
+                        >
+                          <ActivityContentAssignments
+                            courses={contentCourseOptions}
+                            defaultSelectedCourseIds={[]}
                           />
                         </ActivityModalSection>
 
@@ -3378,6 +3481,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <ActivityPlanningAssignments
                             locations={activityPlanningLocations}
                             defaultSelectedLocationIds={selectedActivityPlanningLocationIds}
+                          />
+                        </ActivityModalSection>
+
+                        <ActivityModalSection
+                          title="Contenu pedagogique en ligne"
+                          description="Choisissez ici les cours WordPress / LearnDash a ouvrir automatiquement aux eleves rattaches a cette activite."
+                        >
+                          <ActivityContentAssignments
+                            courses={contentCourseOptions}
+                            defaultSelectedCourseIds={selectedActivityContentCourseIds}
                           />
                         </ActivityModalSection>
 

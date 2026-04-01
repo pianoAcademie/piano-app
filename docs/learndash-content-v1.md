@@ -36,6 +36,7 @@ Main entry points:
 - `sync_wordpress_learndash_catalog(db, endpoint_url=...)`
 - `resolve_wordpress_learndash_sync_endpoint(db)`
 - `upsert_course_type_content_mapping(...)`
+- `replace_course_type_content_mappings(...)`
 
 Supported payload shapes:
 
@@ -83,8 +84,29 @@ If `courses_endpoint` is not set, the service uses:
 ## Current limits
 
 - read-only content sync
-- no BO UI yet for mappings
+- BO mapping is limited to the admin configuration screen for activities
+- no client-facing "Mes cours" UI yet
 - no public/client API yet for "Mes cours"
 - no progress tracking
 - no deletion of missing courses globally, because a sync endpoint may expose only a subset
 - missing sections and lessons **inside a synced course** are removed during sync, because WordPress is the source of truth for that course outline
+
+## Admin usage
+
+The back-office now exposes two building blocks for V1:
+
+- a "Synchroniser LearnDash" action in `Configuration > Activites`
+- a per-activity content assignment area in the create/edit activity modal
+
+Recommended sequence:
+
+1. configure the WordPress / LearnDash endpoint in `app_settings`
+2. run the catalog sync from the BO
+3. open an activity such as `Cours de solfege en ligne - Niveau 1`
+4. attach one or more synced content courses
+
+The intended business rule remains:
+
+- WordPress / LearnDash stores the pedagogical catalog
+- Piano Academie decides which students can access which content
+- access is derived from the student's active enrollment on the mapped activity
