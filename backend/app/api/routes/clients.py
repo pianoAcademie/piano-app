@@ -173,6 +173,22 @@ def _normalize_optional(value: str | None) -> str | None:
     return stripped or None
 
 
+def _is_synthetic_client_email(value: str | None) -> bool:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return False
+    return normalized.endswith("@piano-academie.invalid") or normalized.endswith("@no-email.local")
+
+
+def _public_client_email(user: User | None) -> str | None:
+    if user is None:
+        return None
+    email = (user.email or "").strip()
+    if not email or _is_synthetic_client_email(email):
+        return None
+    return email
+
+
 def _account_default_currency(db: Session) -> str:
     raw = db.scalar(select(AppSetting.value).where(AppSetting.key == ACCOUNT_DEFAULT_CURRENCY_KEY))
     candidate = str(raw or "").strip().upper()
@@ -244,7 +260,7 @@ def _normalize_optout_channel(value: str) -> str:
 def _member_out(user: User) -> FamilyMemberOut:
     return FamilyMemberOut(
         id=user.id,
-        email=user.email,
+        email=_public_client_email(user),
         first_name=user.first_name,
         last_name=user.last_name,
         phone=user.mobile_phone_1 or user.phone,
@@ -262,7 +278,7 @@ def _member_out(user: User) -> FamilyMemberOut:
 
 def _display_name(user: User) -> str:
     full_name = " ".join(part for part in [user.first_name, user.last_name] if part)
-    return full_name or user.email
+    return full_name or _public_client_email(user) or "Membre"
 
 
 def _message_preview(value: str | None, *, max_length: int = 180) -> str | None:
@@ -1916,9 +1932,14 @@ def list_client_messages(
         if recipient_user is None:
             recipient_user = current_user
         owner_display = _display_name(recipient_user)
+        recipient_email = _public_client_email(recipient_user)
+        if recipient_email is None:
+            raw_recipient = (row.recipient or "").strip()
+            recipient_email = raw_recipient if raw_recipient and not _is_synthetic_client_email(raw_recipient) else None
+        is_html_message = row.content_format == MessageFormat.HTML or str(row.content_format or "").strip().upper() == "HTML"
         content_preview = (
             _message_preview_from_html(row.content)
-            if row.content_format == MessageFormat.HTML or str(row.content_format or "").strip().upper() == "HTML"
+            if is_html_message
             else _message_preview(row.content)
         )
         status_value = (
@@ -1931,6 +1952,7 @@ def list_client_messages(
                 id=row.id,
                 owner_client_id=recipient_user.id,
                 owner_display_name=owner_display,
+                recipient_email=recipient_email,
                 channel=row.channel.value if isinstance(row.channel, CommunicationChannel) else str(row.channel or "EMAIL").strip().upper(),
                 booking_id=None,
                 session_id=None,
@@ -1942,6 +1964,7 @@ def list_client_messages(
                 error_message=row.error_message,
                 subject_preview=(row.subject or "").strip() or _client_message_context_label(row.source),
                 content_preview=content_preview,
+                content_html=row.content if is_html_message else None,
             )
         )
 
@@ -1966,6 +1989,7 @@ def list_client_messages(
                 id=reminder.id,
                 owner_client_id=owner.id,
                 owner_display_name=owner_display,
+                recipient_email=_public_client_email(owner),
                 channel="EMAIL",
                 booking_id=booking.id,
                 session_id=session_obj.id,
@@ -1977,6 +2001,7 @@ def list_client_messages(
                 error_message=reminder.error_message,
                 subject_preview=subject_preview,
                 content_preview=content_preview,
+                content_html=None,
             )
         )
 
@@ -1988,6 +2013,99 @@ def list_client_messages(
         reverse=True,
     )
     return payload[:limit]
+
+
+def _format_ics_datetime(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _escape_ics_text(value: str | None) -> str:
+    normalized = " ".join((value or "").split()).strip()
+    if not normalized:
+        return ""
+    return (
+        normalized
+        .replace("\\", "\\\\")
+        .replace(";", r"\;")
+        .replace(",", r"\,")
+        .replace("\n", r"\n")
+    )
+
+
+@router.get("/clients/me/bookings/{booking_id}/calendar.ics")
+def download_client_booking_calendar_event(
+    booking_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> Response:
+    managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
+    row = db.execute(
+        select(Booking, CourseSession, CourseType, Location, Professor, User)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .outerjoin(Professor, Professor.id == CourseSession.professor_id)
+        .join(User, User.id == Booking.user_id)
+        .where(
+            Booking.id == booking_id,
+            Booking.user_id.in_(managed_client_ids),
+        )
+        .limit(1)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation introuvable")
+
+    booking, session_obj, course_type, location, professor, owner = row
+    if normalize_status := str(booking.status or "").strip().upper():
+        if normalize_status == "CANCELLED":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Reservation annulee")
+
+    professor_name = ""
+    if professor is not None:
+        professor_name = " ".join(part for part in [professor.first_name, professor.last_name] if part).strip()
+
+    description_lines = [
+        f"Activite: {course_type.name}",
+        f"Membre: {_display_name(owner)}",
+        f"Lieu: {location.name}",
+    ]
+    if professor_name:
+        description_lines.append(f"Professeur: {professor_name}")
+    if session_obj.description:
+        description_lines.append("")
+        description_lines.append(session_obj.description.strip())
+
+    event_uid = f"booking-{booking.id}@piano-academie.com"
+    calendar_content = "\r\n".join(
+        [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Piano Academie//Reservations//FR",
+            "CALSCALE:GREGORIAN",
+            "METHOD:PUBLISH",
+            "BEGIN:VEVENT",
+            f"UID:{event_uid}",
+            f"DTSTAMP:{_format_ics_datetime(_utcnow())}",
+            f"DTSTART:{_format_ics_datetime(session_obj.start_at_utc)}",
+            f"DTEND:{_format_ics_datetime(session_obj.end_at_utc)}",
+            f"SUMMARY:{_escape_ics_text(session_obj.title or course_type.name)}",
+            f"DESCRIPTION:{_escape_ics_text(chr(10).join(description_lines))}",
+            f"LOCATION:{_escape_ics_text(location.name)}",
+            "STATUS:CONFIRMED",
+            "END:VEVENT",
+            "END:VCALENDAR",
+            "",
+        ]
+    )
+    filename = f"reservation-{session_obj.start_at_utc.astimezone(timezone.utc).strftime('%Y%m%d-%H%M')}.ics"
+    return Response(
+        content=calendar_content,
+        media_type="text/calendar; charset=utf-8",
+        headers={
+            "content-disposition": f'attachment; filename="{filename}"',
+            "cache-control": "no-store",
+        },
+    )
 
 
 def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymentOut]:

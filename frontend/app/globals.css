@@ -6997,6 +6997,15 @@ button.danger:focus-visible {
   right: 4px;
 }
 
+.modal-panel > .client-session-modal-header .modal-close-x,
+.modal-panel > .client-message-modal-header .modal-close-x {
+  position: absolute !important;
+  top: 10px !important;
+  right: 10px !important;
+  left: auto !important;
+  margin-left: 0 !important;
+}
+
 .client-session-modal-header h2 {
   margin: 0;
   padding-right: 54px;
@@ -9268,6 +9277,56 @@ button.danger:focus-visible {
   margin: 0;
 }
 
+.modal-client-message-details {
+  width: min(860px, 96vw);
+  max-height: 90vh;
+  padding: 12px;
+}
+
+.client-message-modal-header {
+  display: grid;
+  gap: 6px;
+  padding: 6px 52px 0 10px;
+  position: relative;
+}
+
+.client-message-modal-header h3 {
+  margin: 0;
+  padding-right: 54px;
+}
+
+.client-message-modal-meta,
+.client-message-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.client-message-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.client-message-html {
+  padding: 10px 12px;
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  background: #ffffff;
+  max-height: 52vh;
+  overflow: auto;
+  color: #1d2a3a;
+}
+
+.client-message-html img,
+.client-message-html iframe,
+.client-message-html table {
+  max-width: 100%;
+}
+
+.client-message-filter-actions {
+  align-items: end;
+}
+
 .client-message-detail-content {
   margin: 0;
   padding: 10px 12px;
@@ -9280,6 +9339,11 @@ button.danger:focus-visible {
   color: #1d2a3a;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.client-session-modal-booking-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .client-stat-chip {

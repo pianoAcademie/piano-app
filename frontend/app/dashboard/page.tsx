@@ -103,7 +103,7 @@ type FamilyBookingRow = {
 type MemberLite = {
   id: string;
   display_name: string;
-  email: string;
+  email: string | null;
   kind: string;
 };
 
@@ -812,9 +812,17 @@ function accentColorForId(id: string): string {
   return SESSION_ACCENT_COLORS[Math.abs(hash) % SESSION_ACCENT_COLORS.length];
 }
 
-function memberDisplayName(member: { first_name: string | null; last_name: string | null; email: string }): string {
+function memberDisplayName(member: { first_name: string | null; last_name: string | null; email: string | null }): string {
   const fullName = [member.first_name, member.last_name].filter(Boolean).join(" ");
-  return fullName || member.email;
+  return fullName || member.email || "Membre";
+}
+
+function normalizeLooseSearch(value: string | null | undefined): string {
+  return (value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function flattenCourseLessons(
@@ -918,6 +926,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedContentLessonId = readParam(searchParams, "content_lesson_id");
   const selectedOfferDetailId = readParam(searchParams, "offer_detail_id");
   const messageScope = parseMessageScope(readParam(searchParams, "message_scope"));
+  const messageQuery = readParam(searchParams, "message_query").trim();
   const financeSourceFilter = readParam(searchParams, "finance_source") || "ALL";
   const financeStatusFilter = parseFinanceStatusFilter(readParam(searchParams, "finance_status"));
   const financePeriodFilter = parseFinancePeriodFilter(readParam(searchParams, "finance_period"));
@@ -1116,7 +1125,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
 
   const memberMap = new Map<string, MemberLite>();
-  const addMember = (candidate: { id: string; first_name: string | null; last_name: string | null; email: string; client_kind: string }): void => {
+  const addMember = (candidate: { id: string; first_name: string | null; last_name: string | null; email: string | null; client_kind: string }): void => {
     if (!candidate?.id) {
       return;
     }
@@ -1262,8 +1271,28 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     return rows;
   })();
 
+  const normalizedMessageQuery = normalizeLooseSearch(messageQuery);
   const messageRows = messages
     .filter((row) => selectedMemberFilter === "ALL" || row.owner_client_id === selectedMemberFilter)
+    .filter((row) => {
+      if (!normalizedMessageQuery) {
+        return true;
+      }
+      const haystack = normalizeLooseSearch(
+        [
+          row.owner_display_name,
+          row.recipient_email,
+          row.subject_preview,
+          row.content_preview,
+          row.session_title,
+          row.channel,
+          row.status,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+      return haystack.includes(normalizedMessageQuery);
+    })
     .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc));
 
   const basePaymentRows = payments
@@ -2657,19 +2686,28 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {(selectedSessionPlanningState?.familyBookings ?? [])
                           .filter((booking) => ["BOOKED", "WAITLISTED"].includes(normalizeStatus(booking.status)))
                           .map((booking) => (
-                            <form key={`cancel-${booking.id}`} action={cancelBookingAction}>
-                              <input type="hidden" name="booking_id" value={booking.id} />
-                              <input
-                                type="hidden"
-                                name="return_to"
-                                value={withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id })}
-                              />
-                              <button className="client-session-cancel-button" type="submit">
-                                {bookingOwnerId === FAMILY_BOOKING_OWNER
-                                  ? `Annuler pour ${booking.owner_display_name}`
-                                  : "Annuler la reservation"}
-                              </button>
-                            </form>
+                            <div key={`booking-actions-${booking.id}`} className="client-session-modal-booking-actions">
+                              <form action={cancelBookingAction}>
+                                <input type="hidden" name="booking_id" value={booking.id} />
+                                <input
+                                  type="hidden"
+                                  name="return_to"
+                                  value={withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id })}
+                                />
+                                <button className="client-session-cancel-button" type="submit">
+                                  {bookingOwnerId === FAMILY_BOOKING_OWNER
+                                    ? `Annuler pour ${booking.owner_display_name}`
+                                    : "Annuler la reservation"}
+                                </button>
+                              </form>
+                              {normalizeStatus(booking.status) === "BOOKED" ? (
+                                <a className="mode-link client-session-calendar-link" href={`/client/bookings/${booking.id}/calendar`}>
+                                  {bookingOwnerId === FAMILY_BOOKING_OWNER
+                                    ? `Ajouter a l agenda pour ${booking.owner_display_name}`
+                                    : "Ajouter a mon agenda"}
+                                </a>
+                              ) : null}
+                            </div>
                           ))}
                         {(selectedSessionPlanningState?.actionableMembers ?? []).map(({ member, state }) => {
                           const planningReturnTo = withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id });
@@ -3702,9 +3740,29 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ))}
                   </select>
                 </label>
-                <div className="row">
-                  <button type="submit">🔎</button>
-                  <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "messages", message_scope: "LAST_3_MONTHS", member_id: null, message_id: null })}>
+                <label>
+                  Rechercher
+                  <input
+                    type="search"
+                    name="message_query"
+                    defaultValue={messageQuery}
+                    placeholder="Sujet, membre, email, contexte..."
+                  />
+                </label>
+                <div className="row client-message-filter-actions">
+                  <button type="submit" aria-label="Rechercher dans les messages">
+                    🔎
+                  </button>
+                  <a
+                    className="reset-link"
+                    href={withUpdatedQuery(rawParams, {
+                      tab: "messages",
+                      message_scope: "LAST_3_MONTHS",
+                      member_id: null,
+                      message_id: null,
+                      message_query: null,
+                    })}
+                  >
                     ↺
                   </a>
                 </div>
@@ -3765,20 +3823,57 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   ))}
                 </div>
                 {selectedMessage ? (
-                  <article className="item client-message-detail">
-                    <div className="row spread">
-                      <h4>{selectedMessage.subject_preview || "Message sans sujet"}</h4>
-                      <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "messages", message_id: null })}>
-                        Fermer
-                      </a>
-                    </div>
-                    <p className="muted">
-                      {formatDateTime(selectedMessage.sent_at ?? selectedMessage.scheduled_for_utc)} · {selectedMessage.owner_display_name} · {selectedMessage.channel}
-                    </p>
-                    <pre className="client-message-detail-content">
-                      {selectedMessage.content_preview || "Contenu indisponible"}
-                    </pre>
-                  </article>
+                  <section className="modal-overlay">
+                    <article className="modal-panel modal-client-message-details">
+                      <header className="client-message-modal-header">
+                        <a
+                          className="modal-close-x"
+                          href={withUpdatedQuery(rawParams, { tab: "messages", message_id: null })}
+                          aria-label="Fermer le message"
+                        >
+                          ×
+                        </a>
+                        <h3>{selectedMessage.subject_preview || "Message sans sujet"}</h3>
+                        <p className="muted">
+                          {formatDateTime(selectedMessage.sent_at ?? selectedMessage.scheduled_for_utc)} · {selectedMessage.owner_display_name} · {selectedMessage.channel}
+                        </p>
+                      </header>
+
+                      <section className="modal-card client-message-modal-meta">
+                        <div className="client-message-meta-grid">
+                          <article className="item">
+                            <small className="muted">Destinataire</small>
+                            <p>{selectedMessage.recipient_email || "Non affiche pour ce membre"}</p>
+                          </article>
+                          <article className="item">
+                            <small className="muted">Statut</small>
+                            <p>{statusLabel(selectedMessage.status)}</p>
+                          </article>
+                          <article className="item">
+                            <small className="muted">Contexte</small>
+                            <p>{selectedMessage.session_title ?? "Message transactionnel"}</p>
+                          </article>
+                          <article className="item">
+                            <small className="muted">Canal</small>
+                            <p>{selectedMessage.channel}</p>
+                          </article>
+                        </div>
+                      </section>
+
+                      <section className="modal-card client-message-detail">
+                        {selectedMessage.content_html ? (
+                          <div
+                            className="client-message-html"
+                            dangerouslySetInnerHTML={{ __html: selectedMessage.content_html }}
+                          />
+                        ) : (
+                          <pre className="client-message-detail-content">
+                            {selectedMessage.content_preview || "Contenu indisponible"}
+                          </pre>
+                        )}
+                      </section>
+                    </article>
+                  </section>
                 ) : null}
                 </>
               )}
@@ -3826,7 +3921,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <ListRow
                               key={`mob-member-${member.id}`}
                               title={member.display_name}
-                              subtitle={member.email}
+                              subtitle={member.email ?? undefined}
                               right={<span className="badge">{member.kind === "CHILD" ? "Enfant" : "Adulte"}</span>}
                             />
                         ))}
@@ -3942,7 +4037,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <article key={member.id} className="item row spread">
                             <div>
                               <strong>{member.display_name}</strong>
-                              <p className="muted">{member.email}</p>
+                              {member.email ? <p className="muted">{member.email}</p> : null}
                             </div>
                             <span className="badge">{member.kind === "CHILD" ? "Enfant" : "Adulte"}</span>
                           </article>

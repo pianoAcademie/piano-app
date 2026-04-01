@@ -445,9 +445,9 @@ function labelForQuoteStatus(value: string | null | undefined): string {
   return normalized || "-";
 }
 
-function displayName(firstName: string | null, lastName: string | null, fallback: string): string {
+function displayName(firstName: string | null, lastName: string | null, fallback: string | null): string {
   const value = [firstName, lastName].filter(Boolean).join(" ").trim();
-  return value || fallback;
+  return value || fallback || "Client";
 }
 
 function locationNameById(locations: LocationOut[], locationId: string | null): string {

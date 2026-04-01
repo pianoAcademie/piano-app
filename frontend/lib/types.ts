@@ -515,7 +515,7 @@ export type AdminRangeInvoiceEmailPreviewOut = {
 
 export type FamilyMemberOut = {
   id: string;
-  email: string;
+  email: string | null;
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
@@ -622,6 +622,7 @@ export type ClientMessageOut = {
   id: string;
   owner_client_id: string;
   owner_display_name: string;
+  recipient_email: string | null;
   channel: string;
   booking_id: string | null;
   session_id: string | null;
@@ -633,6 +634,7 @@ export type ClientMessageOut = {
   error_message: string | null;
   subject_preview: string;
   content_preview: string | null;
+  content_html: string | null;
 };
 
 export type ClientContentLessonOut = {

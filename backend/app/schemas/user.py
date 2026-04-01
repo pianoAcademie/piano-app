@@ -71,7 +71,7 @@ class ClientMeUpdateRequest(BaseModel):
 
 class FamilyMemberOut(BaseModel):
     id: UUID
-    email: str
+    email: str | None = None
     first_name: str | None
     last_name: str | None
     phone: str | None
@@ -223,6 +223,7 @@ class ClientMessageOut(BaseModel):
     id: UUID
     owner_client_id: UUID
     owner_display_name: str
+    recipient_email: str | None = None
     channel: str
     booking_id: UUID | None = None
     session_id: UUID | None = None
@@ -234,6 +235,7 @@ class ClientMessageOut(BaseModel):
     error_message: str | None
     subject_preview: str
     content_preview: str | None = None
+    content_html: str | None = None
 
 
 class ClientPaymentOut(BaseModel):
