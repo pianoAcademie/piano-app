@@ -282,6 +282,52 @@ class InvoicePeriodLine:
     is_section_header: bool = False
 
 
+def summarize_invoice_period_lines(
+    lines: list[InvoicePeriodLine],
+) -> tuple[dict[str, dict[str, Decimal]], dict[str, dict[Decimal, dict[str, Decimal]]]]:
+    totals_by_currency: dict[str, dict[str, Decimal]] = {}
+    totals_by_currency_and_vat_rate: dict[str, dict[Decimal, dict[str, Decimal]]] = {}
+
+    for line in lines:
+        if line.is_section_header:
+            continue
+        currency = _ascii_safe((line.currency or "EUR").strip().upper()) or "EUR"
+        vat_rate = Decimal(line.vat_rate).quantize(Decimal("0.01"))
+        amount_excl_vat = Decimal(line.amount_excl_vat).quantize(Decimal("0.01"))
+        vat_amount = Decimal(line.vat_amount).quantize(Decimal("0.01"))
+        total_incl_vat = Decimal(line.total_incl_vat).quantize(Decimal("0.01"))
+
+        currency_totals = totals_by_currency.setdefault(
+            currency,
+            {
+                "amount_excl_vat": Decimal("0.00"),
+                "vat_amount": Decimal("0.00"),
+                "total_incl_vat": Decimal("0.00"),
+            },
+        )
+        currency_totals["amount_excl_vat"] = (currency_totals["amount_excl_vat"] + amount_excl_vat).quantize(
+            Decimal("0.01")
+        )
+        currency_totals["vat_amount"] = (currency_totals["vat_amount"] + vat_amount).quantize(Decimal("0.01"))
+        currency_totals["total_incl_vat"] = (currency_totals["total_incl_vat"] + total_incl_vat).quantize(
+            Decimal("0.01")
+        )
+
+        vat_totals = totals_by_currency_and_vat_rate.setdefault(currency, {}).setdefault(
+            vat_rate,
+            {
+                "amount_excl_vat": Decimal("0.00"),
+                "vat_amount": Decimal("0.00"),
+                "total_incl_vat": Decimal("0.00"),
+            },
+        )
+        vat_totals["amount_excl_vat"] = (vat_totals["amount_excl_vat"] + amount_excl_vat).quantize(Decimal("0.01"))
+        vat_totals["vat_amount"] = (vat_totals["vat_amount"] + vat_amount).quantize(Decimal("0.01"))
+        vat_totals["total_incl_vat"] = (vat_totals["total_incl_vat"] + total_incl_vat).quantize(Decimal("0.01"))
+
+    return totals_by_currency, totals_by_currency_and_vat_rate
+
+
 class _SimplePdfDocument:
     width = 595.0
     height = 842.0
@@ -1016,11 +1062,13 @@ def render_invoice_period_pdf(
         currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
         normalized_applied_payment_totals_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
     normalized_total_to_pay_by_currency: dict[str, Decimal] = {}
+    computed_totals_by_currency, totals_by_currency_and_vat_rate = summarize_invoice_period_lines(lines)
+    effective_totals_by_currency = computed_totals_by_currency or totals_by_currency
     for currency_code, amount in (total_to_pay_by_currency or {}).items():
         currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
         normalized_total_to_pay_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
     summary_currencies = sorted(
-        set(totals_by_currency.keys())
+        set(effective_totals_by_currency.keys())
         | set(normalized_opening_balance_by_currency.keys())
         | set(normalized_applied_payment_totals_by_currency.keys())
         | set(normalized_total_to_pay_by_currency.keys())
@@ -1056,38 +1104,73 @@ def render_invoice_period_pdf(
     pdf.text(x=left, top_y=current_row_top, value="Totaux", size=11, bold=True)
     current_row_top += 16
     pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.82, 0.86, 0.91), fill_color=(0.95, 0.96, 0.98))
-    pdf.text(x=col_label_x, top_y=current_row_top + 14, value="Devise", size=9, bold=True)
+    pdf.text(x=col_label_x, top_y=current_row_top + 14, value="Devise / TVA", size=9, bold=True)
     pdf.text_right(right_x=totals_col_ht_right, top_y=current_row_top + 14, value="HT", size=9, bold=True)
     pdf.text_right(right_x=totals_col_vat_right, top_y=current_row_top + 14, value="TVA", size=9, bold=True)
     pdf.text_right(right_x=totals_col_ttc_right, top_y=current_row_top + 14, value="TTC", size=9, bold=True)
     current_row_top += 22
 
-    for currency_code in sorted(totals_by_currency.keys()):
-        totals = totals_by_currency[currency_code]
-        pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.90, 0.92, 0.95))
-        pdf.text(x=col_label_x, top_y=current_row_top + 14, value=currency_code.upper(), size=10, bold=True)
-        pdf.text_right(
-            right_x=totals_col_ht_right,
-            top_y=current_row_top + 14,
-            value=_format_amount(Decimal(totals["amount_excl_vat"])),
-            size=10,
-            bold=True,
-        )
-        pdf.text_right(
-            right_x=totals_col_vat_right,
-            top_y=current_row_top + 14,
-            value=_format_amount(Decimal(totals["vat_amount"])),
-            size=10,
-            bold=True,
-        )
-        pdf.text_right(
-            right_x=totals_col_ttc_right,
-            top_y=current_row_top + 14,
-            value=_format_amount(Decimal(totals["total_incl_vat"])),
-            size=10,
-            bold=True,
-        )
-        current_row_top += 22
+    if totals_by_currency_and_vat_rate:
+        for currency_code in sorted(totals_by_currency_and_vat_rate.keys()):
+            for vat_rate in sorted(totals_by_currency_and_vat_rate[currency_code].keys()):
+                totals = totals_by_currency_and_vat_rate[currency_code][vat_rate]
+                pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.90, 0.92, 0.95))
+                pdf.text(
+                    x=col_label_x,
+                    top_y=current_row_top + 14,
+                    value=f"{currency_code.upper()} - {vat_rate.quantize(Decimal('0.01'))}%",
+                    size=10,
+                    bold=True,
+                )
+                pdf.text_right(
+                    right_x=totals_col_ht_right,
+                    top_y=current_row_top + 14,
+                    value=_format_amount(Decimal(totals["amount_excl_vat"])),
+                    size=10,
+                    bold=True,
+                )
+                pdf.text_right(
+                    right_x=totals_col_vat_right,
+                    top_y=current_row_top + 14,
+                    value=_format_amount(Decimal(totals["vat_amount"])),
+                    size=10,
+                    bold=True,
+                )
+                pdf.text_right(
+                    right_x=totals_col_ttc_right,
+                    top_y=current_row_top + 14,
+                    value=_format_amount(Decimal(totals["total_incl_vat"])),
+                    size=10,
+                    bold=True,
+                )
+                current_row_top += 22
+    else:
+        for currency_code in sorted(effective_totals_by_currency.keys()):
+            totals = effective_totals_by_currency[currency_code]
+            pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.90, 0.92, 0.95))
+            pdf.text(x=col_label_x, top_y=current_row_top + 14, value=currency_code.upper(), size=10, bold=True)
+            pdf.text_right(
+                right_x=totals_col_ht_right,
+                top_y=current_row_top + 14,
+                value=_format_amount(Decimal(totals["amount_excl_vat"])),
+                size=10,
+                bold=True,
+            )
+            pdf.text_right(
+                right_x=totals_col_vat_right,
+                top_y=current_row_top + 14,
+                value=_format_amount(Decimal(totals["vat_amount"])),
+                size=10,
+                bold=True,
+            )
+            pdf.text_right(
+                right_x=totals_col_ttc_right,
+                top_y=current_row_top + 14,
+                value=_format_amount(Decimal(totals["total_incl_vat"])),
+                size=10,
+                bold=True,
+            )
+            current_row_top += 22
 
     if summary_currencies:
         current_row_top += 14.0
@@ -1098,7 +1181,7 @@ def render_invoice_period_pdf(
             applied_payments_amount = Decimal(
                 normalized_applied_payment_totals_by_currency.get(currency_code, Decimal("0.00"))
             ).quantize(Decimal("0.01"))
-            period_totals = totals_by_currency.get(currency_code)
+            period_totals = effective_totals_by_currency.get(currency_code)
             period_amount = (
                 Decimal(period_totals["total_incl_vat"]).quantize(Decimal("0.01"))
                 if period_totals is not None

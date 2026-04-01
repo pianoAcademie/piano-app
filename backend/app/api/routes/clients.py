@@ -82,6 +82,7 @@ from app.services.invoice_documents import (
     InvoicePeriodLine,
     render_invoice_period_pdf,
     reserve_next_invoice_number,
+    summarize_invoice_period_lines,
 )
 from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import resolve_frontend_base_url
@@ -673,6 +674,42 @@ def _invoice_period_line_from_invoice_line(line: ClientInvoiceLine) -> InvoicePe
         total_incl_vat=Decimal(line.total_incl_vat).quantize(Decimal("0.01")),
         currency=(line.currency or "EUR").upper(),
     )
+
+
+def _invoice_period_totals_from_lines_or_metadata(
+    invoice_lines: list[InvoicePeriodLine],
+    metadata: dict[str, object],
+) -> dict[str, dict[str, Decimal]]:
+    totals_by_currency: dict[str, dict[str, Decimal]] = {}
+    if invoice_lines:
+        totals_by_currency, _ = summarize_invoice_period_lines(invoice_lines)
+        if totals_by_currency:
+            return totals_by_currency
+
+    raw_totals = metadata.get("totals_by_currency")
+    if isinstance(raw_totals, dict):
+        for currency_code, total_text in raw_totals.items():
+            currency = str(currency_code).strip().upper() or "EUR"
+            try:
+                total = Decimal(str(total_text)).quantize(Decimal("0.01"))
+            except Exception:
+                continue
+            totals_by_currency[currency] = {
+                "amount_excl_vat": total,
+                "vat_amount": Decimal("0.00"),
+                "total_incl_vat": total,
+            }
+    if totals_by_currency:
+        return totals_by_currency
+
+    amount, currency_code = _first_currency_total(metadata)
+    return {
+        currency_code: {
+            "amount_excl_vat": amount,
+            "vat_amount": Decimal("0.00"),
+            "total_incl_vat": amount,
+        }
+    }
 
 
 def _booking_uuid_from_payment_id(payment_id: str) -> UUID | None:
@@ -2740,37 +2777,7 @@ def download_client_invoice(
         ).all()
         invoice_lines = [_invoice_period_line_from_invoice_line(row) for row in invoice_lines_rows]
 
-        totals_by_currency: dict[str, dict[str, Decimal]] = {}
-        raw_totals = metadata.get("totals_by_currency")
-        if isinstance(raw_totals, dict):
-            for currency_code, total_text in raw_totals.items():
-                currency = str(currency_code).strip().upper() or "EUR"
-                try:
-                    total = Decimal(str(total_text)).quantize(Decimal("0.01"))
-                except Exception:
-                    continue
-                totals_by_currency[currency] = {
-                    "amount_excl_vat": total,
-                    "vat_amount": Decimal("0.00"),
-                    "total_incl_vat": total,
-                }
-        if not totals_by_currency and invoice_lines:
-            for row in invoice_lines:
-                currency = (row.currency or "EUR").upper()
-                current = totals_by_currency.setdefault(
-                    currency,
-                    {"amount_excl_vat": Decimal("0.00"), "vat_amount": Decimal("0.00"), "total_incl_vat": Decimal("0.00")},
-                )
-                current["amount_excl_vat"] = (current["amount_excl_vat"] + Decimal(row.amount_excl_vat)).quantize(Decimal("0.01"))
-                current["vat_amount"] = (current["vat_amount"] + Decimal(row.vat_amount)).quantize(Decimal("0.01"))
-                current["total_incl_vat"] = (current["total_incl_vat"] + Decimal(row.total_incl_vat)).quantize(Decimal("0.01"))
-        if not totals_by_currency:
-            amount, currency_code = _first_currency_total(metadata)
-            totals_by_currency[currency_code] = {
-                "amount_excl_vat": amount,
-                "vat_amount": Decimal("0.00"),
-                "total_incl_vat": amount,
-            }
+        totals_by_currency = _invoice_period_totals_from_lines_or_metadata(invoice_lines, metadata)
 
         opening_balance_by_currency: dict[str, Decimal] = {}
         if not is_single_booking_invoice_scope(metadata):
