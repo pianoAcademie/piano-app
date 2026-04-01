@@ -11030,6 +11030,21 @@ button.danger:focus-visible {
   margin: 0;
 }
 
+.client-content-lesson-body iframe {
+  width: 100%;
+  min-height: min(62vh, 720px);
+  border: 0;
+  border-radius: 1rem;
+  background: rgba(250, 246, 238, 0.96);
+}
+
+.client-content-lesson-body img,
+.client-content-lesson-body video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 1rem;
+}
+
 .client-content-empty-state {
   display: grid;
   gap: 0.45rem;

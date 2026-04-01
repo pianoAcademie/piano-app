@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import html
 import json
 import logging
 import re
@@ -984,15 +985,50 @@ def _managed_client_ids_for_sessions(db: Session, current_user: User) -> set[UUI
     return managed_ids
 
 
+def _clean_external_content_text(value: str | None) -> str | None:
+    normalized = _normalize_optional(value)
+    if normalized is None:
+        return None
+    decoded = html.unescape(normalized)
+    cleaned = decoded.replace("\ufffc", "").replace("\xa0", " ")
+    collapsed = " ".join(cleaned.split())
+    return collapsed or None
+
+
+def _clean_external_content_summary(value: str | None) -> str | None:
+    normalized = _normalize_optional(value)
+    if normalized is None:
+        return None
+    decoded = html.unescape(normalized).replace("\ufffc", "").replace("\xa0", " ")
+    stripped = HTML_TAG_RE.sub(" ", decoded)
+    collapsed = " ".join(stripped.split())
+    return collapsed or None
+
+
+def _clean_external_content_html(value: str | None) -> str | None:
+    normalized = _normalize_optional(value)
+    if normalized is None:
+        return None
+    cleaned = html.unescape(normalized).replace("\ufffc", "")
+    for source, target in (
+        ("http://www.cloudlearning.fr/", "https://www.cloudlearning.fr/"),
+        ("http://cloudlearning.fr/", "https://cloudlearning.fr/"),
+        ("http://www.piano-academie.com/", "https://www.piano-academie.com/"),
+        ("http://piano-academie.com/", "https://piano-academie.com/"),
+    ):
+        cleaned = cleaned.replace(source, target)
+    return cleaned or None
+
+
 def _client_content_lesson_out(lesson: ExternalContentLesson) -> ClientContentLessonOut:
     return ClientContentLessonOut(
         id=lesson.id,
         external_id=lesson.external_id,
         slug=lesson.slug,
-        title=lesson.title,
+        title=_clean_external_content_text(lesson.title) or lesson.title,
         position=lesson.position,
-        summary=lesson.summary,
-        content_html=lesson.content_html,
+        summary=_clean_external_content_summary(lesson.summary),
+        content_html=_clean_external_content_html(lesson.content_html),
         video_url=lesson.video_url,
         resource_url=lesson.resource_url,
         status=lesson.status.value if hasattr(lesson.status, "value") else str(lesson.status),
@@ -1151,7 +1187,7 @@ def _client_content_courses(
             ClientContentSectionOut(
                 id=section.id,
                 external_id=section.external_id,
-                title=section.title,
+                title=_clean_external_content_text(section.title) or section.title,
                 position=section.position,
                 lessons=[_client_content_lesson_out(lesson) for lesson in lessons_by_section.get(section.id, [])],
             )
@@ -1176,9 +1212,9 @@ def _client_content_courses(
                 provider=course.provider.value if hasattr(course.provider, "value") else str(course.provider),
                 external_id=course.external_id,
                 slug=course.slug,
-                title=course.title,
-                summary=course.summary,
-                level_code=course.level_code,
+                title=_clean_external_content_text(course.title) or course.title,
+                summary=_clean_external_content_summary(course.summary),
+                level_code=_clean_external_content_text(course.level_code),
                 status=course.status.value if hasattr(course.status, "value") else str(course.status),
                 cover_image_url=course.cover_image_url,
                 last_synced_at=course.last_synced_at,

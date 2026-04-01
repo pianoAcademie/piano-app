@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import html
 import json
 from typing import Iterable, Sequence
 from urllib.error import HTTPError, URLError
@@ -95,9 +96,9 @@ def _string_value(value: object | None) -> str | None:
     if isinstance(value, (dict, list, tuple, set)):
         return None
     if isinstance(value, str):
-        normalized = value.strip()
+        normalized = html.unescape(value).replace("\ufffc", "").replace("\xa0", " ").strip()
         return normalized or None
-    normalized = str(value).strip()
+    normalized = html.unescape(str(value)).replace("\ufffc", "").replace("\xa0", " ").strip()
     return normalized or None
 
 

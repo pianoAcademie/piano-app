@@ -87,6 +87,40 @@ class ExternalContentTests(unittest.TestCase):
         self.assertEqual(courses[0].external_id, "course-solfege-2")
         self.assertEqual(courses[0].lessons[0].status, ExternalContentStatus.DRAFT)
 
+    def test_normalize_catalog_payload_decodes_html_entities(self) -> None:
+        payload = {
+            "courses": [
+                {
+                    "id": "course-1",
+                    "title": "Solfège débutant &#8211; Période 1",
+                    "summary": "Bienvenue &amp; bon travail",
+                    "sections": [
+                        {
+                            "id": "section-1",
+                            "title": "Débutant &#8211; leçon n°1",
+                            "lessons": [
+                                {
+                                    "id": "lesson-1",
+                                    "title": "Cours n°1 &#8211; Clef de fa",
+                                    "summary": "&lt;br /&gt;",
+                                    "content_html": "<iframe src='http://www.cloudlearning.fr/demo'></iframe>\ufffc",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        courses = normalize_wordpress_learndash_catalog_payload(payload)
+
+        self.assertEqual(courses[0].title, "Solfège débutant – Période 1")
+        self.assertEqual(courses[0].summary, "Bienvenue & bon travail")
+        self.assertEqual(courses[0].sections[0].title, "Débutant – leçon n°1")
+        self.assertEqual(courses[0].sections[0].lessons[0].title, "Cours n°1 – Clef de fa")
+        self.assertEqual(courses[0].sections[0].lessons[0].summary, "<br />")
+        self.assertNotIn("\ufffc", courses[0].sections[0].lessons[0].content_html or "")
+
     def test_resolve_sync_endpoint_prefers_explicit_endpoint(self) -> None:
         fake_db = _FakeSettingsSession({})
         values = {
