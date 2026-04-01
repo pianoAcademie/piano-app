@@ -4,6 +4,9 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import AdminIntegrationPlanningEmbed from "../../../components/admin-integration-planning-embed";
+import ActivityContentAssignmentsPicker, {
+  ActivityModalTabs,
+} from "../../../components/activity-content-assignment-picker";
 import ColorHexInput from "../../../components/color-hex-input";
 import RichMessageEditor from "../../../components/rich-message-editor";
 import {
@@ -194,16 +197,6 @@ type ActivityPlanningLocationOption = {
   selectedForCurrentActivity: boolean;
 };
 
-type ActivityContentCourseOption = {
-  id: string;
-  title: string;
-  levelCode: string | null;
-  status: string;
-  sectionsCount: number;
-  lessonsCount: number;
-  summary: string | null;
-};
-
 function ActivityModalSection({ title, description, children, accent = false }: ActivityModalSectionProps) {
   return (
     <section className={`activity-modal-section${accent ? " is-accent" : ""}`}>
@@ -267,55 +260,6 @@ function ActivityPlanningAssignments({
             <small>
               {location.selectedActivityCount} activite(s) actuellement visibles sur ce planning.
             </small>
-          </span>
-        </label>
-      ))}
-    </div>
-  );
-}
-
-function ActivityContentAssignments({
-  courses,
-  defaultSelectedCourseIds,
-}: {
-  courses: ActivityContentCourseOption[];
-  defaultSelectedCourseIds: string[];
-}) {
-  const defaultSelected = new Set(defaultSelectedCourseIds);
-
-  if (courses.length === 0) {
-    return (
-      <div className="activity-content-empty">
-        <p className="muted">Aucun contenu synchronise pour le moment.</p>
-        <p className="muted">
-          Synchronisez d abord le catalogue WordPress / LearnDash, puis revenez ici pour rattacher les cours eleves.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="activity-content-grid">
-      {courses.map((course) => (
-        <label key={course.id} className="activity-content-card">
-          <span className="activity-planning-checkbox">
-            <input
-              type="checkbox"
-              name="content_course_ids"
-              value={course.id}
-              defaultChecked={defaultSelected.has(course.id)}
-            />
-          </span>
-          <span className="activity-content-copy">
-            <strong>{course.title}</strong>
-            <small>
-              {course.levelCode ? `Niveau ${course.levelCode}` : "Niveau non precise"} · {course.sectionsCount} section(s) ·{" "}
-              {course.lessonsCount} lecon(s)
-            </small>
-            {course.summary ? <small>{course.summary}</small> : null}
-          </span>
-          <span className={`status-pill ${course.status === "PUBLISHED" ? "status-ok" : "status-warn"}`}>
-            {course.status === "PUBLISHED" ? "Publie" : course.status}
           </span>
         </label>
       ))}
@@ -829,15 +773,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     .filter((location) => location.selectedForCurrentActivity)
     .map((location) => location.locationId);
   const selectedActivityContentCourseIds = selectedActivity?.content_course_ids ?? [];
-  const contentCourseOptions: ActivityContentCourseOption[] = externalContentCourses.map((course) => ({
-    id: course.id,
-    title: course.title,
-    levelCode: course.level_code,
-    status: course.status,
-    sectionsCount: course.sections_count,
-    lessonsCount: course.lessons_count,
-    summary: course.summary,
-  }));
   const createLegalEntityModalOpen = readParam(params, "new_legal_entity") === "1";
   const selectedLegalEntityId = readParam(params, "legal_entity_id");
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === selectedLegalEntityId) ?? null;
@@ -3218,260 +3153,274 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       ) : (
                       <form action={createAdminActivityAction} className="activity-modal-form">
                         <input type="hidden" name="service_code" value="ACTIVITY" />
-                        <ActivityModalSection
-                          title="Identite et rattachement"
-                          description="Nom lisible par l equipe et rattachement aux entites legales utilisees pour la vente et la paie."
-                        >
-                          <div className="grid cols-2 config-form-grid">
-                            <label className="span-2">
-                              Nom de l activite
-                              <input type="text" name="name" required maxLength={255} />
-                            </label>
-                            <label>
-                              Entite legale vendeuse
-                              <select name="seller_legal_entity_id" defaultValue={activeLegalEntities[0]?.id ?? ""} required>
-                                <option value="" disabled>
-                                  Selectionner
-                                </option>
-                                {activeLegalEntities.map((entity) => (
-                                  <option key={entity.id} value={entity.id}>
-                                    {entity.name} ({entity.invoice_prefix})
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label>
-                              Entite legale payeuse prof
-                              <select name="payor_legal_entity_id" defaultValue={activeLegalEntities[0]?.id ?? ""} required>
-                                <option value="" disabled>
-                                  Selectionner
-                                </option>
-                                {activeLegalEntities.map((entity) => (
-                                  <option key={`create-payor-entity-${entity.id}`} value={entity.id}>
-                                    {entity.name} ({entity.invoice_prefix})
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          </div>
-                        </ActivityModalSection>
+                        <ActivityModalTabs
+                          activityContent={
+                            <>
+                              <ActivityModalSection
+                                title="Identite et rattachement"
+                                description="Nom lisible par l equipe et rattachement aux entites legales utilisees pour la vente et la paie."
+                              >
+                                <div className="grid cols-2 config-form-grid">
+                                  <label className="span-2">
+                                    Nom de l activite
+                                    <input type="text" name="name" required maxLength={255} />
+                                  </label>
+                                  <label>
+                                    Entite legale vendeuse
+                                    <select name="seller_legal_entity_id" defaultValue={activeLegalEntities[0]?.id ?? ""} required>
+                                      <option value="" disabled>
+                                        Selectionner
+                                      </option>
+                                      {activeLegalEntities.map((entity) => (
+                                        <option key={entity.id} value={entity.id}>
+                                          {entity.name} ({entity.invoice_prefix})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label>
+                                    Entite legale payeuse prof
+                                    <select name="payor_legal_entity_id" defaultValue={activeLegalEntities[0]?.id ?? ""} required>
+                                      <option value="" disabled>
+                                        Selectionner
+                                      </option>
+                                      {activeLegalEntities.map((entity) => (
+                                        <option key={`create-payor-entity-${entity.id}`} value={entity.id}>
+                                          {entity.name} ({entity.invoice_prefix})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+                              </ActivityModalSection>
 
-                        <ActivityModalSection
-                          title="Plannings concernes"
-                          description="Choisissez les plannings sur lesquels cette activite doit pouvoir etre utilisee. Decochez un local pour retirer l activite de son planning."
-                        >
-                          <ActivityPlanningAssignments
-                            locations={activityPlanningLocations}
-                            defaultSelectedLocationIds={createActivityDefaultPlanningLocationIds}
-                          />
-                        </ActivityModalSection>
+                              <ActivityModalSection
+                                title="Plannings concernes"
+                                description="Choisissez les plannings sur lesquels cette activite doit pouvoir etre utilisee. Decochez un local pour retirer l activite de son planning."
+                              >
+                                <ActivityPlanningAssignments
+                                  locations={activityPlanningLocations}
+                                  defaultSelectedLocationIds={createActivityDefaultPlanningLocationIds}
+                                />
+                              </ActivityModalSection>
 
-                        <ActivityModalSection
-                          title="Contenu pedagogique en ligne"
-                          description="Associez les cours WordPress / LearnDash qui doivent apparaitre dans le portail eleve quand cette activite est active."
-                        >
-                          <ActivityContentAssignments
-                            courses={contentCourseOptions}
-                            defaultSelectedCourseIds={[]}
-                          />
-                        </ActivityModalSection>
+                              <div className="grid cols-2 activity-modal-zone-grid">
+                                <ActivityModalSection
+                                  title="Usage du creneau"
+                                  description="Definir comment ce type de creneau doit vivre dans le planning et dans les creations recurrentes."
+                                  accent
+                                >
+                                  <div className="grid cols-2 config-form-grid">
+                                    <label>
+                                      Mode
+                                      <select name="mode" defaultValue="ANY">
+                                        <option value="ANY">Tous</option>
+                                        <option value="ONSITE">Presentiel</option>
+                                        <option value="ONLINE">En ligne</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Type de credit
+                                      <select name="credit_type_id" defaultValue="">
+                                        <option value="">Aucun type de credit</option>
+                                        {activeCreditTypes.map((creditType) => (
+                                          <option key={creditType.id} value={creditType.id}>
+                                            {creditType.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  </div>
+                                  <div className="activity-toggle-grid">
+                                    <ActivityToggleCard
+                                      name="without_students"
+                                      label="Creneau sans eleve"
+                                      description="Bloque toute inscription eleve, force la capacite a 0 et rend le professeur optionnel."
+                                      emphasized
+                                    />
+                                    <ActivityToggleCard
+                                      name="requires_professor"
+                                      label="Professeur requis"
+                                      description="Affiche une alerte si aucun professeur n est affecte a ce type de creneau."
+                                      defaultChecked
+                                    />
+                                    <ActivityToggleCard
+                                      name="exclude_holidays_in_recurrence"
+                                      label="Exclure les jours feries"
+                                      description="Ignore les jours feries lors de la creation recurrente de seances."
+                                      defaultChecked
+                                    />
+                                    <ActivityToggleCard
+                                      name="exclude_school_vacations_in_recurrence"
+                                      label="Exclure les vacances scolaires"
+                                      description="Ignore les periodes de vacances scolaires lors de la creation recurrente."
+                                      defaultChecked
+                                    />
+                                    <ActivityToggleCard
+                                      name="active"
+                                      label="Activite active"
+                                      description="Disponible dans l administration et exploitable pour creer de nouveaux creneaux."
+                                      defaultChecked
+                                    />
+                                  </div>
+                                  <p className="activity-modal-note">
+                                    Utilisez "Creneau sans eleve" pour les vacances, fermetures, blocages planning et autres
+                                    occurrences purement administratives.
+                                  </p>
+                                </ActivityModalSection>
 
-                        <div className="grid cols-2 activity-modal-zone-grid">
-                          <ActivityModalSection
-                            title="Usage du creneau"
-                            description="Definir comment ce type de creneau doit vivre dans le planning et dans les creations recurrentes."
-                            accent
-                          >
-                            <div className="grid cols-2 config-form-grid">
-                              <label>
-                                Mode
-                                <select name="mode" defaultValue="ANY">
-                                  <option value="ANY">Tous</option>
-                                  <option value="ONSITE">Presentiel</option>
-                                  <option value="ONLINE">En ligne</option>
-                                </select>
-                              </label>
-                              <label>
-                                Type de credit
-                                <select name="credit_type_id" defaultValue="">
-                                  <option value="">Aucun type de credit</option>
-                                  {activeCreditTypes.map((creditType) => (
-                                    <option key={creditType.id} value={creditType.id}>
-                                      {creditType.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                            </div>
-                            <div className="activity-toggle-grid">
-                              <ActivityToggleCard
-                                name="without_students"
-                                label="Creneau sans eleve"
-                                description="Bloque toute inscription eleve, force la capacite a 0 et rend le professeur optionnel."
-                                emphasized
+                                <ActivityModalSection
+                                  title="Parametres du creneau"
+                                  description="Regles structurelles appliquees a chaque occurrence creee a partir de cette activite."
+                                >
+                                  <div className="grid cols-2 config-form-grid">
+                                    <label>
+                                      Duree (minutes)
+                                      <input
+                                        type="number"
+                                        name="duration_minutes"
+                                        min={5}
+                                        max={1440}
+                                        defaultValue={60}
+                                        required
+                                      />
+                                    </label>
+                                    <label>
+                                      Capacite maximum
+                                      <input type="number" name="default_capacity" min={0} max={500} defaultValue={8} required />
+                                      <small className="muted">
+                                        Si le creneau est sans eleve, la capacite sera forcee a 0 automatiquement.
+                                      </small>
+                                    </label>
+                                  </div>
+                                </ActivityModalSection>
+                              </div>
+
+                              <div className="grid cols-2 activity-modal-zone-grid">
+                                <ActivityModalSection
+                                  title="Reservations et rappels"
+                                  description="Delais minimums, auto-annulations et rappels envoyes aux familles."
+                                >
+                                  <div className="grid cols-2 config-form-grid">
+                                    <label>
+                                      Rappels par courriel
+                                      <select name="email_reminder_hours_before_start" defaultValue="global">
+                                        {REMINDER_OFFSET_OPTIONS.map((option) => (
+                                          <option key={`activity-email-reminder-create-${option.value}`} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Rappels SMS
+                                      <select name="sms_reminder_hours_before_start" defaultValue="global">
+                                        {REMINDER_OFFSET_OPTIONS.map((option) => (
+                                          <option key={`activity-sms-reminder-create-${option.value}`} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Delai minimum reservation (h)
+                                      <input
+                                        type="number"
+                                        name="min_booking_notice_hours_override"
+                                        min={0}
+                                        step="1"
+                                        placeholder="vide = planning"
+                                      />
+                                    </label>
+                                    <label>
+                                      Delai autorise pour annulation (h)
+                                      <input
+                                        type="number"
+                                        name="cancellation_deadline_hours_override"
+                                        min={0}
+                                        step="1"
+                                        placeholder="vide = planning"
+                                      />
+                                    </label>
+                                    <label>
+                                      Auto-annulation si inscrits {"<"}
+                                      <input
+                                        type="number"
+                                        name="auto_cancel_if_booked_less_than_override"
+                                        min={0}
+                                        step="1"
+                                        placeholder="vide = planning"
+                                      />
+                                    </label>
+                                    <label>
+                                      Auto-annulation X heures avant debut
+                                      <input
+                                        type="number"
+                                        name="auto_cancel_hours_before_start_override"
+                                        min={0}
+                                        step="1"
+                                        placeholder="vide = planning"
+                                      />
+                                    </label>
+                                  </div>
+                                </ActivityModalSection>
+
+                                <ActivityModalSection
+                                  title="Tarification et apparence"
+                                  description="Tarifs par defaut, couleur d affichage et informations utiles pour la lecture du planning."
+                                >
+                                  <div className="grid cols-2 config-form-grid">
+                                    <label>
+                                      Tarif horaire TTC
+                                      <input
+                                        type="number"
+                                        name="default_hourly_rate"
+                                        min={0}
+                                        step="0.01"
+                                        placeholder="ex: 35.00"
+                                      />
+                                    </label>
+                                    <label>
+                                      Tarif par cours TTC
+                                      <input
+                                        type="number"
+                                        name="default_course_rate_ttc"
+                                        min={0}
+                                        step="0.01"
+                                        placeholder="ex: 200.00"
+                                      />
+                                    </label>
+                                    <label className="span-2">
+                                      Couleur
+                                      <ColorHexInput name="color_hex" defaultValue="#94C973" />
+                                    </label>
+                                  </div>
+                                </ActivityModalSection>
+                              </div>
+
+                              <ActivityModalSection
+                                title="Description interne"
+                                description="Contexte libre pour aider l equipe a comprendre l usage exact de cette activite."
+                              >
+                                <label>
+                                  Description
+                                  <textarea name="description" rows={4} />
+                                </label>
+                              </ActivityModalSection>
+                            </>
+                          }
+                          contentContent={
+                            <ActivityModalSection
+                              title="Contenu pedagogique en ligne"
+                              description="Retrouvez rapidement le bon cours LearnDash, puis rattachez-le a cette activite eleve."
+                            >
+                              <ActivityContentAssignmentsPicker
+                                courses={externalContentCourses}
+                                defaultSelectedCourseIds={[]}
                               />
-                              <ActivityToggleCard
-                                name="requires_professor"
-                                label="Professeur requis"
-                                description="Affiche une alerte si aucun professeur n est affecte a ce type de creneau."
-                                defaultChecked
-                              />
-                              <ActivityToggleCard
-                                name="exclude_holidays_in_recurrence"
-                                label="Exclure les jours feries"
-                                description="Ignore les jours feries lors de la creation recurrente de seances."
-                                defaultChecked
-                              />
-                              <ActivityToggleCard
-                                name="exclude_school_vacations_in_recurrence"
-                                label="Exclure les vacances scolaires"
-                                description="Ignore les periodes de vacances scolaires lors de la creation recurrente."
-                                defaultChecked
-                              />
-                              <ActivityToggleCard
-                                name="active"
-                                label="Activite active"
-                                description="Disponible dans l administration et exploitable pour creer de nouveaux creneaux."
-                                defaultChecked
-                              />
-                            </div>
-                            <p className="activity-modal-note">
-                              Utilisez "Creneau sans eleve" pour les vacances, fermetures, blocages planning et autres
-                              occurrences purement administratives.
-                            </p>
-                          </ActivityModalSection>
-
-                          <ActivityModalSection
-                            title="Parametres du creneau"
-                            description="Regles structurelles appliquees a chaque occurrence creee a partir de cette activite."
-                          >
-                            <div className="grid cols-2 config-form-grid">
-                              <label>
-                                Duree (minutes)
-                                <input type="number" name="duration_minutes" min={5} max={1440} defaultValue={60} required />
-                              </label>
-                              <label>
-                                Capacite maximum
-                                <input type="number" name="default_capacity" min={0} max={500} defaultValue={8} required />
-                                <small className="muted">
-                                  Si le creneau est sans eleve, la capacite sera forcee a 0 automatiquement.
-                                </small>
-                              </label>
-                            </div>
-                          </ActivityModalSection>
-                        </div>
-
-                        <div className="grid cols-2 activity-modal-zone-grid">
-                          <ActivityModalSection
-                            title="Reservations et rappels"
-                            description="Delais minimums, auto-annulations et rappels envoyes aux familles."
-                          >
-                            <div className="grid cols-2 config-form-grid">
-                              <label>
-                                Rappels par courriel
-                                <select name="email_reminder_hours_before_start" defaultValue="global">
-                                  {REMINDER_OFFSET_OPTIONS.map((option) => (
-                                    <option key={`activity-email-reminder-create-${option.value}`} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                Rappels SMS
-                                <select name="sms_reminder_hours_before_start" defaultValue="global">
-                                  {REMINDER_OFFSET_OPTIONS.map((option) => (
-                                    <option key={`activity-sms-reminder-create-${option.value}`} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                Delai minimum reservation (h)
-                                <input
-                                  type="number"
-                                  name="min_booking_notice_hours_override"
-                                  min={0}
-                                  step="1"
-                                  placeholder="vide = planning"
-                                />
-                              </label>
-                              <label>
-                                Delai autorise pour annulation (h)
-                                <input
-                                  type="number"
-                                  name="cancellation_deadline_hours_override"
-                                  min={0}
-                                  step="1"
-                                  placeholder="vide = planning"
-                                />
-                              </label>
-                              <label>
-                                Auto-annulation si inscrits {"<"}
-                                <input
-                                  type="number"
-                                  name="auto_cancel_if_booked_less_than_override"
-                                  min={0}
-                                  step="1"
-                                  placeholder="vide = planning"
-                                />
-                              </label>
-                              <label>
-                                Auto-annulation X heures avant debut
-                                <input
-                                  type="number"
-                                  name="auto_cancel_hours_before_start_override"
-                                  min={0}
-                                  step="1"
-                                  placeholder="vide = planning"
-                                />
-                              </label>
-                            </div>
-                          </ActivityModalSection>
-
-                          <ActivityModalSection
-                            title="Tarification et apparence"
-                            description="Tarifs par defaut, couleur d affichage et informations utiles pour la lecture du planning."
-                          >
-                            <div className="grid cols-2 config-form-grid">
-                              <label>
-                                Tarif horaire TTC
-                                <input
-                                  type="number"
-                                  name="default_hourly_rate"
-                                  min={0}
-                                  step="0.01"
-                                  placeholder="ex: 35.00"
-                                />
-                              </label>
-                              <label>
-                                Tarif par cours TTC
-                                <input
-                                  type="number"
-                                  name="default_course_rate_ttc"
-                                  min={0}
-                                  step="0.01"
-                                  placeholder="ex: 200.00"
-                                />
-                              </label>
-                              <label className="span-2">
-                                Couleur
-                                <ColorHexInput name="color_hex" defaultValue="#94C973" />
-                              </label>
-                            </div>
-                          </ActivityModalSection>
-                        </div>
-
-                        <ActivityModalSection
-                          title="Description interne"
-                          description="Contexte libre pour aider l equipe a comprendre l usage exact de cette activite."
-                        >
-                          <label>
-                            Description
-                            <textarea name="description" rows={4} />
-                          </label>
-                        </ActivityModalSection>
+                            </ActivityModalSection>
+                          }
+                        />
 
                         <div className="activity-modal-footer">
                           <p className="muted">
@@ -3511,333 +3460,340 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <form action={updateAdminActivityAction} className="activity-modal-form">
                         <input type="hidden" name="activity_id" value={selectedActivity.id} />
                         <input type="hidden" name="service_code" value={selectedActivity.service_code} />
-                        <ActivityModalSection
-                          title="Identite et rattachement"
-                          description="Nom lisible par l equipe et rattachement aux entites legales utilisees pour la vente et la paie."
-                        >
-                          <div className="grid cols-2 config-form-grid">
-                            <label className="span-2">
-                              Nom de l activite
-                              <input type="text" name="name" defaultValue={selectedActivity.name} required maxLength={255} />
-                            </label>
-                            <label>
-                              Entite legale vendeuse
-                              <select
-                                name="seller_legal_entity_id"
-                                defaultValue={selectedActivity.seller_legal_entity_id ?? activeLegalEntities[0]?.id ?? ""}
-                                required
+                        <ActivityModalTabs
+                          activityContent={
+                            <>
+                              <ActivityModalSection
+                                title="Identite et rattachement"
+                                description="Nom lisible par l equipe et rattachement aux entites legales utilisees pour la vente et la paie."
                               >
-                                <option value="" disabled>
-                                  Selectionner
-                                </option>
-                                {activeLegalEntities.map((entity) => (
-                                  <option key={entity.id} value={entity.id}>
-                                    {entity.name} ({entity.invoice_prefix})
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label>
-                              Entite legale payeuse prof
-                              <select
-                                name="payor_legal_entity_id"
-                                defaultValue={
-                                  selectedActivity.payor_legal_entity_id ??
-                                  selectedActivity.seller_legal_entity_id ??
-                                  activeLegalEntities[0]?.id ??
-                                  ""
-                                }
-                                required
+                                <div className="grid cols-2 config-form-grid">
+                                  <label className="span-2">
+                                    Nom de l activite
+                                    <input type="text" name="name" defaultValue={selectedActivity.name} required maxLength={255} />
+                                  </label>
+                                  <label>
+                                    Entite legale vendeuse
+                                    <select
+                                      name="seller_legal_entity_id"
+                                      defaultValue={selectedActivity.seller_legal_entity_id ?? activeLegalEntities[0]?.id ?? ""}
+                                      required
+                                    >
+                                      <option value="" disabled>
+                                        Selectionner
+                                      </option>
+                                      {activeLegalEntities.map((entity) => (
+                                        <option key={entity.id} value={entity.id}>
+                                          {entity.name} ({entity.invoice_prefix})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label>
+                                    Entite legale payeuse prof
+                                    <select
+                                      name="payor_legal_entity_id"
+                                      defaultValue={
+                                        selectedActivity.payor_legal_entity_id ??
+                                        selectedActivity.seller_legal_entity_id ??
+                                        activeLegalEntities[0]?.id ??
+                                        ""
+                                      }
+                                      required
+                                    >
+                                      <option value="" disabled>
+                                        Selectionner
+                                      </option>
+                                      {activeLegalEntities.map((entity) => (
+                                        <option key={`edit-payor-entity-${entity.id}`} value={entity.id}>
+                                          {entity.name} ({entity.invoice_prefix})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+                              </ActivityModalSection>
+
+                              <ActivityModalSection
+                                title="Plannings concernes"
+                                description="Associez ou retirez cette activite des plannings locaux. Si un local est decoche, l activite n apparaitra plus dans son planning."
                               >
-                                <option value="" disabled>
-                                  Selectionner
-                                </option>
-                                {activeLegalEntities.map((entity) => (
-                                  <option key={`edit-payor-entity-${entity.id}`} value={entity.id}>
-                                    {entity.name} ({entity.invoice_prefix})
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          </div>
-                        </ActivityModalSection>
-
-                        <ActivityModalSection
-                          title="Plannings concernes"
-                          description="Associez ou retirez cette activite des plannings locaux. Si un local est decoche, l activite n apparaitra plus dans son planning."
-                        >
-                          <ActivityPlanningAssignments
-                            locations={activityPlanningLocations}
-                            defaultSelectedLocationIds={selectedActivityPlanningLocationIds}
-                          />
-                        </ActivityModalSection>
-
-                        <ActivityModalSection
-                          title="Contenu pedagogique en ligne"
-                          description="Choisissez ici les cours WordPress / LearnDash a ouvrir automatiquement aux eleves rattaches a cette activite."
-                        >
-                          <ActivityContentAssignments
-                            courses={contentCourseOptions}
-                            defaultSelectedCourseIds={selectedActivityContentCourseIds}
-                          />
-                        </ActivityModalSection>
-
-                        <div className="grid cols-2 activity-modal-zone-grid">
-                          <ActivityModalSection
-                            title="Usage du creneau"
-                            description="Definir comment ce type de creneau doit vivre dans le planning et dans les creations recurrentes."
-                            accent
-                          >
-                            <div className="grid cols-2 config-form-grid">
-                              <label>
-                                Mode
-                                <select name="mode" defaultValue={selectedActivity.mode}>
-                                  <option value="ANY">Tous</option>
-                                  <option value="ONSITE">Presentiel</option>
-                                  <option value="ONLINE">En ligne</option>
-                                </select>
-                              </label>
-                              <label>
-                                Type de credit
-                                <select name="credit_type_id" defaultValue={selectedActivity.credit_type_id ?? ""}>
-                                  <option value="">Aucun type de credit</option>
-                                  {activeCreditTypes.map((creditType) => (
-                                    <option key={creditType.id} value={creditType.id}>
-                                      {creditType.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                            </div>
-                            <div className="activity-toggle-grid">
-                              <ActivityToggleCard
-                                name="without_students"
-                                label="Creneau sans eleve"
-                                description="Bloque toute inscription eleve, force la capacite a 0 et rend le professeur optionnel."
-                                defaultChecked={selectedActivityIsStudentless}
-                                emphasized={selectedActivityIsStudentless}
-                              />
-                              <ActivityToggleCard
-                                name="requires_professor"
-                                label="Professeur requis"
-                                description="Affiche une alerte si aucun professeur n est affecte a ce type de creneau."
-                                defaultChecked={selectedActivity.requires_professor}
-                              />
-                              <ActivityToggleCard
-                                name="exclude_holidays_in_recurrence"
-                                label="Exclure les jours feries"
-                                description="Ignore les jours feries lors de la creation recurrente de seances."
-                                defaultChecked={selectedActivity.exclude_holidays_in_recurrence}
-                              />
-                              <ActivityToggleCard
-                                name="exclude_school_vacations_in_recurrence"
-                                label="Exclure les vacances scolaires"
-                                description="Ignore les periodes de vacances scolaires lors de la creation recurrente."
-                                defaultChecked={selectedActivity.exclude_school_vacations_in_recurrence}
-                              />
-                              <ActivityToggleCard
-                                name="active"
-                                label="Activite active"
-                                description="Disponible dans l administration et exploitable pour creer de nouveaux creneaux."
-                                defaultChecked={selectedActivity.active}
-                              />
-                            </div>
-                            <p className="activity-modal-note">
-                              {selectedActivityIsStudentless
-                                ? "Cette activite est actuellement configuree comme un creneau sans eleve. Les inscriptions sont bloquees et la capacite reste a 0."
-                                : 'Cochez "Creneau sans eleve" pour les vacances, fermetures, blocages planning et autres occurrences purement administratives.'}
-                            </p>
-                          </ActivityModalSection>
-
-                          <ActivityModalSection
-                            title="Parametres du creneau"
-                            description="Regles structurelles appliquees a chaque occurrence creee a partir de cette activite."
-                          >
-                            <div className="grid cols-2 config-form-grid">
-                              <label>
-                                Duree (minutes)
-                                <input
-                                  type="number"
-                                  name="duration_minutes"
-                                  min={selectedActivityIsVacation ? 600 : 5}
-                                  max={1440}
-                                  defaultValue={selectedActivity.duration_minutes}
-                                  required
+                                <ActivityPlanningAssignments
+                                  locations={activityPlanningLocations}
+                                  defaultSelectedLocationIds={selectedActivityPlanningLocationIds}
                                 />
-                              </label>
-                              {selectedActivityIsStudentless ? (
-                                <label>
-                                  Capacite maximum
-                                  <input type="number" value={0} disabled readOnly />
-                                  <small className="muted">Capacite fixee a 0 pour les creneaux sans eleve.</small>
-                                </label>
-                              ) : (
-                                <label>
-                                  Capacite maximum
-                                  <input
-                                    type="number"
-                                    name="default_capacity"
-                                    min={0}
-                                    max={500}
-                                    defaultValue={selectedActivity.default_capacity}
-                                    required
-                                  />
-                                  <small className="muted">
-                                    Si le creneau est sans eleve, la capacite sera forcee a 0 automatiquement.
-                                  </small>
-                                </label>
-                              )}
-                            </div>
-                          </ActivityModalSection>
-                        </div>
+                              </ActivityModalSection>
 
-                        <div className="grid cols-2 activity-modal-zone-grid">
-                          <ActivityModalSection
-                            title="Reservations et rappels"
-                            description="Delais minimums, auto-annulations et rappels envoyes aux familles."
-                          >
-                            <div className="grid cols-2 config-form-grid">
-                              <label>
-                                Rappels par courriel
-                                <select
-                                  name="email_reminder_hours_before_start"
-                                  defaultValue={
-                                    selectedActivity.email_reminder_hours_before_start === null
-                                      ? "global"
-                                      : String(selectedActivity.email_reminder_hours_before_start)
-                                  }
+                              <div className="grid cols-2 activity-modal-zone-grid">
+                                <ActivityModalSection
+                                  title="Usage du creneau"
+                                  description="Definir comment ce type de creneau doit vivre dans le planning et dans les creations recurrentes."
+                                  accent
                                 >
-                                  {selectedActivity.email_reminder_hours_before_start !== null &&
-                                  !REMINDER_OFFSET_OPTIONS.some(
-                                    (option) => option.value === String(selectedActivity.email_reminder_hours_before_start),
-                                  ) ? (
-                                    <option value={String(selectedActivity.email_reminder_hours_before_start)}>
-                                      {selectedActivity.email_reminder_hours_before_start} heures avant (personnalise)
-                                    </option>
-                                  ) : null}
-                                  {REMINDER_OFFSET_OPTIONS.map((option) => (
-                                    <option key={`activity-email-reminder-update-${option.value}`} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                Rappels SMS
-                                <select
-                                  name="sms_reminder_hours_before_start"
-                                  defaultValue={
-                                    selectedActivity.sms_reminder_hours_before_start === null
-                                      ? "global"
-                                      : String(selectedActivity.sms_reminder_hours_before_start)
-                                  }
+                                  <div className="grid cols-2 config-form-grid">
+                                    <label>
+                                      Mode
+                                      <select name="mode" defaultValue={selectedActivity.mode}>
+                                        <option value="ANY">Tous</option>
+                                        <option value="ONSITE">Presentiel</option>
+                                        <option value="ONLINE">En ligne</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Type de credit
+                                      <select name="credit_type_id" defaultValue={selectedActivity.credit_type_id ?? ""}>
+                                        <option value="">Aucun type de credit</option>
+                                        {activeCreditTypes.map((creditType) => (
+                                          <option key={creditType.id} value={creditType.id}>
+                                            {creditType.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  </div>
+                                  <div className="activity-toggle-grid">
+                                    <ActivityToggleCard
+                                      name="without_students"
+                                      label="Creneau sans eleve"
+                                      description="Bloque toute inscription eleve, force la capacite a 0 et rend le professeur optionnel."
+                                      defaultChecked={selectedActivityIsStudentless}
+                                      emphasized={selectedActivityIsStudentless}
+                                    />
+                                    <ActivityToggleCard
+                                      name="requires_professor"
+                                      label="Professeur requis"
+                                      description="Affiche une alerte si aucun professeur n est affecte a ce type de creneau."
+                                      defaultChecked={selectedActivity.requires_professor}
+                                    />
+                                    <ActivityToggleCard
+                                      name="exclude_holidays_in_recurrence"
+                                      label="Exclure les jours feries"
+                                      description="Ignore les jours feries lors de la creation recurrente de seances."
+                                      defaultChecked={selectedActivity.exclude_holidays_in_recurrence}
+                                    />
+                                    <ActivityToggleCard
+                                      name="exclude_school_vacations_in_recurrence"
+                                      label="Exclure les vacances scolaires"
+                                      description="Ignore les periodes de vacances scolaires lors de la creation recurrente."
+                                      defaultChecked={selectedActivity.exclude_school_vacations_in_recurrence}
+                                    />
+                                    <ActivityToggleCard
+                                      name="active"
+                                      label="Activite active"
+                                      description="Disponible dans l administration et exploitable pour creer de nouveaux creneaux."
+                                      defaultChecked={selectedActivity.active}
+                                    />
+                                  </div>
+                                  <p className="activity-modal-note">
+                                    {selectedActivityIsStudentless
+                                      ? "Cette activite est actuellement configuree comme un creneau sans eleve. Les inscriptions sont bloquees et la capacite reste a 0."
+                                      : 'Cochez "Creneau sans eleve" pour les vacances, fermetures, blocages planning et autres occurrences purement administratives.'}
+                                  </p>
+                                </ActivityModalSection>
+
+                                <ActivityModalSection
+                                  title="Parametres du creneau"
+                                  description="Regles structurelles appliquees a chaque occurrence creee a partir de cette activite."
                                 >
-                                  {selectedActivity.sms_reminder_hours_before_start !== null &&
-                                  !REMINDER_OFFSET_OPTIONS.some(
-                                    (option) => option.value === String(selectedActivity.sms_reminder_hours_before_start),
-                                  ) ? (
-                                    <option value={String(selectedActivity.sms_reminder_hours_before_start)}>
-                                      {selectedActivity.sms_reminder_hours_before_start} heures avant (personnalise)
-                                    </option>
-                                  ) : null}
-                                  {REMINDER_OFFSET_OPTIONS.map((option) => (
-                                    <option key={`activity-sms-reminder-update-${option.value}`} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                Delai minimum reservation (h)
-                                <input
-                                  type="number"
-                                  name="min_booking_notice_hours_override"
-                                  min={0}
-                                  step="1"
-                                  defaultValue={selectedActivity.min_booking_notice_hours_override ?? ""}
-                                  placeholder="vide = planning"
-                                />
-                              </label>
-                              <label>
-                                Delai autorise pour annulation (h)
-                                <input
-                                  type="number"
-                                  name="cancellation_deadline_hours_override"
-                                  min={0}
-                                  step="1"
-                                  defaultValue={selectedActivity.cancellation_deadline_hours_override ?? ""}
-                                  placeholder="vide = planning"
-                                />
-                              </label>
-                              <label>
-                                Auto-annulation si inscrits {"<"}
-                                <input
-                                  type="number"
-                                  name="auto_cancel_if_booked_less_than_override"
-                                  min={0}
-                                  step="1"
-                                  defaultValue={selectedActivity.auto_cancel_if_booked_less_than_override ?? ""}
-                                  placeholder="vide = planning"
-                                />
-                              </label>
-                              <label>
-                                Auto-annulation X heures avant debut
-                                <input
-                                  type="number"
-                                  name="auto_cancel_hours_before_start_override"
-                                  min={0}
-                                  step="1"
-                                  defaultValue={selectedActivity.auto_cancel_hours_before_start_override ?? ""}
-                                  placeholder="vide = planning"
-                                />
-                              </label>
-                            </div>
-                          </ActivityModalSection>
+                                  <div className="grid cols-2 config-form-grid">
+                                    <label>
+                                      Duree (minutes)
+                                      <input
+                                        type="number"
+                                        name="duration_minutes"
+                                        min={selectedActivityIsVacation ? 600 : 5}
+                                        max={1440}
+                                        defaultValue={selectedActivity.duration_minutes}
+                                        required
+                                      />
+                                    </label>
+                                    {selectedActivityIsStudentless ? (
+                                      <label>
+                                        Capacite maximum
+                                        <input type="number" value={0} disabled readOnly />
+                                        <small className="muted">Capacite fixee a 0 pour les creneaux sans eleve.</small>
+                                      </label>
+                                    ) : (
+                                      <label>
+                                        Capacite maximum
+                                        <input
+                                          type="number"
+                                          name="default_capacity"
+                                          min={0}
+                                          max={500}
+                                          defaultValue={selectedActivity.default_capacity}
+                                          required
+                                        />
+                                        <small className="muted">
+                                          Si le creneau est sans eleve, la capacite sera forcee a 0 automatiquement.
+                                        </small>
+                                      </label>
+                                    )}
+                                  </div>
+                                </ActivityModalSection>
+                              </div>
 
-                          <ActivityModalSection
-                            title="Tarification et apparence"
-                            description="Tarifs par defaut, couleur d affichage et informations utiles pour la lecture du planning."
-                          >
-                            <div className="grid cols-2 config-form-grid">
-                              <label>
-                                Tarif horaire TTC
-                                <input
-                                  type="number"
-                                  name="default_hourly_rate"
-                                  min={0}
-                                  step="0.01"
-                                  defaultValue={selectedActivity.default_hourly_rate ?? ""}
-                                  placeholder="ex: 35.00"
-                                />
-                              </label>
-                              <label>
-                                Tarif par cours TTC
-                                <input
-                                  type="number"
-                                  name="default_course_rate_ttc"
-                                  min={0}
-                                  step="0.01"
-                                  defaultValue={selectedActivity.default_course_rate_ttc ?? ""}
-                                  placeholder="ex: 200.00"
-                                />
-                              </label>
-                              <label className="span-2">
-                                Couleur
-                                <ColorHexInput name="color_hex" defaultValue={selectedActivity.color_hex} />
-                              </label>
-                            </div>
-                          </ActivityModalSection>
-                        </div>
+                              <div className="grid cols-2 activity-modal-zone-grid">
+                                <ActivityModalSection
+                                  title="Reservations et rappels"
+                                  description="Delais minimums, auto-annulations et rappels envoyes aux familles."
+                                >
+                                  <div className="grid cols-2 config-form-grid">
+                                    <label>
+                                      Rappels par courriel
+                                      <select
+                                        name="email_reminder_hours_before_start"
+                                        defaultValue={
+                                          selectedActivity.email_reminder_hours_before_start === null
+                                            ? "global"
+                                            : String(selectedActivity.email_reminder_hours_before_start)
+                                        }
+                                      >
+                                        {selectedActivity.email_reminder_hours_before_start !== null &&
+                                        !REMINDER_OFFSET_OPTIONS.some(
+                                          (option) => option.value === String(selectedActivity.email_reminder_hours_before_start),
+                                        ) ? (
+                                          <option value={String(selectedActivity.email_reminder_hours_before_start)}>
+                                            {selectedActivity.email_reminder_hours_before_start} heures avant (personnalise)
+                                          </option>
+                                        ) : null}
+                                        {REMINDER_OFFSET_OPTIONS.map((option) => (
+                                          <option key={`activity-email-reminder-update-${option.value}`} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Rappels SMS
+                                      <select
+                                        name="sms_reminder_hours_before_start"
+                                        defaultValue={
+                                          selectedActivity.sms_reminder_hours_before_start === null
+                                            ? "global"
+                                            : String(selectedActivity.sms_reminder_hours_before_start)
+                                        }
+                                      >
+                                        {selectedActivity.sms_reminder_hours_before_start !== null &&
+                                        !REMINDER_OFFSET_OPTIONS.some(
+                                          (option) => option.value === String(selectedActivity.sms_reminder_hours_before_start),
+                                        ) ? (
+                                          <option value={String(selectedActivity.sms_reminder_hours_before_start)}>
+                                            {selectedActivity.sms_reminder_hours_before_start} heures avant (personnalise)
+                                          </option>
+                                        ) : null}
+                                        {REMINDER_OFFSET_OPTIONS.map((option) => (
+                                          <option key={`activity-sms-reminder-update-${option.value}`} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Delai minimum reservation (h)
+                                      <input
+                                        type="number"
+                                        name="min_booking_notice_hours_override"
+                                        min={0}
+                                        step="1"
+                                        defaultValue={selectedActivity.min_booking_notice_hours_override ?? ""}
+                                        placeholder="vide = planning"
+                                      />
+                                    </label>
+                                    <label>
+                                      Delai autorise pour annulation (h)
+                                      <input
+                                        type="number"
+                                        name="cancellation_deadline_hours_override"
+                                        min={0}
+                                        step="1"
+                                        defaultValue={selectedActivity.cancellation_deadline_hours_override ?? ""}
+                                        placeholder="vide = planning"
+                                      />
+                                    </label>
+                                    <label>
+                                      Auto-annulation si inscrits {"<"}
+                                      <input
+                                        type="number"
+                                        name="auto_cancel_if_booked_less_than_override"
+                                        min={0}
+                                        step="1"
+                                        defaultValue={selectedActivity.auto_cancel_if_booked_less_than_override ?? ""}
+                                        placeholder="vide = planning"
+                                      />
+                                    </label>
+                                    <label>
+                                      Auto-annulation X heures avant debut
+                                      <input
+                                        type="number"
+                                        name="auto_cancel_hours_before_start_override"
+                                        min={0}
+                                        step="1"
+                                        defaultValue={selectedActivity.auto_cancel_hours_before_start_override ?? ""}
+                                        placeholder="vide = planning"
+                                      />
+                                    </label>
+                                  </div>
+                                </ActivityModalSection>
 
-                        <ActivityModalSection
-                          title="Description interne"
-                          description="Contexte libre pour aider l equipe a comprendre l usage exact de cette activite."
-                        >
-                          <label>
-                            Description
-                            <textarea name="description" rows={4} defaultValue={selectedActivity.description ?? ""} />
-                          </label>
-                        </ActivityModalSection>
+                                <ActivityModalSection
+                                  title="Tarification et apparence"
+                                  description="Tarifs par defaut, couleur d affichage et informations utiles pour la lecture du planning."
+                                >
+                                  <div className="grid cols-2 config-form-grid">
+                                    <label>
+                                      Tarif horaire TTC
+                                      <input
+                                        type="number"
+                                        name="default_hourly_rate"
+                                        min={0}
+                                        step="0.01"
+                                        defaultValue={selectedActivity.default_hourly_rate ?? ""}
+                                        placeholder="ex: 35.00"
+                                      />
+                                    </label>
+                                    <label>
+                                      Tarif par cours TTC
+                                      <input
+                                        type="number"
+                                        name="default_course_rate_ttc"
+                                        min={0}
+                                        step="0.01"
+                                        defaultValue={selectedActivity.default_course_rate_ttc ?? ""}
+                                        placeholder="ex: 200.00"
+                                      />
+                                    </label>
+                                    <label className="span-2">
+                                      Couleur
+                                      <ColorHexInput name="color_hex" defaultValue={selectedActivity.color_hex} />
+                                    </label>
+                                  </div>
+                                </ActivityModalSection>
+                              </div>
+
+                              <ActivityModalSection
+                                title="Description interne"
+                                description="Contexte libre pour aider l equipe a comprendre l usage exact de cette activite."
+                              >
+                                <label>
+                                  Description
+                                  <textarea name="description" rows={4} defaultValue={selectedActivity.description ?? ""} />
+                                </label>
+                              </ActivityModalSection>
+                            </>
+                          }
+                          contentContent={
+                            <ActivityModalSection
+                              title="Contenu pedagogique en ligne"
+                              description="Cherchez le cours LearnDash par titre, puis rattachez-le a cette activite."
+                            >
+                              <ActivityContentAssignmentsPicker
+                                courses={externalContentCourses}
+                                defaultSelectedCourseIds={selectedActivityContentCourseIds}
+                              />
+                            </ActivityModalSection>
+                          }
+                        />
 
                         <div className="activity-modal-footer">
                           <p className="muted">
