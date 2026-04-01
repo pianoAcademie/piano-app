@@ -1766,6 +1766,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         return "status-draft";
     }
   };
+  const shouldRenderPlanningStateBadge = (statusLabelText: string): boolean => {
+    return new Set([
+      "Paiement en attente",
+      "Complet",
+      "Passe",
+      "Reservation fermee",
+      "Offre incompatible",
+      "Aucune formule",
+      "Non reservable",
+      "Liste d attente",
+    ]).has(statusLabelText);
+  };
 
   return (
     <main className="client-portal-shell">
@@ -2445,7 +2457,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               sessionState.familyBookings.length > 1
                                 ? `${sessionState.familyBookings.length} reservations`
                                 : null;
+                            const bookingBadges = sessionState.familyBookings.filter((booking) =>
+                              isAlreadyReservedByMember(booking.status) || isPendingPaymentBooking(booking.status),
+                            );
+                            const bookingSummaryLabel =
+                              bookingBadges.length > 1
+                                ? `${bookingBadges.length} reservations famille`
+                                : bookingBadges.length === 1
+                                  ? bookingOwnerId === FAMILY_BOOKING_OWNER
+                                    ? isPendingPaymentBooking(bookingBadges[0].status)
+                                      ? `${bookingBadges[0].owner_display_name} · Paiement`
+                                      : `Reserve pour ${bookingBadges[0].owner_display_name}`
+                                    : isPendingPaymentBooking(bookingBadges[0].status)
+                                      ? "Paiement en attente"
+                                      : "Reserve"
+                                  : null;
                             const cardStatusClass = planningStatusClass(sessionState.cardStatusLabel);
+                            const showPlanningStateBadge =
+                              !sessionState.alreadyReserved && shouldRenderPlanningStateBadge(sessionState.cardStatusLabel);
                             const sessionCtaLabel = sessionState.alreadyReserved
                               ? "Voir la reservation"
                               : sessionState.paymentPending
@@ -2457,9 +2486,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   : sessionState.isFull
                                   ? "Complet"
                                   : "Voir details";
-                            const bookingBadges = sessionState.familyBookings.filter((booking) =>
-                              isAlreadyReservedByMember(booking.status) || isPendingPaymentBooking(booking.status),
-                            );
 
                             return (
                               <a
@@ -2496,22 +2522,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     </div>
                                     {session.professor ? <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small> : null}
                                     <small className="event-meta event-meta-secondary">📍 {session.location.name}</small>
-                                    <small className="event-meta event-meta-secondary">{sessionState.contextLine}</small>
+                                    {!(sessionState.alreadyReserved && bookingSummaryLabel) ? (
+                                      <small className="event-meta event-meta-secondary">{sessionState.contextLine}</small>
+                                    ) : null}
 
                                     <div className="row client-event-footer">
-                                      <span className={`status-badge ${statusClass(session.status)}`}>{statusLabel(session.status)}</span>
-                                      {bookingBadges.map((booking) => (
-                                        <span key={booking.id} className={`status-badge ${statusClass(booking.status)}`}>
-                                          {bookingOwnerId === FAMILY_BOOKING_OWNER
-                                            ? isPendingPaymentBooking(booking.status)
-                                              ? `${booking.owner_display_name} · Paiement`
-                                              : booking.owner_display_name
-                                            : isPendingPaymentBooking(booking.status)
-                                              ? "Paiement en attente"
-                                              : "Reserve"}
+                                      {bookingSummaryLabel ? (
+                                        <span className={`status-badge ${sessionState.paymentPending ? "status-waitlist" : "status-booked"}`}>
+                                          {bookingSummaryLabel}
                                         </span>
-                                      ))}
-                                      {!sessionState.alreadyReserved ? (
+                                      ) : null}
+                                      {showPlanningStateBadge ? (
                                         <span className={`status-badge ${cardStatusClass}`}>
                                           {sessionState.cardStatusLabel}
                                         </span>
@@ -2556,8 +2577,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <span className="occ-badge">
                           {selectedSession.booked_count}/{selectedSession.capacity_max}
                         </span>
-                        <span className={`status-badge ${statusClass(selectedSession.status)}`}>{statusLabel(selectedSession.status)}</span>
-                        {selectedSessionPlanningState ? (
+                        {selectedSessionPlanningState && shouldRenderPlanningStateBadge(selectedSessionPlanningState.cardStatusLabel) ? (
                           <span className={`status-badge ${planningStatusClass(selectedSessionPlanningState.cardStatusLabel)}`}>
                             {selectedSessionPlanningState.cardStatusLabel}
                           </span>
@@ -2654,12 +2674,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {(selectedSessionPlanningState?.actionableMembers ?? []).map(({ member, state }) => {
                           const planningReturnTo = withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id });
                           const checkoutReturnTo = buildClientSessionCheckoutHref(selectedSession.id, planningReturnTo, member.id);
+                          const multiMemberChoice =
+                            bookingOwnerId === FAMILY_BOOKING_OWNER &&
+                            (selectedSessionPlanningState?.actionableMembers.length ?? 0) > 1;
                           const actionLabel =
-                            state.paymentPending
-                              ? `Finaliser le paiement${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`
-                              : state.hasDirectPayment && !state.eligibleByPlan
-                                ? `Payer et reserver${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`
-                                : `Reserver${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`;
+                            multiMemberChoice && !state.paymentPending && !(state.hasDirectPayment && !state.eligibleByPlan)
+                              ? member.display_name
+                              : state.paymentPending
+                                ? `Finaliser le paiement${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`
+                                : state.hasDirectPayment && !state.eligibleByPlan
+                                  ? `Payer et reserver${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`
+                                  : `Reserver${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`;
+                          const actionClass =
+                            state.paymentPending || (state.hasDirectPayment && !state.eligibleByPlan)
+                              ? "client-session-primary-button"
+                              : multiMemberChoice
+                                ? "client-session-member-button"
+                                : "client-session-secondary-button";
                           return (
                             <form key={`checkout-${member.id}`} action={submitPublicSessionCheckoutAction}>
                               <input type="hidden" name="session_id" value={selectedSession.id} />
@@ -2668,11 +2699,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
                               <button
                                 type="submit"
-                                className={
-                                  state.paymentPending || (state.hasDirectPayment && !state.eligibleByPlan)
-                                    ? "client-session-primary-button"
-                                    : "client-session-secondary-button"
-                                }
+                                className={actionClass}
                               >
                                 {actionLabel}
                               </button>
