@@ -749,6 +749,47 @@ def _company_identity(
     )
 
 
+def _company_legal_summary(identity: CompanyIdentity) -> str:
+    parts = [
+        identity.company_legal_form or "",
+        f"Capital social: {identity.company_share_capital}" if identity.company_share_capital else "",
+    ]
+    return " | ".join(part for part in parts if part).strip()
+
+
+def _company_issuer_lines(identity: CompanyIdentity) -> list[str]:
+    lines = [identity.company_name]
+    lines.extend(
+        [
+            f"SIREN: {identity.company_siren}",
+            f"TVA intracom: {identity.company_vat_number}",
+            f"Telephone: {identity.company_phone}",
+            f"Email: {identity.company_email}",
+        ]
+    )
+    return lines
+
+
+def _company_footer_lines(identity: CompanyIdentity) -> tuple[str, str]:
+    line_1_parts = [identity.company_name]
+    legal_summary = _company_legal_summary(identity)
+    if legal_summary:
+        line_1_parts.append(legal_summary)
+    if identity.company_siret:
+        line_1_parts.append(f"SIRET: {identity.company_siret}")
+    footer_line_1 = " | ".join(part for part in line_1_parts if part).strip()
+
+    line_2_parts = []
+    if identity.company_phone:
+        line_2_parts.append(f"Tel: {identity.company_phone}")
+    if identity.company_email:
+        line_2_parts.append(identity.company_email)
+    if identity.company_address:
+        line_2_parts.append(identity.company_address)
+    footer_line_2 = " | ".join(part for part in line_2_parts if part).strip()
+    return footer_line_1, footer_line_2
+
+
 def render_invoice_period_pdf(
     db: Session,
     *,
@@ -848,23 +889,7 @@ def render_invoice_period_pdf(
         )
 
         # Bloc identite emetteur
-        issuer_lines = [identity.company_name]
-        legal_summary_parts = [
-            identity.company_legal_form or "",
-            f"Capital social: {identity.company_share_capital}" if identity.company_share_capital else "",
-        ]
-        legal_summary = " | ".join(part for part in legal_summary_parts if part).strip()
-        if legal_summary:
-            issuer_lines.append(legal_summary)
-        issuer_lines.extend(
-            [
-                f"SIREN: {identity.company_siren}",
-                f"SIRET: {identity.company_siret}",
-                f"TVA intracom: {identity.company_vat_number}",
-                f"Telephone: {identity.company_phone}",
-                f"Email: {identity.company_email}",
-            ]
-        )
+        issuer_lines = _company_issuer_lines(identity)
         issuer_top_y = 116.0
         issuer_line_height = 16.0
         for index, line in enumerate(issuer_lines):
@@ -1209,8 +1234,7 @@ def render_invoice_period_pdf(
                 ),
             )
 
-    footer_line_1 = f"{identity.company_name} | SIRET: {identity.company_siret} | Tel: {identity.company_phone}"
-    footer_line_2 = f"{identity.company_email} | {identity.company_address}"
+    footer_line_1, footer_line_2 = _company_footer_lines(identity)
     for page_idx in range(len(pdf._pages)):
         pdf._push_on_page(
             page_idx,
@@ -1308,23 +1332,7 @@ def render_payment_receipt_pdf(
 
     draw_header()
 
-    issuer_lines = [identity.company_name]
-    legal_summary_parts = [
-        identity.company_legal_form or "",
-        f"Capital social: {identity.company_share_capital}" if identity.company_share_capital else "",
-    ]
-    legal_summary = " | ".join(part for part in legal_summary_parts if part).strip()
-    if legal_summary:
-        issuer_lines.append(legal_summary)
-    issuer_lines.extend(
-        [
-            f"SIREN: {identity.company_siren}",
-            f"SIRET: {identity.company_siret}",
-            f"TVA intracom: {identity.company_vat_number}",
-            f"Telephone: {identity.company_phone}",
-            f"Email: {identity.company_email}",
-        ]
-    )
+    issuer_lines = _company_issuer_lines(identity)
     issuer_top_y = 116.0
     for index, line in enumerate(issuer_lines):
         pdf.text(x=left, top_y=issuer_top_y + (index * 16.0), value=line, size=10, bold=index == 0)
@@ -1404,8 +1412,7 @@ def render_payment_receipt_pdf(
         for index, line in enumerate(_wrap_text(normalized_note, 96)[:5]):
             pdf.text(x=left, top_y=current_top + (index * 12.0), value=line, size=9)
 
-    footer_line_1 = f"{identity.company_name} | SIRET: {identity.company_siret} | Tel: {identity.company_phone}"
-    footer_line_2 = f"{identity.company_email} | {identity.company_address}"
+    footer_line_1, footer_line_2 = _company_footer_lines(identity)
     for page_idx in range(len(pdf._pages)):
         pdf._push_on_page(
             page_idx,
