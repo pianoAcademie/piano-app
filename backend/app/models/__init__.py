@@ -10,6 +10,15 @@ from app.models.client_record import (
     ClientPaymentRefund,
     PaymentReceipt,
 )
+from app.models.external_content import (
+    ContentAccessRule,
+    CourseTypeContentMapping,
+    ExternalContentCourse,
+    ExternalContentLesson,
+    ExternalContentProvider,
+    ExternalContentSection,
+    ExternalContentStatus,
+)
 from app.models.catalog import (
     Booking,
     BookingStatus,
@@ -151,6 +160,8 @@ __all__ = [
     "ClientForfaitActivityPricing",
     "ClientPaymentRefund",
     "PaymentReceipt",
+    "ContentAccessRule",
+    "CourseTypeContentMapping",
     "ClientStatus",
     "ClientPlanSubscription",
     "CourseSession",
@@ -160,6 +171,11 @@ __all__ = [
     "DomainEvent",
     "DocumentTemplate",
     "EmailReminder",
+    "ExternalContentCourse",
+    "ExternalContentLesson",
+    "ExternalContentProvider",
+    "ExternalContentSection",
+    "ExternalContentStatus",
     "Location",
     "LegalEntity",
     "PlanningConfig",
