@@ -1647,13 +1647,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     const actionableMembers = members
       .map((member) => ({ member, state: memberPlanningStateForSession(session, member.id) }))
       .filter((entry) => entry.state.canCheckout);
+    const hasAdditionalFamilyOptions = reservedFamilyBookings.length > 0 && actionableMembers.length > 0;
     const reservedNames = reservedFamilyBookings.map((booking) => booking.owner_display_name).join(", ");
     const pendingNames = pendingFamilyBookings.map((booking) => booking.owner_display_name).join(", ");
     const hasAnySubscription = members.some((member) => activeSubscriptionByOwner.has(member.id));
 
     let statusLabel = "Non reservable";
     let contextLine = "Aucune action disponible pour la famille";
-    if (reservedFamilyBookings.length > 0) {
+    if (hasAdditionalFamilyOptions) {
+      statusLabel = "Choisir le membre";
+      contextLine =
+        reservedFamilyBookings.length > 1
+          ? `${reservedFamilyBookings.length} reservations famille. Vous pouvez encore reserver pour un autre membre.`
+          : `Reserve pour ${reservedNames}. Vous pouvez encore reserver pour un autre membre.`;
+    } else if (reservedFamilyBookings.length > 0) {
       statusLabel = "Deja reserve";
       contextLine = `Reserve pour ${reservedNames}`;
     } else if (pendingFamilyBookings.length > 0) {
@@ -1669,8 +1676,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       statusLabel = "Reservation fermee";
       contextLine = "Reservation en ligne fermee";
     } else if (actionableMembers.length > 1) {
-      statusLabel = "Reservation possible";
-      contextLine = "Choisissez le membre de la famille a inscrire";
+      statusLabel = "Choisir le membre";
+      contextLine = "Choisissez le membre de la famille a inscrire pour voir la meilleure option.";
     } else if (actionableMembers.length === 1) {
       statusLabel = actionableMembers[0].state.statusLabel;
       contextLine =
@@ -1700,12 +1707,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       hasDirectPayment,
       canCheckout: actionableMembers.length > 0,
       statusLabel,
-      cardStatusLabel: actionableMembers.length > 1 ? "Reserver" : statusLabel,
+      cardStatusLabel: actionableMembers.length > 1 || hasAdditionalFamilyOptions ? "Choisir le membre" : statusLabel,
       contextLine,
       familyBookings,
       actionableMembers,
       actionLabel:
-        actionableMembers.length === 1
+        actionableMembers.length > 1 || hasAdditionalFamilyOptions
+          ? "Choisir le membre"
+          : actionableMembers.length === 1
           ? actionableMembers[0].state.actionLabel
           : "Reserver",
     };
@@ -2612,12 +2621,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             const showPlanningStateBadge =
                               !sessionState.alreadyReserved && shouldRenderPlanningStateBadge(sessionState.cardStatusLabel);
                             const sessionCtaLabel = sessionState.alreadyReserved
-                              ? "Voir la reservation"
+                              ? sessionState.actionableMembers.length > 0
+                                ? "Choisir le membre"
+                                : "Voir la reservation"
                               : sessionState.paymentPending
                                 ? "Finaliser le paiement"
                                 : sessionState.canCheckout
                                   ? sessionState.actionableMembers.length > 1
-                                    ? "Reserver"
+                                    ? "Choisir le membre"
                                     : sessionState.actionLabel
                                   : sessionState.isFull
                                   ? "Complet"
@@ -2768,9 +2779,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <div className="client-session-modal-state-copy">
                             <small className="muted">Prochaine etape</small>
                             <p className="client-session-modal-state-title">
-                              {selectedReservationMemberOption?.action_label || "Consulter ce creneau"}
+                              {selectedSessionRequiresMemberChoice
+                                ? "Choisissez le membre"
+                                : selectedReservationMemberOption?.action_label || "Consulter ce creneau"}
                             </p>
-                            <p>{selectedReservationMemberOption?.reason || selectedSessionPlanningState.contextLine}</p>
+                            <p>
+                              {selectedSessionRequiresMemberChoice
+                                ? "Nous vous proposerons automatiquement la meilleure option: credit, formule compatible ou paiement a l unite."
+                                : selectedReservationMemberOption?.reason || selectedSessionPlanningState.contextLine}
+                            </p>
                           </div>
                           {selectedSessionModalStatusLabel ? (
                             <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusLabel)}`}>

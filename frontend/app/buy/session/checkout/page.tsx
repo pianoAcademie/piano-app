@@ -340,7 +340,10 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
               </div>
             </>
           ) : (
-            <section className="flash-ok">Choisissez le membre a inscrire pour voir l option la plus adaptee.</section>
+            <section className="flash-ok">
+              Choisissez le membre a inscrire. Nous vous proposerons ensuite automatiquement la meilleure option:
+              credit disponible, formule compatible, paiement a l unite ou liste d attente.
+            </section>
           )}
 
           <div className="row">
