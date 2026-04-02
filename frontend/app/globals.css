@@ -6817,8 +6817,20 @@ button.danger:focus-visible {
 }
 
 .client-session-card-booked .client-agenda-event {
+  background: transparent;
+  border-color: transparent;
+}
+
+.client-session-card-booked {
+  border: 1px solid #a7d9b1;
+  border-radius: 12px;
   background: #e9f7ec;
-  border-color: #a7d9b1;
+  overflow: hidden;
+}
+
+.client-session-card-booked .client-session-timebox {
+  background: rgba(255, 255, 255, 0.64);
+  border-color: rgba(40, 86, 61, 0.18);
 }
 
 .client-session-card-booked .client-session-cta {
