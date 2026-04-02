@@ -1829,6 +1829,53 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSessionActionCode = selectedReservationMemberOption?.action_code ?? "";
   const selectedSessionRequiresMemberChoice = reservationOptionsMembers.length > 1 && !selectedReservationMemberOption;
   const selectedSessionFormulaOptions = selectedReservationMemberOption?.formula_options ?? [];
+  const otherMemberOptions = reservationOptionsMembers.filter((option) => option.member_id !== selectedReservationMemberId);
+  const alternativeReservationOptions = otherMemberOptions.filter((option) =>
+    ["BOOK_WITH_CREDIT", "PAY_UNIT", "BUY_FORMULA", "BUY_FORMULA_OR_PAY_UNIT", "JOIN_WAITLIST"].includes(option.action_code),
+  );
+  const reservationOptionSupportLabel = (option: ClientSessionReservationMemberOptionOut): string | null => {
+    if (option.action_code === "FINALIZE_PAYMENT" && option.direct_payment_amount_ttc) {
+      return `Paiement en attente · ${toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency)}`;
+    }
+    if (option.action_code === "BUY_FORMULA_OR_PAY_UNIT") {
+      const formulaCount = option.formula_options.length;
+      const parts = [];
+      if (formulaCount > 0) {
+        parts.push(`${formulaCount} formule${formulaCount > 1 ? "s" : ""}`);
+      }
+      if (option.direct_payment_amount_ttc) {
+        parts.push(`Paiement unitaire ${toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency)}`);
+      }
+      return parts.join(" · ") || null;
+    }
+    if (option.action_code === "BUY_FORMULA" && option.formula_options.length > 0) {
+      return `${option.formula_options.length} formule${option.formula_options.length > 1 ? "s" : ""} compatible${option.formula_options.length > 1 ? "s" : ""}`;
+    }
+    if (option.action_code === "PAY_UNIT" && option.direct_payment_amount_ttc) {
+      return `Paiement unitaire ${toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency)}`;
+    }
+    if (option.action_code === "BOOK_WITH_CREDIT") {
+      return "Reservation couverte sans paiement supplementaire";
+    }
+    if (option.action_code === "JOIN_WAITLIST") {
+      return "Inscription possible sur liste d attente";
+    }
+    return null;
+  };
+  const selectedSessionStateTitle =
+    selectedSessionRequiresMemberChoice
+      ? "Choisissez le membre"
+      : selectedSessionActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
+        ? `Finaliser le paiement pour ${selectedReservationMemberOption.member_display_name}`
+        : selectedReservationMemberOption?.action_label || "Consulter ce creneau";
+  const selectedSessionStateDescription =
+    selectedSessionRequiresMemberChoice
+      ? "Nous vous proposerons automatiquement la meilleure option: credit, formule compatible ou paiement a l unite."
+      : selectedSessionActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
+        ? alternativeReservationOptions.length > 0
+          ? `Une reservation provisoire existe deja pour ${selectedReservationMemberOption.member_display_name}. Pour voir les formules ou le paiement a l unite d un autre membre, choisissez une autre carte ci-dessous.`
+          : selectedReservationMemberOption.reason || selectedSessionPlanningState?.contextLine || ""
+        : selectedReservationMemberOption?.reason || selectedSessionPlanningState?.contextLine || "";
   const selectedSessionHasBooking =
     Boolean(selectedReservationMemberOption?.booking_id) &&
     ["BOOKED", "WAITLISTED"].includes((selectedReservationMemberOption?.booking_status || "").toUpperCase());
@@ -2832,15 +2879,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <div className="client-session-modal-state-copy">
                             <small className="muted">Prochaine etape</small>
                             <p className="client-session-modal-state-title">
-                              {selectedSessionRequiresMemberChoice
-                                ? "Choisissez le membre"
-                                : selectedReservationMemberOption?.action_label || "Consulter ce creneau"}
+                              {selectedSessionStateTitle}
                             </p>
-                            <p>
-                              {selectedSessionRequiresMemberChoice
-                                ? "Nous vous proposerons automatiquement la meilleure option: credit, formule compatible ou paiement a l unite."
-                                : selectedReservationMemberOption?.reason || selectedSessionPlanningState.contextLine}
-                            </p>
+                            <p>{selectedSessionStateDescription}</p>
                           </div>
                           {selectedSessionModalStatusLabel ? (
                             <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusLabel)}`}>
@@ -2901,10 +2942,35 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     </div>
                                   </div>
                                   <small className="muted">{option.reason || option.action_label}</small>
+                                  {reservationOptionSupportLabel(option) ? (
+                                    <small className={`client-session-member-support ${isSelected ? "active" : ""}`}>
+                                      {reservationOptionSupportLabel(option)}
+                                    </small>
+                                  ) : null}
                                 </a>
                               );
                             })}
                           </div>
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {selectedReservationMemberOption &&
+                    selectedSessionActionCode === "FINALIZE_PAYMENT" &&
+                    alternativeReservationOptions.length > 0 ? (
+                      <section className="modal-card client-session-inline-warning">
+                        <strong>Autres options disponibles dans la famille</strong>
+                        <p>
+                          Le paiement en attente concerne seulement {selectedReservationMemberOption.member_display_name}. Vous pouvez
+                          toujours choisir un autre membre pour voir ses formules compatibles ou son paiement unitaire.
+                        </p>
+                        <div className="client-session-inline-warning-list">
+                          {alternativeReservationOptions.map((option) => (
+                            <span key={`alt-option-${option.member_id}`} className="badge">
+                              {option.member_display_name}
+                              {reservationOptionSupportLabel(option) ? ` · ${reservationOptionSupportLabel(option)}` : ""}
+                            </span>
+                          ))}
                         </div>
                       </section>
                     ) : null}
