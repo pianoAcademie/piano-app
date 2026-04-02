@@ -1137,23 +1137,37 @@ def _active_formula_options_for_course_type(
     if not allowed_plan_kinds:
         return []
 
-    rows = db.execute(
-        select(Plan, CourseType.name)
-        .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
-        .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
-        .where(
-            Plan.active.is_(True),
-            Plan.is_private.is_(False),
-            Plan.kind.in_(tuple(allowed_plan_kinds)),
-            PlanEntitlement.course_type_id == course_type_id,
+    try:
+        rows = db.execute(
+            select(Plan, CourseType.name)
+            .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
+            .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
+            .where(
+                Plan.active.is_(True),
+                Plan.is_private.is_(False),
+                Plan.kind.in_(tuple(allowed_plan_kinds)),
+                PlanEntitlement.course_type_id == course_type_id,
+            )
+            .order_by(Plan.kind.asc(), Plan.name.asc())
+        ).all()
+    except Exception:
+        logger.exception(
+            "Failed to query formula options for course_type %s",
+            course_type_id,
         )
-        .order_by(Plan.kind.asc(), Plan.name.asc())
-    ).all()
+        return []
     options: list[ClientSessionFormulaOptionOut] = []
     for plan, course_name in rows:
-        if not _formula_purchase_link_allowed(plan):
-            continue
-        options.append(_formula_option_out(plan, restriction_labels=[course_name]))
+        try:
+            if not _formula_purchase_link_allowed(plan):
+                continue
+            options.append(_formula_option_out(plan, restriction_labels=[course_name]))
+        except Exception:
+            logger.exception(
+                "Failed to normalize formula option for course_type %s and plan %s",
+                course_type_id,
+                getattr(plan, "id", None),
+            )
     return options
 
 

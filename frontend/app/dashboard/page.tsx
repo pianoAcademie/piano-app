@@ -925,6 +925,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedMemberFilter = emptyAsAll(readParam(searchParams, "member_id"));
   const selectedContentMemberFilter = emptyAsAll(readParam(searchParams, "content_member_id"));
   const selectedBookingOwner = readParam(searchParams, "booking_owner_id") || FAMILY_BOOKING_OWNER;
+  const selectedSessionMember = readParam(searchParams, "session_member_id");
   const selectedSessionId = readParam(searchParams, "session_id");
   const selectedContentCourseId = readParam(searchParams, "content_course_id");
   const selectedContentLessonId = readParam(searchParams, "content_lesson_id");
@@ -1723,15 +1724,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   };
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
   const selectedSessionPlanningState = selectedSession ? planningStateForSession(selectedSession) : null;
-  const shouldDeferReservationOptionsFetch =
-    tab === "planning" &&
-    selectedSessionId &&
-    bookingOwnerId === FAMILY_BOOKING_OWNER &&
-    (selectedSessionPlanningState?.actionableMembers.length ?? 0) > 1;
+  const shouldDeferReservationOptionsFetch = false;
   const reservationOptionsQuery = new URLSearchParams();
-  if (bookingOwnerId !== FAMILY_BOOKING_OWNER) {
-    reservationOptionsQuery.set("member_id", bookingOwnerId);
-  }
   const selectedSessionReservationOptionsResult =
     tab === "planning" && selectedSessionId && !shouldDeferReservationOptionsFetch
       ? await backendRequest<ClientSessionReservationOptionsOut>(
@@ -1744,11 +1738,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       : null;
   const selectedSessionReservationOptions =
     selectedSessionReservationOptionsResult?.ok ? selectedSessionReservationOptionsResult.data : null;
-  if (selectedSessionReservationOptionsResult && !selectedSessionReservationOptionsResult.ok) {
+  const shouldUseFallbackReservationOptions =
+    Boolean(selectedSessionPlanningState) &&
+    (
+      shouldDeferReservationOptionsFetch ||
+      (selectedSessionReservationOptionsResult != null && !selectedSessionReservationOptionsResult.ok)
+    );
+  if (
+    selectedSessionReservationOptionsResult &&
+    !selectedSessionReservationOptionsResult.ok &&
+    !shouldUseFallbackReservationOptions
+  ) {
     errors.push(`reservation-options: ${selectedSessionReservationOptionsResult.message}`);
   }
   const fallbackReservationOptionsMembers: ClientSessionReservationMemberOptionOut[] =
-    shouldDeferReservationOptionsFetch && selectedSessionPlanningState
+    shouldUseFallbackReservationOptions && selectedSessionPlanningState
       ? selectedSessionPlanningState.actionableMembers.map(({ member, state }) => ({
           member_id: member.id,
           member_display_name: member.display_name,
@@ -1769,14 +1773,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               : "Cette reservation sera confirmee sans paiement supplementaire.",
           has_credit_coverage: state.eligibleByPlan,
           coverage_source: state.eligibleByPlan ? "PLAN" : null,
-          direct_payment_amount_ttc: null,
-          direct_payment_currency: null,
+          direct_payment_amount_ttc:
+            state.hasDirectPayment && selectedSession?.external_booking_price_ttc != null
+              ? selectedSession.external_booking_price_ttc
+              : null,
+          direct_payment_currency:
+            state.hasDirectPayment
+              ? (selectedSession?.external_booking_currency || "EUR").toUpperCase()
+              : null,
           formula_options: [],
         }))
       : [];
   const reservationOptionsMembers = selectedSessionReservationOptions?.members ?? fallbackReservationOptionsMembers;
   const selectedReservationMemberId =
-    bookingOwnerId !== FAMILY_BOOKING_OWNER
+    selectedSessionMember && validMemberIds.has(selectedSessionMember)
+      ? selectedSessionMember
+      : bookingOwnerId !== FAMILY_BOOKING_OWNER
       ? bookingOwnerId
       : reservationOptionsMembers.length === 1
         ? reservationOptionsMembers[0]?.member_id ?? ""
@@ -1787,6 +1799,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ? withUpdatedQuery(rawParams, {
         tab: "planning",
         session_id: selectedSession.id,
+        session_member_id: null,
         session_ok: null,
         session_error: null,
       })
@@ -1798,6 +1811,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSessionCloseHref = withUpdatedQuery(rawParams, {
     tab: "planning",
     session_id: null,
+    session_member_id: null,
     session_ok: null,
     session_error: null,
   });
@@ -2633,6 +2647,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             const openDetailsHref = withUpdatedQuery(rawParams, {
                               tab: "planning",
                               session_id: session.id,
+                              session_member_id: null,
                               ok: null,
                               error: null,
                               session_ok: null,
@@ -2865,7 +2880,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 timezone,
                                 planning_slot_filter: planningSlotFilter,
                                 session_id: selectedSession.id,
-                                booking_owner_id: option.member_id,
+                                session_member_id: option.member_id,
                               });
                               return (
                                 <a
