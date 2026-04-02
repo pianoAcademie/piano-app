@@ -162,6 +162,9 @@ def _encode_purchase_context(
     email: str,
     price_snapshot: Decimal | None,
     currency: str,
+    session_id: UUID | None = None,
+    booking_user_id: UUID | None = None,
+    planning_return_to: str | None = None,
 ) -> str:
     now = datetime.now(timezone.utc)
     payload: dict[str, object] = {
@@ -172,6 +175,9 @@ def _encode_purchase_context(
         "email": email,
         "price_snapshot": str(price_snapshot) if price_snapshot is not None else None,
         "currency": currency,
+        "session_id": str(session_id) if session_id is not None else None,
+        "booking_user_id": str(booking_user_id) if booking_user_id is not None else None,
+        "planning_return_to": str(planning_return_to or "").strip() or None,
         "iat": now,
         "exp": now + timedelta(hours=3),
     }
@@ -348,8 +354,15 @@ def _frontend_url(*, path: str) -> str:
     return candidate.rstrip("/") + path
 
 
-def _checkout_urls(*, owner_id: UUID, subscription_id: UUID) -> tuple[str, str, str]:
+def _checkout_urls(
+    *,
+    owner_id: UUID,
+    subscription_id: UUID,
+    purchase_context: str | None = None,
+) -> tuple[str, str, str]:
     query = f"tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}"
+    if purchase_context:
+        query += f"&purchase_context={purchase_context}"
     success_url = _frontend_url(path=f"/dashboard?{query}&payment_return=success")
     cancel_url = _frontend_url(path=f"/dashboard?{query}&payment_return=cancel")
     webhook_url = _frontend_url(path=f"/api/v1/public/payments/webhook?client_id={owner_id}&subscription_id={subscription_id}")
@@ -560,6 +573,9 @@ def public_formula_purchase_start(
         email=normalized_email,
         price_snapshot=price_snapshot,
         currency=currency,
+        session_id=payload.session_id,
+        booking_user_id=payload.booking_user_id,
+        planning_return_to=payload.planning_return_to,
     )
     existing_user = db.scalar(select(User.id).where(User.email == normalized_email, User.role == UserRole.CLIENT)) is not None
 
@@ -601,6 +617,9 @@ def public_formula_purchase_context(
         formula_type=plan.kind,
         price_snapshot=price_snapshot,
         currency=currency,
+        session_id=str(payload.get("session_id") or "").strip() or None,
+        booking_user_id=str(payload.get("booking_user_id") or "").strip() or None,
+        planning_return_to=str(payload.get("planning_return_to") or "").strip() or None,
         summary=summary,
     )
 
@@ -703,7 +722,11 @@ def purchase_plan(
 
     checkout_url: str | None = None
     if should_start_pending and method_code is not None:
-        success_url, cancel_url, webhook_url = _checkout_urls(owner_id=owner.id, subscription_id=subscription.id)
+        success_url, cancel_url, webhook_url = _checkout_urls(
+            owner_id=owner.id,
+            subscription_id=subscription.id,
+            purchase_context=payload.purchase_context,
+        )
         checkout = create_checkout_session(
             db,
             CheckoutCreateRequest(

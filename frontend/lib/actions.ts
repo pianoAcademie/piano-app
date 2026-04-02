@@ -1405,6 +1405,9 @@ export async function startFormulaPurchaseLinkAction(formData: FormData): Promis
   const formulaIdRaw = String(formData.get("formula_id") ?? "").trim();
   const formulaId = parseUuid(formulaIdRaw);
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const bookingUserId = String(formData.get("booking_user_id") ?? "").trim();
+  const planningReturnTo = safePublicReturnPath(String(formData.get("planning_return_to") ?? "").trim(), "/embed/planning");
   const fallbackReturnTo = formulaId ? `/buy/formula/${formulaId}` : "/buy/formula";
   const returnTo = safePublicBuyPath(String(formData.get("return_to") ?? ""), fallbackReturnTo);
 
@@ -1420,12 +1423,21 @@ export async function startFormulaPurchaseLinkAction(formData: FormData): Promis
     `/api/v1/public/formulas/${formulaId}/purchase-start`,
     {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({
+        email,
+        session_id: sessionId || null,
+        booking_user_id: bookingUserId || null,
+        planning_return_to: planningReturnTo || null,
+      }),
     },
   );
   if (!result.ok) {
     const pathWithEmail = setQueryParam(returnTo, "email", email);
     redirect(appendQueryMessage(pathWithEmail, "error", result.message));
+  }
+
+  if (getPortalToken()) {
+    redirect(`/buy/checkout?purchase_context=${encodeURIComponent(result.data.purchase_context)}`);
   }
 
   const mode = result.data.existing_user ? "login" : "signup";
@@ -1462,7 +1474,7 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
     `/api/v1/plans/${contextResult.data.formula_id}/purchase`,
     {
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify({ purchase_context: purchaseContext }),
     },
     token,
   );

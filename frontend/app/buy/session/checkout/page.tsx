@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import AutoSubmitSelect from "../../../../components/auto-submit-select";
 import PortalBrandLockup from "../../../../components/portal-brand-lockup";
-import { submitPublicSessionCheckoutAction } from "../../../../lib/actions";
+import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import type { SessionOut, UserOut } from "../../../../lib/types";
+import type { ClientSessionReservationOptionsOut, SessionOut, UserOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -46,6 +47,18 @@ function formatDateTime(value: string, timezone: string): string {
     weekday: "long",
     day: "2-digit",
     month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: timezone || "Europe/Paris",
+  }).format(parsed);
+}
+
+function formatTime(value: string, timezone: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "--:--";
+  }
+  return new Intl.DateTimeFormat("fr-FR", {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: timezone || "Europe/Paris",
@@ -115,14 +128,44 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
       )}`,
     );
   }
-
-  const isFull = session.seats_remaining <= 0;
-  const hasOnlinePrice = Boolean(session.external_booking_price_ttc);
-  const submitLabel = isFull
-    ? "Rejoindre la liste d attente"
-    : hasOnlinePrice
-      ? "Payer et reserver"
-      : "Confirmer la reservation";
+  const me = authResult.data;
+  const reservationOptionsResult = await backendRequest<ClientSessionReservationOptionsOut>(
+    `/api/v1/clients/me/sessions/${encodeURIComponent(sessionId)}/reservation-options`,
+    {},
+    portalToken,
+  );
+  if (!reservationOptionsResult.ok) {
+    return (
+      <main className="page public-buy-page">
+        <section className="public-buy-shell">
+          <article className="card public-buy-card">
+            <h1>Reservation indisponible</h1>
+            <p className="flash-err">{reservationOptionsResult.message}</p>
+            <div className="row">
+              <Link className="ghost small-btn" href={planningReturnTo || "/embed/planning"}>
+                Revenir au planning
+              </Link>
+            </div>
+          </article>
+        </section>
+      </main>
+    );
+  }
+  const reservationOptions = reservationOptionsResult.data;
+  const members = reservationOptions.members;
+  const selectedMemberId = bookingUserId || (members.length === 1 ? members[0]?.member_id ?? "" : "");
+  const selectedMember = members.find((option) => option.member_id === selectedMemberId) ?? null;
+  const coverageLabel =
+    selectedMember?.coverage_source === "MANUAL_CREDIT"
+      ? "Credit manuel disponible"
+      : selectedMember?.coverage_source === "PACK"
+        ? "Carnet compatible disponible"
+        : selectedMember?.coverage_source === "FORFAIT"
+          ? "Forfait compatible disponible"
+          : selectedMember?.coverage_source === "SUBSCRIPTION"
+            ? "Abonnement compatible disponible"
+            : null;
+  const sessionTimeLabel = `${formatTime(session.start_at_utc, session.session_timezone || session.timezone)} - ${formatTime(session.end_at_utc, session.session_timezone || session.timezone)}`;
 
   return (
     <main className="page public-buy-page">
@@ -152,6 +195,10 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
               <strong>{formatDateTime(session.start_at_utc, session.session_timezone || session.timezone)}</strong>
             </article>
             <article className="public-buy-line">
+              <span>Horaire</span>
+              <strong>{sessionTimeLabel}</strong>
+            </article>
+            <article className="public-buy-line">
               <span>Lieu</span>
               <strong>{session.location.name}</strong>
             </article>
@@ -161,17 +208,140 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
             </article>
             <article className="public-buy-line">
               <span>Disponibilite</span>
-              <strong>{isFull ? "Liste d attente" : "Reservation disponible"}</strong>
+              <strong>{reservationOptions.is_full ? "Liste d attente possible" : "Reservation disponible"}</strong>
             </article>
           </section>
 
-          <form action={submitPublicSessionCheckoutAction} className="grid public-buy-form">
-            <input type="hidden" name="session_id" value={session.id} />
-            <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
-            <input type="hidden" name="planning_return_to" value={planningReturnTo} />
-            <input type="hidden" name="booking_user_id" value={bookingUserId} />
-            <button type="submit">{submitLabel}</button>
-          </form>
+          {members.length > 1 ? (
+            <section className="modal-card">
+              <form method="get" className="client-session-member-select-form">
+                <input type="hidden" name="session_id" value={session.id} />
+                <input type="hidden" name="planning_return_to" value={planningReturnTo} />
+                <label className="client-planning-quick-filter-label">
+                  <span>Membre concerne</span>
+                  <AutoSubmitSelect
+                    name="booking_user_id"
+                    defaultValue={selectedMemberId || ""}
+                    options={[
+                      { value: "", label: "Choisir le membre" },
+                      ...members.map((option) => ({
+                        value: option.member_id,
+                        label: option.member_display_name,
+                      })),
+                    ]}
+                  />
+                </label>
+              </form>
+            </section>
+          ) : null}
+
+          {selectedMember ? (
+            <>
+              <section className="modal-card client-session-modal-state">
+                <div className="row spread">
+                  <div className="client-session-modal-state-copy">
+                    <small className="muted">Prochaine etape</small>
+                    <p className="client-session-modal-state-title">{selectedMember.action_label}</p>
+                    <p>{selectedMember.reason || "Continuez pour finaliser votre reservation."}</p>
+                  </div>
+                </div>
+                {coverageLabel ? (
+                  <div className="client-session-modal-state-meta">
+                    <span className="badge">{coverageLabel}</span>
+                  </div>
+                ) : null}
+              </section>
+
+              {selectedMember.formula_options.length > 0 ? (
+                <section className="modal-card">
+                  <small className="muted">
+                    {selectedMember.action_code === "BUY_FORMULA_OR_PAY_UNIT"
+                      ? "Ou choisissez une formule compatible"
+                      : "Formules compatibles"}
+                  </small>
+                  <div className="client-plan-grid client-session-formula-grid">
+                    {selectedMember.formula_options.map((formula) => (
+                      <article key={formula.formula_id} className="modal-card client-plan-card client-session-formula-card">
+                        <div className="client-session-formula-copy">
+                          <strong>{formula.name}</strong>
+                          {formula.description ? <p className="muted">{formula.description}</p> : null}
+                          <small className="muted">
+                            {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels].filter(Boolean).join(" · ")}
+                          </small>
+                        </div>
+                        <form action={startFormulaPurchaseLinkAction} className="client-session-formula-action">
+                          <input type="hidden" name="formula_id" value={formula.formula_id} />
+                          <input type="hidden" name="email" value={me.email} />
+                          <input type="hidden" name="session_id" value={session.id} />
+                          <input type="hidden" name="booking_user_id" value={selectedMember.member_id} />
+                          <input type="hidden" name="planning_return_to" value={planningReturnTo} />
+                          <button type="submit" className="client-session-secondary-button">
+                            {formula.price_ttc ? `Acheter · ${formatMoney(formula.price_ttc, formula.currency)}` : "Acheter la formule"}
+                          </button>
+                        </form>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              <div className="grid public-buy-form">
+                {selectedMember.booking_id &&
+                ["BOOKED", "WAITLISTED"].includes((selectedMember.booking_status || "").toUpperCase()) ? (
+                  <div className="client-session-modal-booking-actions">
+                    {(selectedMember.booking_status || "").toUpperCase() === "BOOKED" ? (
+                      <Link className="mode-link client-session-calendar-link" href={`/client/bookings/${selectedMember.booking_id}/calendar`}>
+                        Ajouter a mon agenda
+                      </Link>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {["BOOK_WITH_CREDIT", "PAY_UNIT", "FINALIZE_PAYMENT", "JOIN_WAITLIST"].includes(selectedMember.action_code) ? (
+                  <form action={submitPublicSessionCheckoutAction} className="grid">
+                    <input type="hidden" name="session_id" value={session.id} />
+                    <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
+                    <input type="hidden" name="planning_return_to" value={planningReturnTo} />
+                    <input type="hidden" name="booking_user_id" value={selectedMember.member_id} />
+                    <button
+                      type="submit"
+                      className={
+                        ["PAY_UNIT", "FINALIZE_PAYMENT"].includes(selectedMember.action_code)
+                          ? "client-session-primary-button"
+                          : "client-session-secondary-button"
+                      }
+                    >
+                      {selectedMember.action_label}
+                      {selectedMember.direct_payment_amount_ttc
+                        ? ` · ${formatMoney(selectedMember.direct_payment_amount_ttc, selectedMember.direct_payment_currency)}`
+                        : ""}
+                    </button>
+                  </form>
+                ) : null}
+
+                {selectedMember.action_code === "BUY_FORMULA_OR_PAY_UNIT" && selectedMember.direct_payment_amount_ttc ? (
+                  <form action={submitPublicSessionCheckoutAction} className="grid">
+                    <input type="hidden" name="session_id" value={session.id} />
+                    <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
+                    <input type="hidden" name="planning_return_to" value={planningReturnTo} />
+                    <input type="hidden" name="booking_user_id" value={selectedMember.member_id} />
+                    <button type="submit" className="client-session-primary-button">
+                      {`Payer a l unite · ${formatMoney(
+                        selectedMember.direct_payment_amount_ttc,
+                        selectedMember.direct_payment_currency,
+                      )}`}
+                    </button>
+                  </form>
+                ) : null}
+
+                {selectedMember.action_code === "UNAVAILABLE" ? (
+                  <section className="flash-err">{selectedMember.reason || "Reservation indisponible pour ce membre."}</section>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <section className="flash-ok">Choisissez le membre a inscrire pour voir l option la plus adaptee.</section>
+          )}
 
           <div className="row">
             <Link className="ghost small-btn" href={planningReturnTo || "/embed/planning"}>

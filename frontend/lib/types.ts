@@ -1783,7 +1783,50 @@ export type PublicFormulaPurchaseContextOut = {
   formula_type: "PACK" | "SUBSCRIPTION" | "FORFAIT";
   price_snapshot: string | null;
   currency: string;
+  session_id: string | null;
+  booking_user_id: string | null;
+  planning_return_to: string | null;
   summary: PublicFormulaPurchaseSummaryOut;
+};
+
+export type ClientSessionFormulaOptionOut = {
+  formula_id: string;
+  formula_code: string;
+  formula_type: "PACK" | "SUBSCRIPTION" | "FORFAIT";
+  name: string;
+  description: string | null;
+  price_ttc: string | null;
+  currency: string;
+  frequency_label: string | null;
+  restriction_labels: string[];
+  payment_methods: string[];
+};
+
+export type ClientSessionReservationMemberOptionOut = {
+  member_id: string;
+  member_display_name: string;
+  member_kind: "ADULT" | "CHILD";
+  booking_id: string | null;
+  booking_status: string | null;
+  action_code: string;
+  action_label: string;
+  status_label: string;
+  reason: string | null;
+  has_credit_coverage: boolean;
+  coverage_source: string | null;
+  direct_payment_amount_ttc: string | null;
+  direct_payment_currency: string | null;
+  formula_options: ClientSessionFormulaOptionOut[];
+};
+
+export type ClientSessionReservationOptionsOut = {
+  session_id: string;
+  session_title: string;
+  session_status: string;
+  is_full: boolean;
+  online_booking_enabled: boolean;
+  waitlist_enabled: boolean;
+  members: ClientSessionReservationMemberOptionOut[];
 };
 
 export type AdminActivityOut = {

@@ -10,6 +10,7 @@ import {
   logoutAction,
   openClientPaymentCheckoutAction,
   purchasePlanAction,
+  startFormulaPurchaseLinkAction,
   submitPublicSessionCheckoutAction,
   updateProfileAction,
 } from "../../lib/actions";
@@ -31,7 +32,9 @@ import type {
   ClientInvoiceOut,
   ClientMessageOut,
   ClientPaymentCheckoutOut,
+  ClientSessionReservationOptionsOut,
   ClientPaymentOut,
+  PublicFormulaPurchaseContextOut,
   CourseTypeOut,
   LocationOut,
   PlanOut,
@@ -940,6 +943,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const paymentSourceParam = normalizeStatus(readParam(searchParams, "source"));
   const paymentIdParam = readParam(searchParams, "payment_id").trim();
   const paymentReturnParam = readParam(searchParams, "payment_return").trim().toLowerCase();
+  const purchaseContextParam = readParam(searchParams, "purchase_context").trim();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
   const homeCalendarView = readParam(searchParams, "home_calendar_view") === "BY_MEMBER" ? "BY_MEMBER" : "FAMILY";
   const preFetchErrors: string[] = [];
@@ -973,6 +977,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       paymentResultError = "Le paiement n'a pas encore ete confirme.";
     } else {
       paymentResultMessage = "Paiement effectue.";
+      if (purchaseContextParam) {
+        const purchaseContext = await backendRequest<PublicFormulaPurchaseContextOut>(
+          `/api/v1/public/formulas/purchase-context/${encodeURIComponent(purchaseContextParam)}`,
+        );
+        if (!purchaseContext.ok) {
+          preFetchErrors.push(`purchase-context: ${purchaseContext.message}`);
+        } else if (purchaseContext.data.session_id && purchaseContext.data.booking_user_id) {
+          const bookingResult = await backendRequest<{ booking_status: string; invoice_status?: string | null }>(
+            `/api/v1/clients/me/sessions/${purchaseContext.data.session_id}/checkout`,
+            {
+              method: "POST",
+              body: JSON.stringify({ user_id: purchaseContext.data.booking_user_id }),
+            },
+            token,
+          );
+          if (!bookingResult.ok) {
+            preFetchErrors.push(`session-checkout-after-plan: ${bookingResult.message}`);
+            paymentResultError = bookingResult.message;
+          } else if ((bookingResult.data.booking_status || "").toUpperCase() === "WAITLISTED") {
+            paymentResultMessage = "Paiement effectue. Le membre a ete place en liste d attente.";
+          } else {
+            paymentResultMessage = "Paiement effectue et reservation confirmee.";
+          }
+        }
+      }
     }
   } else if (paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "cancel") {
     paymentResultError = "Paiement annule.";
@@ -1683,6 +1712,67 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   };
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
   const selectedSessionPlanningState = selectedSession ? planningStateForSession(selectedSession) : null;
+  const selectedSessionReservationOptionsResult =
+    tab === "planning" && selectedSessionId
+      ? await backendRequest<ClientSessionReservationOptionsOut>(
+          `/api/v1/clients/me/sessions/${encodeURIComponent(selectedSessionId)}/reservation-options`,
+          {},
+          token,
+        )
+      : null;
+  const selectedSessionReservationOptions =
+    selectedSessionReservationOptionsResult?.ok ? selectedSessionReservationOptionsResult.data : null;
+  if (selectedSessionReservationOptionsResult && !selectedSessionReservationOptionsResult.ok) {
+    errors.push(`reservation-options: ${selectedSessionReservationOptionsResult.message}`);
+  }
+  const reservationOptionsMembers = selectedSessionReservationOptions?.members ?? [];
+  const selectedReservationMemberId =
+    bookingOwnerId !== FAMILY_BOOKING_OWNER
+      ? bookingOwnerId
+      : reservationOptionsMembers.length === 1
+        ? reservationOptionsMembers[0]?.member_id ?? ""
+        : "";
+  const selectedReservationMemberOption =
+    reservationOptionsMembers.find((option) => option.member_id === selectedReservationMemberId) ?? null;
+  const selectedSessionReturnTo = selectedSession
+    ? withUpdatedQuery(rawParams, {
+        tab: "planning",
+        session_id: selectedSession.id,
+        session_ok: null,
+        session_error: null,
+      })
+    : withUpdatedQuery(rawParams, {
+        tab: "planning",
+        session_ok: null,
+        session_error: null,
+      });
+  const selectedSessionCloseHref = withUpdatedQuery(rawParams, {
+    tab: "planning",
+    session_id: null,
+    session_ok: null,
+    session_error: null,
+  });
+  const selectedSessionModalStatusLabel = selectedReservationMemberOption?.status_label || selectedSessionPlanningState?.cardStatusLabel || "";
+  const selectedSessionCoverageLabel =
+    selectedReservationMemberOption?.coverage_source === "MANUAL_CREDIT"
+      ? "Credit manuel disponible"
+      : selectedReservationMemberOption?.coverage_source === "PACK"
+        ? "Carnet compatible disponible"
+        : selectedReservationMemberOption?.coverage_source === "FORFAIT"
+          ? "Forfait compatible disponible"
+          : selectedReservationMemberOption?.coverage_source === "SUBSCRIPTION"
+            ? "Abonnement compatible disponible"
+            : null;
+  const selectedSessionActionCode = selectedReservationMemberOption?.action_code ?? "";
+  const selectedSessionRequiresMemberChoice = reservationOptionsMembers.length > 1 && !selectedReservationMemberOption;
+  const selectedSessionFormulaOptions = selectedReservationMemberOption?.formula_options ?? [];
+  const selectedSessionHasBooking =
+    Boolean(selectedReservationMemberOption?.booking_id) &&
+    ["BOOKED", "WAITLISTED"].includes((selectedReservationMemberOption?.booking_status || "").toUpperCase());
+  const selectedSessionCheckoutReturnTo =
+    selectedSession && selectedReservationMemberOption
+      ? buildClientSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo, selectedReservationMemberOption.member_id)
+      : "/buy/session/checkout";
   const agendaSessionCount = agendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
   const advancedFiltersOpen =
     Boolean(selectedCourseType) ||
@@ -1774,7 +1864,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const planningStatusClass = (statusLabelText: string): string => {
     switch (statusLabelText) {
       case "Deja reserve":
+      case "Reserve":
       case "Liste d attente":
+      case "Credit disponible":
         return "status-booked";
       case "Reservation possible":
       case "Reserver":
@@ -1792,6 +1884,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       case "Reservation fermee":
       case "Offre incompatible":
       case "Aucune formule":
+      case "Aucune couverture":
       case "Non reservable":
       default:
         return "status-draft";
@@ -2602,12 +2695,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <header className="client-session-modal-header">
                       <a
                         className="modal-close-x"
-                        href={withUpdatedQuery(rawParams, {
-                          tab: "planning",
-                          session_id: null,
-                          session_ok: null,
-                          session_error: null,
-                        })}
+                        href={selectedSessionCloseHref}
                         aria-label="Fermer le detail du creneau"
                       >
                         ×
@@ -2620,9 +2708,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <span className="occ-badge">
                           {selectedSession.booked_count}/{selectedSession.capacity_max}
                         </span>
-                        {selectedSessionPlanningState && shouldRenderPlanningStateBadge(selectedSessionPlanningState.cardStatusLabel) ? (
-                          <span className={`status-badge ${planningStatusClass(selectedSessionPlanningState.cardStatusLabel)}`}>
-                            {selectedSessionPlanningState.cardStatusLabel}
+                        {selectedSessionModalStatusLabel ? (
+                          <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusLabel)}`}>
+                            {selectedSessionModalStatusLabel}
                           </span>
                         ) : null}
                         {!selectedSession.online_booking_enabled ? <span className="badge">Reservation en ligne fermee</span> : null}
@@ -2675,92 +2763,173 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ) : null}
 
                     {selectedSessionPlanningState ? (
+                      <section className="modal-card client-session-modal-state">
+                        <div className="row spread">
+                          <div className="client-session-modal-state-copy">
+                            <small className="muted">Prochaine etape</small>
+                            <p className="client-session-modal-state-title">
+                              {selectedReservationMemberOption?.action_label || "Consulter ce creneau"}
+                            </p>
+                            <p>{selectedReservationMemberOption?.reason || selectedSessionPlanningState.contextLine}</p>
+                          </div>
+                          {selectedSessionModalStatusLabel ? (
+                            <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusLabel)}`}>
+                              {selectedSessionModalStatusLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                        {selectedSessionCoverageLabel ? (
+                          <div className="client-session-modal-state-meta">
+                            <span className="badge">{selectedSessionCoverageLabel}</span>
+                          </div>
+                        ) : null}
+                      </section>
+                    ) : null}
+
+                    {reservationOptionsMembers.length > 1 ? (
                       <section className="modal-card">
-                        <small className="muted">Etat de reservation</small>
-                        <p>{selectedSessionPlanningState.contextLine}</p>
+                        <form method="get" className="client-session-member-select-form">
+                          <input type="hidden" name="tab" value="planning" />
+                          <input type="hidden" name="agenda_view" value="week" />
+                          <input type="hidden" name="agenda_date" value={agendaDate} />
+                          <input type="hidden" name="location_id" value={selectedLocation} />
+                          <input type="hidden" name="course_type_id" value={selectedCourseType} />
+                          <input type="hidden" name="coach_id" value={selectedCoachId} />
+                          <input type="hidden" name="time_bucket" value={selectedTimeBucket} />
+                          <input type="hidden" name="timezone" value={timezone} />
+                          <input type="hidden" name="planning_slot_filter" value={planningSlotFilter} />
+                          <input type="hidden" name="session_id" value={selectedSession.id} />
+                          <label className="client-planning-quick-filter-label">
+                            <span>Membre concerne</span>
+                            <AutoSubmitSelect
+                              name="booking_owner_id"
+                              defaultValue={selectedReservationMemberId || FAMILY_BOOKING_OWNER}
+                              options={[
+                                { value: FAMILY_BOOKING_OWNER, label: "Choisir le membre" },
+                                ...reservationOptionsMembers.map((option) => ({
+                                  value: option.member_id,
+                                  label: option.member_display_name,
+                                })),
+                              ]}
+                            />
+                          </label>
+                        </form>
                       </section>
                     ) : null}
 
                     {sessionOkMessage ? <section className="flash-ok modal-card">{sessionOkMessage}</section> : null}
                     {sessionErrorMessage ? <section className="flash-err modal-card">{sessionErrorMessage}</section> : null}
 
+                    {selectedReservationMemberOption && selectedSessionFormulaOptions.length > 0 ? (
+                      <section className="modal-card">
+                        <small className="muted">
+                          {selectedSessionActionCode === "BUY_FORMULA_OR_PAY_UNIT"
+                            ? "Ou choisissez une formule compatible"
+                            : "Formules compatibles"}
+                        </small>
+                        <div className="client-plan-grid client-session-formula-grid">
+                          {selectedSessionFormulaOptions.map((formula) => (
+                            <article key={`formula-${formula.formula_id}`} className="modal-card client-plan-card client-session-formula-card">
+                              <div className="client-session-formula-copy">
+                                <strong>{formula.name}</strong>
+                                {formula.description ? <p className="muted">{formula.description}</p> : null}
+                                <small className="muted">
+                                  {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels].filter(Boolean).join(" · ")}
+                                </small>
+                              </div>
+                              <form action={startFormulaPurchaseLinkAction} className="client-session-formula-action">
+                                <input type="hidden" name="formula_id" value={formula.formula_id} />
+                                <input type="hidden" name="email" value={me.email} />
+                                <input type="hidden" name="session_id" value={selectedSession.id} />
+                                <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
+                                <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
+                                <button type="submit" className="client-session-secondary-button">
+                                  {formula.price_ttc ? `Acheter · ${toMoney(formula.price_ttc, formula.currency)}` : "Acheter la formule"}
+                                </button>
+                              </form>
+                            </article>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
+
                     <footer className="modal-card client-session-modal-actions">
                       <a
                         className="mode-link client-session-modal-back-link"
-                        href={withUpdatedQuery(rawParams, {
-                          tab: "planning",
-                          session_id: null,
-                          session_ok: null,
-                          session_error: null,
-                        })}
+                        href={selectedSessionCloseHref}
                       >
                         Retour au planning
                       </a>
                       <div className="client-session-modal-action-list">
-                        {(selectedSessionPlanningState?.familyBookings ?? [])
-                          .filter((booking) => ["BOOKED", "WAITLISTED"].includes(normalizeStatus(booking.status)))
-                          .map((booking) => (
-                            <div key={`booking-actions-${booking.id}`} className="client-session-modal-booking-actions">
-                              <form action={cancelBookingAction}>
-                                <input type="hidden" name="booking_id" value={booking.id} />
-                                <input
-                                  type="hidden"
-                                  name="return_to"
-                                  value={withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id })}
-                                />
-                                <button className="client-session-cancel-button" type="submit">
-                                  {bookingOwnerId === FAMILY_BOOKING_OWNER
-                                    ? `Annuler pour ${booking.owner_display_name}`
-                                    : "Annuler la reservation"}
-                                </button>
-                              </form>
-                              {normalizeStatus(booking.status) === "BOOKED" ? (
-                                <a className="mode-link client-session-calendar-link" href={`/client/bookings/${booking.id}/calendar`}>
-                                  {bookingOwnerId === FAMILY_BOOKING_OWNER
-                                    ? `Ajouter a l agenda pour ${booking.owner_display_name}`
-                                    : "Ajouter a mon agenda"}
-                                </a>
-                              ) : null}
-                            </div>
-                          ))}
-                        {(selectedSessionPlanningState?.actionableMembers ?? []).map(({ member, state }) => {
-                          const planningReturnTo = withUpdatedQuery(rawParams, { tab: "planning", session_id: selectedSession.id });
-                          const checkoutReturnTo = buildClientSessionCheckoutHref(selectedSession.id, planningReturnTo, member.id);
-                          const multiMemberChoice =
-                            bookingOwnerId === FAMILY_BOOKING_OWNER &&
-                            (selectedSessionPlanningState?.actionableMembers.length ?? 0) > 1;
-                          const actionLabel =
-                            multiMemberChoice && !state.paymentPending && !(state.hasDirectPayment && !state.eligibleByPlan)
-                              ? member.display_name
-                              : state.paymentPending
-                                ? `Finaliser le paiement${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`
-                                : state.hasDirectPayment && !state.eligibleByPlan
-                                  ? `Payer et reserver${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`
-                                  : `Reserver${bookingOwnerId === FAMILY_BOOKING_OWNER ? ` pour ${member.display_name}` : ""}`;
-                          const actionClass =
-                            state.paymentPending || (state.hasDirectPayment && !state.eligibleByPlan)
-                              ? "client-session-primary-button"
-                              : multiMemberChoice
-                                ? "client-session-member-button"
-                                : "client-session-secondary-button";
-                          return (
-                            <form key={`checkout-${member.id}`} action={submitPublicSessionCheckoutAction}>
-                              <input type="hidden" name="session_id" value={selectedSession.id} />
-                              <input type="hidden" name="booking_user_id" value={member.id} />
-                              <input type="hidden" name="planning_return_to" value={planningReturnTo} />
-                              <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
-                              <button
-                                type="submit"
-                                className={actionClass}
-                              >
-                                {actionLabel}
+                        {selectedSessionHasBooking && selectedReservationMemberOption?.booking_id ? (
+                          <div className="client-session-modal-booking-actions">
+                            <form action={cancelBookingAction}>
+                              <input type="hidden" name="booking_id" value={selectedReservationMemberOption.booking_id} />
+                              <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
+                              <button className="client-session-cancel-button" type="submit">
+                                {`Annuler pour ${selectedReservationMemberOption.member_display_name}`}
                               </button>
                             </form>
-                          );
-                        })}
-                        {!selectedSessionPlanningState?.alreadyReserved &&
-                        !selectedSessionPlanningState?.paymentPending &&
-                        !selectedSessionPlanningState?.canCheckout ? (
+                            {(selectedReservationMemberOption.booking_status || "").toUpperCase() === "BOOKED" ? (
+                              <a className="mode-link client-session-calendar-link" href={`/client/bookings/${selectedReservationMemberOption.booking_id}/calendar`}>
+                                {`Ajouter a l agenda pour ${selectedReservationMemberOption.member_display_name}`}
+                              </a>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {selectedReservationMemberOption && ["BOOK_WITH_CREDIT", "PAY_UNIT", "FINALIZE_PAYMENT", "JOIN_WAITLIST"].includes(selectedSessionActionCode) ? (
+                          <form action={submitPublicSessionCheckoutAction}>
+                            <input type="hidden" name="session_id" value={selectedSession.id} />
+                            <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
+                            <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
+                            <input type="hidden" name="checkout_return_to" value={selectedSessionCheckoutReturnTo} />
+                            <button
+                              type="submit"
+                              className={
+                                ["PAY_UNIT", "FINALIZE_PAYMENT"].includes(selectedSessionActionCode)
+                                  ? "client-session-primary-button"
+                                  : "client-session-secondary-button"
+                              }
+                            >
+                              {selectedReservationMemberOption.action_label}
+                              {selectedReservationMemberOption.direct_payment_amount_ttc
+                                ? ` · ${toMoney(
+                                    selectedReservationMemberOption.direct_payment_amount_ttc,
+                                    selectedReservationMemberOption.direct_payment_currency,
+                                  )}`
+                                : ""}
+                            </button>
+                          </form>
+                        ) : null}
+                        {selectedReservationMemberOption &&
+                        selectedSessionActionCode === "BUY_FORMULA_OR_PAY_UNIT" &&
+                        selectedReservationMemberOption.direct_payment_amount_ttc ? (
+                          <form action={submitPublicSessionCheckoutAction}>
+                            <input type="hidden" name="session_id" value={selectedSession.id} />
+                            <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
+                            <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
+                            <input type="hidden" name="checkout_return_to" value={selectedSessionCheckoutReturnTo} />
+                            <button type="submit" className="client-session-primary-button">
+                              {`Payer a l unite · ${toMoney(
+                                selectedReservationMemberOption.direct_payment_amount_ttc,
+                                selectedReservationMemberOption.direct_payment_currency,
+                              )}`}
+                            </button>
+                          </form>
+                        ) : null}
+                        {selectedReservationMemberOption && selectedSessionActionCode === "UNAVAILABLE" ? (
+                          <div className="stack-sm">
+                            <span className="badge">
+                              {selectedReservationMemberOption.reason || "Reservation non disponible pour ce creneau"}
+                            </span>
+                          </div>
+                        ) : null}
+                        {selectedSessionRequiresMemberChoice ? (
+                          <div className="stack-sm">
+                            <span className="badge">Choisissez d abord le membre a inscrire pour voir l option la plus adaptee.</span>
+                          </div>
+                        ) : null}
+                        {!selectedReservationMemberOption && !selectedSessionRequiresMemberChoice ? (
                           <div className="stack-sm">
                             <span className="badge">
                               {selectedSessionPlanningState?.contextLine || "Reservation non disponible pour ce creneau"}
@@ -2771,6 +2940,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 Voir les offres compatibles
                               </a>
                             ) : null}
+                          </div>
+                        ) : null}
+                        {selectedReservationMemberOption &&
+                        ["BUY_FORMULA", "BUY_FORMULA_OR_PAY_UNIT"].includes(selectedSessionActionCode) ? (
+                          <div className="client-session-inline-note">
+                            <small className="muted">
+                              {selectedSessionActionCode === "BUY_FORMULA_OR_PAY_UNIT"
+                                ? "Vous pouvez reserver tout de suite a l unite ou choisir une formule plus avantageuse."
+                                : "Selectionnez une formule pour activer des credits puis confirmer la reservation."}
+                            </small>
                           </div>
                         ) : null}
                       </div>

@@ -43,6 +43,9 @@ class PublicFormulaPurchaseSummaryOut(BaseModel):
 
 class PublicFormulaPurchaseStartRequest(BaseModel):
     email: str = Field(min_length=3, max_length=255)
+    session_id: UUID | None = None
+    booking_user_id: UUID | None = None
+    planning_return_to: str | None = None
 
 
 class PublicFormulaPurchaseStartOut(BaseModel):
@@ -59,6 +62,9 @@ class PublicFormulaPurchaseContextOut(BaseModel):
     formula_type: PlanKind
     price_snapshot: Decimal | None = None
     currency: str
+    session_id: UUID | None = None
+    booking_user_id: UUID | None = None
+    planning_return_to: str | None = None
     summary: PublicFormulaPurchaseSummaryOut
 
 
@@ -110,6 +116,7 @@ class ClientSubscriptionOut(BaseModel):
 class PlanPurchaseRequest(BaseModel):
     user_id: UUID | None = None
     start_date: date | None = None
+    purchase_context: str | None = None
 
 
 class PlanPricePreviewQuery(BaseModel):

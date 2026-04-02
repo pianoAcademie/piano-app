@@ -17,7 +17,13 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
-from app.api.routes.bookings import book_session, create_or_refresh_pending_payment_booking
+from app.api.routes.bookings import (
+    _count_booked,
+    _effective_session_booking_rules,
+    _select_eligible_subscription,
+    book_session,
+    create_or_refresh_pending_payment_booking,
+)
 from app.core.config import settings
 from app.models.catalog import (
     BOOKING_STATUSES_CONFIRMED,
@@ -32,7 +38,7 @@ from app.models.catalog import (
     SessionAudienceScope,
     SessionStatus,
 )
-from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
+from app.models.client_record import ClientInvoiceLine, ClientManualCreditBalance, ClientNoteEntry
 from app.models.external_content import (
     CourseTypeContentMapping,
     ExternalContentCourse,
@@ -65,7 +71,10 @@ from app.schemas.user import (
     ClientMessageOut,
     ClientMessageScope,
     ClientPaymentCheckoutOut,
+    ClientSessionFormulaOptionOut,
     ClientSessionCheckoutOut,
+    ClientSessionReservationMemberOptionOut,
+    ClientSessionReservationOptionsOut,
     ClientMeUpdateRequest,
     ClientPaymentOut,
     FamilyBookingOut,
@@ -100,11 +109,13 @@ from app.services.payment_receipts import (
 from app.services.payment_provider import detect_provider_from_reference, resolve_provider
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.session_audience import (
+    allowed_plan_kinds_for_scopes,
     primary_session_audience_scope,
     resolve_session_booking_scopes,
     resolve_session_visibility_scopes,
     scopes_allow_external_visibility,
     scopes_allow_plan_kind,
+    scopes_allow_planless_booking,
 )
 
 router = APIRouter()
@@ -1062,6 +1073,88 @@ def _managed_client_ids_for_sessions(db: Session, current_user: User) -> set[UUI
     ).all()
     managed_ids.update(child_ids)
     return managed_ids
+
+
+def _plan_payment_methods(plan: Plan) -> list[str]:
+    raw = plan.payment_methods_json
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in raw:
+        code = str(value or "").strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(code)
+    return out
+
+
+def _formula_frequency_label(kind: PlanKind) -> str | None:
+    if kind == PlanKind.SUBSCRIPTION:
+        return "Mensuel"
+    return None
+
+
+def _formula_purchase_link_allowed(plan: Plan) -> bool:
+    raw = plan.options_json if isinstance(plan.options_json, list) else []
+    normalized = {str(value or "").strip().lower() for value in raw if str(value or "").strip()}
+    if normalized & {"achat_par_lien_desactive", "purchase_link_disabled", "buy_link_disabled"}:
+        return False
+    return True
+
+
+def _formula_price_snapshot(plan: Plan) -> tuple[Decimal | None, str]:
+    if plan.monthly_price_value is not None:
+        return Decimal(plan.monthly_price_value).quantize(Decimal("0.01")), (plan.currency_code or "EUR").upper()
+    if plan.monthly_price_excl_vat is not None:
+        return Decimal(plan.monthly_price_excl_vat).quantize(Decimal("0.01")), (plan.currency_code or "EUR").upper()
+    return None, (plan.currency_code or "EUR").upper()
+
+
+def _formula_option_out(plan: Plan, *, restriction_labels: list[str]) -> ClientSessionFormulaOptionOut:
+    price_snapshot, currency = _formula_price_snapshot(plan)
+    return ClientSessionFormulaOptionOut(
+        formula_id=plan.id,
+        formula_code=plan.code,
+        formula_type=plan.kind,
+        name=plan.name,
+        description=plan.description,
+        price_ttc=price_snapshot,
+        currency=currency,
+        frequency_label=_formula_frequency_label(plan.kind),
+        restriction_labels=restriction_labels,
+        payment_methods=_plan_payment_methods(plan),
+    )
+
+
+def _active_formula_options_for_course_type(
+    db: Session,
+    *,
+    course_type_id: UUID,
+    allowed_plan_kinds: set[PlanKind],
+) -> list[ClientSessionFormulaOptionOut]:
+    if not allowed_plan_kinds:
+        return []
+
+    rows = db.execute(
+        select(Plan, CourseType.name)
+        .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
+        .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
+        .where(
+            Plan.active.is_(True),
+            Plan.is_private.is_(False),
+            Plan.kind.in_(tuple(allowed_plan_kinds)),
+            PlanEntitlement.course_type_id == course_type_id,
+        )
+        .order_by(Plan.kind.asc(), Plan.name.asc())
+    ).all()
+    options: list[ClientSessionFormulaOptionOut] = []
+    for plan, course_name in rows:
+        if not _formula_purchase_link_allowed(plan):
+            continue
+        options.append(_formula_option_out(plan, restriction_labels=[course_name]))
+    return options
 
 
 def _clean_external_content_text(value: str | None) -> str | None:
@@ -2573,6 +2666,312 @@ def create_client_session_checkout(
             metadata=metadata,
         ),
         invoice_status="ISSUED",
+    )
+
+
+@router.get("/clients/me/sessions/{session_id}/reservation-options", response_model=ClientSessionReservationOptionsOut)
+def get_client_session_reservation_options(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientSessionReservationOptionsOut:
+    managed_ids = _managed_client_ids_for_sessions(db, current_user)
+    members = db.scalars(
+        select(User)
+        .where(
+            User.id.in_(managed_ids),
+            User.role == UserRole.CLIENT,
+        )
+        .order_by(User.client_kind.asc(), User.first_name.asc(), User.last_name.asc(), User.email.asc())
+    ).all()
+    member_by_id = {member.id: member for member in members}
+
+    row = db.execute(
+        select(CourseSession, CourseType)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .where(CourseSession.id == session_id)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_obj, course_type = row
+
+    if not bool(course_type.allows_student_bookings):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This slot does not accept student bookings")
+
+    session_booking_scopes = resolve_session_booking_scopes(
+        session_obj,
+        allows_student_bookings=bool(course_type.allows_student_bookings),
+    )
+    online_booking_enabled = session_booking_scopes != [SessionAudienceScope.PRIVATE]
+    allows_planless_booking = scopes_allow_planless_booking(session_booking_scopes)
+    allowed_plan_kinds = allowed_plan_kinds_for_scopes(session_booking_scopes)
+    formula_options = _active_formula_options_for_course_type(
+        db,
+        course_type_id=course_type.id,
+        allowed_plan_kinds=allowed_plan_kinds,
+    )
+    direct_payment_amount = (
+        Decimal(session_obj.external_booking_price_ttc).quantize(Decimal("0.01"))
+        if allows_planless_booking and session_obj.external_booking_price_ttc is not None
+        else None
+    )
+    direct_payment_currency = (
+        (session_obj.external_booking_currency or "EUR").upper()
+        if direct_payment_amount is not None
+        else None
+    )
+    now = _utcnow()
+    min_booking_notice_hours, _, _ = _effective_session_booking_rules(db, session_obj=session_obj)
+    booking_deadline_reached = session_obj.start_at_utc < now + timedelta(hours=min_booking_notice_hours)
+    session_started = session_obj.start_at_utc <= now
+    is_full = _count_booked(db, session_obj.id) >= session_obj.capacity_max
+
+    existing_bookings = db.scalars(
+        select(Booking)
+        .where(
+            Booking.session_id == session_id,
+            Booking.user_id.in_(managed_ids),
+        )
+        .order_by(Booking.booked_at.desc(), Booking.id.desc())
+    ).all()
+    booking_by_user: dict[UUID, Booking] = {}
+    for booking in existing_bookings:
+        booking_by_user.setdefault(booking.user_id, booking)
+
+    member_options: list[ClientSessionReservationMemberOptionOut] = []
+    for member in members:
+        existing = booking_by_user.get(member.id)
+        booking_status = existing.status.value if existing is not None and hasattr(existing.status, "value") else (
+            str(existing.status) if existing is not None else None
+        )
+        if existing is not None:
+            normalized_existing = booking_status or ""
+            if normalized_existing in {"BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"}:
+                member_options.append(
+                    ClientSessionReservationMemberOptionOut(
+                        member_id=member.id,
+                        member_display_name=_display_name(member),
+                        member_kind=member.client_kind,
+                        booking_id=existing.id,
+                        booking_status=booking_status,
+                        action_code="ALREADY_BOOKED",
+                        action_label="Voir la reservation",
+                        status_label="Reserve",
+                        reason="Reservation deja confirmee pour ce membre.",
+                        has_credit_coverage=existing.client_plan_subscription_id is not None or existing.manual_credit_type_id is not None,
+                        coverage_source="PLAN" if existing.client_plan_subscription_id is not None else ("MANUAL_CREDIT" if existing.manual_credit_type_id is not None else None),
+                    )
+                )
+                continue
+            if normalized_existing == "WAITLISTED":
+                member_options.append(
+                    ClientSessionReservationMemberOptionOut(
+                        member_id=member.id,
+                        member_display_name=_display_name(member),
+                        member_kind=member.client_kind,
+                        booking_id=existing.id,
+                        booking_status=booking_status,
+                        action_code="ALREADY_WAITLISTED",
+                        action_label="Voir la reservation",
+                        status_label="Liste d attente",
+                        reason="Ce membre est deja en liste d attente pour ce creneau.",
+                    )
+                )
+                continue
+            if normalized_existing == "PENDING_PAYMENT":
+                amount_due = remaining_booking_amount_due(db, booking=existing)
+                member_options.append(
+                    ClientSessionReservationMemberOptionOut(
+                        member_id=member.id,
+                        member_display_name=_display_name(member),
+                        member_kind=member.client_kind,
+                        booking_id=existing.id,
+                        booking_status=booking_status,
+                        action_code="FINALIZE_PAYMENT",
+                        action_label="Finaliser le paiement",
+                        status_label="Paiement en attente",
+                        reason="Une reservation provisoire est deja en attente de paiement.",
+                        direct_payment_amount_ttc=amount_due if amount_due > Decimal("0.00") else None,
+                        direct_payment_currency=existing.currency_snapshot or direct_payment_currency,
+                    )
+                )
+                continue
+
+        if session_obj.status != SessionStatus.SCHEDULED:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="UNAVAILABLE",
+                    action_label="Non reservable",
+                    status_label="Reservation fermee",
+                    reason="Ce creneau n est plus ouvert a la reservation.",
+                )
+            )
+            continue
+
+        if not online_booking_enabled:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="UNAVAILABLE",
+                    action_label="Non reservable",
+                    status_label="Reservation fermee",
+                    reason="La reservation en ligne est fermee pour ce creneau.",
+                )
+            )
+            continue
+
+        if session_started or booking_deadline_reached:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="UNAVAILABLE",
+                    action_label="Non reservable",
+                    status_label="Reservation fermee",
+                    reason="Le delai de reservation pour ce creneau est depasse.",
+                )
+            )
+            continue
+
+        if is_full:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="JOIN_WAITLIST",
+                    action_label="Rejoindre la liste d attente",
+                    status_label="Liste d attente",
+                    reason="Le creneau est complet. Vous pouvez rejoindre la liste d attente.",
+                )
+            )
+            continue
+
+        selected_subscription = _select_eligible_subscription(
+            db,
+            user_id=member.id,
+            course_type_id=course_type.id,
+            now=now,
+            requested_subscription_id=None,
+            allowed_plan_kinds=allowed_plan_kinds,
+        )
+        if selected_subscription is not None:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="BOOK_WITH_CREDIT",
+                    action_label="Reserver maintenant",
+                    status_label="Credit disponible",
+                    reason="Cette reservation sera confirmee sans paiement supplementaire.",
+                    has_credit_coverage=True,
+                    coverage_source=selected_subscription[1].kind.value,
+                )
+            )
+            continue
+
+        manual_credit_balance = (
+            db.scalar(
+                select(ClientManualCreditBalance)
+                .where(
+                    ClientManualCreditBalance.user_id == member.id,
+                    ClientManualCreditBalance.credit_type_id == course_type.credit_type_id,
+                )
+            )
+            if course_type.credit_type_id is not None
+            else None
+        )
+        if manual_credit_balance is not None and int(manual_credit_balance.credits_count or 0) > 0:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="BOOK_WITH_CREDIT",
+                    action_label="Reserver maintenant",
+                    status_label="Credit disponible",
+                    reason="Cette reservation utilisera un credit manuel disponible.",
+                    has_credit_coverage=True,
+                    coverage_source="MANUAL_CREDIT",
+                )
+            )
+            continue
+
+        if direct_payment_amount is not None and formula_options:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="BUY_FORMULA_OR_PAY_UNIT",
+                    action_label="Choisir une formule ou payer a l unite",
+                    status_label="Paiement requis",
+                    reason="Aucun credit disponible. Vous pouvez acheter une formule compatible ou payer cette reservation a l unite.",
+                    direct_payment_amount_ttc=direct_payment_amount,
+                    direct_payment_currency=direct_payment_currency,
+                    formula_options=formula_options,
+                )
+            )
+            continue
+
+        if formula_options:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="BUY_FORMULA",
+                    action_label="Choisir une formule",
+                    status_label="Aucune couverture",
+                    reason="Selectionnez une formule compatible pour confirmer la reservation.",
+                    formula_options=formula_options,
+                )
+            )
+            continue
+
+        if direct_payment_amount is not None:
+            member_options.append(
+                ClientSessionReservationMemberOptionOut(
+                    member_id=member.id,
+                    member_display_name=_display_name(member),
+                    member_kind=member.client_kind,
+                    action_code="PAY_UNIT",
+                    action_label="Payer et reserver",
+                    status_label="Paiement requis",
+                    reason="Aucun credit disponible. Cette reservation peut etre payee a l unite.",
+                    direct_payment_amount_ttc=direct_payment_amount,
+                    direct_payment_currency=direct_payment_currency,
+                )
+            )
+            continue
+
+        member_options.append(
+            ClientSessionReservationMemberOptionOut(
+                member_id=member.id,
+                member_display_name=_display_name(member),
+                member_kind=member.client_kind,
+                action_code="UNAVAILABLE",
+                action_label="Non reservable",
+                status_label="Aucune couverture",
+                reason="Aucune formule ni paiement unitaire n est disponible pour ce creneau.",
+            )
+        )
+
+    return ClientSessionReservationOptionsOut(
+        session_id=session_obj.id,
+        session_title=course_type.name,
+        session_status=session_obj.status.value if hasattr(session_obj.status, "value") else str(session_obj.status),
+        is_full=is_full,
+        online_booking_enabled=online_booking_enabled,
+        waitlist_enabled=online_booking_enabled,
+        members=member_options,
     )
 
 

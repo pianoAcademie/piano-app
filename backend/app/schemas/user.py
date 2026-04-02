@@ -287,6 +287,46 @@ class ClientSessionCheckoutOut(BaseModel):
     invoice_status: str | None = None
 
 
+class ClientSessionFormulaOptionOut(BaseModel):
+    formula_id: UUID
+    formula_code: str
+    formula_type: PlanKind
+    name: str
+    description: str | None = None
+    price_ttc: Decimal | None = None
+    currency: str
+    frequency_label: str | None = None
+    restriction_labels: list[str] = Field(default_factory=list)
+    payment_methods: list[str] = Field(default_factory=list)
+
+
+class ClientSessionReservationMemberOptionOut(BaseModel):
+    member_id: UUID
+    member_display_name: str
+    member_kind: ClientKind
+    booking_id: UUID | None = None
+    booking_status: str | None = None
+    action_code: str
+    action_label: str
+    status_label: str
+    reason: str | None = None
+    has_credit_coverage: bool = False
+    coverage_source: str | None = None
+    direct_payment_amount_ttc: Decimal | None = None
+    direct_payment_currency: str | None = None
+    formula_options: list[ClientSessionFormulaOptionOut] = Field(default_factory=list)
+
+
+class ClientSessionReservationOptionsOut(BaseModel):
+    session_id: UUID
+    session_title: str
+    session_status: str
+    is_full: bool
+    online_booking_enabled: bool
+    waitlist_enabled: bool
+    members: list[ClientSessionReservationMemberOptionOut] = Field(default_factory=list)
+
+
 class ClientPaymentConfirmOut(BaseModel):
     payment_id: str
     subscription_status: str

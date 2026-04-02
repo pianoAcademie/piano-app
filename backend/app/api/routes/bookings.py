@@ -22,6 +22,7 @@ from app.models.catalog import (
     SessionAudienceScope,
     SessionStatus,
 )
+from app.models.client_record import ClientManualCreditBalance
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting
 from app.models.plan import (
@@ -303,6 +304,39 @@ def _restore_pack_credit(subscription: ClientPlanSubscription, plan: Plan) -> No
     current = int(subscription.credits_remaining or 0)
     cap = subscription.credits_initial if subscription.credits_initial is not None else current + 1
     subscription.credits_remaining = min(current + 1, cap)
+
+
+def _load_manual_credit_balance_for_update(
+    db: Session,
+    *,
+    user_id: UUID,
+    credit_type_id: UUID | None,
+) -> ClientManualCreditBalance | None:
+    if credit_type_id is None:
+        return None
+    return db.scalar(
+        select(ClientManualCreditBalance)
+        .where(
+            ClientManualCreditBalance.user_id == user_id,
+            ClientManualCreditBalance.credit_type_id == credit_type_id,
+        )
+        .with_for_update()
+    )
+
+
+def _consume_manual_credit(balance: ClientManualCreditBalance | None) -> bool:
+    if balance is None:
+        return False
+    if int(balance.credits_count or 0) <= 0:
+        return False
+    balance.credits_count = int(balance.credits_count or 0) - 1
+    return True
+
+
+def _restore_manual_credit(balance: ClientManualCreditBalance | None) -> None:
+    if balance is None:
+        return
+    balance.credits_count = int(balance.credits_count or 0) + 1
 
 
 def _non_negative_money(value: Decimal | float | int | None) -> Decimal:
@@ -734,12 +768,13 @@ def _resolve_booking_snapshot(
     now: datetime,
     subscription: ClientPlanSubscription | None,
     plan: Plan | None,
+    covered_by_manual_credit: bool = False,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str]:
     billing_profile = resolve_billing_profile(db, user)
     currency = (billing_profile.preferred_currency or "EUR").upper()
 
     # For SUBSCRIPTION/PACK plan-backed bookings, there is no per-session pricing.
-    if plan is not None and plan.kind in (PlanKind.SUBSCRIPTION, PlanKind.PACK):
+    if covered_by_manual_credit or (plan is not None and plan.kind in (PlanKind.SUBSCRIPTION, PlanKind.PACK)):
         zero = Decimal("0.00")
         return zero, zero, zero, zero, currency
 
@@ -826,6 +861,37 @@ def _promote_waitlist_if_possible(
             return
 
         if next_waitlisted.client_plan_subscription_id is None:
+            if next_waitlisted.manual_credit_type_id is not None:
+                manual_credit_balance = _load_manual_credit_balance_for_update(
+                    db,
+                    user_id=next_waitlisted.user_id,
+                    credit_type_id=next_waitlisted.manual_credit_type_id,
+                )
+                if not _consume_manual_credit(manual_credit_balance):
+                    next_waitlisted.status = BookingStatus.CANCELLED
+                    next_waitlisted.cancelled_at = now
+                    next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_NO_MANUAL_CREDIT"
+                    db.flush()
+                    continue
+                next_waitlisted.status = BookingStatus.BOOKED
+                next_waitlisted.booked_at = now
+                next_waitlisted.cancelled_at = None
+                next_waitlisted.cancellation_reason = None
+                promoted_user = db.scalar(
+                    select(User)
+                    .where(User.id == next_waitlisted.user_id)
+                    .with_for_update()
+                )
+                if promoted_user is not None:
+                    _mark_first_course_if_needed(promoted_user, session_obj)
+                ensure_booking_reminder(
+                    db,
+                    booking=next_waitlisted,
+                    session_obj=session_obj,
+                    now=now,
+                )
+                db.flush()
+                continue
             if allow_planless_promotion:
                 next_waitlisted.status = BookingStatus.BOOKED
                 next_waitlisted.booked_at = now
@@ -1020,8 +1086,18 @@ def _book_session_internal(
     )
     subscription: ClientPlanSubscription | None = None
     plan: Plan | None = None
+    manual_credit_balance: ClientManualCreditBalance | None = None
+    manual_credit_type_id: UUID | None = None
     if selected is not None:
         subscription, plan = selected
+    elif course_type.credit_type_id is not None:
+        manual_credit_balance = _load_manual_credit_balance_for_update(
+            db,
+            user_id=booking_owner.id,
+            credit_type_id=course_type.credit_type_id,
+        )
+        if manual_credit_balance is not None and int(manual_credit_balance.credits_count or 0) > 0:
+            manual_credit_type_id = course_type.credit_type_id
     elif payload.client_plan_subscription_id is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1039,6 +1115,7 @@ def _book_session_internal(
         now=now,
         subscription=subscription,
         plan=plan,
+        covered_by_manual_credit=manual_credit_type_id is not None,
     )
 
     should_create_payment_hold = allow_pending_payment_hold and subscription is None and total > Decimal("0.00")
@@ -1057,6 +1134,11 @@ def _book_session_internal(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No remaining credits on selected pack",
         )
+    if booking_status == BookingStatus.BOOKED and manual_credit_type_id is not None and not _consume_manual_credit(manual_credit_balance):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No remaining manual credits for this activity",
+        )
 
     if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None:
         _enforce_plan_restrictions(
@@ -1071,6 +1153,7 @@ def _book_session_internal(
         booking.session_id = session_id
         booking.user_id = booking_owner.id
         booking.client_plan_subscription_id = subscription.id if subscription is not None else None
+        booking.manual_credit_type_id = manual_credit_type_id
         booking.status = booking_status
         booking.booked_at = now
         booking.cancelled_at = None
@@ -1086,6 +1169,7 @@ def _book_session_internal(
             session_id=session_id,
             user_id=booking_owner.id,
             client_plan_subscription_id=subscription.id if subscription is not None else None,
+            manual_credit_type_id=manual_credit_type_id,
             status=booking_status,
             booked_at=now,
             payment_hold_expires_at=payment_hold_expiration(now=now) if booking_status == BookingStatus.PENDING_PAYMENT else None,
@@ -1229,6 +1313,14 @@ def cancel_booking(
             subscription, plan = sub_and_plan
             if subscription.user_id == booking.user_id:
                 _restore_pack_credit(subscription, plan)
+    if previous_status == BookingStatus.BOOKED and booking.manual_credit_type_id is not None and session_obj.start_at_utc > now:
+        manual_credit_balance = _load_manual_credit_balance_for_update(
+            db,
+            user_id=booking.user_id,
+            credit_type_id=booking.manual_credit_type_id,
+        )
+        if manual_credit_balance is not None:
+            _restore_manual_credit(manual_credit_balance)
 
     booking.status = BookingStatus.CANCELLED
     booking.cancelled_at = now

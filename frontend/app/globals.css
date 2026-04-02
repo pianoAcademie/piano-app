@@ -9839,6 +9839,32 @@ button.danger:focus-visible {
   letter-spacing: 0.02em;
 }
 
+.client-session-modal-state {
+  display: grid;
+  gap: 10px;
+}
+
+.client-session-modal-state-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.client-session-modal-state-copy p {
+  margin: 0;
+}
+
+.client-session-modal-state-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #24170b;
+}
+
+.client-session-modal-state-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .client-session-modal-actions {
   display: grid;
   gap: 12px;
@@ -9853,6 +9879,36 @@ button.danger:focus-visible {
 .client-session-modal-action-list {
   display: grid;
   gap: 10px;
+}
+
+.client-session-inline-note {
+  border-top: 1px solid #efe3d2;
+  padding-top: 6px;
+}
+
+.client-session-formula-grid {
+  margin-top: 10px;
+}
+
+.client-session-formula-card {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  padding: 12px;
+}
+
+.client-session-formula-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.client-session-formula-copy p,
+.client-session-formula-copy small {
+  margin: 0;
+}
+
+.client-session-formula-action {
+  display: grid;
+  margin-top: 8px;
 }
 
 .client-session-modal-action-list form,
