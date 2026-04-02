@@ -2795,13 +2795,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             </span>
                           ) : null}
                         </div>
-                        {selectedSessionCoverageLabel ? (
-                          <div className="client-session-modal-state-meta">
-                            <span className="badge">{selectedSessionCoverageLabel}</span>
-                          </div>
+                    {selectedSessionCoverageLabel ? (
+                      <div className="client-session-modal-state-meta">
+                        <span className="badge">{selectedSessionCoverageLabel}</span>
+                        {selectedReservationMemberOption ? (
+                          <span className="badge">{`Pour ${selectedReservationMemberOption.member_display_name}`}</span>
                         ) : null}
-                      </section>
+                      </div>
                     ) : null}
+                  </section>
+                ) : null}
 
                     {reservationOptionsMembers.length > 1 ? (
                       <section className="modal-card">
@@ -2832,16 +2835,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   className={`client-session-member-card ${isSelected ? "active" : ""}`}
                                   href={selectionHref}
                                 >
-                                  <div className="client-session-member-card-head">
-                                    <strong>{option.member_display_name}</strong>
-                                    <span className={`status-badge ${planningStatusClass(option.status_label)}`}>
-                                      {option.status_label}
-                                    </span>
-                                  </div>
-                                  <small className="muted">{option.reason || option.action_label}</small>
-                                </a>
-                              );
-                            })}
+                              <div className="client-session-member-card-head">
+                                <strong>{option.member_display_name}</strong>
+                                <div className="client-session-member-card-badges">
+                                  {isSelected ? <span className="badge">Selectionne</span> : null}
+                                  <span className={`status-badge ${planningStatusClass(option.status_label)}`}>
+                                    {option.status_label}
+                                  </span>
+                                </div>
+                              </div>
+                              <small className="muted">{option.reason || option.action_label}</small>
+                            </a>
+                          );
+                        })}
                           </div>
                         </div>
                       </section>
@@ -2854,8 +2860,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <section className="modal-card">
                         <small className="muted">
                           {selectedSessionActionCode === "BUY_FORMULA_OR_PAY_UNIT"
-                            ? "Ou choisissez une formule compatible"
-                            : "Formules compatibles"}
+                            ? `Ou choisissez une formule compatible pour ${selectedReservationMemberOption.member_display_name}`
+                            : `Formules compatibles pour ${selectedReservationMemberOption.member_display_name}`}
                         </small>
                         <div className="client-plan-grid client-session-formula-grid">
                           {selectedSessionFormulaOptions.map((formula) => (
@@ -2874,7 +2880,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
                                 <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                 <button type="submit" className="client-session-secondary-button">
-                                  {formula.price_ttc ? `Acheter · ${toMoney(formula.price_ttc, formula.currency)}` : "Acheter la formule"}
+                                  {formula.price_ttc
+                                    ? `Acheter pour ${selectedReservationMemberOption.member_display_name} · ${toMoney(formula.price_ttc, formula.currency)}`
+                                    : `Acheter la formule pour ${selectedReservationMemberOption.member_display_name}`}
                                 </button>
                               </form>
                             </article>

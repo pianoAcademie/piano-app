@@ -229,7 +229,10 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                       >
                         <div className="client-session-member-card-head">
                           <strong>{option.member_display_name}</strong>
-                          <span className="status-badge status-draft">{option.status_label}</span>
+                          <div className="client-session-member-card-badges">
+                            {isSelected ? <span className="badge">Selectionne</span> : null}
+                            <span className="status-badge status-draft">{option.status_label}</span>
+                          </div>
                         </div>
                         <small className="muted">{option.reason || option.action_label}</small>
                       </Link>
@@ -253,6 +256,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                 {coverageLabel ? (
                   <div className="client-session-modal-state-meta">
                     <span className="badge">{coverageLabel}</span>
+                    <span className="badge">{`Pour ${selectedMember.member_display_name}`}</span>
                   </div>
                 ) : null}
               </section>
@@ -261,8 +265,8 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                 <section className="modal-card">
                   <small className="muted">
                     {selectedMember.action_code === "BUY_FORMULA_OR_PAY_UNIT"
-                      ? "Ou choisissez une formule compatible"
-                      : "Formules compatibles"}
+                      ? `Ou choisissez une formule compatible pour ${selectedMember.member_display_name}`
+                      : `Formules compatibles pour ${selectedMember.member_display_name}`}
                   </small>
                   <div className="client-plan-grid client-session-formula-grid">
                     {selectedMember.formula_options.map((formula) => (
@@ -281,7 +285,9 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                           <input type="hidden" name="booking_user_id" value={selectedMember.member_id} />
                           <input type="hidden" name="planning_return_to" value={planningReturnTo} />
                           <button type="submit" className="client-session-secondary-button">
-                            {formula.price_ttc ? `Acheter · ${formatMoney(formula.price_ttc, formula.currency)}` : "Acheter la formule"}
+                            {formula.price_ttc
+                              ? `Acheter pour ${selectedMember.member_display_name} · ${formatMoney(formula.price_ttc, formula.currency)}`
+                              : `Acheter la formule pour ${selectedMember.member_display_name}`}
                           </button>
                         </form>
                       </article>

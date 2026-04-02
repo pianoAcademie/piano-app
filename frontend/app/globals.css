@@ -9917,6 +9917,14 @@ button.danger:focus-visible {
   gap: 10px;
 }
 
+.client-session-member-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .client-session-member-card strong {
   font-size: 15px;
   line-height: 1.25;
@@ -10020,6 +10028,10 @@ button.danger:focus-visible {
   .client-session-member-card-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .client-session-member-card-badges {
+    justify-content: flex-start;
   }
 }
 
