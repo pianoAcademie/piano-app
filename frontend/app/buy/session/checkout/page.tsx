@@ -5,7 +5,12 @@ import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import type { ClientSessionReservationOptionsOut, SessionOut, UserOut } from "../../../../lib/types";
+import type {
+  ClientSessionPurchaseCatalogOut,
+  ClientSessionReservationOptionsOut,
+  SessionOut,
+  UserOut,
+} from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -151,9 +156,31 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
     );
   }
   const reservationOptions = reservationOptionsResult.data;
+  const purchaseCatalogResult = await backendRequest<ClientSessionPurchaseCatalogOut>(
+    `/api/v1/clients/me/sessions/${encodeURIComponent(sessionId)}/purchase-catalog`,
+    {},
+    portalToken,
+  );
+  const purchaseCatalog = purchaseCatalogResult.ok ? purchaseCatalogResult.data : null;
   const members = reservationOptions.members;
   const selectedMemberId = bookingUserId || (members.length === 1 ? members[0]?.member_id ?? "" : "");
   const selectedMember = members.find((option) => option.member_id === selectedMemberId) ?? null;
+  const selectedMemberFormulaOptions =
+    (selectedMember?.formula_options?.length ?? 0) > 0
+      ? selectedMember?.formula_options ?? []
+      : purchaseCatalog?.formula_options ?? [];
+  const selectedMemberDirectPaymentAmount =
+    selectedMember?.direct_payment_amount_ttc ?? purchaseCatalog?.direct_payment_amount_ttc ?? null;
+  const selectedMemberDirectPaymentCurrency =
+    selectedMember?.direct_payment_currency ?? purchaseCatalog?.direct_payment_currency ?? null;
+  const selectedMemberEffectiveActionCode =
+    selectedMember == null
+      ? ""
+      : selectedMember.action_code === "PAY_UNIT" && selectedMemberFormulaOptions.length > 0
+        ? selectedMemberDirectPaymentAmount
+          ? "BUY_FORMULA_OR_PAY_UNIT"
+          : "BUY_FORMULA"
+        : selectedMember.action_code;
   const coverageLabel =
     selectedMember?.coverage_source === "MANUAL_CREDIT"
       ? "Credit manuel disponible"
@@ -264,15 +291,15 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                 ) : null}
               </section>
 
-              {selectedMember.formula_options.length > 0 ? (
+              {selectedMemberFormulaOptions.length > 0 ? (
                 <section className="modal-card">
                   <small className="muted">
-                    {selectedMember.action_code === "BUY_FORMULA_OR_PAY_UNIT"
+                    {selectedMemberEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
                       ? `Ou choisissez une formule compatible pour ${selectedMember.member_display_name}`
                       : `Formules compatibles pour ${selectedMember.member_display_name}`}
                   </small>
                   <div className="client-plan-grid client-session-formula-grid">
-                    {selectedMember.formula_options.map((formula) => (
+                    {selectedMemberFormulaOptions.map((formula) => (
                       <article key={formula.formula_id} className="modal-card client-plan-card client-session-formula-card">
                         <div className="client-session-formula-copy">
                           <strong>{formula.name}</strong>
@@ -311,7 +338,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                   </div>
                 ) : null}
 
-                {["BOOK_WITH_CREDIT", "PAY_UNIT", "FINALIZE_PAYMENT", "JOIN_WAITLIST"].includes(selectedMember.action_code) ? (
+                {["BOOK_WITH_CREDIT", "FINALIZE_PAYMENT", "JOIN_WAITLIST"].includes(selectedMemberEffectiveActionCode) ? (
                   <form action={submitPublicSessionCheckoutAction} className="grid">
                     <input type="hidden" name="session_id" value={session.id} />
                     <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
@@ -320,35 +347,32 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                     <button
                       type="submit"
                       className={
-                        ["PAY_UNIT", "FINALIZE_PAYMENT"].includes(selectedMember.action_code)
+                        ["PAY_UNIT", "FINALIZE_PAYMENT"].includes(selectedMemberEffectiveActionCode)
                           ? "client-session-primary-button"
                           : "client-session-secondary-button"
                       }
                     >
                       {selectedMember.action_label}
-                      {selectedMember.direct_payment_amount_ttc
-                        ? ` · ${formatMoney(selectedMember.direct_payment_amount_ttc, selectedMember.direct_payment_currency)}`
+                      {selectedMemberDirectPaymentAmount
+                        ? ` · ${formatMoney(selectedMemberDirectPaymentAmount, selectedMemberDirectPaymentCurrency)}`
                         : ""}
                     </button>
                   </form>
                 ) : null}
 
-                {selectedMember.action_code === "BUY_FORMULA_OR_PAY_UNIT" && selectedMember.direct_payment_amount_ttc ? (
+                {["BUY_FORMULA_OR_PAY_UNIT", "PAY_UNIT"].includes(selectedMemberEffectiveActionCode) && selectedMemberDirectPaymentAmount ? (
                   <form action={submitPublicSessionCheckoutAction} className="grid">
                     <input type="hidden" name="session_id" value={session.id} />
                     <input type="hidden" name="checkout_return_to" value={checkoutReturnTo} />
                     <input type="hidden" name="planning_return_to" value={planningReturnTo} />
                     <input type="hidden" name="booking_user_id" value={selectedMember.member_id} />
                     <button type="submit" className="client-session-primary-button">
-                      {`Payer a l unite · ${formatMoney(
-                        selectedMember.direct_payment_amount_ttc,
-                        selectedMember.direct_payment_currency,
-                      )}`}
+                      {`Payer a l unite · ${formatMoney(selectedMemberDirectPaymentAmount, selectedMemberDirectPaymentCurrency)}`}
                     </button>
                   </form>
                 ) : null}
 
-                {selectedMember.action_code === "UNAVAILABLE" ? (
+                {selectedMemberEffectiveActionCode === "UNAVAILABLE" ? (
                   <section className="flash-err">{selectedMember.reason || "Reservation indisponible pour ce membre."}</section>
                 ) : null}
               </div>

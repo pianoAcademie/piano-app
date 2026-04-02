@@ -23,10 +23,10 @@ class _ScalarResult:
 
 
 class _ExecuteResult:
-    def __init__(self, rows: list[tuple[object, object]]) -> None:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
         self._rows = list(rows)
 
-    def all(self) -> list[tuple[object, object]]:
+    def all(self) -> list[tuple[object, ...]]:
         return list(self._rows)
 
 
@@ -36,10 +36,12 @@ class _FakeSession:
         *,
         scalar_values: list[object] | None = None,
         scalar_rows: list[object] | None = None,
-        execute_rows: list[tuple[object, object]] | None = None,
+        scalar_rows_sequence: list[list[object]] | None = None,
+        execute_rows: list[tuple[object, ...]] | None = None,
     ) -> None:
         self._scalar_values = list(scalar_values or [])
         self._scalar_rows = list(scalar_rows or [])
+        self._scalar_rows_sequence = [list(rows) for rows in (scalar_rows_sequence or [])]
         self._execute_rows = list(execute_rows or [])
         self.added: list[object] = []
 
@@ -49,6 +51,8 @@ class _FakeSession:
         return None
 
     def scalars(self, _query: object) -> _ScalarResult:
+        if self._scalar_rows_sequence:
+            return _ScalarResult(self._scalar_rows_sequence.pop(0))
         return _ScalarResult(self._scalar_rows)
 
     def execute(self, _query: object) -> _ExecuteResult:
@@ -89,8 +93,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             currency_code="EUR",
         )
         fake_db = _FakeSession(
-            scalar_rows=[plan],
-            scalar_values=[None, uuid4()],
+            scalar_rows_sequence=[[plan.id], [plan.id], [plan]],
         )
 
         options = _active_formula_options_for_course_type(
@@ -165,8 +168,8 @@ class FormulaCompatibilityTests(unittest.TestCase):
             currency_code="EUR",
         )
         fake_db = _FakeSession(
-            scalar_rows=[plan],
-            scalar_values=[None, uuid4()],
+            scalar_rows_sequence=[[], [plan]],
+            execute_rows=[(plan.id, "Réservation studio de répétition", "STUDIO_BOOKING")],
         )
 
         options = _active_formula_options_for_course_type(
@@ -180,6 +183,35 @@ class FormulaCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(len(options), 1)
         self.assertEqual(options[0].formula_code, "FORM-STUDIO-10")
+
+    def test_formula_options_include_exact_entitlement_match(self) -> None:
+        plan = SimpleNamespace(
+            id=uuid4(),
+            code="FORM-STUDIO-EXACT",
+            kind=PlanKind.PACK,
+            name="Reservation studio",
+            description="Pack studio exact",
+            options_json=[],
+            payment_methods_json=["CARD_ONLINE"],
+            monthly_price_value=15,
+            monthly_price_excl_vat=None,
+            currency_code="EUR",
+        )
+        fake_db = _FakeSession(
+            scalar_rows_sequence=[[plan.id], [plan]],
+        )
+
+        options = _active_formula_options_for_course_type(
+            fake_db,
+            course_type_id=uuid4(),
+            course_type_name="Réservation studio de répétition",
+            course_type_service_code="STUDIO_BOOKING",
+            credit_type_id=None,
+            allowed_plan_kinds={PlanKind.PACK},
+        )
+
+        self.assertEqual(len(options), 1)
+        self.assertEqual(options[0].formula_code, "FORM-STUDIO-EXACT")
 
 
 if __name__ == "__main__":

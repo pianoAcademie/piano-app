@@ -20,7 +20,7 @@ from app.api.deps import get_db, require_roles
 from app.api.routes.bookings import (
     _count_booked,
     _effective_session_booking_rules,
-    _plan_supports_course_access,
+    _normalize_course_access_key,
     _select_eligible_subscription,
     book_session,
     create_or_refresh_pending_payment_booking,
@@ -48,7 +48,16 @@ from app.models.external_content import (
     ExternalContentStatus,
 )
 from app.models.family import ClientFamilyLink
-from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, PlanPriceTaxMode, SubscriptionStatus
+from app.models.plan import (
+    ClientForfaitActivityPricing,
+    ClientPlanSubscription,
+    Plan,
+    PlanCreditGrant,
+    PlanEntitlement,
+    PlanKind,
+    PlanPriceTaxMode,
+    SubscriptionStatus,
+)
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
@@ -74,6 +83,7 @@ from app.schemas.user import (
     ClientPaymentCheckoutOut,
     ClientSessionFormulaOptionOut,
     ClientSessionCheckoutOut,
+    ClientSessionPurchaseCatalogOut,
     ClientSessionReservationMemberOptionOut,
     ClientSessionReservationOptionsOut,
     ClientMeUpdateRequest,
@@ -1141,10 +1151,54 @@ def _active_formula_options_for_course_type(
     if not allowed_plan_kinds:
         return []
 
+    # The booking tunnel should propose the same formulas the back office shows as
+    # attached to the activity. We therefore build a candidate set from explicit
+    # entitlements, credit grants and a normalized label fallback, then trust that
+    # candidate set instead of re-checking access through a second gate.
+    plan_ids = set(
+        db.scalars(
+            select(PlanEntitlement.plan_id).where(PlanEntitlement.course_type_id == course_type_id)
+        ).all()
+    )
+    if credit_type_id is not None and PlanKind.PACK in allowed_plan_kinds:
+        plan_ids.update(
+            db.scalars(
+                select(PlanCreditGrant.plan_id).where(PlanCreditGrant.credit_type_id == credit_type_id)
+            ).all()
+        )
+    target_keys = {
+        normalized
+        for normalized in (
+            _normalize_course_access_key(course_type_name),
+            _normalize_course_access_key(course_type_service_code),
+        )
+        if normalized
+    }
+    if target_keys:
+        entitlement_rows = db.execute(
+            select(PlanEntitlement.plan_id, CourseType.name, CourseType.service_code)
+            .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
+        ).all()
+        for entitlement_plan_id, entitlement_name, entitlement_service_code in entitlement_rows:
+            entitlement_keys = {
+                normalized
+                for normalized in (
+                    _normalize_course_access_key(entitlement_name),
+                    _normalize_course_access_key(entitlement_service_code),
+                )
+                if normalized
+            }
+            if entitlement_keys & target_keys:
+                plan_ids.add(entitlement_plan_id)
+
+    if not plan_ids:
+        return []
+
     try:
         plans = db.scalars(
             select(Plan)
             .where(
+                Plan.id.in_(tuple(plan_ids)),
                 Plan.active.is_(True),
                 Plan.is_private.is_(False),
                 Plan.kind.in_(tuple(allowed_plan_kinds)),
@@ -1160,16 +1214,6 @@ def _active_formula_options_for_course_type(
     options: list[ClientSessionFormulaOptionOut] = []
     for plan in plans:
         try:
-            if not _plan_supports_course_access(
-                db,
-                plan_id=plan.id,
-                plan_kind=plan.kind,
-                course_type_id=course_type_id,
-                credit_type_id=credit_type_id,
-                course_type_name=course_type_name,
-                course_type_service_code=course_type_service_code,
-            ):
-                continue
             if not _formula_purchase_link_allowed(plan):
                 continue
             options.append(_formula_option_out(plan, restriction_labels=[course_type_name]))
@@ -1180,6 +1224,39 @@ def _active_formula_options_for_course_type(
                 getattr(plan, "id", None),
             )
     return options
+
+
+def _session_purchase_catalog(
+    db: Session,
+    *,
+    session_obj: CourseSession,
+    course_type: CourseType,
+) -> tuple[list[ClientSessionFormulaOptionOut], Decimal | None, str | None, list[SessionAudienceScope]]:
+    session_booking_scopes = resolve_session_booking_scopes(
+        session_obj,
+        allows_student_bookings=bool(course_type.allows_student_bookings),
+    )
+    allows_planless_booking = scopes_allow_planless_booking(session_booking_scopes)
+    allowed_plan_kinds = allowed_plan_kinds_for_scopes(session_booking_scopes)
+    formula_options = _active_formula_options_for_course_type(
+        db,
+        course_type_id=course_type.id,
+        course_type_name=course_type.name,
+        course_type_service_code=course_type.service_code,
+        credit_type_id=course_type.credit_type_id,
+        allowed_plan_kinds=allowed_plan_kinds,
+    )
+    direct_payment_amount = (
+        Decimal(session_obj.external_booking_price_ttc).quantize(Decimal("0.01"))
+        if allows_planless_booking and session_obj.external_booking_price_ttc is not None
+        else None
+    )
+    direct_payment_currency = (
+        (session_obj.external_booking_currency or "EUR").upper()
+        if direct_payment_amount is not None
+        else None
+    )
+    return formula_options, direct_payment_amount, direct_payment_currency, session_booking_scopes
 
 
 def _clean_external_content_text(value: str | None) -> str | None:
@@ -2729,31 +2806,13 @@ def get_client_session_reservation_options(
     if not bool(course_type.allows_student_bookings):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This slot does not accept student bookings")
 
-    session_booking_scopes = resolve_session_booking_scopes(
-        session_obj,
-        allows_student_bookings=bool(course_type.allows_student_bookings),
+    formula_options, direct_payment_amount, direct_payment_currency, session_booking_scopes = _session_purchase_catalog(
+        db,
+        session_obj=session_obj,
+        course_type=course_type,
     )
     online_booking_enabled = session_booking_scopes != [SessionAudienceScope.PRIVATE]
-    allows_planless_booking = scopes_allow_planless_booking(session_booking_scopes)
     allowed_plan_kinds = allowed_plan_kinds_for_scopes(session_booking_scopes)
-    formula_options = _active_formula_options_for_course_type(
-        db,
-        course_type_id=course_type.id,
-        course_type_name=course_type.name,
-        course_type_service_code=course_type.service_code,
-        credit_type_id=course_type.credit_type_id,
-        allowed_plan_kinds=allowed_plan_kinds,
-    )
-    direct_payment_amount = (
-        Decimal(session_obj.external_booking_price_ttc).quantize(Decimal("0.01"))
-        if allows_planless_booking and session_obj.external_booking_price_ttc is not None
-        else None
-    )
-    direct_payment_currency = (
-        (session_obj.external_booking_currency or "EUR").upper()
-        if direct_payment_amount is not None
-        else None
-    )
     now = _utcnow()
     min_booking_notice_hours, _, _ = _effective_session_booking_rules(db, session_obj=session_obj)
     booking_deadline_reached = session_obj.start_at_utc < now + timedelta(hours=min_booking_notice_hours)
@@ -3026,6 +3085,41 @@ def get_client_session_reservation_options(
         online_booking_enabled=online_booking_enabled,
         waitlist_enabled=online_booking_enabled,
         members=member_options,
+    )
+
+
+@router.get("/clients/me/sessions/{session_id}/purchase-catalog", response_model=ClientSessionPurchaseCatalogOut)
+def get_client_session_purchase_catalog(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientSessionPurchaseCatalogOut:
+    managed_ids = _managed_client_ids_for_sessions(db, current_user)
+    if not managed_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Aucun membre rattaché au compte")
+
+    row = db.execute(
+        select(CourseSession, CourseType)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .where(CourseSession.id == session_id)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_obj, course_type = row
+
+    if not bool(course_type.allows_student_bookings):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This slot does not accept student bookings")
+
+    formula_options, direct_payment_amount, direct_payment_currency, _ = _session_purchase_catalog(
+        db,
+        session_obj=session_obj,
+        course_type=course_type,
+    )
+    return ClientSessionPurchaseCatalogOut(
+        session_id=session_obj.id,
+        formula_options=formula_options,
+        direct_payment_amount_ttc=direct_payment_amount,
+        direct_payment_currency=direct_payment_currency,
     )
 
 

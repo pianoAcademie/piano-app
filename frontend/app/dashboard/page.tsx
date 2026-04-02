@@ -33,6 +33,7 @@ import type {
   ClientMessageOut,
   ClientPaymentCheckoutOut,
   ClientSessionReservationMemberOptionOut,
+  ClientSessionPurchaseCatalogOut,
   ClientSessionReservationOptionsOut,
   ClientPaymentOut,
   PublicFormulaPurchaseContextOut,
@@ -1738,6 +1739,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       : null;
   const selectedSessionReservationOptions =
     selectedSessionReservationOptionsResult?.ok ? selectedSessionReservationOptionsResult.data : null;
+  const selectedSessionPurchaseCatalogResult =
+    tab === "planning" && selectedSessionId
+      ? await backendRequest<ClientSessionPurchaseCatalogOut>(
+          `/api/v1/clients/me/sessions/${encodeURIComponent(selectedSessionId)}/purchase-catalog`,
+          {},
+          token,
+        )
+      : null;
+  const selectedSessionPurchaseCatalog =
+    selectedSessionPurchaseCatalogResult?.ok ? selectedSessionPurchaseCatalogResult.data : null;
   const shouldUseFallbackReservationOptions =
     Boolean(selectedSessionPlanningState) &&
     (
@@ -1828,7 +1839,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             : null;
   const selectedSessionActionCode = selectedReservationMemberOption?.action_code ?? "";
   const selectedSessionRequiresMemberChoice = reservationOptionsMembers.length > 1 && !selectedReservationMemberOption;
-  const selectedSessionFormulaOptions = selectedReservationMemberOption?.formula_options ?? [];
+  const selectedSessionCatalogFormulaOptions = selectedSessionPurchaseCatalog?.formula_options ?? [];
+  const selectedSessionFormulaOptions =
+    (selectedReservationMemberOption?.formula_options?.length ?? 0) > 0
+      ? selectedReservationMemberOption?.formula_options ?? []
+      : selectedSessionCatalogFormulaOptions;
+  const selectedSessionDirectPaymentAmount =
+    selectedReservationMemberOption?.direct_payment_amount_ttc ?? selectedSessionPurchaseCatalog?.direct_payment_amount_ttc ?? null;
+  const selectedSessionDirectPaymentCurrency =
+    selectedReservationMemberOption?.direct_payment_currency ?? selectedSessionPurchaseCatalog?.direct_payment_currency ?? null;
+  const selectedSessionEffectiveActionCode =
+    selectedReservationMemberOption == null
+      ? selectedSessionActionCode
+      : selectedSessionActionCode === "PAY_UNIT" && selectedSessionFormulaOptions.length > 0
+        ? selectedSessionDirectPaymentAmount
+          ? "BUY_FORMULA_OR_PAY_UNIT"
+          : "BUY_FORMULA"
+        : selectedSessionActionCode;
   const otherMemberOptions = reservationOptionsMembers.filter((option) => option.member_id !== selectedReservationMemberId);
   const alternativeReservationOptions = otherMemberOptions.filter((option) =>
     ["BOOK_WITH_CREDIT", "PAY_UNIT", "BUY_FORMULA", "BUY_FORMULA_OR_PAY_UNIT", "JOIN_WAITLIST"].includes(option.action_code),
@@ -1865,16 +1892,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSessionStateTitle =
     selectedSessionRequiresMemberChoice
       ? "Choisissez le membre"
-      : selectedSessionActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
+      : selectedSessionEffectiveActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
         ? `Finaliser le paiement pour ${selectedReservationMemberOption.member_display_name}`
-        : selectedReservationMemberOption?.action_label || "Consulter ce creneau";
+        : selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
+          ? "Choisir votre option"
+          : selectedSessionEffectiveActionCode === "BUY_FORMULA"
+            ? "Acheter une formule"
+            : selectedReservationMemberOption?.action_label || "Consulter ce creneau";
   const selectedSessionStateDescription =
     selectedSessionRequiresMemberChoice
       ? "Nous vous proposerons automatiquement la meilleure option: credit, formule compatible ou paiement a l unite."
-      : selectedSessionActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
+      : selectedSessionEffectiveActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
         ? alternativeReservationOptions.length > 0
           ? `Une reservation provisoire existe deja pour ${selectedReservationMemberOption.member_display_name}. Pour voir les formules ou le paiement a l unite d un autre membre, choisissez une autre carte ci-dessous.`
           : selectedReservationMemberOption.reason || selectedSessionPlanningState?.contextLine || ""
+        : selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT" && selectedReservationMemberOption
+          ? `Aucun credit disponible pour ${selectedReservationMemberOption.member_display_name}. Vous pouvez choisir une formule compatible ou payer ce creneau a l unite.`
+          : selectedSessionEffectiveActionCode === "BUY_FORMULA" && selectedReservationMemberOption
+            ? `Aucun credit disponible pour ${selectedReservationMemberOption.member_display_name}. Choisissez une formule compatible pour confirmer la reservation.`
         : selectedReservationMemberOption?.reason || selectedSessionPlanningState?.contextLine || "";
   const selectedSessionHasBooking =
     Boolean(selectedReservationMemberOption?.booking_id) &&
@@ -2981,7 +3016,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {selectedReservationMemberOption && selectedSessionFormulaOptions.length > 0 ? (
                       <section className="modal-card">
                         <small className="muted">
-                          {selectedSessionActionCode === "BUY_FORMULA_OR_PAY_UNIT"
+                          {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
                             ? `Ou choisissez une formule compatible pour ${selectedReservationMemberOption.member_display_name}`
                             : `Formules compatibles pour ${selectedReservationMemberOption.member_display_name}`}
                         </small>
@@ -3037,7 +3072,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             ) : null}
                           </div>
                         ) : null}
-                        {selectedReservationMemberOption && ["BOOK_WITH_CREDIT", "PAY_UNIT", "FINALIZE_PAYMENT", "JOIN_WAITLIST"].includes(selectedSessionActionCode) ? (
+                        {selectedReservationMemberOption && ["BOOK_WITH_CREDIT", "FINALIZE_PAYMENT", "JOIN_WAITLIST"].includes(selectedSessionEffectiveActionCode) ? (
                           <form action={submitPublicSessionCheckoutAction}>
                             <input type="hidden" name="session_id" value={selectedSession.id} />
                             <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
@@ -3046,24 +3081,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <button
                               type="submit"
                               className={
-                                ["PAY_UNIT", "FINALIZE_PAYMENT"].includes(selectedSessionActionCode)
+                                ["PAY_UNIT", "FINALIZE_PAYMENT"].includes(selectedSessionEffectiveActionCode)
                                   ? "client-session-primary-button"
                                   : "client-session-secondary-button"
                               }
                             >
                               {selectedReservationMemberOption.action_label}
-                              {selectedReservationMemberOption.direct_payment_amount_ttc
+                              {selectedSessionDirectPaymentAmount
                                 ? ` · ${toMoney(
-                                    selectedReservationMemberOption.direct_payment_amount_ttc,
-                                    selectedReservationMemberOption.direct_payment_currency,
+                                    selectedSessionDirectPaymentAmount,
+                                    selectedSessionDirectPaymentCurrency,
                                   )}`
                                 : ""}
                             </button>
                           </form>
                         ) : null}
                         {selectedReservationMemberOption &&
-                        selectedSessionActionCode === "BUY_FORMULA_OR_PAY_UNIT" &&
-                        selectedReservationMemberOption.direct_payment_amount_ttc ? (
+                        ["BUY_FORMULA_OR_PAY_UNIT", "PAY_UNIT"].includes(selectedSessionEffectiveActionCode) &&
+                        selectedSessionDirectPaymentAmount ? (
                           <form action={submitPublicSessionCheckoutAction}>
                             <input type="hidden" name="session_id" value={selectedSession.id} />
                             <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
@@ -3071,13 +3106,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <input type="hidden" name="checkout_return_to" value={selectedSessionCheckoutReturnTo} />
                             <button type="submit" className="client-session-primary-button">
                               {`Payer a l unite · ${toMoney(
-                                selectedReservationMemberOption.direct_payment_amount_ttc,
-                                selectedReservationMemberOption.direct_payment_currency,
+                                selectedSessionDirectPaymentAmount,
+                                selectedSessionDirectPaymentCurrency,
                               )}`}
                             </button>
                           </form>
                         ) : null}
-                        {selectedReservationMemberOption && selectedSessionActionCode === "UNAVAILABLE" ? (
+                        {selectedReservationMemberOption && selectedSessionEffectiveActionCode === "UNAVAILABLE" ? (
                           <div className="stack-sm">
                             <span className="badge">
                               {selectedReservationMemberOption.reason || "Reservation non disponible pour ce creneau"}
@@ -3103,10 +3138,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           </div>
                         ) : null}
                         {selectedReservationMemberOption &&
-                        ["BUY_FORMULA", "BUY_FORMULA_OR_PAY_UNIT"].includes(selectedSessionActionCode) ? (
+                        ["BUY_FORMULA", "BUY_FORMULA_OR_PAY_UNIT"].includes(selectedSessionEffectiveActionCode) ? (
                           <div className="client-session-inline-note">
                             <small className="muted">
-                              {selectedSessionActionCode === "BUY_FORMULA_OR_PAY_UNIT"
+                              {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
                                 ? "Vous pouvez reserver tout de suite a l unite ou choisir une formule plus avantageuse."
                                 : "Selectionnez une formule pour activer des credits puis confirmer la reservation."}
                             </small>

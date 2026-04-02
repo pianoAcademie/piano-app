@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import re
+import unicodedata
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -62,6 +64,17 @@ PLANNING_RULE_DEFAULTS = {
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
 PAYMENT_HOLD_MINUTES = 15
 PAYMENT_TIMEOUT_CANCELLATION_REASON = "PAYMENT_TIMEOUT"
+
+
+def _normalize_course_access_key(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", raw)
+    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    lowered = without_accents.casefold()
+    cleaned = re.sub(r"[^a-z0-9]+", " ", lowered)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _utcnow() -> datetime:
@@ -363,24 +376,31 @@ def _plan_supports_course_access(
         if has_credit_grant is not None:
             return True
 
-    normalized_name = str(course_type_name or "").strip().lower()
-    normalized_service_code = str(course_type_service_code or "").strip().lower()
-    fallback_filters = []
-    if normalized_name:
-        fallback_filters.append(func.lower(func.trim(CourseType.name)) == normalized_name)
-    if normalized_service_code:
-        fallback_filters.append(func.lower(func.trim(CourseType.service_code)) == normalized_service_code)
-    if fallback_filters:
-        has_equivalent_entitlement = db.scalar(
-            select(PlanEntitlement.id)
-            .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
-            .where(
-                PlanEntitlement.plan_id == plan_id,
-                or_(*fallback_filters),
-            )
+    target_keys = {
+        normalized
+        for normalized in (
+            _normalize_course_access_key(course_type_name),
+            _normalize_course_access_key(course_type_service_code),
         )
-        if has_equivalent_entitlement is not None:
-            return True
+        if normalized
+    }
+    if target_keys:
+        entitlement_rows = db.execute(
+            select(CourseType.name, CourseType.service_code)
+            .join(PlanEntitlement, PlanEntitlement.course_type_id == CourseType.id)
+            .where(PlanEntitlement.plan_id == plan_id)
+        ).all()
+        for entitlement_name, entitlement_service_code in entitlement_rows:
+            entitlement_keys = {
+                normalized
+                for normalized in (
+                    _normalize_course_access_key(entitlement_name),
+                    _normalize_course_access_key(entitlement_service_code),
+                )
+                if normalized
+            }
+            if entitlement_keys & target_keys:
+                return True
 
     return False
 

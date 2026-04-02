@@ -327,6 +327,13 @@ class ClientSessionReservationOptionsOut(BaseModel):
     members: list[ClientSessionReservationMemberOptionOut] = Field(default_factory=list)
 
 
+class ClientSessionPurchaseCatalogOut(BaseModel):
+    session_id: UUID
+    formula_options: list[ClientSessionFormulaOptionOut] = Field(default_factory=list)
+    direct_payment_amount_ttc: Decimal | None = None
+    direct_payment_currency: str | None = None
+
+
 class ClientPaymentConfirmOut(BaseModel):
     payment_id: str
     subscription_status: str

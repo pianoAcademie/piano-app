@@ -1829,6 +1829,13 @@ export type ClientSessionReservationOptionsOut = {
   members: ClientSessionReservationMemberOptionOut[];
 };
 
+export type ClientSessionPurchaseCatalogOut = {
+  session_id: string;
+  formula_options: ClientSessionFormulaOptionOut[];
+  direct_payment_amount_ttc: string | null;
+  direct_payment_currency: string | null;
+};
+
 export type AdminActivityOut = {
   id: string;
   code: string;
