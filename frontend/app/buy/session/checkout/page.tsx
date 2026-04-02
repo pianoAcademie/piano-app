@@ -226,11 +226,14 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                         key={option.member_id}
                         className={`client-session-member-card ${isSelected ? "active" : ""}`}
                         href={buildCheckoutHref(session.id, planningReturnTo, option.member_id)}
+                        aria-current={isSelected ? "true" : undefined}
                       >
+                        {isSelected ? (
+                          <span className="client-session-member-selected-label">Membre selectionne</span>
+                        ) : null}
                         <div className="client-session-member-card-head">
                           <strong>{option.member_display_name}</strong>
                           <div className="client-session-member-card-badges">
-                            {isSelected ? <span className="badge">Selectionne</span> : null}
                             <span className="status-badge status-draft">{option.status_label}</span>
                           </div>
                         </div>

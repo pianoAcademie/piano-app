@@ -9899,6 +9899,11 @@ button.danger:focus-visible {
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
+.client-session-member-card:focus-visible {
+  outline: 3px solid #2f2417;
+  outline-offset: 2px;
+}
+
 .client-session-member-card:hover {
   border-color: #c8a760;
   box-shadow: 0 10px 18px rgba(120, 92, 35, 0.10);
@@ -9906,8 +9911,10 @@ button.danger:focus-visible {
 }
 
 .client-session-member-card.active {
-  border-color: #b58b2c;
-  box-shadow: 0 0 0 2px rgba(181, 139, 44, 0.14);
+  border-color: #2f2417;
+  box-shadow: 0 0 0 3px rgba(47, 36, 23, 0.18);
+  background: linear-gradient(180deg, #2f2417 0%, #3a2b1a 100%);
+  color: #fff9ef;
 }
 
 .client-session-member-card-head {
@@ -9925,9 +9932,32 @@ button.danger:focus-visible {
   justify-content: flex-end;
 }
 
+.client-session-member-selected-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  border-radius: 999px;
+  background: #f1cb69;
+  color: #211608;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
 .client-session-member-card strong {
   font-size: 15px;
   line-height: 1.25;
+}
+
+.client-session-member-card.active strong,
+.client-session-member-card.active .muted {
+  color: #fff9ef;
+}
+
+.client-session-member-card.active .status-badge {
+  border-color: rgba(255, 249, 239, 0.35);
 }
 
 .client-session-modal-actions {

@@ -2834,20 +2834,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   key={option.member_id}
                                   className={`client-session-member-card ${isSelected ? "active" : ""}`}
                                   href={selectionHref}
+                                  aria-current={isSelected ? "true" : undefined}
                                 >
-                              <div className="client-session-member-card-head">
-                                <strong>{option.member_display_name}</strong>
-                                <div className="client-session-member-card-badges">
-                                  {isSelected ? <span className="badge">Selectionne</span> : null}
-                                  <span className={`status-badge ${planningStatusClass(option.status_label)}`}>
-                                    {option.status_label}
-                                  </span>
-                                </div>
-                              </div>
-                              <small className="muted">{option.reason || option.action_label}</small>
-                            </a>
-                          );
-                        })}
+                                  {isSelected ? (
+                                    <span className="client-session-member-selected-label">Membre selectionne</span>
+                                  ) : null}
+                                  <div className="client-session-member-card-head">
+                                    <strong>{option.member_display_name}</strong>
+                                    <div className="client-session-member-card-badges">
+                                      <span className={`status-badge ${planningStatusClass(option.status_label)}`}>
+                                        {option.status_label}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <small className="muted">{option.reason || option.action_label}</small>
+                                </a>
+                              );
+                            })}
                           </div>
                         </div>
                       </section>
