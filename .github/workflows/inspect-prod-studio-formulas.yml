@@ -104,13 +104,7 @@ jobs:
 
           cat "${SUMMARY_FILE}"
 
-          ENCODED_TAIL="$(tail -n 80 "${SUMMARY_FILE}" | python3 - <<'PY'
-import sys
-data = sys.stdin.read()
-data = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-print(data)
-PY
-)"
+          ENCODED_TAIL="$(tail -n 80 "${SUMMARY_FILE}" | python3 -c "import sys; data = sys.stdin.read(); data = data.replace('%', '%25').replace('\\r', '%0D').replace('\\n', '%0A'); print(data)")"
           if [ -n "${ENCODED_TAIL}" ]; then
             echo "::notice title=Studio formula inspect tail::${ENCODED_TAIL}"
           fi
