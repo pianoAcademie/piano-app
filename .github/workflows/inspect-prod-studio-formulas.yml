@@ -77,8 +77,10 @@ jobs:
       - name: Run inspect script on VPS
         run: |
           set -euo pipefail
+          SUMMARY_FILE="$(mktemp)"
+          EXIT_CODE=0
           ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
-            set -euo pipefail
+            set -uo pipefail
             cd '${VPS_PATH}'
             export COMPOSE_PROJECT_NAME='piano-app'
             services=\$(docker compose config --services)
@@ -87,6 +89,22 @@ jobs:
             else
               docker compose up -d db
             fi
-            docker compose run --rm -T --build backend \
-              python scripts/inspect_prod_studio_formula_options.py
-          "
+            docker compose exec -T backend python scripts/inspect_prod_studio_formula_options.py
+          " >"${SUMMARY_FILE}" 2>&1 || EXIT_CODE=$?
+
+          {
+            echo "## Studio formula inspection"
+            echo
+            echo "- Exit code: ${EXIT_CODE}"
+            echo
+            echo '```text'
+            cat "${SUMMARY_FILE}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          cat "${SUMMARY_FILE}"
+
+          if [ "${EXIT_CODE}" -ne 0 ]; then
+            echo "Inspection command failed with exit code ${EXIT_CODE}"
+            exit 1
+          fi
