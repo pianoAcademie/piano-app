@@ -1770,9 +1770,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedMessage = selectedMessageId ? messageRows.find((row) => row.id === selectedMessageId) ?? null : null;
   const communicationSummary = `Rappels: Email ${me.lesson_reminder_email_opt_in ? "ON" : "OFF"} / SMS ${
     me.lesson_reminder_sms_opt_in ? "ON" : "OFF"
-  } · Communications: Email ${me.email_opt_in ? "ON" : "OFF"} / SMS ${me.sms_opt_in ? "ON" : "OFF"} · Confidentialite: ${
-    me.portal_contact_visible ? "ON" : "OFF"
-  }`;
+  } · Communications: Email ${me.email_opt_in ? "ON" : "OFF"} / SMS ${me.sms_opt_in ? "ON" : "OFF"}`;
   const planningStatusClass = (statusLabelText: string): string => {
     switch (statusLabelText) {
       case "Deja reserve":
@@ -3954,11 +3952,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <p className="muted">{communicationSummary}</p>
                     </article>
                     <article className="item">
-                      <strong>Confidentialite</strong>
-                      <p className="muted">Choisissez la visibilite du profil dans le portail etudiant.</p>
-                      <label className="client-switch-row"><span>Afficher dans les contacts du portail etudiant</span><span className={`client-switch ${me.portal_contact_visible ? "on" : ""}`} /></label>
-                    </article>
-                    <article className="item">
                       <strong>Rappels de cours</strong>
                       <p className="muted">Notifications automatiques avant les seances.</p>
                       <label className="client-switch-row"><span>Rappels de cours par email</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
@@ -4067,10 +4060,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <h2>Preferences communication</h2>
                 <p className="muted">{communicationSummary}</p>
                 <div className="client-preferences-list">
-                  <article className="item">
-                    <strong>Confidentialite</strong>
-                    <label className="client-switch-row"><span>Afficher dans les contacts du portail etudiant</span><span className={`client-switch ${me.portal_contact_visible ? "on" : ""}`} /></label>
-                  </article>
                   <article className="item">
                     <strong>Rappels de cours</strong>
                     <label className="client-switch-row"><span>Rappels de cours par email</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
@@ -4219,10 +4208,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <textarea name="important_info" rows={3} defaultValue={me.important_info ?? ""} maxLength={1000} />
                     </label>
 
-                    <label className="checkline">
-                      <input type="checkbox" name="portal_contact_visible" defaultChecked={me.portal_contact_visible} />
-                      <span className="client-switch-label">Afficher dans les contacts du portail etudiant</span>
-                    </label>
+                    <input type="hidden" name="portal_contact_visible" value={me.portal_contact_visible ? "on" : "off"} />
                     <label className="checkline">
                       <input type="checkbox" name="email_opt_in" defaultChecked={me.email_opt_in} />
                       <span className="client-switch-label">Recevoir les emails de communication</span>
