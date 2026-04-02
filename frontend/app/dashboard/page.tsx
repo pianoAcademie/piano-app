@@ -32,6 +32,7 @@ import type {
   ClientInvoiceOut,
   ClientMessageOut,
   ClientPaymentCheckoutOut,
+  ClientSessionReservationMemberOptionOut,
   ClientSessionReservationOptionsOut,
   ClientPaymentOut,
   PublicFormulaPurchaseContextOut,
@@ -1651,11 +1652,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     const reservedNames = reservedFamilyBookings.map((booking) => booking.owner_display_name).join(", ");
     const pendingNames = pendingFamilyBookings.map((booking) => booking.owner_display_name).join(", ");
     const hasAnySubscription = members.some((member) => activeSubscriptionByOwner.has(member.id));
+    const requiresMemberChoice = actionableMembers.length > 1 || hasAdditionalFamilyOptions;
 
     let statusLabel = "Non reservable";
     let contextLine = "Aucune action disponible pour la famille";
     if (hasAdditionalFamilyOptions) {
-      statusLabel = "Choisir le membre";
+      statusLabel = "Reservation possible";
       contextLine =
         reservedFamilyBookings.length > 1
           ? `${reservedFamilyBookings.length} reservations famille. Vous pouvez encore reserver pour un autre membre.`
@@ -1676,8 +1678,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       statusLabel = "Reservation fermee";
       contextLine = "Reservation en ligne fermee";
     } else if (actionableMembers.length > 1) {
-      statusLabel = "Choisir le membre";
-      contextLine = "Choisissez le membre de la famille a inscrire pour voir la meilleure option.";
+      statusLabel = "Reservation possible";
+      contextLine = "Choisissez le membre a inscrire a l etape suivante.";
     } else if (actionableMembers.length === 1) {
       statusLabel = actionableMembers[0].state.statusLabel;
       contextLine =
@@ -1707,13 +1709,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       hasDirectPayment,
       canCheckout: actionableMembers.length > 0,
       statusLabel,
-      cardStatusLabel: actionableMembers.length > 1 || hasAdditionalFamilyOptions ? "Choisir le membre" : statusLabel,
+      cardStatusLabel: statusLabel,
       contextLine,
       familyBookings,
       actionableMembers,
       actionLabel:
-        actionableMembers.length > 1 || hasAdditionalFamilyOptions
-          ? "Choisir le membre"
+        requiresMemberChoice
+          ? "Reserver"
           : actionableMembers.length === 1
           ? actionableMembers[0].state.actionLabel
           : "Reserver",
@@ -1721,10 +1723,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   };
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
   const selectedSessionPlanningState = selectedSession ? planningStateForSession(selectedSession) : null;
+  const shouldDeferReservationOptionsFetch =
+    tab === "planning" &&
+    selectedSessionId &&
+    bookingOwnerId === FAMILY_BOOKING_OWNER &&
+    (selectedSessionPlanningState?.actionableMembers.length ?? 0) > 1;
+  const reservationOptionsQuery = new URLSearchParams();
+  if (bookingOwnerId !== FAMILY_BOOKING_OWNER) {
+    reservationOptionsQuery.set("member_id", bookingOwnerId);
+  }
   const selectedSessionReservationOptionsResult =
-    tab === "planning" && selectedSessionId
+    tab === "planning" && selectedSessionId && !shouldDeferReservationOptionsFetch
       ? await backendRequest<ClientSessionReservationOptionsOut>(
-          `/api/v1/clients/me/sessions/${encodeURIComponent(selectedSessionId)}/reservation-options`,
+          `/api/v1/clients/me/sessions/${encodeURIComponent(selectedSessionId)}/reservation-options${
+            reservationOptionsQuery.size ? `?${reservationOptionsQuery.toString()}` : ""
+          }`,
           {},
           token,
         )
@@ -1734,7 +1747,34 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   if (selectedSessionReservationOptionsResult && !selectedSessionReservationOptionsResult.ok) {
     errors.push(`reservation-options: ${selectedSessionReservationOptionsResult.message}`);
   }
-  const reservationOptionsMembers = selectedSessionReservationOptions?.members ?? [];
+  const fallbackReservationOptionsMembers: ClientSessionReservationMemberOptionOut[] =
+    shouldDeferReservationOptionsFetch && selectedSessionPlanningState
+      ? selectedSessionPlanningState.actionableMembers.map(({ member, state }) => ({
+          member_id: member.id,
+          member_display_name: member.display_name,
+          member_kind: member.kind === "CHILD" ? "CHILD" : "ADULT",
+          booking_id: state.memberBooking?.id ?? null,
+          booking_status: state.bookingStatus || null,
+          action_code: state.paymentPending
+            ? "FINALIZE_PAYMENT"
+            : state.hasDirectPayment && !state.eligibleByPlan
+              ? "PAY_UNIT"
+              : "BOOK_WITH_CREDIT",
+          action_label: state.paymentPending ? "Finaliser le paiement" : state.actionLabel,
+          status_label: state.statusLabel,
+          reason: state.paymentPending
+            ? "Une reservation provisoire existe deja pour ce membre. Finalisez le paiement pour confirmer la place."
+            : state.hasDirectPayment && !state.eligibleByPlan
+              ? "Cette reservation peut etre payee a l unite."
+              : "Cette reservation sera confirmee sans paiement supplementaire.",
+          has_credit_coverage: state.eligibleByPlan,
+          coverage_source: state.eligibleByPlan ? "PLAN" : null,
+          direct_payment_amount_ttc: null,
+          direct_payment_currency: null,
+          formula_options: [],
+        }))
+      : [];
+  const reservationOptionsMembers = selectedSessionReservationOptions?.members ?? fallbackReservationOptionsMembers;
   const selectedReservationMemberId =
     bookingOwnerId !== FAMILY_BOOKING_OWNER
       ? bookingOwnerId
@@ -2622,14 +2662,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               !sessionState.alreadyReserved && shouldRenderPlanningStateBadge(sessionState.cardStatusLabel);
                             const sessionCtaLabel = sessionState.alreadyReserved
                               ? sessionState.actionableMembers.length > 0
-                                ? "Choisir le membre"
+                                ? "Reserver"
                                 : "Voir la reservation"
                               : sessionState.paymentPending
                                 ? "Finaliser le paiement"
                                 : sessionState.canCheckout
-                                  ? sessionState.actionableMembers.length > 1
-                                    ? "Choisir le membre"
-                                    : sessionState.actionLabel
+                                  ? sessionState.actionLabel
                                   : sessionState.isFull
                                   ? "Complet"
                                   : "Voir details";
