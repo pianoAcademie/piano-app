@@ -1248,7 +1248,7 @@ def _session_purchase_catalog(
         else None
     )
     direct_payment_currency = (
-        (session_obj.external_booking_currency or "EUR").upper()
+        (getattr(session_obj, "external_booking_currency", None) or _account_default_currency(db)).upper()
         if direct_payment_amount is not None
         else None
     )

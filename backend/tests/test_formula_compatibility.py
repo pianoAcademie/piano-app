@@ -10,7 +10,7 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.bookings import _plan_supports_course_access, _select_eligible_subscription
-from app.api.routes.clients import _active_formula_options_for_course_type
+from app.api.routes.clients import _active_formula_options_for_course_type, _session_purchase_catalog
 from app.models.plan import PlanKind, SubscriptionStatus
 
 
@@ -213,6 +213,51 @@ class FormulaCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(len(options), 1)
         self.assertEqual(options[0].formula_code, "FORM-STUDIO-EXACT")
+
+    def test_session_purchase_catalog_uses_account_currency_when_session_has_no_currency_field(self) -> None:
+        plan = SimpleNamespace(
+            id=uuid4(),
+            code="FORM-STUDIO-1",
+            kind=PlanKind.PACK,
+            name="1 reservation de studio",
+            description="Pack studio",
+            options_json=[],
+            payment_methods_json=["CARD_ONLINE"],
+            monthly_price_value=15,
+            monthly_price_excl_vat=None,
+            currency_code="EUR",
+        )
+        credit_type_id = uuid4()
+        fake_db = _FakeSession(
+            scalar_values=["EUR"],
+            execute_rows=[(plan, uuid4(), "Reservation studio de repetition", "STUDIO", credit_type_id)],
+        )
+        session_obj = SimpleNamespace(
+            visibility_scope="EXTERNAL",
+            booking_scope="EXTERNAL",
+            is_private=False,
+            allow_online_booking=True,
+            external_booking_price_ttc=15,
+        )
+        course_type = SimpleNamespace(
+            id=uuid4(),
+            name="Reservation studio de repetition",
+            service_code="STUDIO",
+            credit_type_id=credit_type_id,
+            allows_student_bookings=True,
+        )
+
+        formula_options, direct_payment_amount, direct_payment_currency, session_booking_scopes = _session_purchase_catalog(
+            fake_db,
+            session_obj=session_obj,
+            course_type=course_type,
+        )
+
+        self.assertEqual(len(formula_options), 1)
+        self.assertEqual(formula_options[0].formula_code, "FORM-STUDIO-1")
+        self.assertEqual(str(direct_payment_amount), "15.00")
+        self.assertEqual(direct_payment_currency, "EUR")
+        self.assertEqual([scope.value for scope in session_booking_scopes], ["EXTERNAL"])
 
 
 if __name__ == "__main__":
