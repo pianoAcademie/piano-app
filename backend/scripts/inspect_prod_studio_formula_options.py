@@ -51,6 +51,32 @@ def main() -> None:
                 f"credit_type_id={credit_type_id or '-'}|credit_type_code={credit_code or '-'}|credit_type_name={credit_name or '-'}"
             )
 
+            exact_public_plans = db.execute(
+                select(
+                    Plan.id,
+                    Plan.code,
+                    Plan.name,
+                    Plan.kind,
+                    Plan.active,
+                    Plan.is_private,
+                )
+                .select_from(Plan)
+                .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
+                .where(
+                    PlanEntitlement.course_type_id == course_type_id,
+                    Plan.active.is_(True),
+                    Plan.is_private.is_(False),
+                )
+                .order_by(Plan.name.asc())
+            ).all()
+            _print(f"exact_public_plans_for_{name}={len(exact_public_plans)}")
+            for plan_id, plan_code, plan_name, kind, active, is_private in exact_public_plans:
+                _print(
+                    "exact_public_plan="
+                    f"{plan_id}|code={plan_code}|name={plan_name}|kind={getattr(kind, 'value', kind)}|"
+                    f"active={active}|private={is_private}"
+                )
+
             entitlement_rows = db.execute(
                 select(
                     Plan.id,
