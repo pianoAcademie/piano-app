@@ -85,10 +85,11 @@ jobs:
             export COMPOSE_PROJECT_NAME='piano-app'
             services=\$(docker compose config --services)
             if echo \"\$services\" | grep -qx redis; then
-              docker compose up -d db redis
+              docker compose up -d db redis backend
             else
-              docker compose up -d db
+              docker compose up -d db backend
             fi
+            docker compose cp backend/scripts/inspect_prod_studio_formula_options.py backend:/app/scripts/inspect_prod_studio_formula_options.py
             docker compose exec -T backend python scripts/inspect_prod_studio_formula_options.py
           " >"${SUMMARY_FILE}" 2>&1 || EXIT_CODE=$?
 
