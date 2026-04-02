@@ -92,8 +92,9 @@ class FormulaCompatibilityTests(unittest.TestCase):
             monthly_price_excl_vat=None,
             currency_code="EUR",
         )
+        credit_type_id = uuid4()
         fake_db = _FakeSession(
-            scalar_rows_sequence=[[plan.id], [plan.id], [plan]],
+            execute_rows=[(plan, None, None, None, credit_type_id)],
         )
 
         options = _active_formula_options_for_course_type(
@@ -101,7 +102,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             course_type_id=uuid4(),
             course_type_name="Reservation studio de repetition",
             course_type_service_code="STUDIO_BOOKING",
-            credit_type_id=uuid4(),
+            credit_type_id=credit_type_id,
             allowed_plan_kinds={PlanKind.PACK},
         )
 
@@ -168,8 +169,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             currency_code="EUR",
         )
         fake_db = _FakeSession(
-            scalar_rows_sequence=[[], [plan]],
-            execute_rows=[(plan.id, "Réservation studio de répétition", "STUDIO_BOOKING")],
+            execute_rows=[(plan, uuid4(), "Réservation studio de répétition", "STUDIO_BOOKING", None)],
         )
 
         options = _active_formula_options_for_course_type(
@@ -197,13 +197,14 @@ class FormulaCompatibilityTests(unittest.TestCase):
             monthly_price_excl_vat=None,
             currency_code="EUR",
         )
+        course_type_id = uuid4()
         fake_db = _FakeSession(
-            scalar_rows_sequence=[[plan.id], [plan]],
+            execute_rows=[(plan, course_type_id, "Reservation studio de repetition", None, None)],
         )
 
         options = _active_formula_options_for_course_type(
             fake_db,
-            course_type_id=uuid4(),
+            course_type_id=course_type_id,
             course_type_name="Réservation studio de répétition",
             course_type_service_code="STUDIO_BOOKING",
             credit_type_id=None,

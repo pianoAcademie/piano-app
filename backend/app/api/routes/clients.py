@@ -1150,22 +1150,6 @@ def _active_formula_options_for_course_type(
 ) -> list[ClientSessionFormulaOptionOut]:
     if not allowed_plan_kinds:
         return []
-
-    # The booking tunnel should propose the same formulas the back office shows as
-    # attached to the activity. We therefore build a candidate set from explicit
-    # entitlements, credit grants and a normalized label fallback, then trust that
-    # candidate set instead of re-checking access through a second gate.
-    plan_ids = set(
-        db.scalars(
-            select(PlanEntitlement.plan_id).where(PlanEntitlement.course_type_id == course_type_id)
-        ).all()
-    )
-    if credit_type_id is not None and PlanKind.PACK in allowed_plan_kinds:
-        plan_ids.update(
-            db.scalars(
-                select(PlanCreditGrant.plan_id).where(PlanCreditGrant.credit_type_id == credit_type_id)
-            ).all()
-        )
     target_keys = {
         normalized
         for normalized in (
@@ -1174,31 +1158,21 @@ def _active_formula_options_for_course_type(
         )
         if normalized
     }
-    if target_keys:
-        entitlement_rows = db.execute(
-            select(PlanEntitlement.plan_id, CourseType.name, CourseType.service_code)
-            .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
-        ).all()
-        for entitlement_plan_id, entitlement_name, entitlement_service_code in entitlement_rows:
-            entitlement_keys = {
-                normalized
-                for normalized in (
-                    _normalize_course_access_key(entitlement_name),
-                    _normalize_course_access_key(entitlement_service_code),
-                )
-                if normalized
-            }
-            if entitlement_keys & target_keys:
-                plan_ids.add(entitlement_plan_id)
-
-    if not plan_ids:
-        return []
 
     try:
-        plans = db.scalars(
-            select(Plan)
+        candidate_rows = db.execute(
+            select(
+                Plan,
+                PlanEntitlement.course_type_id,
+                CourseType.name,
+                CourseType.service_code,
+                PlanCreditGrant.credit_type_id,
+            )
+            .select_from(Plan)
+            .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id, isouter=True)
+            .join(CourseType, CourseType.id == PlanEntitlement.course_type_id, isouter=True)
+            .join(PlanCreditGrant, PlanCreditGrant.plan_id == Plan.id, isouter=True)
             .where(
-                Plan.id.in_(tuple(plan_ids)),
                 Plan.active.is_(True),
                 Plan.is_private.is_(False),
                 Plan.kind.in_(tuple(allowed_plan_kinds)),
@@ -1211,11 +1185,33 @@ def _active_formula_options_for_course_type(
             course_type_id,
         )
         return []
+
+    matched_plans: dict[UUID, Plan] = {}
+    for plan, entitlement_course_type_id, entitlement_name, entitlement_service_code, grant_credit_type_id in candidate_rows:
+        matches_exact_entitlement = entitlement_course_type_id == course_type_id
+        matches_credit_type = (
+            credit_type_id is not None
+            and plan.kind == PlanKind.PACK
+            and grant_credit_type_id == credit_type_id
+        )
+        entitlement_keys = {
+            normalized
+            for normalized in (
+                _normalize_course_access_key(entitlement_name),
+                _normalize_course_access_key(entitlement_service_code),
+            )
+            if normalized
+        }
+        matches_normalized_activity = bool(entitlement_keys & target_keys)
+        if not (matches_exact_entitlement or matches_credit_type or matches_normalized_activity):
+            continue
+        if not _formula_purchase_link_allowed(plan):
+            continue
+        matched_plans.setdefault(plan.id, plan)
+
     options: list[ClientSessionFormulaOptionOut] = []
-    for plan in plans:
+    for plan in matched_plans.values():
         try:
-            if not _formula_purchase_link_allowed(plan):
-                continue
             options.append(_formula_option_out(plan, restriction_labels=[course_type_name]))
         except Exception:
             logger.exception(
