@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -13,7 +13,6 @@ from app.db.session import SessionLocal
 from app.models.catalog import CourseSession, CourseType, CreditType, Location
 from app.models.plan import Plan, PlanCreditGrant, PlanEntitlement, PlanKind
 from app.services.session_audience import resolve_session_booking_scopes
-from app.services.utils import utcnow
 
 SCRIPT_PREFIX = "PROD_STUDIO_FORMULA_INSPECT"
 
@@ -144,7 +143,7 @@ def main() -> None:
                 )
             )
 
-        now = utcnow()
+        now = datetime.now(timezone.utc)
         upcoming_sessions = db.execute(
             select(CourseSession, CourseType, Location)
             .join(CourseType, CourseType.id == CourseSession.course_type_id)
