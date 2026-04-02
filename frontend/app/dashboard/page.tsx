@@ -2805,32 +2805,45 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                     {reservationOptionsMembers.length > 1 ? (
                       <section className="modal-card">
-                        <form method="get" className="client-session-member-select-form">
-                          <input type="hidden" name="tab" value="planning" />
-                          <input type="hidden" name="agenda_view" value="week" />
-                          <input type="hidden" name="agenda_date" value={agendaDate} />
-                          <input type="hidden" name="location_id" value={selectedLocation} />
-                          <input type="hidden" name="course_type_id" value={selectedCourseType} />
-                          <input type="hidden" name="coach_id" value={selectedCoachId} />
-                          <input type="hidden" name="time_bucket" value={selectedTimeBucket} />
-                          <input type="hidden" name="timezone" value={timezone} />
-                          <input type="hidden" name="planning_slot_filter" value={planningSlotFilter} />
-                          <input type="hidden" name="session_id" value={selectedSession.id} />
-                          <label className="client-planning-quick-filter-label">
-                            <span>Membre concerne</span>
-                            <AutoSubmitSelect
-                              name="booking_owner_id"
-                              defaultValue={selectedReservationMemberId || FAMILY_BOOKING_OWNER}
-                              options={[
-                                { value: FAMILY_BOOKING_OWNER, label: "Choisir le membre" },
-                                ...reservationOptionsMembers.map((option) => ({
-                                  value: option.member_id,
-                                  label: option.member_display_name,
-                                })),
-                              ]}
-                            />
-                          </label>
-                        </form>
+                        <div className="client-session-member-picker">
+                          <div className="client-session-member-picker-heading">
+                            <small className="muted">Membre concerne</small>
+                            <p>Choisissez le membre a inscrire. Nous adaptons ensuite automatiquement le parcours.</p>
+                          </div>
+                          <div className="client-session-member-grid">
+                            {reservationOptionsMembers.map((option) => {
+                              const isSelected = option.member_id === selectedReservationMemberId;
+                              const selectionHref = withUpdatedQuery(rawParams, {
+                                tab: "planning",
+                                agenda_view: "week",
+                                agenda_date: agendaDate,
+                                location_id: selectedLocation || null,
+                                course_type_id: selectedCourseType || null,
+                                coach_id: selectedCoachId || null,
+                                time_bucket: selectedTimeBucket || null,
+                                timezone,
+                                planning_slot_filter: planningSlotFilter,
+                                session_id: selectedSession.id,
+                                booking_owner_id: option.member_id,
+                              });
+                              return (
+                                <a
+                                  key={option.member_id}
+                                  className={`client-session-member-card ${isSelected ? "active" : ""}`}
+                                  href={selectionHref}
+                                >
+                                  <div className="client-session-member-card-head">
+                                    <strong>{option.member_display_name}</strong>
+                                    <span className={`status-badge ${planningStatusClass(option.status_label)}`}>
+                                      {option.status_label}
+                                    </span>
+                                  </div>
+                                  <small className="muted">{option.reason || option.action_label}</small>
+                                </a>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </section>
                     ) : null}
 

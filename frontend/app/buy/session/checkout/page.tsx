@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import AutoSubmitSelect from "../../../../components/auto-submit-select";
 import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
@@ -214,24 +213,30 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
 
           {members.length > 1 ? (
             <section className="modal-card">
-              <form method="get" className="client-session-member-select-form">
-                <input type="hidden" name="session_id" value={session.id} />
-                <input type="hidden" name="planning_return_to" value={planningReturnTo} />
-                <label className="client-planning-quick-filter-label">
-                  <span>Membre concerne</span>
-                  <AutoSubmitSelect
-                    name="booking_user_id"
-                    defaultValue={selectedMemberId || ""}
-                    options={[
-                      { value: "", label: "Choisir le membre" },
-                      ...members.map((option) => ({
-                        value: option.member_id,
-                        label: option.member_display_name,
-                      })),
-                    ]}
-                  />
-                </label>
-              </form>
+              <div className="client-session-member-picker">
+                <div className="client-session-member-picker-heading">
+                  <small className="muted">Membre concerne</small>
+                  <p>Choisissez le membre a inscrire. Nous adaptons ensuite automatiquement l option la plus pertinente.</p>
+                </div>
+                <div className="client-session-member-grid">
+                  {members.map((option) => {
+                    const isSelected = option.member_id === selectedMemberId;
+                    return (
+                      <Link
+                        key={option.member_id}
+                        className={`client-session-member-card ${isSelected ? "active" : ""}`}
+                        href={buildCheckoutHref(session.id, planningReturnTo, option.member_id)}
+                      >
+                        <div className="client-session-member-card-head">
+                          <strong>{option.member_display_name}</strong>
+                          <span className="status-badge status-draft">{option.status_label}</span>
+                        </div>
+                        <small className="muted">{option.reason || option.action_label}</small>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
             </section>
           ) : null}
 
