@@ -29,6 +29,7 @@ from app.models.plan import (
     ClientForfaitActivityPricing,
     ClientPlanSubscription,
     Plan,
+    PlanCreditGrant,
     PlanEntitlement,
     PlanKind,
     PlanRestrictionPeriod,
@@ -331,6 +332,36 @@ def _consume_manual_credit(balance: ClientManualCreditBalance | None) -> bool:
         return False
     balance.credits_count = int(balance.credits_count or 0) - 1
     return True
+
+
+def _plan_supports_course_access(
+    db: Session,
+    *,
+    plan_id: UUID,
+    plan_kind: PlanKind,
+    course_type_id: UUID,
+    credit_type_id: UUID | None,
+) -> bool:
+    has_entitlement = db.scalar(
+        select(PlanEntitlement.id).where(
+            PlanEntitlement.plan_id == plan_id,
+            PlanEntitlement.course_type_id == course_type_id,
+        )
+    )
+    if has_entitlement is not None:
+        return True
+
+    if plan_kind == PlanKind.PACK and credit_type_id is not None:
+        has_credit_grant = db.scalar(
+            select(PlanCreditGrant.id).where(
+                PlanCreditGrant.plan_id == plan_id,
+                PlanCreditGrant.credit_type_id == credit_type_id,
+            )
+        )
+        if has_credit_grant is not None:
+            return True
+
+    return False
 
 
 def _restore_manual_credit(balance: ClientManualCreditBalance | None) -> None:
@@ -692,14 +723,12 @@ def _select_eligible_subscription(
     requested_subscription_id: UUID | None,
     allowed_plan_kinds: set[PlanKind] | None = None,
 ) -> tuple[ClientPlanSubscription, Plan] | None:
+    course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
+    credit_type_id = course_type.credit_type_id if course_type is not None else None
+
     stmt = (
         select(ClientPlanSubscription, Plan)
         .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
-        .join(
-            PlanEntitlement,
-            (PlanEntitlement.plan_id == ClientPlanSubscription.plan_id)
-            & (PlanEntitlement.course_type_id == course_type_id),
-        )
         .where(
             ClientPlanSubscription.user_id == user_id,
             ClientPlanSubscription.status.in_([
@@ -729,6 +758,14 @@ def _select_eligible_subscription(
 
     candidates = db.execute(stmt).all()
     for subscription, plan in candidates:
+        if not _plan_supports_course_access(
+            db,
+            plan_id=plan.id,
+            plan_kind=plan.kind,
+            course_type_id=course_type_id,
+            credit_type_id=credit_type_id,
+        ):
+            continue
         if reconcile_subscription_status(subscription, now=now, plan_kind=plan.kind):
             db.add(subscription)
         if plan.kind == PlanKind.PACK and (subscription.credits_remaining is None or subscription.credits_remaining <= 0):
@@ -841,6 +878,9 @@ def _promote_waitlist_if_possible(
     *,
     allow_planless_promotion: bool = False,
 ) -> None:
+    course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
+    credit_type_id = course_type.credit_type_id if course_type is not None else None
+
     while True:
         booked_count = _count_booked(db, session_obj.id)
         if booked_count >= session_obj.capacity_max:
@@ -931,13 +971,16 @@ def _promote_waitlist_if_possible(
 
         subscription, plan = sub_and_plan
 
-        has_entitlement = db.scalar(
-            select(PlanEntitlement.id).where(
-                PlanEntitlement.plan_id == subscription.plan_id,
-                PlanEntitlement.course_type_id == session_obj.course_type_id,
+        if (
+            not _plan_supports_course_access(
+                db,
+                plan_id=subscription.plan_id,
+                plan_kind=plan.kind,
+                course_type_id=session_obj.course_type_id,
+                credit_type_id=credit_type_id,
             )
-        )
-        if has_entitlement is None or not _is_subscription_active(subscription, plan, now):
+            or not _is_subscription_active(subscription, plan, now)
+        ):
             next_waitlisted.status = BookingStatus.CANCELLED
             next_waitlisted.cancelled_at = now
             next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_INELIGIBLE"

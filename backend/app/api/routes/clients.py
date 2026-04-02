@@ -20,6 +20,7 @@ from app.api.deps import get_db, require_roles
 from app.api.routes.bookings import (
     _count_booked,
     _effective_session_booking_rules,
+    _plan_supports_course_access,
     _select_eligible_subscription,
     book_session,
     create_or_refresh_pending_payment_booking,
@@ -1132,21 +1133,20 @@ def _active_formula_options_for_course_type(
     db: Session,
     *,
     course_type_id: UUID,
+    course_type_name: str,
+    credit_type_id: UUID | None,
     allowed_plan_kinds: set[PlanKind],
 ) -> list[ClientSessionFormulaOptionOut]:
     if not allowed_plan_kinds:
         return []
 
     try:
-        rows = db.execute(
-            select(Plan, CourseType.name)
-            .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
-            .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
+        plans = db.scalars(
+            select(Plan)
             .where(
                 Plan.active.is_(True),
                 Plan.is_private.is_(False),
                 Plan.kind.in_(tuple(allowed_plan_kinds)),
-                PlanEntitlement.course_type_id == course_type_id,
             )
             .order_by(Plan.kind.asc(), Plan.name.asc())
         ).all()
@@ -1157,11 +1157,19 @@ def _active_formula_options_for_course_type(
         )
         return []
     options: list[ClientSessionFormulaOptionOut] = []
-    for plan, course_name in rows:
+    for plan in plans:
         try:
+            if not _plan_supports_course_access(
+                db,
+                plan_id=plan.id,
+                plan_kind=plan.kind,
+                course_type_id=course_type_id,
+                credit_type_id=credit_type_id,
+            ):
+                continue
             if not _formula_purchase_link_allowed(plan):
                 continue
-            options.append(_formula_option_out(plan, restriction_labels=[course_name]))
+            options.append(_formula_option_out(plan, restriction_labels=[course_type_name]))
         except Exception:
             logger.exception(
                 "Failed to normalize formula option for course_type %s and plan %s",
@@ -2728,6 +2736,8 @@ def get_client_session_reservation_options(
     formula_options = _active_formula_options_for_course_type(
         db,
         course_type_id=course_type.id,
+        course_type_name=course_type.name,
+        credit_type_id=course_type.credit_type_id,
         allowed_plan_kinds=allowed_plan_kinds,
     )
     direct_payment_amount = (
