@@ -341,6 +341,8 @@ def _plan_supports_course_access(
     plan_kind: PlanKind,
     course_type_id: UUID,
     credit_type_id: UUID | None,
+    course_type_name: str | None = None,
+    course_type_service_code: str | None = None,
 ) -> bool:
     has_entitlement = db.scalar(
         select(PlanEntitlement.id).where(
@@ -359,6 +361,25 @@ def _plan_supports_course_access(
             )
         )
         if has_credit_grant is not None:
+            return True
+
+    normalized_name = str(course_type_name or "").strip().lower()
+    normalized_service_code = str(course_type_service_code or "").strip().lower()
+    fallback_filters = []
+    if normalized_name:
+        fallback_filters.append(func.lower(func.trim(CourseType.name)) == normalized_name)
+    if normalized_service_code:
+        fallback_filters.append(func.lower(func.trim(CourseType.service_code)) == normalized_service_code)
+    if fallback_filters:
+        has_equivalent_entitlement = db.scalar(
+            select(PlanEntitlement.id)
+            .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
+            .where(
+                PlanEntitlement.plan_id == plan_id,
+                or_(*fallback_filters),
+            )
+        )
+        if has_equivalent_entitlement is not None:
             return True
 
     return False
@@ -725,6 +746,8 @@ def _select_eligible_subscription(
 ) -> tuple[ClientPlanSubscription, Plan] | None:
     course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
     credit_type_id = course_type.credit_type_id if course_type is not None else None
+    course_type_name = course_type.name if course_type is not None else None
+    course_type_service_code = course_type.service_code if course_type is not None else None
 
     stmt = (
         select(ClientPlanSubscription, Plan)
@@ -764,6 +787,8 @@ def _select_eligible_subscription(
             plan_kind=plan.kind,
             course_type_id=course_type_id,
             credit_type_id=credit_type_id,
+            course_type_name=course_type_name,
+            course_type_service_code=course_type_service_code,
         ):
             continue
         if reconcile_subscription_status(subscription, now=now, plan_kind=plan.kind):
@@ -880,6 +905,8 @@ def _promote_waitlist_if_possible(
 ) -> None:
     course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
     credit_type_id = course_type.credit_type_id if course_type is not None else None
+    course_type_name = course_type.name if course_type is not None else None
+    course_type_service_code = course_type.service_code if course_type is not None else None
 
     while True:
         booked_count = _count_booked(db, session_obj.id)
@@ -978,6 +1005,8 @@ def _promote_waitlist_if_possible(
                 plan_kind=plan.kind,
                 course_type_id=session_obj.course_type_id,
                 credit_type_id=credit_type_id,
+                course_type_name=course_type_name,
+                course_type_service_code=course_type_service_code,
             )
             or not _is_subscription_active(subscription, plan, now)
         ):

@@ -97,6 +97,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             fake_db,
             course_type_id=uuid4(),
             course_type_name="Reservation studio de repetition",
+            course_type_service_code="STUDIO_BOOKING",
             credit_type_id=uuid4(),
             allowed_plan_kinds={PlanKind.PACK},
         )
@@ -125,7 +126,12 @@ class FormulaCompatibilityTests(unittest.TestCase):
             kind=PlanKind.PACK,
             active=True,
         )
-        course_type = SimpleNamespace(id=uuid4(), credit_type_id=uuid4())
+        course_type = SimpleNamespace(
+            id=uuid4(),
+            credit_type_id=uuid4(),
+            name="Reservation studio de repetition",
+            service_code="STUDIO_BOOKING",
+        )
         fake_db = _FakeSession(
             scalar_values=[course_type, None, uuid4()],
             execute_rows=[(subscription, plan)],
@@ -144,6 +150,36 @@ class FormulaCompatibilityTests(unittest.TestCase):
         selected_subscription, selected_plan = selected
         self.assertIs(selected_subscription, subscription)
         self.assertIs(selected_plan, plan)
+
+    def test_formula_options_include_entitlement_with_same_activity_name(self) -> None:
+        plan = SimpleNamespace(
+            id=uuid4(),
+            code="FORM-STUDIO-10",
+            kind=PlanKind.PACK,
+            name="10 reservations de studio",
+            description="Pack studio 10",
+            options_json=[],
+            payment_methods_json=["CARD_ONLINE"],
+            monthly_price_value=130,
+            monthly_price_excl_vat=None,
+            currency_code="EUR",
+        )
+        fake_db = _FakeSession(
+            scalar_rows=[plan],
+            scalar_values=[None, uuid4()],
+        )
+
+        options = _active_formula_options_for_course_type(
+            fake_db,
+            course_type_id=uuid4(),
+            course_type_name="Reservation studio de repetition",
+            course_type_service_code="STUDIO_BOOKING",
+            credit_type_id=None,
+            allowed_plan_kinds={PlanKind.PACK},
+        )
+
+        self.assertEqual(len(options), 1)
+        self.assertEqual(options[0].formula_code, "FORM-STUDIO-10")
 
 
 if __name__ == "__main__":

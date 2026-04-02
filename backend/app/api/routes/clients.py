@@ -1134,6 +1134,7 @@ def _active_formula_options_for_course_type(
     *,
     course_type_id: UUID,
     course_type_name: str,
+    course_type_service_code: str | None,
     credit_type_id: UUID | None,
     allowed_plan_kinds: set[PlanKind],
 ) -> list[ClientSessionFormulaOptionOut]:
@@ -1165,6 +1166,8 @@ def _active_formula_options_for_course_type(
                 plan_kind=plan.kind,
                 course_type_id=course_type_id,
                 credit_type_id=credit_type_id,
+                course_type_name=course_type_name,
+                course_type_service_code=course_type_service_code,
             ):
                 continue
             if not _formula_purchase_link_allowed(plan):
@@ -2737,6 +2740,7 @@ def get_client_session_reservation_options(
         db,
         course_type_id=course_type.id,
         course_type_name=course_type.name,
+        course_type_service_code=course_type.service_code,
         credit_type_id=course_type.credit_type_id,
         allowed_plan_kinds=allowed_plan_kinds,
     )
