@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 import { getPortalToken } from "../../../../../lib/auth-cookies";
 import { backendUrl } from "../../../../../lib/backend";
@@ -9,23 +9,33 @@ type RouteParams = {
   };
 };
 
+function redirectTo(path: string): Response {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: path,
+      "cache-control": "no-store",
+    },
+  });
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const invoiceId = params.invoiceId.trim();
   if (!invoiceId) {
-    return NextResponse.redirect("/client?tab=finance&error=Facture%20indisponible", 302);
+    return redirectTo("/client?tab=finance&error=Facture%20indisponible");
   }
 
   if (invoiceId.startsWith("plan:")) {
     const subscriptionId = invoiceId.slice("plan:".length).trim();
     if (!subscriptionId) {
-      return NextResponse.redirect("/client?tab=finance&error=Facture%20indisponible", 302);
+      return redirectTo("/client?tab=finance&error=Facture%20indisponible");
     }
-    return NextResponse.redirect(`/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download`, 302);
+    return redirectTo(`/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download`);
   }
 
   const token = getPortalToken();
   if (!token) {
-    return NextResponse.redirect("/login?error=Session%20expiree", 302);
+    return redirectTo("/login?error=Session%20expiree");
   }
 
   const url = `${backendUrl()}/api/v1/clients/me/invoices/${invoiceId}/download`;
@@ -38,10 +48,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!response.ok) {
-    return NextResponse.redirect(
-      `/client?tab=finance&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`,
-      302,
-    );
+    return redirectTo(`/client?tab=finance&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`);
   }
 
   const buffer = await response.arrayBuffer();
