@@ -1911,6 +1911,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           : selectedSessionEffectiveActionCode === "BUY_FORMULA" && selectedReservationMemberOption
             ? `Aucun credit disponible pour ${selectedReservationMemberOption.member_display_name}. Choisissez une formule compatible pour confirmer la reservation.`
         : selectedReservationMemberOption?.reason || selectedSessionPlanningState?.contextLine || "";
+  const selectedSessionPurchaseChoiceCount =
+    (selectedSessionDirectPaymentAmount ? 1 : 0) + selectedSessionFormulaOptions.length;
   const selectedSessionHasBooking =
     Boolean(selectedReservationMemberOption?.booking_id) &&
     ["BOOKED", "WAITLISTED"].includes((selectedReservationMemberOption?.booking_status || "").toUpperCase());
@@ -3015,16 +3017,58 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                     {selectedReservationMemberOption && selectedSessionFormulaOptions.length > 0 ? (
                       <section className="modal-card">
-                        <small className="muted">
-                          {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
-                            ? `Ou choisissez une formule compatible pour ${selectedReservationMemberOption.member_display_name}`
-                            : `Formules compatibles pour ${selectedReservationMemberOption.member_display_name}`}
-                        </small>
-                        <div className="client-plan-grid client-session-formula-grid">
-                          {selectedSessionFormulaOptions.map((formula) => (
-                            <article key={`formula-${formula.formula_id}`} className="modal-card client-plan-card client-session-formula-card">
+                        <div className="client-session-choice-heading">
+                          <strong>
+                            {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
+                              ? `${selectedSessionPurchaseChoiceCount} choix disponibles pour ${selectedReservationMemberOption.member_display_name}`
+                              : `Formules compatibles pour ${selectedReservationMemberOption.member_display_name}`}
+                          </strong>
+                          <small className="muted">
+                            {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
+                              ? "Choisissez librement une formule ou le paiement unitaire. Ces options ont le meme niveau."
+                              : "Choisissez la formule la plus adaptee pour confirmer la reservation."}
+                          </small>
+                        </div>
+                        <div className="client-plan-grid client-session-formula-grid client-session-choice-grid">
+                          {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT" && selectedSessionDirectPaymentAmount ? (
+                            <article className="modal-card client-plan-card client-session-formula-card client-session-choice-card">
                               <div className="client-session-formula-copy">
-                                <strong>{formula.name}</strong>
+                                <div className="client-session-choice-card-head">
+                                  <strong>Paiement unitaire</strong>
+                                  <span className="badge">Reservation immediate</span>
+                                </div>
+                                <p className="muted">Reglez uniquement ce creneau, sans achat de formule.</p>
+                                <small className="muted">
+                                  {`Achat unitaire · ${toMoney(
+                                    selectedSessionDirectPaymentAmount,
+                                    selectedSessionDirectPaymentCurrency,
+                                  )}`}
+                                </small>
+                              </div>
+                              <form action={submitPublicSessionCheckoutAction} className="client-session-formula-action">
+                                <input type="hidden" name="session_id" value={selectedSession.id} />
+                                <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
+                                <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
+                                <input type="hidden" name="checkout_return_to" value={selectedSessionCheckoutReturnTo} />
+                                <button type="submit" className="client-session-secondary-button client-session-choice-button">
+                                  {`Payer a l unite · ${toMoney(
+                                    selectedSessionDirectPaymentAmount,
+                                    selectedSessionDirectPaymentCurrency,
+                                  )}`}
+                                </button>
+                              </form>
+                            </article>
+                          ) : null}
+                          {selectedSessionFormulaOptions.map((formula) => (
+                            <article
+                              key={`formula-${formula.formula_id}`}
+                              className="modal-card client-plan-card client-session-formula-card client-session-choice-card"
+                            >
+                              <div className="client-session-formula-copy">
+                                <div className="client-session-choice-card-head">
+                                  <strong>{formula.name}</strong>
+                                  <span className="badge">Formule</span>
+                                </div>
                                 {formula.description ? <p className="muted">{formula.description}</p> : null}
                                 <small className="muted">
                                   {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels].filter(Boolean).join(" · ")}
@@ -3036,7 +3080,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <input type="hidden" name="session_id" value={selectedSession.id} />
                                 <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
                                 <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
-                                <button type="submit" className="client-session-secondary-button">
+                                <button type="submit" className="client-session-secondary-button client-session-choice-button">
                                   {formula.price_ttc
                                     ? `Acheter pour ${selectedReservationMemberOption.member_display_name} · ${toMoney(formula.price_ttc, formula.currency)}`
                                     : `Acheter la formule pour ${selectedReservationMemberOption.member_display_name}`}
@@ -3097,7 +3141,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           </form>
                         ) : null}
                         {selectedReservationMemberOption &&
-                        ["BUY_FORMULA_OR_PAY_UNIT", "PAY_UNIT"].includes(selectedSessionEffectiveActionCode) &&
+                        selectedSessionEffectiveActionCode === "PAY_UNIT" &&
                         selectedSessionDirectPaymentAmount ? (
                           <form action={submitPublicSessionCheckoutAction}>
                             <input type="hidden" name="session_id" value={selectedSession.id} />

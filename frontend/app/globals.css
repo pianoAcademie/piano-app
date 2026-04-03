@@ -10025,10 +10025,40 @@ button.danger:focus-visible {
   margin-top: 10px;
 }
 
+.client-session-choice-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.client-session-choice-heading strong {
+  color: #24170b;
+  font-size: 15px;
+}
+
 .client-session-formula-card {
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   padding: 12px;
+}
+
+.client-session-choice-grid {
+  align-items: stretch;
+}
+
+.client-session-choice-card {
+  border: 1px solid #dfcaa2;
+  background: linear-gradient(180deg, #fffdf9 0%, #fbf3e4 100%);
+}
+
+.client-session-choice-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.client-session-choice-card-head .badge {
+  white-space: nowrap;
 }
 
 .client-session-formula-copy {
@@ -10044,6 +10074,10 @@ button.danger:focus-visible {
 .client-session-formula-action {
   display: grid;
   margin-top: 8px;
+}
+
+.client-session-choice-button {
+  min-height: 46px;
 }
 
 .client-session-modal-action-list form,
