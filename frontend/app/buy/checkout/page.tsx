@@ -36,30 +36,16 @@ function formatMoney(amountRaw: string | null, currency: string): string {
   }
 }
 
-function paymentMethodLabel(code: string): string {
-  const normalized = code.trim().toUpperCase();
-  if (normalized === "CARD_ONLINE") {
-    return "Carte en ligne";
+function buildSessionCheckoutHref(sessionId: string, planningReturnTo: string, bookingUserId: string): string {
+  const params = new URLSearchParams();
+  params.set("session_id", sessionId);
+  if (planningReturnTo) {
+    params.set("planning_return_to", planningReturnTo);
   }
-  if (normalized === "SEPA_DEBIT") {
-    return "Prelevement SEPA";
+  if (bookingUserId) {
+    params.set("booking_user_id", bookingUserId);
   }
-  if (normalized === "BANK_TRANSFER") {
-    return "Virement";
-  }
-  if (normalized === "CHECK") {
-    return "Cheque";
-  }
-  if (normalized === "CASH") {
-    return "Especes";
-  }
-  if (normalized === "PAYPAL") {
-    return "PayPal";
-  }
-  if (normalized === "CARD_TERMINAL") {
-    return "CB sur place";
-  }
-  return normalized || "-";
+  return `/buy/session/checkout?${params.toString()}`;
 }
 
 export default async function BuyCheckoutPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
@@ -114,6 +100,16 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
 
   const summary = contextResult.data.summary;
   const returnTo = `/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}`;
+  const isSessionReservationFlow = Boolean(contextResult.data.session_id);
+  const backHref =
+    contextResult.data.session_id != null
+      ? buildSessionCheckoutHref(
+          String(contextResult.data.session_id),
+          contextResult.data.planning_return_to || "",
+          contextResult.data.booking_user_id ? String(contextResult.data.booking_user_id) : "",
+        )
+      : `/buy/formula/${summary.formula_id}`;
+  const backLabel = isSessionReservationFlow ? "Revenir aux choix de reservation" : "Revenir a la formule";
   return (
     <main className="page public-buy-page">
       <section className="public-buy-shell">
@@ -149,11 +145,19 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
               <span>Email</span>
               <strong>{contextResult.data.email}</strong>
             </article>
-            <article className="public-buy-line">
-              <span>Moyens de paiement</span>
-              <strong>{summary.payment_methods.length > 0 ? summary.payment_methods.map(paymentMethodLabel).join(", ") : "Selon configuration"}</strong>
-            </article>
+            {!isSessionReservationFlow ? (
+              <article className="public-buy-line">
+                <span>Moyens de paiement</span>
+                <strong>
+                  {summary.payment_methods.length > 0 ? "Selon la configuration de cette formule" : "Selon configuration"}
+                </strong>
+              </article>
+            ) : null}
           </section>
+
+          {isSessionReservationFlow ? (
+            <p className="muted">Dans ce tunnel de reservation, le reglement se fait uniquement en ligne.</p>
+          ) : null}
 
           <form action={submitFormulaCheckoutAction} className="grid public-buy-form">
             <input type="hidden" name="purchase_context" value={purchaseContext} />
@@ -162,8 +166,8 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
           </form>
 
           <div className="row">
-            <Link className="ghost small-btn" href={`/buy/formula/${summary.formula_id}`}>
-              Revenir a la formule
+            <Link className="ghost small-btn" href={backHref}>
+              {backLabel}
             </Link>
           </div>
         </article>
