@@ -12,24 +12,20 @@ type RouteParams = {
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const invoiceId = params.invoiceId.trim();
   if (!invoiceId) {
-    const fallback = new URL("/client?tab=finance&error=Facture%20indisponible", request.url);
-    return NextResponse.redirect(fallback, 302);
+    return NextResponse.redirect("/client?tab=finance&error=Facture%20indisponible", 302);
   }
 
   if (invoiceId.startsWith("plan:")) {
     const subscriptionId = invoiceId.slice("plan:".length).trim();
     if (!subscriptionId) {
-      const fallback = new URL("/client?tab=finance&error=Facture%20indisponible", request.url);
-      return NextResponse.redirect(fallback, 302);
+      return NextResponse.redirect("/client?tab=finance&error=Facture%20indisponible", 302);
     }
-    const publicUrl = new URL(`/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download`, request.url);
-    return NextResponse.redirect(publicUrl, 302);
+    return NextResponse.redirect(`/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download`, 302);
   }
 
   const token = getPortalToken();
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
-    return NextResponse.redirect(loginUrl, 302);
+    return NextResponse.redirect("/login?error=Session%20expiree", 302);
   }
 
   const url = `${backendUrl()}/api/v1/clients/me/invoices/${invoiceId}/download`;
@@ -42,11 +38,10 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!response.ok) {
-    const fallback = new URL(
+    return NextResponse.redirect(
       `/client?tab=finance&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`,
-      request.url,
+      302,
     );
-    return NextResponse.redirect(fallback, 302);
   }
 
   const buffer = await response.arrayBuffer();
