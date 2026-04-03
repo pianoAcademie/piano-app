@@ -2764,11 +2764,58 @@ def _invoice_status_from_payment_status(status_value: str) -> str:
     return "PENDING"
 
 
+def _normalized_manual_payment_category(category: str | None) -> str:
+    return (category or "").strip().upper()
+
+
+def _is_booking_payment_receipt_category(category: str | None) -> bool:
+    return _normalized_manual_payment_category(category) in {
+        "BOOKING_PAYMENT_RECEIPT",
+        "BOOKING_PAYMENT_RECEIPT_REFUND",
+    }
+
+
+def _is_booking_payment_receipt_manual_row(row: AdminClientPaymentOut) -> bool:
+    return (row.source or "").strip().upper() == "MANUAL" and _is_booking_payment_receipt_category(row.category)
+
+
+def _apply_invoice_presentation_to_payment_item(
+    item: AdminClientPaymentOut,
+    *,
+    lock: tuple[str, str, UUID, str, UUID | None] | None = None,
+) -> None:
+    if lock is not None:
+        locked_status, locked_invoice_number, locked_note_id, locked_billing_entity, locked_seller_legal_entity_id = lock
+        item.invoice_number = locked_invoice_number
+        item.invoice_status = "PAID" if locked_status == "PAID" else "ISSUED"
+        item.invoice_note_id = locked_note_id
+        item.status = "PAID" if locked_status == "PAID" else "INVOICED"
+        item.billing_entity = _billing_entity_text(locked_billing_entity)
+        if locked_seller_legal_entity_id is not None:
+            item.seller_legal_entity_id = locked_seller_legal_entity_id
+        if item.source.strip().upper() == "MANUAL":
+            item.can_edit = False
+            item.can_cancel = False
+            item.locked_by_invoice_number = locked_invoice_number
+        return
+
+    if _is_booking_payment_receipt_manual_row(item):
+        item.invoice_status = None
+        item.invoice_number = None
+        return
+
+    invoice_status = _invoice_status_from_payment_status(item.status)
+    item.invoice_status = invoice_status
+    item.invoice_number = _invoice_number_for_payment(item.id, item.occurred_at) if invoice_status != "PENDING" else None
+
+
 def _should_count_in_client_balance(row: AdminClientPaymentOut) -> bool:
     status_value = (row.status or "").strip().upper()
     if status_value in {"NOT_BILLABLE", "INCLUDED_PLAN", "REFUNDED"}:
         return False
     if status_value in CANCELLED_PAYMENT_STATUSES:
+        return False
+    if _is_booking_payment_receipt_manual_row(row):
         return False
     if (row.source or "").strip().upper() == "MANUAL":
         return True
@@ -6187,24 +6234,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 item.can_cancel = False
 
         lock = invoice_locks_by_payment_key.get(_payment_key(source=item.source, payment_id=item.id))
-        if lock is not None:
-            locked_status, locked_invoice_number, locked_note_id, locked_billing_entity, locked_seller_legal_entity_id = lock
-            item.invoice_number = locked_invoice_number
-            item.invoice_status = "PAID" if locked_status == "PAID" else "ISSUED"
-            item.invoice_note_id = locked_note_id
-            item.status = "PAID" if locked_status == "PAID" else "INVOICED"
-            item.billing_entity = _billing_entity_text(locked_billing_entity)
-            if locked_seller_legal_entity_id is not None:
-                item.seller_legal_entity_id = locked_seller_legal_entity_id
-            if item.source.strip().upper() == "MANUAL":
-                item.can_edit = False
-                item.can_cancel = False
-                item.locked_by_invoice_number = locked_invoice_number
-            continue
-
-        invoice_status = _invoice_status_from_payment_status(item.status)
-        item.invoice_status = invoice_status
-        item.invoice_number = _invoice_number_for_payment(item.id, item.occurred_at) if invoice_status != "PENDING" else None
+        _apply_invoice_presentation_to_payment_item(item, lock=lock)
 
     items.sort(key=lambda item: item.occurred_at, reverse=True)
     return items
@@ -7539,6 +7569,7 @@ def download_admin_client_range_invoice(
             for row in payments
             if ((row.invoice_status or "").strip().upper() not in {"ISSUED", "PAID"})
         ]
+    payments = [row for row in payments if not _is_booking_payment_receipt_manual_row(row)]
     single_booking_scope = len(normalized_frozen_keys) == 1 and normalized_frozen_keys[0].startswith("BOOKING:")
 
     if not payments:
@@ -8824,6 +8855,25 @@ def download_admin_client_payment_invoice(
     )
     if payment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+
+    if _is_booking_payment_receipt_manual_row(payment):
+        receipt = db.scalar(
+            select(PaymentReceipt).where(
+                PaymentReceipt.customer_id == client_id,
+                PaymentReceipt.manual_transaction_id == payment.id,
+            )
+        )
+        if receipt is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Booking payment receipt found without matching receipt document",
+            )
+        return download_admin_client_payment_receipt(
+            client_id=client_id,
+            receipt_id=receipt.id,
+            db=db,
+            _=actor,
+        )
 
     if payment.invoice_note_id is not None:
         return download_admin_client_range_invoice_from_note(
