@@ -4681,9 +4681,11 @@ def delete_admin_client_family_link(
 
     if link.is_billing_recipient and siblings:
         replacement = siblings[0]
-        replacement.is_billing_recipient = True
-        replacement.updated_at = _utcnow()
-        db.add(replacement)
+        _set_billing_recipient(
+            db,
+            child_user_id=link.child_user_id,
+            chosen_adult_user_id=replacement.adult_user_id,
+        )
 
     db.delete(link)
     db.commit()
