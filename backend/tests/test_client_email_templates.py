@@ -10,7 +10,12 @@ from unittest.mock import patch
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.booking_confirmation_templates import render_booking_confirmation_email
-from app.services.client_purchase_notifications import send_payment_success_notifications
+from uuid import uuid4
+
+from app.services.client_purchase_notifications import (
+    send_client_payment_success_notifications,
+    send_payment_success_notifications,
+)
 from app.services.messaging_templates import render_template_content
 
 
@@ -64,6 +69,33 @@ class ClientEmailTemplateTests(unittest.TestCase):
         self.assertEqual(
             send_template_email.call_args_list[1].kwargs["context"]["account_url"],
             "https://app.piano-academie.com/client?tab=finance",
+        )
+
+    def test_plan_purchase_notifications_use_public_invoice_download_url(self) -> None:
+        subscription_id = uuid4()
+        with patch(
+            "app.services.client_purchase_notifications._send_template_email",
+            side_effect=["msg-payment", "msg-invoice"],
+        ) as send_template_email, patch(
+            "app.services.client_purchase_notifications._frontend_url",
+            side_effect=lambda path: f"https://app.piano-academie.com{path}",
+        ):
+            send_client_payment_success_notifications(
+                db=object(),
+                to_email="hector@example.com",
+                first_name="Hector",
+                last_name="Souza",
+                plan_name="1 reservation de studio",
+                subscription_id=subscription_id,
+                paid_at=datetime(2026, 4, 3, 7, 0, tzinfo=timezone.utc),
+                amount_paid=Decimal("15.00"),
+                currency="EUR",
+            )
+
+        invoice_context = send_template_email.call_args_list[1].kwargs["context"]
+        self.assertEqual(
+            invoice_context["invoice_url"],
+            f"https://app.piano-academie.com/api/v1/public/invoices/plans/{subscription_id}/download",
         )
 
     def test_booking_confirmation_uses_client_planning_link(self) -> None:

@@ -10,13 +10,28 @@ type RouteParams = {
 };
 
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
+  const invoiceId = params.invoiceId.trim();
+  if (!invoiceId) {
+    const fallback = new URL("/client?tab=finance&error=Facture%20indisponible", request.url);
+    return NextResponse.redirect(fallback, 302);
+  }
+
+  if (invoiceId.startsWith("plan:")) {
+    const subscriptionId = invoiceId.slice("plan:".length).trim();
+    if (!subscriptionId) {
+      const fallback = new URL("/client?tab=finance&error=Facture%20indisponible", request.url);
+      return NextResponse.redirect(fallback, 302);
+    }
+    const publicUrl = new URL(`/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download`, request.url);
+    return NextResponse.redirect(publicUrl, 302);
+  }
+
   const token = getPortalToken();
   if (!token) {
     const loginUrl = new URL("/login?error=Session%20expiree", request.url);
     return NextResponse.redirect(loginUrl, 302);
   }
 
-  const invoiceId = params.invoiceId;
   const url = `${backendUrl()}/api/v1/clients/me/invoices/${invoiceId}/download`;
   const response = await fetch(url, {
     method: "GET",

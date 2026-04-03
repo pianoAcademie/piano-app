@@ -3557,7 +3557,15 @@ def download_client_invoice(
     payment_user = db.scalar(select(User).where(User.id == payment.owner_client_id))
     if payment_user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+    return _render_client_payment_invoice_response(db, payment=payment, payment_user=payment_user)
 
+
+def _render_client_payment_invoice_response(
+    db: Session,
+    *,
+    payment: ClientPaymentOut,
+    payment_user: User,
+) -> Response:
     raw_id = payment.id.split(":", maxsplit=1)[-1]
     compact = raw_id.replace("-", "").upper()
     short = compact[:8] if compact else "XXXX0000"
@@ -3608,3 +3616,28 @@ def download_client_invoice(
             "Cache-Control": "no-store",
         },
     )
+
+
+@router.get("/public/invoices/plans/{subscription_id}/download")
+def download_public_plan_purchase_invoice(
+    subscription_id: UUID,
+    db: Session = Depends(get_db),
+) -> Response:
+    subscription = db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == subscription_id))
+    if subscription is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    payment_owner = db.scalar(
+        select(User).where(
+            User.id == subscription.user_id,
+            User.role == UserRole.CLIENT,
+        )
+    )
+    if payment_owner is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    payments = _build_client_payments(db, payment_owner)
+    payment = next((row for row in payments if row.id == f"plan:{subscription_id}"), None)
+    if payment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    return _render_client_payment_invoice_response(db, payment=payment, payment_user=payment_owner)

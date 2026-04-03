@@ -158,7 +158,7 @@ def send_client_payment_success_notifications(
     currency: str | None = None,
 ) -> dict[str, str | None]:
     transactions_url = _frontend_url(f"/dashboard?tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}")
-    invoice_url = _frontend_url(f"/dashboard/invoices/plan:{subscription_id}/download")
+    invoice_url = _frontend_url(f"/api/v1/public/invoices/plans/{subscription_id}/download")
     invoice_number = _invoice_number_for_subscription(subscription_id, paid_at)
     return send_payment_success_notifications(
         db,
