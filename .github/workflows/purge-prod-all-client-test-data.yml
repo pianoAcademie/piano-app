@@ -1,0 +1,118 @@
+name: Purge Prod All Client Test Data
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/scripts/purge_prod_all_client_test_data.py"
+      - ".github/workflows/purge-prod-all-client-test-data.yml"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Set to true to apply the production purge. false runs a dry-run only."
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      VPS_PATH: ${{ secrets.VPS_PATH }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+
+    steps:
+      - name: Validate required secrets
+        run: |
+          set -euo pipefail
+          test -n "${VPS_HOST}" || { echo "Missing secret VPS_HOST"; exit 1; }
+          test -n "${VPS_USER}" || { echo "Missing secret VPS_USER"; exit 1; }
+          test -n "${VPS_PATH}" || { echo "Missing secret VPS_PATH"; exit 1; }
+          if [ -z "${{ secrets.VPS_SSH_KEY }}" ] && [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "Missing SSH key secret: set VPS_SSH_KEY (preferred) or SSH_PRIVATE_KEY"
+            exit 1
+          fi
+          if [ -n "${VPS_PORT:-}" ]; then
+            echo "${VPS_PORT}" | grep -Eq '^[0-9]+$' || { echo "Invalid VPS_PORT secret"; exit 1; }
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          SSH_KEY_CONTENT="${{ secrets.VPS_SSH_KEY }}"
+          if [ -z "${SSH_KEY_CONTENT}" ]; then
+            SSH_KEY_CONTENT="${{ secrets.SSH_PRIVATE_KEY }}"
+          fi
+          printf '%s\n' "${SSH_KEY_CONTENT}" | tr -d '\r' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          : > ~/.ssh/known_hosts
+          ssh-keygen -R "${VPS_HOST}" >/dev/null 2>&1 || true
+          ssh-keygen -R "[${VPS_HOST}]:${VPS_PORT:-22}" >/dev/null 2>&1 || true
+          ssh-keyscan -p "${VPS_PORT:-22}" -H "${VPS_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          if [ -n "${VPS_KNOWN_HOSTS}" ]; then
+            printf '%s\n' "${VPS_KNOWN_HOSTS}" >> ~/.ssh/known_hosts
+          fi
+          test -s ~/.ssh/known_hosts || {
+            echo "known_hosts is empty. Configure VPS_KNOWN_HOSTS or ensure ssh-keyscan reaches the host."
+            exit 1
+          }
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Upload purge script to VPS
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            mkdir -p '${VPS_PATH}/backend/scripts'
+          "
+          scp -i ~/.ssh/id_ed25519 -P "${VPS_PORT:-22}" \
+            backend/scripts/purge_prod_all_client_test_data.py \
+            "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/backend/scripts/purge_prod_all_client_test_data.py"
+
+      - name: Dry-run purge script on VPS
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            cd '${VPS_PATH}'
+            export COMPOSE_PROJECT_NAME='piano-app'
+            services=\$(docker compose config --services)
+
+            if echo \"\$services\" | grep -qx redis; then
+              docker compose up -d db redis
+            else
+              docker compose up -d db
+            fi
+
+            docker compose run --rm -T --build backend \
+              python scripts/purge_prod_all_client_test_data.py
+          "
+
+      - name: Apply purge script on VPS
+        if: ${{ github.event_name == 'push' || inputs.apply == 'true' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "
+            set -euo pipefail
+            cd '${VPS_PATH}'
+            export COMPOSE_PROJECT_NAME='piano-app'
+            docker compose run --rm -T --build backend \
+              python scripts/purge_prod_all_client_test_data.py --apply
+          "
