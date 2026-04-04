@@ -10,7 +10,11 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.bookings import PAYMENT_TIMEOUT_CANCELLATION_REASON, promote_pending_payment_booking
+from app.api.routes.bookings import (
+    PAYMENT_TIMEOUT_CANCELLATION_REASON,
+    _next_booking_status,
+    promote_pending_payment_booking,
+)
 from app.models.catalog import BookingStatus, SessionStatus
 from app.services.session_automation import run_expire_pending_payment_bookings_job
 
@@ -49,6 +53,36 @@ class _FakeSession:
 
 
 class BookingHoldTests(unittest.TestCase):
+    def test_next_booking_status_waitlists_when_waitlist_has_space(self) -> None:
+        session_id = uuid4()
+        session_obj = SimpleNamespace(id=session_id, capacity_max=1, location_id=uuid4())
+        fake_db = _FakeSession(
+            scalar_values=[
+                1,
+                0,
+                SimpleNamespace(waitlist_capacity=1),
+            ]
+        )
+
+        next_status = _next_booking_status(fake_db, session_obj=session_obj)
+
+        self.assertEqual(next_status, BookingStatus.WAITLISTED)
+
+    def test_next_booking_status_rejects_when_waitlist_is_full(self) -> None:
+        session_id = uuid4()
+        session_obj = SimpleNamespace(id=session_id, capacity_max=1, location_id=uuid4())
+        fake_db = _FakeSession(
+            scalar_values=[
+                1,
+                1,
+                SimpleNamespace(waitlist_capacity=1),
+            ]
+        )
+
+        next_status = _next_booking_status(fake_db, session_obj=session_obj)
+
+        self.assertIsNone(next_status)
+
     def test_promote_pending_payment_booking_confirms_booking(self) -> None:
         now = datetime(2026, 3, 31, 10, 0, tzinfo=timezone.utc)
         booking = SimpleNamespace(

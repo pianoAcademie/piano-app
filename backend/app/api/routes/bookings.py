@@ -60,6 +60,7 @@ PLANNING_RULE_DEFAULTS = {
     "min_booking_notice_hours": 1,
     "cancellation_deadline_hours": 1,
     "block_client_cancellation": False,
+    "waitlist_capacity": 3,
 }
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
 PAYMENT_HOLD_MINUTES = 15
@@ -133,6 +134,43 @@ def _count_booked(db: Session, session_id: UUID, *, exclude_booking_id: UUID | N
         stmt = stmt.where(Booking.id != exclude_booking_id)
     value = db.scalar(stmt)
     return int(value or 0)
+
+
+def _count_waitlisted(db: Session, session_id: UUID, *, exclude_booking_id: UUID | None = None) -> int:
+    stmt = select(func.count(Booking.id)).where(
+        Booking.session_id == session_id,
+        Booking.status == BookingStatus.WAITLISTED,
+    )
+    if exclude_booking_id is not None:
+        stmt = stmt.where(Booking.id != exclude_booking_id)
+    value = db.scalar(stmt)
+    return int(value or 0)
+
+
+def _effective_waitlist_capacity(db: Session, *, session_obj: CourseSession) -> int:
+    config = db.scalar(select(PlanningConfig).where(PlanningConfig.location_id == session_obj.location_id))
+    waitlist_capacity = int(
+        config.waitlist_capacity if config is not None else PLANNING_RULE_DEFAULTS["waitlist_capacity"]
+    )
+    return max(0, waitlist_capacity)
+
+
+def _next_booking_status(
+    db: Session,
+    *,
+    session_obj: CourseSession,
+    exclude_booking_id: UUID | None = None,
+    create_payment_hold: bool = False,
+) -> BookingStatus | None:
+    booked_count = _count_booked(db, session_obj.id, exclude_booking_id=exclude_booking_id)
+    if booked_count < session_obj.capacity_max:
+        return BookingStatus.PENDING_PAYMENT if create_payment_hold else BookingStatus.BOOKED
+
+    waitlisted_count = _count_waitlisted(db, session_obj.id, exclude_booking_id=exclude_booking_id)
+    if waitlisted_count < _effective_waitlist_capacity(db, session_obj=session_obj):
+        return BookingStatus.WAITLISTED
+
+    return None
 
 
 def payment_hold_expiration(*, now: datetime | None = None) -> datetime:
@@ -1211,15 +1249,18 @@ def _book_session_internal(
     )
 
     should_create_payment_hold = allow_pending_payment_hold and subscription is None and total > Decimal("0.00")
-    booked_count = _count_booked(
+    booking_status = _next_booking_status(
         db,
-        session_id,
-        exclude_booking_id=reusable_existing.id if reusable_existing is not None and reusable_existing.status in BOOKING_STATUSES_CONSUMING_CAPACITY else None,
+        session_obj=session_obj,
+        exclude_booking_id=(
+            reusable_existing.id
+            if reusable_existing is not None and reusable_existing.status in BOOKING_STATUSES_CONSUMING_CAPACITY
+            else None
+        ),
+        create_payment_hold=should_create_payment_hold,
     )
-    if booked_count < session_obj.capacity_max:
-        booking_status = BookingStatus.PENDING_PAYMENT if should_create_payment_hold else BookingStatus.BOOKED
-    else:
-        booking_status = BookingStatus.WAITLISTED
+    if booking_status is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is full")
 
     if booking_status == BookingStatus.BOOKED and subscription is not None and plan is not None and not _consume_pack_credit(subscription, plan):
         raise HTTPException(

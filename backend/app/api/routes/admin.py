@@ -16,9 +16,9 @@ from sqlalchemy.orm import Session, aliased
 
 from app.api.routes.bookings import (
     _consume_pack_credit,
-    _count_booked,
     _enforce_plan_restrictions,
     _load_subscription_with_plan_for_update,
+    _next_booking_status,
     _promote_waitlist_if_possible,
     _resolve_booking_snapshot,
     _restore_pack_credit,
@@ -2608,7 +2608,11 @@ def add_admin_session_booking(
                 subscription=subscription,
                 plan=plan,
             )
-            next_status = BookingStatus.BOOKED if _count_booked(db, target.id) < target.capacity_max else BookingStatus.WAITLISTED
+            next_status = _next_booking_status(db, session_obj=target)
+            if next_status is None:
+                skipped_count += 1
+                add_detail("Creneau complet et liste d attente pleine")
+                continue
 
             if subscription is not None and plan is not None and next_status == BookingStatus.BOOKED and not _consume_pack_credit(subscription, plan):
                 skipped_count += 1
