@@ -10080,6 +10080,40 @@ button.danger:focus-visible {
   min-height: 46px;
 }
 
+.client-session-secondary-options {
+  border: 1px solid #e8dcc5;
+  background: linear-gradient(180deg, #fffdfa 0%, #f8f1e4 100%);
+}
+
+.client-session-secondary-options details {
+  display: grid;
+  gap: 12px;
+}
+
+.client-session-secondary-options summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-weight: 700;
+  color: #2f2417;
+  list-style: none;
+}
+
+.client-session-secondary-options summary::-webkit-details-marker {
+  display: none;
+}
+
+.client-session-secondary-options summary small {
+  font-weight: 600;
+}
+
+.client-session-secondary-options-body {
+  display: grid;
+  gap: 12px;
+}
+
 .client-session-modal-action-list form,
 .client-session-modal-action-list .stack-sm {
   width: 100%;
