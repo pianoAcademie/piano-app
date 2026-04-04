@@ -855,7 +855,7 @@ function courseAudienceLabel(course: ClientContentCourseOut): string {
   if (course.member_accesses.length === 1) {
     return course.member_accesses[0].member_display_name;
   }
-  return `${course.member_accesses.length} membres de la famille`;
+  return `${course.member_accesses.length} membres`;
 }
 
 function emptyAsAll(value: string): string {
@@ -873,6 +873,11 @@ function withUpdatedQuery(base: URLSearchParams, updates: Record<string, string 
   }
   const query = next.toString();
   return query ? `/client?${query}` : "/client";
+}
+
+function clientInvoiceHref(invoiceId: string, options?: { inline?: boolean }): string {
+  const encodedId = encodeURIComponent(invoiceId);
+  return options?.inline ? `/client/invoices/${encodedId}/download?inline=true` : `/client/invoices/${encodedId}/download`;
 }
 
 function buildClientSessionCheckoutHref(sessionId: string, planningReturnTo: string, bookingUserId: string | null): string {
@@ -1191,6 +1196,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   const members = [...memberMap.values()].sort((a, b) => a.display_name.localeCompare(b.display_name, "fr"));
   const linkedMembers = members.filter((member) => member.id !== me.id);
+  const hasMultipleVisibleMembers = members.length > 1;
   const validMemberIds = new Set(members.map((member) => member.id));
   const contentMemberFilter = selectedContentMemberFilter === "ALL" || validMemberIds.has(selectedContentMemberFilter)
     ? selectedContentMemberFilter
@@ -1204,7 +1210,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const bookingOwnerMember = bookingOwnerId === FAMILY_BOOKING_OWNER
     ? null
     : members.find((member) => member.id === bookingOwnerId) ?? members[0] ?? null;
-  const bookingOwnerLabel = bookingOwnerId === FAMILY_BOOKING_OWNER ? "Toute la famille" : bookingOwnerMember?.display_name ?? "-";
+  const bookingOwnerLabel =
+    bookingOwnerId === FAMILY_BOOKING_OWNER
+      ? hasMultipleVisibleMembers
+        ? "Toute la famille"
+        : members[0]?.display_name ?? "Mon compte"
+      : bookingOwnerMember?.display_name ?? "-";
+  const normalizedHomeCalendarView = hasMultipleVisibleMembers ? homeCalendarView : "FAMILY";
   const filteredContentCourses = contentCourses.filter((course) =>
     contentMemberFilter === "ALL"
       ? true
@@ -1479,7 +1491,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc))
     .slice(0, 2);
   const homeCalendarRows = [...upcomingBookings14].sort((a, b) => {
-    if (homeCalendarView === "BY_MEMBER") {
+    if (normalizedHomeCalendarView === "BY_MEMBER") {
       const memberDiff = a.owner_display_name.localeCompare(b.owner_display_name, "fr");
       if (memberDiff !== 0) {
         return memberDiff;
@@ -1488,7 +1500,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     return a.session.start_at_utc.localeCompare(b.session.start_at_utc);
   });
   const homeCalendarGroups =
-    homeCalendarView === "BY_MEMBER"
+    normalizedHomeCalendarView === "BY_MEMBER"
       ? Array.from(
           homeCalendarRows.reduce((acc, row) => {
             const existing = acc.get(row.owner_display_name) ?? [];
@@ -2262,7 +2274,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           <div>
             <h1>{tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}</h1>
             <p className="muted">
-              Réservations actives: {upcomingBookings.length} | Membres visibles: {members.length}
+              Réservations actives: {upcomingBookings.length} | {hasMultipleVisibleMembers ? "Membres visibles" : "Membre visible"}: {members.length}
             </p>
           </div>
           <div className="row">
@@ -2302,20 +2314,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 action={<Link className="mode-link" href={homePlanningHref}>Voir le planning</Link>}
               >
                 <p className="muted">Bonjour {me.first_name || displayName}</p>
-                <FilterChipsBar className="client-member-chips">
-                  <a className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", member_id: "ALL" })}>
-                    Tous
-                  </a>
-                  {linkedMembers.map((member) => (
-                    <a
-                      key={`home-chip-${member.id}`}
-                      className={`badge ${selectedMemberFilter === member.id ? "active" : ""}`}
-                      href={withUpdatedQuery(rawParams, { tab: "home", member_id: member.id })}
-                    >
-                      {member.display_name}
+                {linkedMembers.length > 0 ? (
+                  <FilterChipsBar className="client-member-chips">
+                    <a className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", member_id: "ALL" })}>
+                      Tous
                     </a>
-                  ))}
-                </FilterChipsBar>
+                    {linkedMembers.map((member) => (
+                      <a
+                        key={`home-chip-${member.id}`}
+                        className={`badge ${selectedMemberFilter === member.id ? "active" : ""}`}
+                        href={withUpdatedQuery(rawParams, { tab: "home", member_id: member.id })}
+                      >
+                        {member.display_name}
+                      </a>
+                    ))}
+                  </FilterChipsBar>
+                ) : null}
               </SectionCard>
 
               <section className="client-home-layout">
@@ -2345,9 +2359,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   ) : null}
                                   <a
                                     className="mode-link"
-                                    href={invoice.download_url || withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}
-                                    target={invoice.download_url ? "_blank" : undefined}
-                                    rel={invoice.download_url ? "noreferrer" : undefined}
+                                    href={clientInvoiceHref(invoice.id, { inline: true })}
+                                    target="_blank"
+                                    rel="noreferrer"
                                   >
                                     Ouvrir
                                   </a>
@@ -2465,9 +2479,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <div className="row client-home-due-actions">
                                 <a
                                   className="mode-link"
-                                  href={invoice.download_url || withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}
-                                  target={invoice.download_url ? "_blank" : undefined}
-                                  rel={invoice.download_url ? "noreferrer" : undefined}
+                                  href={clientInvoiceHref(invoice.id, { inline: true })}
+                                  target="_blank"
+                                  rel="noreferrer"
                                 >
                                   Ouvrir
                                 </a>
@@ -2487,21 +2501,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </section>
 
               <SectionCard
-                title="Calendrier famille"
+                title={hasMultipleVisibleMembers ? "Calendrier famille" : "Calendrier"}
                 action={
-                  <div className="row">
-                    <a className={`mode-link ${homeCalendarView === "FAMILY" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "FAMILY" })}>
-                      Vue famille
-                    </a>
-                    <a className={`mode-link ${homeCalendarView === "BY_MEMBER" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "BY_MEMBER" })}>
-                      Par enfant
-                    </a>
-                  </div>
+                  hasMultipleVisibleMembers ? (
+                    <div className="row">
+                      <a className={`mode-link ${normalizedHomeCalendarView === "FAMILY" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "FAMILY" })}>
+                        Vue famille
+                      </a>
+                      <a className={`mode-link ${normalizedHomeCalendarView === "BY_MEMBER" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "BY_MEMBER" })}>
+                        Par enfant
+                      </a>
+                    </div>
+                  ) : undefined
                 }
               >
                 {homeCalendarRows.length === 0 ? (
                   <p className="muted">Aucun cours a venir sur 14 jours.</p>
-                ) : homeCalendarView === "BY_MEMBER" ? (
+                ) : normalizedHomeCalendarView === "BY_MEMBER" ? (
                   <div className="client-home-calendar-groups">
                     {homeCalendarGroups.map(([memberName, rows]) => (
                       <article key={`home-calendar-group-${memberName}`} className="client-home-calendar-group">
@@ -2708,17 +2724,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         />
                       </label>
 
+                      {hasMultipleVisibleMembers ? (
                       <label>
                         Reservation pour
-                        <AutoSubmitSelect
-                          name="booking_owner_id"
-                          defaultValue={bookingOwnerId}
-                          options={[
-                            { value: FAMILY_BOOKING_OWNER, label: "Toute la famille" },
-                            ...members.map((member) => ({ value: member.id, label: member.display_name })),
-                          ]}
-                        />
-                      </label>
+                          <AutoSubmitSelect
+                            name="booking_owner_id"
+                            defaultValue={bookingOwnerId}
+                            options={[
+                              { value: FAMILY_BOOKING_OWNER, label: "Toute la famille" },
+                              ...members.map((member) => ({ value: member.id, label: member.display_name })),
+                            ]}
+                          />
+                        </label>
+                      ) : (
+                        <input type="hidden" name="booking_owner_id" value={bookingOwnerId} />
+                      )}
 
                       <label>
                         Statut creneaux
@@ -2741,7 +2761,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-week-title-group">
                       <span className="badge">{bookingOwnerLabel}</span>
                       <strong>{agendaRange.title}</strong>
-                      <small>Une seule grille mobile-first pour suivre les reservations famille et les creneaux reservables.</small>
+                      <small>{hasMultipleVisibleMembers ? "Une seule grille mobile-first pour suivre les reservations famille et les creneaux reservables." : "Une seule grille mobile-first pour suivre vos reservations et les creneaux reservables."}</small>
                     </div>
                     <div className="client-week-toolbar-actions">
                       <a
@@ -3413,17 +3433,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
                 <form method="get" className="client-content-filter-form">
                   <input type="hidden" name="tab" value="courses" />
-                  <label className="client-content-member-filter">
-                    <span>Afficher pour</span>
-                    <AutoSubmitSelect
-                      name="content_member_id"
-                      defaultValue={contentMemberFilter}
-                      options={[
-                        { value: "ALL", label: "Toute la famille" },
-                        ...members.map((member) => ({ value: member.id, label: member.display_name })),
-                      ]}
-                    />
-                  </label>
+                  {hasMultipleVisibleMembers ? (
+                    <label className="client-content-member-filter">
+                      <span>Afficher pour</span>
+                      <AutoSubmitSelect
+                        name="content_member_id"
+                        defaultValue={contentMemberFilter}
+                        options={[
+                          { value: "ALL", label: "Toute la famille" },
+                          ...members.map((member) => ({ value: member.id, label: member.display_name })),
+                        ]}
+                      />
+                    </label>
+                  ) : null}
                 </form>
               </Card>
 
@@ -3648,7 +3670,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <label>
                   Membre
                   <select name="member_id" defaultValue={selectedMemberFilter}>
-                    <option value="ALL">Tous les membres</option>
+                    <option value="ALL">{hasMultipleVisibleMembers ? "Tous les membres" : "Mon compte"}</option>
                     {members.map((member) => (
                       <option key={member.id} value={member.id}>
                         {member.display_name}
@@ -3906,9 +3928,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <div className="row">
                                   <a
                                     className="mode-link"
-                                    href={invoice.download_url || withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: invoice.id })}
-                                    target={invoice.download_url ? "_blank" : undefined}
-                                    rel={invoice.download_url ? "noreferrer" : undefined}
+                                    href={clientInvoiceHref(invoice.id, { inline: true })}
+                                    target="_blank"
+                                    rel="noreferrer"
                                   >
                                     Ouvrir
                                   </a>
@@ -4060,7 +4082,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <label>
                         Membre
                         <select name="member_id" defaultValue={selectedMemberFilter}>
-                          <option value="ALL">Tous les membres</option>
+                          <option value="ALL">{hasMultipleVisibleMembers ? "Tous les membres" : "Mon compte"}</option>
                           {members.map((member) => (
                             <option key={member.id} value={member.id}>
                               {member.display_name}
@@ -4140,21 +4162,27 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
 
                 <FilterChipsBar className="client-finance-member-chips">
-                  <a
-                    className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`}
-                    href={withUpdatedQuery(rawParams, { tab: "finance", member_id: "ALL", finance_page: "1", invoice_id: null })}
-                  >
-                    Tous
-                  </a>
-                  {members.map((member) => (
-                    <a
-                      key={`finance-member-${member.id}`}
-                      className={`badge ${selectedMemberFilter === member.id ? "active" : ""}`}
-                      href={withUpdatedQuery(rawParams, { tab: "finance", member_id: member.id, finance_page: "1", invoice_id: null })}
-                    >
-                      {member.display_name}
-                    </a>
-                  ))}
+                  {hasMultipleVisibleMembers ? (
+                    <>
+                      <a
+                        className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`}
+                        href={withUpdatedQuery(rawParams, { tab: "finance", member_id: "ALL", finance_page: "1", invoice_id: null })}
+                      >
+                        Tous
+                      </a>
+                      {members.map((member) => (
+                        <a
+                          key={`finance-member-${member.id}`}
+                          className={`badge ${selectedMemberFilter === member.id ? "active" : ""}`}
+                          href={withUpdatedQuery(rawParams, { tab: "finance", member_id: member.id, finance_page: "1", invoice_id: null })}
+                        >
+                          {member.display_name}
+                        </a>
+                      ))}
+                    </>
+                  ) : (
+                    <span className="badge active">{members[0]?.display_name ?? "Mon compte"}</span>
+                  )}
                   {financeStatusFilter !== "ALL" ? <span className="badge">Statut: {visibleFinanceStatusOptions.find((item) => item.value === financeStatusFilter)?.label}</span> : null}
                   {financePeriodFilter !== "ALL" ? <span className="badge">Periode: {financePeriodLabel(financePeriodFilter)}</span> : null}
                   <span className="badge">Arrêté: {formatDate(financeAsOfDateKey)}</span>
@@ -4189,11 +4217,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   <a
                                     className="mode-link"
                                     href={
-                                      linkedInvoice.download_url ||
-                                      withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: linkedInvoice.id })
+                                      clientInvoiceHref(linkedInvoice.id, { inline: true })
                                     }
-                                    target={linkedInvoice.download_url ? "_blank" : undefined}
-                                    rel={linkedInvoice.download_url ? "noreferrer" : undefined}
+                                    target="_blank"
+                                    rel="noreferrer"
                                   >
                                     Ouvrir facture
                                   </a>
@@ -4241,9 +4268,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 ) : (
                                   <a
                                     className="mode-link client-card-primary-action"
-                                    href={row.download_url || withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: row.id })}
-                                    target={row.download_url ? "_blank" : undefined}
-                                    rel={row.download_url ? "noreferrer" : undefined}
+                                    href={clientInvoiceHref(row.id, { inline: true })}
+                                    target="_blank"
+                                    rel="noreferrer"
                                   >
                                     Ouvrir
                                   </a>
@@ -4365,7 +4392,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <label>
                   Membre
                   <select name="member_id" defaultValue={selectedMemberFilter}>
-                    <option value="ALL">Tous les membres</option>
+                    <option value="ALL">{hasMultipleVisibleMembers ? "Tous les membres" : "Mon compte"}</option>
                     {members.map((member) => (
                       <option key={member.id} value={member.id}>
                         {member.display_name}
