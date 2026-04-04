@@ -1555,21 +1555,23 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
 
   const bookingStatus = String(result.data.booking_status ?? "").trim().toUpperCase();
   const invoiceStatus = String(result.data.invoice_status ?? "").trim().toUpperCase();
+  let successPlanningPath = removeQueryParam(planningReturnTo, "session_id");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_member_id");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_ok");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "ok");
+  successPlanningPath = removeQueryParam(successPlanningPath, "error");
   if (bookingStatus === "WAITLISTED") {
-    const successPath = appendQueryMessage(planningReturnTo, "session_ok", "Ajout a la liste d attente");
-    redirect(appendQueryMessage(successPath, "ok", "Ajout a la liste d attente"));
+    redirect(appendQueryMessage(successPlanningPath, "ok", "Ajout a la liste d attente"));
   }
   if (invoiceStatus === "PAID") {
-    const successPath = appendQueryMessage(planningReturnTo, "session_ok", "Reservation deja reglee");
-    redirect(appendQueryMessage(successPath, "ok", "Reservation deja reglee"));
+    redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation deja reglee"));
   }
   if (invoiceStatus === "COVERED") {
-    const successPath = appendQueryMessage(planningReturnTo, "session_ok", "Reservation confirmee");
-    redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
+    redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation confirmee"));
   }
 
-  const successPath = appendQueryMessage(planningReturnTo, "session_ok", "Reservation confirmee");
-  redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
+  redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation confirmee"));
 }
 
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
