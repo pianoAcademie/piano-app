@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from sqlalchemy.orm import Session
@@ -140,7 +140,57 @@ def _normalize_metadata(raw: object) -> dict[str, str]:
     return out
 
 
+def _looks_like_local_callback_url(url: str) -> bool:
+    candidate = (url or "").strip()
+    if not candidate:
+        return False
+    try:
+        hostname = (urlparse(candidate).hostname or "").strip().lower()
+    except Exception:
+        return False
+    if not hostname:
+        return False
+    if hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+        return True
+    return hostname.endswith(".local")
+
+
+def _payplug_lookup_status_label(
+    *,
+    status_code: int,
+    payment_status: str,
+    is_paid: bool,
+    is_refunded: bool,
+    is_canceled: bool,
+    is_failed: bool,
+) -> str:
+    normalized = (payment_status or "").strip()
+    if normalized:
+        return normalized
+    if is_paid:
+        return "PAID"
+    if is_refunded:
+        return "REFUNDED"
+    if is_canceled:
+        return "CANCELLED"
+    if is_failed:
+        return "FAILED"
+    return f"HTTP_{status_code}"
+
+
 def _mollie_create_checkout(secret: str, payload: CheckoutCreateRequest) -> CheckoutCreateResult:
+    body: dict[str, object] = {
+        "amount": {
+            "currency": payload.currency.upper(),
+            "value": f"{payload.amount.quantize(Decimal('0.01')):.2f}",
+        },
+        "description": payload.description,
+        "redirectUrl": payload.success_return_url,
+        "metadata": payload.metadata,
+        "method": "creditcard",
+    }
+    if payload.webhook_url and not _looks_like_local_callback_url(payload.webhook_url):
+        body["webhookUrl"] = payload.webhook_url
     status_code, parsed, message = _request_json(
         method="POST",
         url="https://api.mollie.com/v2/payments",
@@ -148,17 +198,7 @@ def _mollie_create_checkout(secret: str, payload: CheckoutCreateRequest) -> Chec
             "Authorization": f"Bearer {secret}",
             "Content-Type": "application/json",
         },
-        body={
-            "amount": {
-                "currency": payload.currency.upper(),
-                "value": f"{payload.amount.quantize(Decimal('0.01')):.2f}",
-            },
-            "description": payload.description,
-            "redirectUrl": payload.success_return_url,
-            "webhookUrl": payload.webhook_url,
-            "metadata": payload.metadata,
-            "method": "creditcard",
-        },
+        body=body,
     )
     if status_code == 0 or parsed is None:
         return CheckoutCreateResult(
@@ -200,6 +240,20 @@ def _mollie_create_checkout(secret: str, payload: CheckoutCreateRequest) -> Chec
 
 def _payplug_create_checkout(secret: str, payload: CheckoutCreateRequest) -> CheckoutCreateResult:
     amount_cents = int((payload.amount.quantize(Decimal("0.01")) * Decimal("100")).to_integral_value())
+    body: dict[str, object] = {
+        "amount": amount_cents,
+        "currency": payload.currency.upper(),
+        "customer": {
+            "email": payload.customer_email,
+        },
+        "hosted_payment": {
+            "return_url": payload.success_return_url,
+            "cancel_url": payload.cancel_return_url,
+        },
+        "metadata": payload.metadata,
+    }
+    if payload.webhook_url and not _looks_like_local_callback_url(payload.webhook_url):
+        body["notification_url"] = payload.webhook_url
     status_code, parsed, message = _request_json(
         method="POST",
         url="https://api.payplug.com/v1/payments",
@@ -207,19 +261,7 @@ def _payplug_create_checkout(secret: str, payload: CheckoutCreateRequest) -> Che
             "Authorization": _payplug_auth_header(secret),
             "Content-Type": "application/json",
         },
-        body={
-            "amount": amount_cents,
-            "currency": payload.currency.upper(),
-            "customer": {
-                "email": payload.customer_email,
-            },
-            "hosted_payment": {
-                "return_url": payload.success_return_url,
-                "cancel_url": payload.cancel_return_url,
-            },
-            "notification_url": payload.webhook_url,
-            "metadata": payload.metadata,
-        },
+        body=body,
     )
     if status_code == 0 or parsed is None:
         return CheckoutCreateResult(
@@ -417,12 +459,20 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
     is_refunded = bool(parsed.get("is_refunded")) or payment_status == "refunded"
     is_canceled = bool(parsed.get("is_canceled")) or payment_status in {"cancelled", "canceled"}
     is_failed = payment_status in {"failed"} or bool(parsed.get("failure")) or bool(parsed.get("is_expired"))
+    status_label = _payplug_lookup_status_label(
+        status_code=status_code,
+        payment_status=payment_status,
+        is_paid=is_paid,
+        is_refunded=is_refunded,
+        is_canceled=is_canceled,
+        is_failed=is_failed,
+    )
 
     return PaymentLookupResult(
         success=200 <= status_code < 300,
         provider=PaymentProvider.PAYPLUG,
         provider_reference=str(parsed.get("id") or payment_reference),
-        status=payment_status or f"http_{status_code}",
+        status=status_label,
         paid=is_paid,
         cancelled=is_refunded or is_canceled,
         failed=is_failed and not is_paid,

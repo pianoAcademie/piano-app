@@ -3138,12 +3138,23 @@ def _is_failed_payment_status(status_value: str) -> bool:
     if normalized in FAILED_PAYMENT_STATUSES:
         return True
     if normalized.startswith("HTTP_"):
-        return True
+        suffix = normalized[5:]
+        if suffix.startswith(("4", "5")) or suffix == "0":
+            return True
+        return False
     if normalized.startswith("FAILED"):
         return True
     if normalized.endswith("_ERROR"):
         return True
     return False
+
+
+def _is_success_http_payment_status(status_value: str) -> bool:
+    normalized = (status_value or "").strip().upper()
+    if not normalized.startswith("HTTP_"):
+        return False
+    suffix = normalized[5:]
+    return suffix.startswith("2")
 
 
 def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
@@ -3156,6 +3167,8 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     last_payment_status = (subscription.last_payment_status or "").strip().upper()
     if last_payment_status:
         if last_payment_status in PAID_PAYMENT_STATUSES:
+            return "PAID"
+        if _is_success_http_payment_status(last_payment_status):
             return "PAID"
         if last_payment_status in CANCELLED_PAYMENT_STATUSES:
             return "CANCELLED"
