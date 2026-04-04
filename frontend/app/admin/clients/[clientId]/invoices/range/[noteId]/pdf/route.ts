@@ -10,6 +10,19 @@ type RouteParams = {
   };
 };
 
+function rewriteContentDisposition(disposition: string, inline: boolean): string {
+  if (!inline) {
+    return disposition;
+  }
+  if (/^attachment/i.test(disposition)) {
+    return disposition.replace(/^attachment/i, "inline");
+  }
+  if (/^inline/i.test(disposition)) {
+    return disposition;
+  }
+  return `inline; ${disposition}`;
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -40,7 +53,10 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   }
 
   const buffer = await response.arrayBuffer();
-  const contentDisposition = response.headers.get("content-disposition") ?? 'attachment; filename="facture-periode.pdf"';
+  const contentDisposition = rewriteContentDisposition(
+    response.headers.get("content-disposition") ?? 'attachment; filename="facture-periode.pdf"',
+    inline,
+  );
   const contentType = response.headers.get("content-type") ?? "application/pdf";
 
   return new Response(buffer, {
