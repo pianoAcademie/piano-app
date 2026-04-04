@@ -583,6 +583,19 @@ function toMoney(amountRaw: string | null | undefined, currencyRaw: string | nul
   }
 }
 
+function planDisplayPrice(plan: PlanOut | null | undefined): string | null {
+  if (!plan) {
+    return null;
+  }
+  if (plan.price_ttc != null) {
+    return plan.price_ttc;
+  }
+  if (plan.monthly_price_excl_vat != null) {
+    return plan.monthly_price_excl_vat;
+  }
+  return null;
+}
+
 function isSubscriptionActiveNow(
   sub: { status: string; started_at: string; ends_at: string | null; bookings_blocked?: boolean | null },
   now: Date,
@@ -2044,9 +2057,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               ? "Utiliser mon forfait"
               : "Confirmer sans payer"
         : selectedReservationMemberOption.action_label;
+  const selectedSessionBookingStatus = (selectedReservationMemberOption?.booking_status || "").toUpperCase();
   const selectedSessionHasBooking =
     Boolean(selectedReservationMemberOption?.booking_id) &&
-    ["BOOKED", "WAITLISTED"].includes((selectedReservationMemberOption?.booking_status || "").toUpperCase());
+    ["BOOKED", "WAITLISTED"].includes(selectedSessionBookingStatus);
+  const selectedSessionBookedStateTitle =
+    selectedSessionBookingStatus === "WAITLISTED" ? "En liste d attente" : "Reservation confirmee";
+  const selectedSessionBookedStateDescription =
+    selectedReservationMemberOption == null
+      ? ""
+      : selectedSessionBookingStatus === "WAITLISTED"
+        ? `Votre demande est bien en liste d attente pour ${selectedReservationMemberOption.member_display_name}. Nous vous confirmerons des qu une place se libere.`
+        : `Cette reservation est deja confirmee pour ${selectedReservationMemberOption.member_display_name}.`;
   const selectedSessionCheckoutReturnTo =
     selectedSession && selectedReservationMemberOption
       ? buildClientSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo, selectedReservationMemberOption.member_id)
@@ -2442,9 +2464,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           const remainingCredits = sub.credits_remaining ?? 0;
                           const consumedCredits = Math.max(0, initialCredits - remainingCredits);
                           const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
+                          const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
                           const detailLine = isPack
                             ? `Credits restants: ${remainingCredits}/${initialCredits || "?"}`
-                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : plans.find((plan) => plan.id === sub.plan.id)?.monthly_price_excl_vat, me.preferred_currency)} / periode · ${paymentMethodLabel(sub.billing_method_code)}`;
+                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : planDisplayPrice(linkedPlan), me.preferred_currency)} / periode · ${paymentMethodLabel(sub.billing_method_code)}`;
                           const expiryLine = sub.ends_at
                             ? `Expiration: ${formatDate(sub.ends_at)}`
                             : sub.next_payment_at
@@ -3049,7 +3072,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </section>
                     ) : null}
 
-                    {selectedSessionPlanningState ? (
+                    {selectedSessionHasBooking && selectedReservationMemberOption ? (
+                      <section className="modal-card client-session-modal-state">
+                        <div className="row spread">
+                          <div className="client-session-modal-state-copy">
+                            <small className="muted">Statut de la reservation</small>
+                            <p className="client-session-modal-state-title">{selectedSessionBookedStateTitle}</p>
+                            <p>{selectedSessionBookedStateDescription}</p>
+                          </div>
+                          {selectedSessionModalStatusLabel ? (
+                            <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusLabel)}`}>
+                              {selectedSessionModalStatusLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                      </section>
+                    ) : selectedSessionPlanningState ? (
                       <section className="modal-card client-session-modal-state">
                         <div className="row spread">
                           <div className="client-session-modal-state-copy">
@@ -3154,7 +3192,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {sessionOkMessage ? <section className="flash-ok modal-card">{sessionOkMessage}</section> : null}
                     {sessionErrorMessage ? <section className="flash-err modal-card">{sessionErrorMessage}</section> : null}
 
-                    {selectedReservationMemberOption &&
+                    {!selectedSessionHasBooking &&
+                    selectedReservationMemberOption &&
                     selectedSessionFormulaOptions.length > 0 &&
                     selectedSessionEffectiveActionCode !== "BOOK_WITH_CREDIT" ? (
                       <section className="modal-card">
@@ -3233,7 +3272,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </section>
                     ) : null}
 
-                    {selectedReservationMemberOption &&
+                    {!selectedSessionHasBooking &&
+                    selectedReservationMemberOption &&
                     selectedSessionFormulaOptions.length > 0 &&
                     selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" ? (
                       <section className="modal-card client-session-secondary-options">
@@ -3813,47 +3853,66 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               {confirmExistingPackPurchase && confirmPlan ? (
                 <Card className="client-offers-confirm-card">
-                  <section className="flash-warn">
-                    {warningMessage || "Attention : vous avez deja un carnet actif avec des credits restants. Confirmez-vous votre nouvel achat ?"}
+                  <section className="flash-warn client-offers-confirm-alert">
+                    <strong>Verification avant achat</strong>
+                    <span>{warningMessage || "Vous avez deja un carnet actif avec des credits restants. Confirmez ce nouvel achat seulement si vous souhaitez cumuler une nouvelle formule."}</span>
                   </section>
-                  <div className="list">
-                    <article className="item">
-                      <div className="row spread">
-                        <div>
-                          <strong>{confirmPlan.name}</strong>
-                          <p className="muted">
-                            {selectedPurchaseOwnerProfile?.display_name || "Beneficiaire"} ·
-                            {" "}
-                            {confirmPlan.kind === "PACK" ? "Carnet / seances" : confirmPlan.kind === "FORFAIT" ? "Forfait" : "Abonnement"}
-                          </p>
-                        </div>
-                        <strong>{toMoney(confirmPlan.monthly_price_excl_vat, confirmPlan.currency_code ?? me.preferred_currency)}</strong>
-                      </div>
+                  <div className="client-offers-confirm-head">
+                    <div>
+                      <p className="client-offers-confirm-kicker">Confirmation d achat</p>
+                      <h3>Derniere verification avant paiement</h3>
                       <p className="muted">
-                        Votre achat actuel restera actif. Cette confirmation ajoute simplement une nouvelle formule a votre compte.
+                        Vous ajoutez une nouvelle formule au compte de {selectedPurchaseOwnerProfile?.display_name || "ce beneficiaire"}. Votre formule actuelle restera active.
                       </p>
-                      <div className="row">
-                        <form action={purchasePlanAction}>
-                          <input type="hidden" name="plan_id" value={confirmPlan.id} />
-                          <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
-                          <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
-                          <input type="hidden" name="confirm_existing_pack_purchase" value="1" />
-                          <button type="submit">Confirmer l achat</button>
-                        </form>
-                        <a
-                          className="ghost"
-                          href={withUpdatedQuery(rawParams, {
-                            tab: "offers",
-                            warning: null,
-                            confirm_existing_pack_purchase: null,
-                            confirm_plan_id: null,
-                            error: null,
-                          })}
-                        >
-                          Annuler
-                        </a>
-                      </div>
+                    </div>
+                    <div className="client-offers-confirm-price">
+                      {toMoney(planDisplayPrice(confirmPlan), confirmPlan.currency_code ?? me.preferred_currency)}
+                    </div>
+                  </div>
+                  <div className="client-offers-confirm-summary">
+                    <article className="item">
+                      <h4>Beneficiaire</h4>
+                      <p>{selectedPurchaseOwnerProfile?.display_name || "Beneficiaire"}</p>
                     </article>
+                    <article className="item">
+                      <h4>Offre choisie</h4>
+                      <p>{confirmPlan.name}</p>
+                    </article>
+                    <article className="item">
+                      <h4>Type</h4>
+                      <p>{confirmPlan.kind === "PACK" ? "Carnet / seances" : confirmPlan.kind === "FORFAIT" ? "Forfait" : "Abonnement"}</p>
+                    </article>
+                    <article className="item">
+                      <h4>Paiement</h4>
+                      <p>{Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? "Paiement securise en ligne" : "Aucun paiement requis"}</p>
+                    </article>
+                  </div>
+                  <div className="client-offers-confirm-note">
+                    <strong>Ce qui va se passer ensuite</strong>
+                    <p>{Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? "Apres confirmation, vous serez redirige vers la page de paiement securise." : "Apres confirmation, la formule sera ajoutee immediatement a votre compte."}</p>
+                  </div>
+                  <div className="client-offers-confirm-actions">
+                    <form action={purchasePlanAction}>
+                      <input type="hidden" name="plan_id" value={confirmPlan.id} />
+                      <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
+                      <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
+                      <input type="hidden" name="confirm_existing_pack_purchase" value="1" />
+                      <button type="submit">
+                        {Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? "Confirmer et payer en ligne" : "Confirmer l achat"}
+                      </button>
+                    </form>
+                    <a
+                      className="ghost"
+                      href={withUpdatedQuery(rawParams, {
+                        tab: "offers",
+                        warning: null,
+                        confirm_existing_pack_purchase: null,
+                        confirm_plan_id: null,
+                        error: null,
+                      })}
+                    >
+                      Annuler
+                    </a>
                   </div>
                 </Card>
               ) : null}
@@ -3873,7 +3932,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       const remainingCredits = sub.credits_remaining ?? 0;
                       const consumedCredits = Math.max(0, initialCredits - remainingCredits);
                       const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
-                      const planPrice = plans.find((plan) => plan.id === sub.plan.id)?.monthly_price_excl_vat ?? null;
+                      const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
+                      const planPrice = planDisplayPrice(linkedPlan);
                       return (
                         <article key={`forfait-card-${sub.id}`} className="item client-forfait-card">
                           <div className="row spread">
@@ -3937,7 +3997,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {toMoney(
                           selectedOfferSubscription.plan.kind === "FORFAIT"
                             ? "0"
-                            : plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)?.monthly_price_excl_vat,
+                            : planDisplayPrice(plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)),
                           me.preferred_currency,
                         )}{" "}
                         / periode
@@ -4057,7 +4117,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {plan.kind === "FORFAIT"
                             ? "Facturation: au reel selon planning"
                             : `Credits: ${plan.credits_count ?? "illimite"}`}{" "}
-                          | Prix base: {toMoney(plan.monthly_price_excl_vat, plan.currency_code ?? me.preferred_currency)}
+                          | Prix: {toMoney(planDisplayPrice(plan), plan.currency_code ?? me.preferred_currency)}
                         </p>
                       </div>
                       <form action={purchasePlanAction}>
