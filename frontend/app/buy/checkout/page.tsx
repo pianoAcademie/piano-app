@@ -53,6 +53,8 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
   const purchaseContext = readParam(params, "purchase_context").trim();
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
+  const warningMessage = readParam(params, "warning");
+  const confirmExistingPackPurchase = readParam(params, "confirm_existing_pack_purchase") === "1";
 
   if (!purchaseContext) {
     return (
@@ -127,6 +129,7 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
 
           {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
           {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
+          {warningMessage ? <section className="flash-warn">{warningMessage}</section> : null}
 
           <section className="public-buy-summary">
             <article className="public-buy-line">
@@ -162,6 +165,7 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
           <form action={submitFormulaCheckoutAction} className="grid public-buy-form">
             <input type="hidden" name="purchase_context" value={purchaseContext} />
             <input type="hidden" name="return_to" value={returnTo} />
+            {confirmExistingPackPurchase ? <input type="hidden" name="confirm_existing_pack_purchase" value="1" /> : null}
             <button type="submit">Payer cette formule</button>
           </form>
 

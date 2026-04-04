@@ -1369,6 +1369,7 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   const planId = String(formData.get("plan_id") ?? "");
   const purchaseUserId = String(formData.get("purchase_user_id") ?? "").trim();
   const startDateRaw = String(formData.get("start_date") ?? "").trim();
+  const confirmExistingPackPurchase = String(formData.get("confirm_existing_pack_purchase") ?? "").trim() === "1";
   const payload: Record<string, string> = {};
   if (purchaseUserId) {
     payload.user_id = purchaseUserId;
@@ -1378,6 +1379,9 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
       redirect("/client?tab=offers&error=Date%20de%20demarrage%20invalide");
     }
     payload.start_date = startDateRaw;
+  }
+  if (confirmExistingPackPurchase) {
+    payload.confirm_existing_pack_purchase = "true";
   }
 
   const result = await backendRequest<{ id: string; checkout_url?: string | null }>(
@@ -1390,6 +1394,19 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   );
 
   if (!result.ok) {
+    if (result.status === 409 && result.message === "An active pack with remaining credits already exists") {
+      let confirmPath = "/client?tab=offers";
+      confirmPath = setQueryParam(confirmPath, "purchase_user_id", purchaseUserId || null);
+      confirmPath = setQueryParam(confirmPath, "purchase_start_date", startDateRaw || null);
+      confirmPath = setQueryParam(confirmPath, "confirm_plan_id", planId || null);
+      confirmPath = setQueryParam(confirmPath, "confirm_existing_pack_purchase", "1");
+      confirmPath = setQueryParam(
+        confirmPath,
+        "warning",
+        "Attention : vous avez deja un carnet actif avec des credits restants. Confirmez-vous votre nouvel achat ?",
+      );
+      redirect(confirmPath);
+    }
     redirect(`/client?tab=offers&error=${encodeURIComponent(result.message)}`);
   }
 
@@ -1398,7 +1415,10 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   if (result.data.checkout_url) {
     redirect(result.data.checkout_url);
   }
-  redirect("/client?tab=offers&ok=Offre%20souscrite");
+  let successPath = "/client?tab=offers&ok=Offre%20souscrite";
+  successPath = setQueryParam(successPath, "purchase_user_id", purchaseUserId || null);
+  successPath = setQueryParam(successPath, "purchase_start_date", startDateRaw || null);
+  redirect(successPath);
 }
 
 export async function startFormulaPurchaseLinkAction(formData: FormData): Promise<void> {
@@ -1449,6 +1469,7 @@ export async function startFormulaPurchaseLinkAction(formData: FormData): Promis
 export async function submitFormulaCheckoutAction(formData: FormData): Promise<void> {
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const returnTo = safePublicBuyPath(String(formData.get("return_to") ?? ""), "/buy/checkout");
+  const confirmExistingPackPurchase = String(formData.get("confirm_existing_pack_purchase") ?? "").trim() === "1";
 
   if (!purchaseContext) {
     redirect(appendQueryMessage(returnTo, "error", "Contexte d achat invalide"));
@@ -1474,7 +1495,10 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
     `/api/v1/plans/${contextResult.data.formula_id}/purchase`,
     {
       method: "POST",
-      body: JSON.stringify({ purchase_context: purchaseContext }),
+      body: JSON.stringify({
+        purchase_context: purchaseContext,
+        confirm_existing_pack_purchase: confirmExistingPackPurchase,
+      }),
     },
     token,
   );
@@ -1488,6 +1512,16 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
       );
     }
     const withContext = setQueryParam(returnTo, "purchase_context", purchaseContext);
+    if (purchaseResult.status === 409 && purchaseResult.message === "An active pack with remaining credits already exists") {
+      const warningPath = setQueryParam(withContext, "confirm_existing_pack_purchase", "1");
+      redirect(
+        setQueryParam(
+          warningPath,
+          "warning",
+          "Attention : vous avez deja un carnet actif avec des credits restants. Confirmez-vous votre nouvel achat ?",
+        ),
+      );
+    }
     redirect(appendQueryMessage(withContext, "error", purchaseResult.message));
   }
 

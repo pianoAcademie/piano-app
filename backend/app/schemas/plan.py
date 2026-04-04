@@ -117,6 +117,7 @@ class PlanPurchaseRequest(BaseModel):
     user_id: UUID | None = None
     start_date: date | None = None
     purchase_context: str | None = None
+    confirm_existing_pack_purchase: bool = False
 
 
 class PlanPricePreviewQuery(BaseModel):

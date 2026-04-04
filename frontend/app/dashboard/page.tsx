@@ -952,6 +952,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const paymentIdParam = readParam(searchParams, "payment_id").trim();
   const paymentReturnParam = readParam(searchParams, "payment_return").trim().toLowerCase();
   const purchaseContextParam = readParam(searchParams, "purchase_context").trim();
+  const warningMessage = readParam(searchParams, "warning").trim();
+  const confirmExistingPackPurchase = readParam(searchParams, "confirm_existing_pack_purchase") === "1";
+  const confirmPlanId = readParam(searchParams, "confirm_plan_id").trim();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
   const homeCalendarView = readParam(searchParams, "home_calendar_view") === "BY_MEMBER" ? "BY_MEMBER" : "FAMILY";
   const preFetchErrors: string[] = [];
@@ -1432,6 +1435,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ? selectedPurchaseStartDateRaw
     : todayKeyInTimezone(timezone);
   const selectedOwnerSubscriptions = subscriptionsByOwner.get(selectedPurchaseOwner) ?? [];
+  const confirmPlan = confirmPlanId ? plans.find((plan) => plan.id === confirmPlanId) ?? null : null;
+  const selectedPurchaseOwnerProfile = members.find((member) => member.id === selectedPurchaseOwner) ?? null;
   const isPendingSubscription = (sub: { status: string }): boolean => {
     const normalized = normalizeStatus(sub.status);
     return (
@@ -3805,6 +3810,53 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <button type="submit">Afficher les offres</button>
                 </form>
               </Card>
+
+              {confirmExistingPackPurchase && confirmPlan ? (
+                <Card className="client-offers-confirm-card">
+                  <section className="flash-warn">
+                    {warningMessage || "Attention : vous avez deja un carnet actif avec des credits restants. Confirmez-vous votre nouvel achat ?"}
+                  </section>
+                  <div className="list">
+                    <article className="item">
+                      <div className="row spread">
+                        <div>
+                          <strong>{confirmPlan.name}</strong>
+                          <p className="muted">
+                            {selectedPurchaseOwnerProfile?.display_name || "Beneficiaire"} ·
+                            {" "}
+                            {confirmPlan.kind === "PACK" ? "Carnet / seances" : confirmPlan.kind === "FORFAIT" ? "Forfait" : "Abonnement"}
+                          </p>
+                        </div>
+                        <strong>{toMoney(confirmPlan.monthly_price_excl_vat, confirmPlan.currency_code ?? me.preferred_currency)}</strong>
+                      </div>
+                      <p className="muted">
+                        Votre achat actuel restera actif. Cette confirmation ajoute simplement une nouvelle formule a votre compte.
+                      </p>
+                      <div className="row">
+                        <form action={purchasePlanAction}>
+                          <input type="hidden" name="plan_id" value={confirmPlan.id} />
+                          <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
+                          <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
+                          <input type="hidden" name="confirm_existing_pack_purchase" value="1" />
+                          <button type="submit">Confirmer l achat</button>
+                        </form>
+                        <a
+                          className="ghost"
+                          href={withUpdatedQuery(rawParams, {
+                            tab: "offers",
+                            warning: null,
+                            confirm_existing_pack_purchase: null,
+                            confirm_plan_id: null,
+                            error: null,
+                          })}
+                        >
+                          Annuler
+                        </a>
+                      </div>
+                    </article>
+                  </div>
+                </Card>
+              ) : null}
 
               <Card>
                 <div className="row spread">

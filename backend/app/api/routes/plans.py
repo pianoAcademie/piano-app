@@ -664,7 +664,7 @@ def purchase_plan(
             detail="This subscription is already purchased for the current month",
         )
 
-    if plan.kind == PlanKind.PACK and _has_active_pack_with_remaining_credits(
+    if plan.kind == PlanKind.PACK and not bool(payload.confirm_existing_pack_purchase) and _has_active_pack_with_remaining_credits(
         db,
         user_id=owner.id,
         now=now,
