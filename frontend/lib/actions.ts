@@ -1618,6 +1618,12 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
   }
   const returnTo = safeClientReturnPath(formData, "/client?tab=planning");
   const inSessionContext = returnTo.includes("session_id=");
+  let successPlanningPath = removeQueryParam(returnTo, "session_id");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_member_id");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_ok");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "ok");
+  successPlanningPath = removeQueryParam(successPlanningPath, "error");
 
   const sessionId = String(formData.get("session_id") ?? "");
   const bookingUserId = String(formData.get("booking_user_id") ?? "").trim();
@@ -1656,12 +1662,11 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
 
   revalidatePath("/client");
   revalidatePath("/dashboard");
+  if (inSessionContext) {
+    redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation confirmee"));
+  }
   let successPath = removeQueryParam(returnTo, "error");
   successPath = removeQueryParam(successPath, "session_error");
-  if (inSessionContext) {
-    successPath = removeQueryParam(successPath, "session_ok");
-    successPath = appendQueryMessage(successPath, "session_ok", "Reservation confirmee");
-  }
   redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
 }
 
@@ -1672,6 +1677,12 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
   if (!token) {
     redirect(`/login?mode=login&return_to=${encodeURIComponent(returnTo)}&error=Connexion%20requise`);
   }
+  let successPlanningPath = removeQueryParam(returnTo, "session_id");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_member_id");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_ok");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "ok");
+  successPlanningPath = removeQueryParam(successPlanningPath, "error");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
   if (!sessionId) {
@@ -1703,11 +1714,7 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
   }
 
   revalidatePath("/embed/planning");
-  let successPath = removeQueryParam(returnTo, "error");
-  successPath = removeQueryParam(successPath, "session_error");
-  successPath = removeQueryParam(successPath, "session_ok");
-  successPath = appendQueryMessage(successPath, "session_ok", "Reservation confirmee");
-  redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
+  redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation confirmee"));
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {
