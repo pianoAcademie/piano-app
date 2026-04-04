@@ -275,6 +275,9 @@ function statusClass(value: string): string {
 
 function statusLabel(value: string): string {
   const normalized = normalizeStatus(value);
+  if (normalized === "SKIPPED") {
+    return "NON ENVOYÉ";
+  }
   if (normalized === "BOOKED") {
     return "RÉSERVÉ";
   }
