@@ -137,6 +137,7 @@ export type PlanOut = {
   forfait_start_date: string | null;
   forfait_end_date: string | null;
   monthly_price_excl_vat: string | null;
+  price_ttc: string | null;
   currency_code: string | null;
   active: boolean;
 };
