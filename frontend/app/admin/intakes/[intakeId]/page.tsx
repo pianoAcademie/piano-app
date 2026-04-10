@@ -70,6 +70,7 @@ type TypeformSessionRecommendationOut = {
   summary_label: string;
   selected_session_id: string | null;
   options: TypeformSessionMatchOptionOut[];
+  manual_options: TypeformSessionMatchOptionOut[];
   warnings: string[];
   blockages: string[];
 };
@@ -281,6 +282,10 @@ function normalizedListValue(payload: Record<string, unknown>, key: string): str
 
 function proposalLabel(index: number): string {
   return `Proposition ${index + 1}`;
+}
+
+function manualProposalLabel(index: number): string {
+  return `Manuel ${index + 1}`;
 }
 
 function slotBadgeLabel(option: TypeformSessionMatchOptionOut): string {
@@ -776,86 +781,153 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
               <h4>Creneaux</h4>
               <div className={`${styles.candidateStack} top-gap-sm`}>
                 {detail.session_recommendations.length === 0 ? <p className="muted">Aucune recommandation de creneau.</p> : null}
-                {detail.session_recommendations.map((recommendation) => (
-                  <article className={styles.candidateItem} key={recommendation.activity_id}>
-                    <div className="row spread wrap gap-sm">
-                      <div>
-                        <strong>{recommendation.activity_name}</strong>
-                        <p className="muted">
-                          {recommendation.summary_label}
-                          {recommendation.requested_summary ? ` · ${recommendation.requested_summary}` : ""}
-                        </p>
+                {detail.session_recommendations.map((recommendation) => {
+                  const autoCount = recommendation.options.length;
+                  const manualCount = recommendation.manual_options.length;
+                  const hasAutomaticOptions = autoCount > 0;
+                  const hasManualOptions = manualCount > 0;
+                  return (
+                    <article className={styles.candidateItem} key={recommendation.activity_id}>
+                      <div className="row spread wrap gap-sm">
+                        <div>
+                          <strong>{recommendation.activity_name}</strong>
+                          <p className="muted">
+                            {recommendation.summary_label}
+                            {recommendation.requested_summary ? ` · ${recommendation.requested_summary}` : ""}
+                          </p>
+                        </div>
+                        <span className={`status-pill ${recommendation.blockages.length > 0 ? "status-off" : recommendation.warnings.length > 0 ? "status-warn" : "status-ok"}`}>
+                          {recommendation.summary_status}
+                        </span>
                       </div>
-                      <span className={`status-pill ${recommendation.blockages.length > 0 ? "status-off" : recommendation.warnings.length > 0 ? "status-warn" : "status-ok"}`}>
-                        {recommendation.summary_status}
-                      </span>
-                    </div>
-                    <label className="top-gap-sm">
-                      Creneau retenu
-                      <input
-                        type="hidden"
-                        name={`initial_selected_session_for_${recommendation.activity_id}`}
-                        value={recommendation.selected_session_id || ""}
-                      />
-                      <select name={`selected_session_for_${recommendation.activity_id}`} defaultValue={recommendation.selected_session_id || ""}>
-                        <option value="">Aucune selection</option>
-                        {recommendation.options.map((option, index) => (
-                          <option key={option.session_id} value={option.session_id}>
-                            {proposalLabel(index)} · {option.selection_label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <p className="muted">
-                      {recommendation.options.length} proposition{recommendation.options.length > 1 ? "s" : ""} a arbitrer.
-                    </p>
-                    {recommendation.options.length > 0 ? (
-                      <div className="table-wrap top-gap-sm">
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Proposition</th>
-                              <th>Occurrence</th>
-                              <th>Serie</th>
-                              <th>Lieu</th>
-                              <th>Places</th>
-                              <th>Score</th>
-                              <th>Raisons</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {recommendation.options.map((option, index) => (
-                              <tr
-                                className={recommendation.selected_session_id === option.session_id ? styles.selectedOptionRow : undefined}
-                                key={option.session_id}
-                              >
-                                <td>
-                                  <div className={styles.optionCellStack}>
-                                    <strong>{proposalLabel(index)}</strong>
-                                    {recommendation.selected_session_id === option.session_id ? (
-                                      <span className="badge">Retenu</span>
-                                    ) : null}
-                                  </div>
-                                </td>
-                                <td>
-                                  <div className={styles.optionCellStack}>
-                                    <strong>{option.occurrence_label}</strong>
-                                    <span className="muted">{slotOptionTitle(option)}</span>
-                                  </div>
-                                </td>
-                                <td>{slotBadgeLabel(option)}</td>
-                                <td>{option.location_name}</td>
-                                <td>{option.seats_remaining}</td>
-                                <td>{option.score}</td>
-                                <td>{option.reasons.join(", ")}</td>
+                      <label className="top-gap-sm">
+                        Creneau retenu
+                        <input
+                          type="hidden"
+                          name={`initial_selected_session_for_${recommendation.activity_id}`}
+                          value={recommendation.selected_session_id || ""}
+                        />
+                        <select name={`selected_session_for_${recommendation.activity_id}`} defaultValue={recommendation.selected_session_id || ""}>
+                          <option value="">Aucune selection</option>
+                          {hasAutomaticOptions ? (
+                            <optgroup label="Propositions compatibles">
+                              {recommendation.options.map((option, index) => (
+                                <option key={option.session_id} value={option.session_id}>
+                                  {proposalLabel(index)} · {option.selection_label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                          {hasManualOptions ? (
+                            <optgroup label={hasAutomaticOptions ? "Choix manuel (autre activite)" : "Choix manuel de creneau"}>
+                              {recommendation.manual_options.map((option, index) => (
+                                <option key={option.session_id} value={option.session_id}>
+                                  {manualProposalLabel(index)} · {option.selection_label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                        </select>
+                      </label>
+                      <p className="muted">
+                        {autoCount} proposition{autoCount > 1 ? "s" : ""} compatible{autoCount > 1 ? "s" : ""}
+                        {hasManualOptions ? ` · ${manualCount} choix manuel${manualCount > 1 ? "s" : ""}` : ""}
+                      </p>
+                      {hasAutomaticOptions ? (
+                        <div className="table-wrap top-gap-sm">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Proposition</th>
+                                <th>Occurrence</th>
+                                <th>Serie</th>
+                                <th>Lieu</th>
+                                <th>Places</th>
+                                <th>Score</th>
+                                <th>Raisons</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : null}
-                  </article>
-                ))}
+                            </thead>
+                            <tbody>
+                              {recommendation.options.map((option, index) => (
+                                <tr
+                                  className={recommendation.selected_session_id === option.session_id ? styles.selectedOptionRow : undefined}
+                                  key={option.session_id}
+                                >
+                                  <td>
+                                    <div className={styles.optionCellStack}>
+                                      <strong>{proposalLabel(index)}</strong>
+                                      {recommendation.selected_session_id === option.session_id ? (
+                                        <span className="badge">Retenu</span>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className={styles.optionCellStack}>
+                                      <strong>{option.occurrence_label}</strong>
+                                      <span className="muted">{slotOptionTitle(option)}</span>
+                                    </div>
+                                  </td>
+                                  <td>{slotBadgeLabel(option)}</td>
+                                  <td>{option.location_name}</td>
+                                  <td>{option.seats_remaining}</td>
+                                  <td>{option.score}</td>
+                                  <td>{option.reasons.join(", ")}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+                      {hasManualOptions ? (
+                        <div className="table-wrap top-gap-sm">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Choix manuel</th>
+                                <th>Activite</th>
+                                <th>Occurrence</th>
+                                <th>Serie</th>
+                                <th>Lieu</th>
+                                <th>Places</th>
+                                <th>Score</th>
+                                <th>Raisons</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {recommendation.manual_options.map((option, index) => (
+                                <tr
+                                  className={recommendation.selected_session_id === option.session_id ? styles.selectedOptionRow : undefined}
+                                  key={option.session_id}
+                                >
+                                  <td>
+                                    <div className={styles.optionCellStack}>
+                                      <strong>{manualProposalLabel(index)}</strong>
+                                      {recommendation.selected_session_id === option.session_id ? (
+                                        <span className="badge">Retenu</span>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                  <td>{option.activity_name}</td>
+                                  <td>
+                                    <div className={styles.optionCellStack}>
+                                      <strong>{option.occurrence_label}</strong>
+                                      <span className="muted">{slotOptionTitle(option)}</span>
+                                    </div>
+                                  </td>
+                                  <td>{slotBadgeLabel(option)}</td>
+                                  <td>{option.location_name}</td>
+                                  <td>{option.seats_remaining}</td>
+                                  <td>{option.score}</td>
+                                  <td>{option.reasons.join(", ")}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
               </div>
             </div>
 

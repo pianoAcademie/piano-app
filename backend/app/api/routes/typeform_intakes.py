@@ -1692,6 +1692,141 @@ def _requested_summary(normalized: dict[str, object]) -> str | None:
     return " · ".join(parts) if parts else None
 
 
+def _typeform_session_option_from_row(
+    *,
+    session_obj: CourseSession,
+    activity: CourseType,
+    location: Location,
+    booked_count: int,
+    config: TypeformFormConfig | None,
+    requested_location: str,
+    resolved_location_id: UUID | None,
+    requested_slot_preferences: list[dict[str, int | None]],
+    requested_days: set[int],
+    requested_times: list[int],
+    include_activity_in_label: bool = False,
+    extra_reasons: list[str] | None = None,
+) -> TypeformSessionMatchOptionOut | None:
+    zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+    local_start = session_obj.start_at_utc.astimezone(zone)
+    weekday = local_start.weekday()
+    start_minutes = local_start.hour * 60 + local_start.minute
+    recurrence_label = _recurrence_label(session_obj.recurrence_rule)
+    occurrence_label, time_range_label = _session_occurrence_label(
+        local_start,
+        session_obj.end_at_utc,
+        session_obj.timezone or location.timezone,
+    )
+    score = 30
+    reasons: list[str] = []
+    if resolved_location_id is not None and resolved_location_id == location.id:
+        score += 20
+        reasons.append("site choisi")
+    elif config is not None and config.default_location_id == location.id:
+        score += 10
+        reasons.append("site par defaut")
+    if session_obj.is_private:
+        reasons.append("creneau prive")
+    if requested_location and requested_location in {
+        _lower(config.location_code if config is not None else None),
+        _lower(location.code),
+        _lower(location.name),
+    }:
+        score += 20
+        reasons.append("lieu prefere")
+    if requested_slot_preferences:
+        slot_match_found = False
+        best_bonus = -20
+        best_reason = "hors creneaux souhaites"
+        for preference in requested_slot_preferences:
+            pref_day = preference["day"]
+            pref_time = preference["time"]
+            if pref_day is not None and pref_day != weekday:
+                continue
+            slot_match_found = True
+            if pref_time is None:
+                if best_bonus < 25:
+                    best_bonus = 25
+                    best_reason = "jour souhaite"
+                continue
+            delta = abs(start_minutes - pref_time)
+            if delta == 0 and best_bonus < 40:
+                best_bonus = 40
+                best_reason = "creneau exact"
+            elif delta <= 30 and best_bonus < 32:
+                best_bonus = 32
+                best_reason = "creneau proche"
+            elif delta <= 60 and best_bonus < 22:
+                best_bonus = 22
+                best_reason = "horaire acceptable"
+        if not slot_match_found:
+            return None
+        score += best_bonus
+        reasons.append(best_reason)
+    else:
+        if requested_days:
+            if weekday in requested_days:
+                score += 30
+                reasons.append("jour souhaite")
+            else:
+                score -= 20
+        if requested_times:
+            best_delta = min(abs(start_minutes - item) for item in requested_times)
+            if best_delta <= 30:
+                score += 30
+                reasons.append("horaire ideal")
+            elif best_delta <= 60:
+                score += 20
+                reasons.append("horaire proche")
+            elif best_delta <= 120:
+                score += 10
+                reasons.append("horaire acceptable")
+            else:
+                score -= 15
+    seats_remaining = max(int(session_obj.capacity_max or 0) - int(booked_count), 0)
+    is_full = seats_remaining <= 0
+    if is_full:
+        score -= 30
+        reasons.append("complet")
+    else:
+        score += 15
+        reasons.append("places disponibles")
+    if extra_reasons:
+        reasons.extend([_text(item) for item in extra_reasons if _text(item)])
+    if score <= 0:
+        return None
+    selection_label_parts = [occurrence_label]
+    if include_activity_in_label:
+        selection_label_parts.append(activity.name)
+    selection_label_parts.extend(
+        [
+            location.name,
+            recurrence_label or "Seance ponctuelle",
+            f"places {seats_remaining}",
+        ]
+    )
+    return TypeformSessionMatchOptionOut(
+        session_id=session_obj.id,
+        activity_id=activity.id,
+        activity_name=activity.name,
+        location_id=location.id,
+        location_name=location.name,
+        title=session_obj.title,
+        start_at=session_obj.start_at_utc,
+        start_time_label=local_start.strftime("%H:%M"),
+        end_time_label=time_range_label.split("-", 1)[1],
+        weekday_label=DAY_LABELS[weekday],
+        occurrence_label=occurrence_label,
+        selection_label=" · ".join(part for part in selection_label_parts if part),
+        recurrence_group_id=session_obj.recurrence_group_id,
+        recurrence_label=recurrence_label,
+        seats_remaining=seats_remaining,
+        is_full=is_full,
+        score=score,
+        reasons=reasons,
+    )
+
+
 def _preview_line_haystack(line: TypeformQuotePreviewLineOut) -> str:
     meta = _json_object(line.meta)
     template = _json_object(meta.get("typeform_template"))
@@ -1855,12 +1990,27 @@ def _build_session_recommendations(
         .order_by(CourseSession.start_at_utc.asc())
     ).all()
 
+    manual_rows_stmt = (
+        select(CourseSession, CourseType, Location, func.coalesce(booked_counts.c.booked_count, 0))
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
+        .where(
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc >= _utcnow() - timedelta(hours=1),
+        )
+    )
+
     by_activity: dict[UUID, list[tuple[CourseSession, CourseType, Location, int]]] = {}
     for session_obj, activity, location, booked_count in rows:
         by_activity.setdefault(activity.id, []).append((session_obj, activity, location, int(booked_count or 0)))
 
     requested_location = _lower(normalized.get("requested_location"))
     resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
+    if resolved_location_id is not None:
+        manual_rows_stmt = manual_rows_stmt.where(CourseSession.location_id == resolved_location_id)
+    elif config is not None and config.default_location_id is not None:
+        manual_rows_stmt = manual_rows_stmt.where(CourseSession.location_id == config.default_location_id)
     requested_days = {_weekday_from_label(day) for day in _json_list(normalized.get("requested_days"))}
     requested_days.discard(None)
     requested_times = [_minutes_from_hhmm(_text(value)) for value in _json_list(normalized.get("requested_times"))]
@@ -1878,6 +2028,9 @@ def _build_session_recommendations(
         for item in requested_slot_preferences
         if item["day"] is not None or item["time"] is not None
     ]
+    manual_rows = db.execute(
+        manual_rows_stmt.order_by(CourseSession.start_at_utc.asc()).limit(60)
+    ).all()
     selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
     explicitly_cleared_activity_ids = {
         _text(key)
@@ -1899,125 +2052,71 @@ def _build_session_recommendations(
         activity_rows = by_activity.get(line.activity_id, [])
         options: list[TypeformSessionMatchOptionOut] = []
         for session_obj, activity, location, booked_count in activity_rows:
-            zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
-            local_start = session_obj.start_at_utc.astimezone(zone)
-            weekday = local_start.weekday()
-            start_minutes = local_start.hour * 60 + local_start.minute
-            recurrence_label = _recurrence_label(session_obj.recurrence_rule)
-            occurrence_label, time_range_label = _session_occurrence_label(local_start, session_obj.end_at_utc, session_obj.timezone or location.timezone)
-            score = 30
-            reasons: list[str] = []
-            if resolved_location_id is not None and resolved_location_id == location.id:
-                score += 20
-                reasons.append("site choisi")
-            elif config is not None and config.default_location_id == location.id:
-                score += 10
-                reasons.append("site par defaut")
-            if session_obj.is_private:
-                reasons.append("creneau prive")
-            if requested_location and requested_location in {_lower(config.location_code if config is not None else None), _lower(location.code), _lower(location.name)}:
-                score += 20
-                reasons.append("lieu prefere")
-            if requested_slot_preferences:
-                slot_match_found = False
-                best_bonus = -20
-                best_reason = "hors creneaux souhaites"
-                for preference in requested_slot_preferences:
-                    pref_day = preference["day"]
-                    pref_time = preference["time"]
-                    if pref_day is not None and pref_day != weekday:
-                        continue
-                    slot_match_found = True
-                    if pref_time is None:
-                        if best_bonus < 25:
-                            best_bonus = 25
-                            best_reason = "jour souhaite"
-                        continue
-                    delta = abs(start_minutes - pref_time)
-                    if delta == 0 and best_bonus < 40:
-                        best_bonus = 40
-                        best_reason = "creneau exact"
-                    elif delta <= 30 and best_bonus < 32:
-                        best_bonus = 32
-                        best_reason = "creneau proche"
-                    elif delta <= 60 and best_bonus < 22:
-                        best_bonus = 22
-                        best_reason = "horaire acceptable"
-                if not slot_match_found:
-                    continue
-                else:
-                    score += best_bonus
-                    reasons.append(best_reason)
-            else:
-                if requested_days:
-                    if weekday in requested_days:
-                        score += 30
-                        reasons.append("jour souhaite")
-                    else:
-                        score -= 20
-                if requested_times:
-                    best_delta = min(abs(start_minutes - item) for item in requested_times)
-                    if best_delta <= 30:
-                        score += 30
-                        reasons.append("horaire ideal")
-                    elif best_delta <= 60:
-                        score += 20
-                        reasons.append("horaire proche")
-                    elif best_delta <= 120:
-                        score += 10
-                        reasons.append("horaire acceptable")
-                    else:
-                        score -= 15
-            seats_remaining = max(int(session_obj.capacity_max or 0) - int(booked_count), 0)
-            is_full = seats_remaining <= 0
-            if is_full:
-                score -= 30
-                reasons.append("complet")
-            else:
-                score += 15
-                reasons.append("places disponibles")
-
-            if score <= 0:
-                continue
-            selection_label_parts = [
-                occurrence_label,
-                location.name,
-                recurrence_label or "Seance ponctuelle",
-                f"places {seats_remaining}",
-            ]
-            options.append(
-                TypeformSessionMatchOptionOut(
-                    session_id=session_obj.id,
-                    activity_id=activity.id,
-                    activity_name=activity.name,
-                    location_id=location.id,
-                    location_name=location.name,
-                    title=session_obj.title,
-                    start_at=session_obj.start_at_utc,
-                    start_time_label=local_start.strftime("%H:%M"),
-                    end_time_label=time_range_label.split("-", 1)[1],
-                    weekday_label=DAY_LABELS[weekday],
-                    occurrence_label=occurrence_label,
-                    selection_label=" · ".join(part for part in selection_label_parts if part),
-                    recurrence_group_id=session_obj.recurrence_group_id,
-                    recurrence_label=recurrence_label,
-                    seats_remaining=seats_remaining,
-                    is_full=is_full,
-                    score=score,
-                    reasons=reasons,
-                )
+            option = _typeform_session_option_from_row(
+                session_obj=session_obj,
+                activity=activity,
+                location=location,
+                booked_count=int(booked_count or 0),
+                config=config,
+                requested_location=requested_location,
+                resolved_location_id=resolved_location_id,
+                requested_slot_preferences=requested_slot_preferences,
+                requested_days=requested_days,
+                requested_times=requested_times,
             )
+            if option is not None:
+                options.append(option)
 
         options.sort(key=lambda item: (item.score, item.seats_remaining, -item.start_at.timestamp()), reverse=True)
         available_options = [item for item in options if not item.is_full]
         selected_session_id = _parse_uuid(selected_session_ids.get(str(line.activity_id)))
+        option_session_ids = {item.session_id for item in options}
+        manual_options: list[TypeformSessionMatchOptionOut] = []
+        if not options or (selected_session_id is not None and selected_session_id not in option_session_ids):
+            for session_obj, activity, location, booked_count in manual_rows:
+                if activity.id == line.activity_id:
+                    continue
+                option = _typeform_session_option_from_row(
+                    session_obj=session_obj,
+                    activity=activity,
+                    location=location,
+                    booked_count=int(booked_count or 0),
+                    config=config,
+                    requested_location=requested_location,
+                    resolved_location_id=resolved_location_id,
+                    requested_slot_preferences=requested_slot_preferences,
+                    requested_days=requested_days,
+                    requested_times=requested_times,
+                    include_activity_in_label=True,
+                    extra_reasons=[f"activite differente: {activity.name}"],
+                )
+                if option is not None:
+                    manual_options.append(option)
+            manual_options.sort(key=lambda item: (item.score, item.seats_remaining, -item.start_at.timestamp()), reverse=True)
+            manual_options = manual_options[:12]
+
+        manual_session_ids = {item.session_id for item in manual_options}
+        exact_selected = selected_session_id is not None and selected_session_id in option_session_ids
+        manual_selected = selected_session_id is not None and selected_session_id in manual_session_ids
 
         summary_status = "ideal_available"
         summary_label = "Creneau ideal disponible"
         local_warnings: list[str] = []
         local_blockages: list[str] = []
-        if not options:
-            if allow_deferred_selection:
+        if selected_session_id is not None and not exact_selected and not manual_selected:
+            selected_session_id = None
+            local_warnings.append(f"Le creneau selectionne precedemment n'est plus disponible pour {line.title}.")
+        if manual_selected:
+            summary_status = "manual_selected"
+            summary_label = "Creneau manuel retenu"
+        elif not options:
+            if manual_options:
+                summary_status = "manual_selection_required"
+                summary_label = "Choix manuel de creneau requis"
+                local_blockages.append(
+                    f"Aucun creneau exact trouve pour {line.title}. Selectionnez manuellement un creneau compatible."
+                )
+            elif allow_deferred_selection:
                 summary_status = "selection_deferred"
                 summary_label = "Creneau a confirmer ulterieurement"
                 local_warnings.append(
@@ -2072,6 +2171,7 @@ def _build_session_recommendations(
                 summary_label=summary_label,
                 selected_session_id=selected_session_id,
                 options=options[:6],
+                manual_options=manual_options,
                 warnings=local_warnings,
                 blockages=local_blockages,
             )
