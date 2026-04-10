@@ -1798,6 +1798,7 @@ def _build_session_recommendations(
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
         .where(
             CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.is_private.is_(False),
             CourseSession.start_at_utc >= _utcnow() - timedelta(hours=1),
         )
     )
@@ -1808,9 +1809,14 @@ def _build_session_recommendations(
 
     requested_location = _lower(normalized.get("requested_location"))
     resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
-    if resolved_location_id is not None:
-        manual_rows_stmt = manual_rows_stmt.where(CourseSession.location_id == resolved_location_id)
-    elif config is not None and config.default_location_id is not None:
+    manual_location_id = resolved_location_id
+    if manual_location_id is None and requested_location:
+        inferred_location, _ = _find_location_by_request_value(db, requested_location)
+        if inferred_location is not None:
+            manual_location_id = inferred_location.id
+    if manual_location_id is not None:
+        manual_rows_stmt = manual_rows_stmt.where(CourseSession.location_id == manual_location_id)
+    elif not requested_location and config is not None and config.default_location_id is not None:
         manual_rows_stmt = manual_rows_stmt.where(CourseSession.location_id == config.default_location_id)
     requested_days = {_weekday_from_label(day) for day in _json_list(normalized.get("requested_days"))}
     requested_days.discard(None)
@@ -1830,7 +1836,7 @@ def _build_session_recommendations(
         if item["day"] is not None or item["time"] is not None
     ]
     manual_rows = db.execute(
-        manual_rows_stmt.order_by(CourseSession.start_at_utc.asc()).limit(60)
+        manual_rows_stmt.order_by(CourseSession.start_at_utc.asc()).limit(250)
     ).all()
     selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
 
