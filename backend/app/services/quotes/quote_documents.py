@@ -640,6 +640,46 @@ def _resolve_solfege_available_slot_labels(
     return _solfege_pending_slot_labels(snapshot=snapshot, level_code=level_code)
 
 
+def _pending_solfege_snapshot_info(snapshot: dict[str, Any]) -> dict[str, Any]:
+    level_code = ""
+    slot_labels: list[str] = []
+    has_pending_selection = False
+
+    for raw_block in _json_list(snapshot.get("blocks")):
+        block = _json_object(raw_block)
+        activity_tokens = " ".join(
+            str(block.get(key) or "")
+            for key in ("activity_label", "activity_code", "activity_service_code")
+        ).strip().lower()
+        pending_level = str(block.get("pending_solfege_level") or "").strip()
+        is_solfege_block = bool(pending_level) or "solfege" in activity_tokens
+        if not is_solfege_block:
+            continue
+
+        try:
+            weekday_value = int(block.get("weekday") or -99)
+        except (TypeError, ValueError):
+            weekday_value = -99
+        selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
+        if selection_pending:
+            has_pending_selection = True
+        if pending_level and not level_code:
+            level_code = pending_level
+
+        location_label = str(block.get("location_label") or "").strip()
+        for raw_slot in _json_list(block.get("pending_slot_options")):
+            slot = _json_object(raw_slot)
+            label = _slot_label(slot, fallback_location_label=location_label)
+            if label and label != "-":
+                slot_labels.append(label)
+
+    return {
+        "has_pending_selection": has_pending_selection,
+        "level_code": level_code,
+        "slot_labels": list(dict.fromkeys(slot_labels)),
+    }
+
+
 def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
     blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     rows: list[list[str]] = []
@@ -1104,6 +1144,12 @@ def _extract_document_context(
     selected_solfege_slot = _json_object(quote.selected_solfege_slot)
     if not selected_solfege_slot:
         selected_solfege_slot = solfege_selected_slot
+    pending_solfege_info = _pending_solfege_snapshot_info(calendar_snapshot)
+    resolved_solfege_level = str(
+        quote.estimated_solfege_level
+        or pending_solfege_info.get("level_code")
+        or ""
+    ).strip()
 
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
@@ -1126,10 +1172,11 @@ def _extract_document_context(
     pass_recup_enabled = _resolve_pass_recup_enabled(meta=meta, lines=lines)
 
     solfege_enabled = bool(
-        quote.estimated_solfege_level
+        resolved_solfege_level
         or quote.solfege_duration_minutes
         or selected_solfege_slot
         or activity_solfege
+        or pending_solfege_info.get("has_pending_selection")
     )
     masterclass_enabled = (
         bool(masterclass_blocks)
@@ -1186,9 +1233,11 @@ def _extract_document_context(
         "deposit_amount_ttc": deposit_amount_ttc,
         "remaining_ttc_after_deposit": remaining_ttc_after_deposit,
         "solfege_enabled": solfege_enabled,
-        "solfege_level": str(quote.estimated_solfege_level or "").strip(),
+        "solfege_level": resolved_solfege_level,
         "solfege_duration_minutes": quote.solfege_duration_minutes,
         "solfege_selected_slot": selected_solfege_slot,
+        "solfege_pending_selection": bool(pending_solfege_info.get("has_pending_selection")),
+        "solfege_available_slots": [item for item in pending_solfege_info.get("slot_labels", []) if isinstance(item, str)],
         "masterclass_enabled": masterclass_enabled,
         "masterclass_blocks": masterclass_blocks,
         "pass_recup_mode": pass_recup_mode,
@@ -2069,12 +2118,18 @@ def _build_template_values(
         solfege_slot_label = ""
     solfege_duration = document_context.get("solfege_duration_minutes")
     solfege_duration_label = f" ({solfege_duration} min)" if solfege_duration else ""
-    solfege_available_slots = _resolve_solfege_available_slot_labels(
-        quote=quote,
-        level_code=str(document_context.get("solfege_level") or "").strip(),
-    )
+    solfege_available_slots = [
+        item
+        for item in _json_list(document_context.get("solfege_available_slots"))
+        if isinstance(item, str) and item.strip()
+    ]
+    if not solfege_available_slots:
+        solfege_available_slots = _resolve_solfege_available_slot_labels(
+            quote=quote,
+            level_code=str(document_context.get("solfege_level") or "").strip(),
+        )
     solfege_level_label = str(document_context.get("solfege_level") or "-").strip() or "-"
-    show_solfege_pending_notice = bool(display_flags["showSolfegeSection"]) and not solfege_slot_label
+    show_solfege_pending_notice = bool(document_context.get("solfege_pending_selection")) and not solfege_slot_label
     solfege_lines: list[str] = []
     if show_solfege_pending_notice:
         solfege_lines = [
