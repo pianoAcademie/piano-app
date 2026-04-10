@@ -485,12 +485,24 @@ def _modality_label(value: Any) -> str:
         "ONLINE": "En ligne",
         "ONSITE": "Presentiel",
         "HYBRID": "Hybride",
+        "ANY": "Tous modes",
     }
     return mapping.get(raw.upper(), raw)
 
 
+def _sanitize_slot_label_text(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parts = [part.strip() for part in raw.split("·")]
+    filtered = [part for part in parts if part and part.upper() != "ANY"]
+    if filtered:
+        return " · ".join(filtered)
+    return raw
+
+
 def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "") -> str:
-    label = str(value.get("label") or "").strip()
+    label = _sanitize_slot_label_text(value.get("label"))
     if label:
         return label
     weekday = str(value.get("weekday_label") or "").strip() or _weekday_label(value.get("weekday"))
@@ -507,7 +519,7 @@ def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "") -> 
         parts.append(f"{weekday} {start}-{end}".strip() if start and end else weekday)
     elif start and end:
         parts.append(f"{start}-{end}")
-    if modality_label and modality_label != "Cours":
+    if modality_label and modality_label not in {"Cours", "Tous modes"}:
         parts.append(modality_label)
     if location_label:
         parts.append(location_label)
