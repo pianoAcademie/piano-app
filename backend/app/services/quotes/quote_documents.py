@@ -2026,6 +2026,7 @@ def _build_template_values(
         if sessions
         else "Aucune seance planifiee"
     )
+    payment_method_label = str(document_context["payment_method_label"] or "Paiement non precise")
     payment_schedule_summary = _payment_schedule_summary_text(
         schedule=schedule,
         has_deposit=has_deposit,
@@ -2062,7 +2063,6 @@ def _build_template_values(
         or client_data.get("client_email")
         or "-"
     )
-    payment_method_label = str(document_context["payment_method_label"] or "Paiement non precise")
     solfege_slot = _json_object(document_context.get("solfege_selected_slot"))
     solfege_slot_label = _slot_label(solfege_slot) if solfege_slot else ""
     if solfege_slot_label == "-":
