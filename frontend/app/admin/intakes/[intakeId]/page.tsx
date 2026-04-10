@@ -69,6 +69,7 @@ type TypeformSessionRecommendationOut = {
   summary_label: string;
   selected_session_id: string | null;
   options: TypeformSessionMatchOptionOut[];
+  manual_options: TypeformSessionMatchOptionOut[];
   warnings: string[];
   blockages: string[];
 };
@@ -250,6 +251,10 @@ function normalizedListValue(payload: Record<string, unknown>, key: string): str
 
 function proposalLabel(index: number): string {
   return `Proposition ${index + 1}`;
+}
+
+function manualProposalLabel(index: number): string {
+  return `Choix manuel ${index + 1}`;
 }
 
 function slotBadgeLabel(option: TypeformSessionMatchOptionOut): string {
@@ -751,15 +756,29 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                       Creneau retenu
                       <select name={`selected_session_for_${recommendation.activity_id}`} defaultValue={recommendation.selected_session_id || ""}>
                         <option value="">Aucune selection</option>
-                        {recommendation.options.map((option, index) => (
-                          <option key={option.session_id} value={option.session_id}>
-                            {proposalLabel(index)} · {option.selection_label}
-                          </option>
-                        ))}
+                        {recommendation.options.length > 0 ? (
+                          <optgroup label="Propositions automatiques">
+                            {recommendation.options.map((option, index) => (
+                              <option key={option.session_id} value={option.session_id}>
+                                {proposalLabel(index)} · {option.selection_label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                        {recommendation.manual_options.length > 0 ? (
+                          <optgroup label="Choix manuels administrateur">
+                            {recommendation.manual_options.map((option, index) => (
+                              <option key={option.session_id} value={option.session_id}>
+                                {manualProposalLabel(index)} · {option.selection_label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null}
                       </select>
                     </label>
                     <p className="muted">
-                      {recommendation.options.length} proposition{recommendation.options.length > 1 ? "s" : ""} a arbitrer.
+                      {recommendation.options.length} proposition{recommendation.options.length > 1 ? "s" : ""} automatique{recommendation.options.length > 1 ? "s" : ""} et{" "}
+                      {recommendation.manual_options.length} choix manuel{recommendation.manual_options.length > 1 ? "s" : ""} disponibles.
                     </p>
                     {recommendation.options.length > 0 ? (
                       <div className="table-wrap top-gap-sm">
@@ -789,6 +808,53 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                                     ) : null}
                                   </div>
                                 </td>
+                                <td>
+                                  <div className={styles.optionCellStack}>
+                                    <strong>{option.occurrence_label}</strong>
+                                    <span className="muted">{slotOptionTitle(option)}</span>
+                                  </div>
+                                </td>
+                                <td>{slotBadgeLabel(option)}</td>
+                                <td>{option.location_name}</td>
+                                <td>{option.seats_remaining}</td>
+                                <td>{option.score}</td>
+                                <td>{option.reasons.join(", ")}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+                    {recommendation.manual_options.length > 0 ? (
+                      <div className="table-wrap top-gap-sm">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Choix manuel</th>
+                              <th>Activite</th>
+                              <th>Occurrence</th>
+                              <th>Serie</th>
+                              <th>Lieu</th>
+                              <th>Places</th>
+                              <th>Score</th>
+                              <th>Raisons</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recommendation.manual_options.map((option, index) => (
+                              <tr
+                                className={recommendation.selected_session_id === option.session_id ? styles.selectedOptionRow : undefined}
+                                key={option.session_id}
+                              >
+                                <td>
+                                  <div className={styles.optionCellStack}>
+                                    <strong>{manualProposalLabel(index)}</strong>
+                                    {recommendation.selected_session_id === option.session_id ? (
+                                      <span className="badge">Retenu</span>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td>{option.activity_name}</td>
                                 <td>
                                   <div className={styles.optionCellStack}>
                                     <strong>{option.occurrence_label}</strong>

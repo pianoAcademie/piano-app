@@ -1507,6 +1507,7 @@ def _typeform_session_option_from_row(
     requested_times: list[int],
     include_activity_in_label: bool = False,
     extra_reasons: list[str] | None = None,
+    allow_low_score: bool = False,
 ) -> TypeformSessionMatchOptionOut | None:
     zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
     local_start = session_obj.start_at_utc.astimezone(zone)
@@ -1593,8 +1594,11 @@ def _typeform_session_option_from_row(
         reasons.append("places disponibles")
     if extra_reasons:
         reasons.extend([_text(item) for item in extra_reasons if _text(item)])
-    if score <= 0:
+    if score <= 0 and not allow_low_score:
         return None
+    if score <= 0:
+        reasons.append("choix manuel administrateur")
+        score = max(score, 0)
     selection_label_parts = [occurrence_label]
     if include_activity_in_label:
         selection_label_parts.append(activity.name)
@@ -1891,6 +1895,7 @@ def _build_session_recommendations(
                     requested_times=requested_times,
                     include_activity_in_label=True,
                     extra_reasons=[f"activite differente: {activity.name}"],
+                    allow_low_score=True,
                 )
                 if option is not None:
                     manual_options.append(option)
