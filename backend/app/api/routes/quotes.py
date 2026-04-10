@@ -422,9 +422,13 @@ def _build_payment_terms_snapshot_from_plan(
                 currency=(quote.currency or "EUR").upper(),
             )
         )
+    normalized_payment_method = plan.payment_method.strip().upper()
+    if deposit_amount_ttc > Decimal("0.00") and normalized_payment_method == "BANK_TRANSFER" and len(schedule) == 1:
+        schedule[0]["due_type"] = "on_quote_validation_before_first_course"
+        schedule[0]["due_label"] = "à la validation du devis, avant votre 1er cours"
     installment_count = len(schedule)
     visibility_raw = rules.get("schedule_visibility") if isinstance(rules.get("schedule_visibility"), dict) else {}
-    show_schedule_to_client_default = installment_count > 1
+    show_schedule_to_client_default = installment_count > 0
     schedule_visibility = {
         AUDIENCE_ADMIN_PREVIEW: _bool_or_default((visibility_raw or {}).get(AUDIENCE_ADMIN_PREVIEW), True),
         AUDIENCE_PUBLIC_PAGE: _bool_or_default(
@@ -438,7 +442,6 @@ def _build_payment_terms_snapshot_from_plan(
     }
     check_submission_address = str(rules.get("check_submission_address") or "").strip()
     check_submission_instruction = str(rules.get("check_submission_instruction") or "").strip()
-    normalized_payment_method = plan.payment_method.strip().upper()
     is_check_family = normalized_payment_method in {
         "CHECK",
         "CHECK_2",
