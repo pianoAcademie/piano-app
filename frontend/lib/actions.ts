@@ -9721,6 +9721,43 @@ export async function saveTypeformIntakeResolutionAction(formData: FormData): Pr
   );
 }
 
+export async function reanalyzeTypeformIntakeAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error=Session%20expiree");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  const cleanReturnTo = setQueryParam(
+    setQueryParam(
+      setQueryParam(returnTo, "error", null),
+      "ok",
+      null,
+    ),
+    "success_modal",
+    null,
+  );
+  if (!intakeId) {
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Intake introuvable"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/reanalyze`,
+    { method: "POST" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(cleanReturnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(appendQueryMessage(cleanReturnTo, "ok", "Analyse des propositions mise a jour"));
+}
+
 export async function saveTypeformIntakeNormalizedDataAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

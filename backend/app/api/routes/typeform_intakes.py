@@ -2944,6 +2944,21 @@ def get_typeform_intake(
     return _intake_detail_out(intake, analysis)
 
 
+@router.post("/intakes/{intake_id}/reanalyze", response_model=TypeformIntakeDetailOut)
+def reanalyze_typeform_intake(
+    intake_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TypeformIntakeDetailOut:
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
+    if intake is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
+    analysis = _refresh_intake_analysis(db, intake)
+    db.commit()
+    db.refresh(intake)
+    return _intake_detail_out(intake, analysis)
+
+
 @router.patch("/intakes/{intake_id}/resolution", response_model=TypeformIntakeDetailOut)
 def update_typeform_intake_resolution(
     intake_id: UUID,

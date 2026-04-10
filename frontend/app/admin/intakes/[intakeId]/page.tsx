@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import {
   generateTypeformDraftQuoteAction,
+  reanalyzeTypeformIntakeAction,
   saveTypeformIntakeNormalizedDataAction,
   saveTypeformIntakeResolutionAction,
 } from "../../../../lib/actions";
@@ -661,9 +662,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
 
         <article className="card span-2">
           <h3>Panneau de resolution</h3>
-          <form action={saveTypeformIntakeResolutionAction} className="grid cols-2 config-form-grid top-gap-sm">
+          <form action={saveTypeformIntakeResolutionAction} className="grid cols-2 config-form-grid top-gap-sm" id="resolution-form">
             <input type="hidden" name="intake_id" value={detail.id} />
-            <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
+            <input type="hidden" name="return_to" value={intakeHref} />
 
             <label>
               Mode client
@@ -810,10 +811,15 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
               </div>
             </div>
 
-            <div className="row wrap gap-sm span-2">
-              <button type="submit">Enregistrer arbitrage</button>
-            </div>
           </form>
+          <div className="row wrap gap-sm top-gap-sm">
+            <button type="submit" form="resolution-form">Enregistrer arbitrage</button>
+            <form action={reanalyzeTypeformIntakeAction} className="inline">
+              <input type="hidden" name="intake_id" value={detail.id} />
+              <input type="hidden" name="return_to" value={intakeHref} />
+              <button type="submit" className="ghost">Analyser a nouveau les propositions</button>
+            </form>
+          </div>
         </article>
 
         <article className="card span-2">
