@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { backendUrl } from "../../../../lib/backend";
+import { buildPublicUrl } from "../../../../lib/request-url";
 
 type RouteParams = {
   params: {
@@ -12,7 +13,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   const quoteId = String(params.quoteId || "").trim();
   const token = request.nextUrl.searchParams.get("t")?.trim() ?? "";
   if (!quoteId || !token) {
-    const fallback = new URL(`/q/${encodeURIComponent(quoteId)}?error=Token%20PDF%20invalide`, request.url);
+    const fallback = buildPublicUrl(request, `/q/${encodeURIComponent(quoteId)}?error=Token%20PDF%20invalide`);
     return NextResponse.redirect(fallback, 302);
   }
 
@@ -22,7 +23,10 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!upstream.ok) {
-    const fallback = new URL(`/q/${encodeURIComponent(quoteId)}?t=${encodeURIComponent(token)}&error=${encodeURIComponent(`PDF indisponible (${upstream.status})`)}`, request.url);
+    const fallback = buildPublicUrl(
+      request,
+      `/q/${encodeURIComponent(quoteId)}?t=${encodeURIComponent(token)}&error=${encodeURIComponent(`PDF indisponible (${upstream.status})`)}`,
+    );
     return NextResponse.redirect(fallback, 302);
   }
 

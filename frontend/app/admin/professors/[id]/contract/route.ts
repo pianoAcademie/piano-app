@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getAdminToken } from "../../../../../lib/auth-cookies";
 import { backendUrl } from "../../../../../lib/backend";
+import { buildPublicUrl } from "../../../../../lib/request-url";
 
 type Params = {
   params: {
@@ -12,7 +13,7 @@ type Params = {
 export async function GET(request: NextRequest, { params }: Params): Promise<Response> {
   const token = getAdminToken();
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
+    const loginUrl = buildPublicUrl(request, "/login?error=Session%20expiree");
     return NextResponse.redirect(loginUrl, 302);
   }
 
@@ -26,9 +27,9 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
   });
 
   if (!response.ok) {
-    const fallback = new URL(
+    const fallback = buildPublicUrl(
+      request,
       `/admin/professors/${professorId}?tab=profil&error=${encodeURIComponent(`Contrat indisponible (${response.status})`)}`,
-      request.url,
     );
     return NextResponse.redirect(fallback, 302);
   }

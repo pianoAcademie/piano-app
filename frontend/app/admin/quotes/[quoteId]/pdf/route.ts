@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { backendUrl } from "../../../../../lib/backend";
+import { buildPublicUrl } from "../../../../../lib/request-url";
 
 type RouteParams = {
   params: {
@@ -12,13 +13,13 @@ type RouteParams = {
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
+    const loginUrl = buildPublicUrl(request, "/login?error=Session%20expiree");
     return NextResponse.redirect(loginUrl, 302);
   }
 
   const quoteId = String(params.quoteId || "").trim();
   if (!quoteId) {
-    const fallback = new URL("/admin/quotes?error=Devis%20invalide", request.url);
+    const fallback = buildPublicUrl(request, "/admin/quotes?error=Devis%20invalide");
     return NextResponse.redirect(fallback, 302);
   }
 
@@ -31,7 +32,10 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!upstream.ok) {
-    const fallback = new URL(`/admin/quotes?quote_id=${encodeURIComponent(quoteId)}&error=${encodeURIComponent(`PDF indisponible (${upstream.status})`)}`, request.url);
+    const fallback = buildPublicUrl(
+      request,
+      `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}&error=${encodeURIComponent(`PDF indisponible (${upstream.status})`)}`,
+    );
     return NextResponse.redirect(fallback, 302);
   }
 

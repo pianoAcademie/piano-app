@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getPortalToken } from "../../../../../../lib/auth-cookies";
 import { backendUrl } from "../../../../../../lib/backend";
+import { buildPublicUrl } from "../../../../../../lib/request-url";
 
 type RouteParams = {
   params: {
@@ -13,14 +14,14 @@ type RouteParams = {
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const token = getPortalToken();
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
+    const loginUrl = buildPublicUrl(request, "/login?error=Session%20expiree");
     return NextResponse.redirect(loginUrl, 302);
   }
 
   const year = String(params.year || "").trim();
   const month = String(params.month || "").trim();
   if (!year || !month) {
-    const fallback = new URL("/prof/statements?error=Periode%20invalide", request.url);
+    const fallback = buildPublicUrl(request, "/prof/statements?error=Periode%20invalide");
     return NextResponse.redirect(fallback, 302);
   }
 
@@ -33,7 +34,10 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!upstream.ok) {
-    const fallback = new URL(`/prof/statements/${year}/${month}?error=${encodeURIComponent(`Export impossible (${upstream.status})`)}`, request.url);
+    const fallback = buildPublicUrl(
+      request,
+      `/prof/statements/${year}/${month}?error=${encodeURIComponent(`Export impossible (${upstream.status})`)}`,
+    );
     return NextResponse.redirect(fallback, 302);
   }
 
