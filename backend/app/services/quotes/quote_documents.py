@@ -3240,7 +3240,4 @@ def render_quote_pdf_from_combined_html(
     combined_html: str,
     audience: str = DEFAULT_AUDIENCE,
 ) -> bytes:
-    html_pdf = _render_html_pdf_with_xhtml2pdf(combined_html)
-    if html_pdf:
-        return html_pdf
     return _render_quote_pdf_blocks(db=db, quote=quote, lines=lines, audience=audience)
