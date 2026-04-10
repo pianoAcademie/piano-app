@@ -1879,9 +1879,16 @@ def _build_session_recommendations(
         option_session_ids = {item.session_id for item in options}
         manual_options: list[TypeformSessionMatchOptionOut] = []
         if not options or (selected_session_id is not None and selected_session_id not in option_session_ids):
+            manual_series_rows: dict[str, tuple[CourseSession, CourseType, Location, int]] = {}
             for session_obj, activity, location, booked_count in manual_rows:
                 if activity.id == line.activity_id:
                     continue
+                series_key = str(session_obj.recurrence_group_id or session_obj.id)
+                existing = manual_series_rows.get(series_key)
+                if existing is None or session_obj.start_at_utc < existing[0].start_at_utc:
+                    manual_series_rows[series_key] = (session_obj, activity, location, int(booked_count or 0))
+
+            for session_obj, activity, location, booked_count in manual_series_rows.values():
                 option = _typeform_session_option_from_row(
                     session_obj=session_obj,
                     activity=activity,
@@ -1898,6 +1905,26 @@ def _build_session_recommendations(
                     allow_low_score=True,
                 )
                 if option is not None:
+                    zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+                    local_start = session_obj.start_at_utc.astimezone(zone)
+                    local_end = session_obj.end_at_utc.astimezone(zone)
+                    slot_label = f"{DAY_LABELS[local_start.weekday()]} · {local_start.strftime('%H:%M')}-{local_end.strftime('%H:%M')}"
+                    start_label = f"demarrage {local_start.strftime('%d/%m/%Y')}"
+                    selection_parts = [
+                        slot_label,
+                        activity.name,
+                        location.name,
+                        option.recurrence_label or "Seance ponctuelle",
+                        start_label,
+                        f"places {option.seats_remaining}",
+                    ]
+                    option = option.model_copy(
+                        update={
+                            "occurrence_label": slot_label,
+                            "selection_label": " · ".join(part for part in selection_parts if part),
+                            "reasons": [*option.reasons, start_label],
+                        }
+                    )
                     manual_options.append(option)
             manual_options.sort(key=lambda item: (item.score, item.seats_remaining, -item.start_at.timestamp()), reverse=True)
             manual_options = manual_options[:12]
@@ -1963,10 +1990,12 @@ def _build_session_recommendations(
         if selected_session_id is None and available_options and summary_status in {"ideal_available", "full_with_alternative"}:
             selected_session_id = available_options[0].session_id
 
+        line_meta = _json_object(line.meta)
+        display_activity_name = _text(line_meta.get("activity_name")) or line.title
         recommendations.append(
             TypeformSessionRecommendationOut(
                 activity_id=line.activity_id,
-                activity_name=line.title,
+                activity_name=display_activity_name,
                 requested_location=_text(normalized.get("requested_location")) or None,
                 requested_summary=_requested_summary(normalized),
                 summary_status=summary_status,
