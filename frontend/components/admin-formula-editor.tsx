@@ -142,13 +142,19 @@ export default function AdminFormulaEditor({
   });
   const [restrictionRowIndex, setRestrictionRowIndex] = useState<number>(Math.max(restrictionRows.length, 1));
 
-  const totalCredits = creditRows.reduce((sum, row) => {
+  const creditCounts = creditRows.map((row) => {
     const parsed = Number.parseInt(row.creditsCount, 10);
     if (!Number.isFinite(parsed) || parsed < 0) {
-      return sum;
+      return 0;
     }
-    return sum + parsed;
-  }, 0);
+    return parsed;
+  });
+  const configuredCredits = creditCounts.reduce((sum, count) => sum + count, 0);
+  const effectiveCredits = creditCounts.length === 0
+    ? 0
+    : creditGrantsRelation === "OR"
+      ? Math.max(...creditCounts)
+      : configuredCredits;
 
   const isForfait = kind === "FORFAIT";
   const priceLabel = priceTaxMode === "TTC" ? "Tarif TTC" : "Tarif HT";
@@ -327,8 +333,13 @@ export default function AdminFormulaEditor({
 
                   <p className="muted">Associez un type de credit et un nombre de credits pour ce carnet.</p>
                   <p className="muted">
-                    Total credits: <strong>{totalCredits}</strong>
+                    Credits effectifs du carnet: <strong>{effectiveCredits}</strong>
                   </p>
+                  {creditRows.length > 1 ? (
+                    <p className="muted">
+                      Credits saisis sur les lignes: <strong>{configuredCredits}</strong>
+                    </p>
+                  ) : null}
                   {creditRows.length > 1 ? (
                     <>
                       <label>
@@ -338,12 +349,14 @@ export default function AdminFormulaEditor({
                           value={creditGrantsRelation}
                           onChange={(event) => setCreditGrantsRelation(event.currentTarget.value as AdminFormulaCreditGrantsRelation)}
                         >
-                          <option value="OR">OU (un type de credit suffit)</option>
-                          <option value="AND">ET (tous les types de credit sont requis)</option>
+                          <option value="OR">OU (stock partage, non cumulatif)</option>
+                          <option value="AND">ET (stocks cumules)</option>
                         </select>
                       </label>
                       <small className="muted">
-                        Exemple: Presentiel ET En ligne oblige les deux credits. Presentiel OU En ligne accepte l’un des deux.
+                        {creditGrantsRelation === "OR"
+                          ? "En mode OU, le carnet garde un seul stock de credits partage entre les activites eligibles. Les lignes servent a autoriser plusieurs formats, pas a doubler le carnet."
+                          : "En mode ET, les lignes se cumulent pour former le stock total du carnet."}
                       </small>
                     </>
                   ) : (
