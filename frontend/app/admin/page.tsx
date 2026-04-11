@@ -28,6 +28,7 @@ import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
 import SessionEditModalBridge from "../../components/planning/session-edit-modal-bridge";
 import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
+import SessionCreateSubmitButton from "../../components/planning/session-create-submit-button";
 import type {
   AdminClientOut,
   AdminMessagingTemplateOut,
@@ -1711,7 +1712,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </article>
               </section>
             ) : null}
-            <form action={createAdminSessionAction} className="create-session-form">
+            <form action={createAdminSessionAction} className="create-session-form" noValidate>
               <input type="hidden" name="return_to" value={createHref} />
               <section className="create-session-section">
                 <div className="row spread">
@@ -1866,7 +1867,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <a className="reset-link" href={createCloseHref}>
                     Annuler
                   </a>
-                  <button type="submit">Creer le creneau</button>
+                  <SessionCreateSubmitButton />
                 </div>
               </div>
             </form>
