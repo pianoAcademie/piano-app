@@ -2,11 +2,12 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { backendUrl } from "../../../../lib/backend";
+import { buildPublicUrl } from "../../../../lib/request-url";
 
 export async function GET(request: NextRequest): Promise<Response> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
+    const loginUrl = buildPublicUrl(request, "/login?error=Session%20expiree");
     return NextResponse.redirect(loginUrl, 302);
   }
 
@@ -21,7 +22,10 @@ export async function GET(request: NextRequest): Promise<Response> {
   });
 
   if (!response.ok) {
-    const fallback = new URL(`/admin/clients?error=${encodeURIComponent(`Export impossible (${response.status})`)}`, request.url);
+    const fallback = buildPublicUrl(
+      request,
+      `/admin/clients?error=${encodeURIComponent(`Export impossible (${response.status})`)}`,
+    );
     return NextResponse.redirect(fallback, 302);
   }
 

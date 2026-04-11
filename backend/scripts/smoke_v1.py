@@ -98,6 +98,8 @@ def register_user(email: str, password: str, *, timezone: str = "Europe/Paris") 
         "first_name": "Smoke",
         "last_name": "User",
         "address_line": "1 Rue Test",
+        "postal_code": "75011",
+        "city": "Paris",
         "phone": "+33100000000",
         "residence_country": "FR",
         "preferred_currency": "EUR",

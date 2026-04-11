@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { backendUrl } from "../../../../../../lib/backend";
+import { buildPublicUrl } from "../../../../../../lib/request-url";
 
 type RouteParams = {
   params: {
@@ -12,7 +13,7 @@ type RouteParams = {
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
+    const loginUrl = buildPublicUrl(request, "/login?error=Session%20expiree");
     return NextResponse.redirect(loginUrl, 302);
   }
 
@@ -33,9 +34,9 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
 
   if (!response.ok) {
     const returnTab = request.nextUrl.searchParams.get("payment_return_tab") === "factures" ? "factures" : "paiements";
-    const fallback = new URL(
+    const fallback = buildPublicUrl(
+      request,
       `/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`,
-      request.url,
     );
     return NextResponse.redirect(fallback, 302);
   }

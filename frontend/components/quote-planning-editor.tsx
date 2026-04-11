@@ -474,7 +474,7 @@ function slotOptionsFromRule(rule: SolfegeRule | null | undefined, locationLabel
   const pushOption = (weekday: number, start: string, end: string): void => {
     const weekdayText = weekdayLabel(weekday);
     const locationSuffix = locationLabel ? ` · ${locationLabel}` : "";
-    const modalitySuffix = rule.modality ? ` · ${rule.modality}` : "";
+    const modalitySuffix = rule.modality && rule.modality.toUpperCase() !== "ANY" ? ` · ${rule.modality}` : "";
     options.push({
       key: `${weekday}|${start}|${end}|${rule.id}|${locationLabel || "-"}`,
       weekday,

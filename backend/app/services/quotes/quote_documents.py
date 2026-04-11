@@ -485,8 +485,211 @@ def _modality_label(value: Any) -> str:
         "ONLINE": "En ligne",
         "ONSITE": "Presentiel",
         "HYBRID": "Hybride",
+        "ANY": "Tous modes",
     }
     return mapping.get(raw.upper(), raw)
+
+
+def _sanitize_slot_label_text(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parts = [part.strip() for part in raw.split("·")]
+    filtered = [part for part in parts if part and part.upper() != "ANY"]
+    if filtered:
+        return " · ".join(filtered)
+    return raw
+
+
+def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "") -> str:
+    label = _sanitize_slot_label_text(value.get("label"))
+    if label:
+        return label
+    weekday = str(value.get("weekday_label") or "").strip() or _weekday_label(value.get("weekday"))
+    start = str(value.get("start_time") or value.get("start") or "").strip()
+    end = str(value.get("end_time") or value.get("end") or "").strip()
+    location_label = str(value.get("location_label") or fallback_location_label or "").strip()
+    modality_label = ""
+    raw_modality = str(value.get("modality") or "").strip()
+    if raw_modality:
+        modality_label = _modality_label(raw_modality)
+
+    parts: list[str] = []
+    if weekday and weekday != "-":
+        parts.append(f"{weekday} {start}-{end}".strip() if start and end else weekday)
+    elif start and end:
+        parts.append(f"{start}-{end}")
+    if modality_label and modality_label not in {"Cours", "Tous modes"}:
+        parts.append(modality_label)
+    if location_label:
+        parts.append(location_label)
+    return " · ".join(part for part in parts if part).strip() or "-"
+
+
+def _payment_schedule_rows_for_display(
+    schedule: list[dict[str, Any]],
+    *,
+    fallback_currency: str,
+) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for item in schedule:
+        amount = _money(
+            _decimal_from_any(item.get("amount_ttc"), Decimal("0.00")),
+            str(item.get("currency") or fallback_currency or "EUR"),
+        )
+        rows.append(
+            [
+                str(item.get("label") or "-"),
+                amount,
+                _schedule_due_label(item),
+                str(item.get("payment_method") or "-"),
+            ]
+        )
+    return rows
+
+
+def _payment_schedule_method_subject(method_label: str, *, count: int) -> str:
+    normalized = str(method_label or "").strip().lower()
+    if "virement" in normalized:
+        return "virement bancaire"
+    if "cheque" in normalized or "chèque" in normalized:
+        return "cheque" if count == 1 else "cheques"
+    if "carte" in normalized:
+        return "reglement par carte bancaire"
+    return "reglement"
+
+
+def _payment_schedule_summary_text(
+    *,
+    schedule: list[dict[str, Any]],
+    has_deposit: bool,
+    deposit_amount_ttc: Decimal,
+    currency: str,
+    payment_method_label: str,
+    remaining_ttc_after_deposit: Decimal,
+) -> str:
+    if schedule:
+        if len(schedule) == 1:
+            item = schedule[0]
+            amount = _money(
+                _decimal_from_any(item.get("amount_ttc"), Decimal("0.00")),
+                str(item.get("currency") or currency or "EUR"),
+            )
+            item_method_label = str(item.get("payment_method") or payment_method_label or "").strip()
+            method_subject = _payment_schedule_method_subject(item_method_label, count=1)
+            remaining_sentence = f"{method_subject} de {amount} à regler {_schedule_due_label(item)}"
+            if has_deposit:
+                return (
+                    f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à regler par carte bancaire, "
+                    f"puis {remaining_sentence}."
+                )
+            return f"{remaining_sentence}."
+
+        if has_deposit:
+            return (
+                f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à regler par carte bancaire, "
+                f"puis echeancier de {len(schedule)} échéances selon le detail ci-dessous."
+            )
+        return f"Echeancier de {len(schedule)} échéances selon le detail ci-dessous."
+
+    if has_deposit and remaining_ttc_after_deposit <= Decimal("0.00"):
+        return (
+            f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à regler par carte bancaire "
+            "(solde regle)."
+        )
+    return "Paiement non planifie"
+
+
+def _payment_schedule_visibility_explicit_for_audience(*, quote: Quote, audience: str) -> bool:
+    payment_snapshot = _json_object(quote.payment_terms_snapshot)
+    schedule_rules = _json_object(payment_snapshot.get("schedule_rules"))
+    snapshot_raw = _json_object(schedule_rules.get("schedule_visibility"))
+    if audience in snapshot_raw:
+        return True
+    meta = _json_object(quote.meta)
+    visibility_root = _json_object(meta.get("document_visibility"))
+    raw = _json_object(visibility_root.get("payment_schedule_detailed"))
+    if audience in raw:
+        return True
+    raw = _json_object(meta.get("payment_schedule_visibility"))
+    return audience in raw
+
+
+def _solfege_pending_slot_labels(
+    *,
+    snapshot: dict[str, Any],
+    level_code: str,
+) -> list[str]:
+    labels: list[str] = []
+    normalized_level = str(level_code or "").strip()
+    for raw_block in _json_list(snapshot.get("blocks")):
+        block = _json_object(raw_block)
+        activity_tokens = " ".join(
+            str(block.get(key) or "")
+            for key in ("activity_label", "activity_code", "activity_service_code")
+        ).strip().lower()
+        pending_level = str(block.get("pending_solfege_level") or "").strip()
+        is_solfege_block = bool(pending_level) or "solfege" in activity_tokens
+        if not is_solfege_block:
+            continue
+        if normalized_level and pending_level and pending_level != normalized_level:
+            continue
+        location_label = str(block.get("location_label") or "").strip()
+        for raw_slot in _json_list(block.get("pending_slot_options")):
+            slot = _json_object(raw_slot)
+            label = _slot_label(slot, fallback_location_label=location_label)
+            if label and label != "-":
+                labels.append(label)
+    return list(dict.fromkeys(labels))
+
+
+def _resolve_solfege_available_slot_labels(
+    *,
+    quote: Quote,
+    level_code: str,
+) -> list[str]:
+    snapshot = _json_object(quote.calendar_snapshot)
+    return _solfege_pending_slot_labels(snapshot=snapshot, level_code=level_code)
+
+
+def _pending_solfege_snapshot_info(snapshot: dict[str, Any]) -> dict[str, Any]:
+    level_code = ""
+    slot_labels: list[str] = []
+    has_pending_selection = False
+
+    for raw_block in _json_list(snapshot.get("blocks")):
+        block = _json_object(raw_block)
+        activity_tokens = " ".join(
+            str(block.get(key) or "")
+            for key in ("activity_label", "activity_code", "activity_service_code")
+        ).strip().lower()
+        pending_level = str(block.get("pending_solfege_level") or "").strip()
+        is_solfege_block = bool(pending_level) or "solfege" in activity_tokens
+        if not is_solfege_block:
+            continue
+
+        try:
+            weekday_value = int(block.get("weekday") or -99)
+        except (TypeError, ValueError):
+            weekday_value = -99
+        selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
+        if selection_pending:
+            has_pending_selection = True
+        if pending_level and not level_code:
+            level_code = pending_level
+
+        location_label = str(block.get("location_label") or "").strip()
+        for raw_slot in _json_list(block.get("pending_slot_options")):
+            slot = _json_object(raw_slot)
+            label = _slot_label(slot, fallback_location_label=location_label)
+            if label and label != "-":
+                slot_labels.append(label)
+
+    return {
+        "has_pending_selection": has_pending_selection,
+        "level_code": level_code,
+        "slot_labels": list(dict.fromkeys(slot_labels)),
+    }
 
 
 def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
@@ -924,7 +1127,6 @@ def _extract_document_context(
 
     payment_snapshot = _json_object(quote.payment_terms_snapshot)
     schedule = [item for item in _json_list(payment_snapshot.get("schedule")) if isinstance(item, dict)]
-    has_installment_schedule = len(schedule) > 1
     schedule_visibility = _resolve_schedule_visibility_by_audience(quote=quote)
     deposit_data = _json_object(payment_snapshot.get("deposit"))
     meta = _json_object(quote.meta)
@@ -954,6 +1156,12 @@ def _extract_document_context(
     selected_solfege_slot = _json_object(quote.selected_solfege_slot)
     if not selected_solfege_slot:
         selected_solfege_slot = solfege_selected_slot
+    pending_solfege_info = _pending_solfege_snapshot_info(calendar_snapshot)
+    resolved_solfege_level = str(
+        quote.estimated_solfege_level
+        or pending_solfege_info.get("level_code")
+        or ""
+    ).strip()
 
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
@@ -976,10 +1184,11 @@ def _extract_document_context(
     pass_recup_enabled = _resolve_pass_recup_enabled(meta=meta, lines=lines)
 
     solfege_enabled = bool(
-        quote.estimated_solfege_level
+        resolved_solfege_level
         or quote.solfege_duration_minutes
         or selected_solfege_slot
         or activity_solfege
+        or pending_solfege_info.get("has_pending_selection")
     )
     masterclass_enabled = (
         bool(masterclass_blocks)
@@ -988,7 +1197,14 @@ def _extract_document_context(
     )
 
     schedule_allowed_for_audience = bool(schedule_visibility.get(audience, False))
-    show_schedule_detailed = has_installment_schedule and schedule_allowed_for_audience
+    schedule_visibility_explicit = _payment_schedule_visibility_explicit_for_audience(quote=quote, audience=audience)
+    show_schedule_detailed = bool(schedule) and (
+        schedule_allowed_for_audience
+        or (
+            not schedule_visibility_explicit
+            and audience in {AUDIENCE_ADMIN_PREVIEW, AUDIENCE_PUBLIC_PAGE, AUDIENCE_CLIENT_PDF}
+        )
+    )
     payment_schedule_compact_notice = ""
     if schedule and not show_schedule_detailed:
         if len(schedule) == 1:
@@ -1029,9 +1245,11 @@ def _extract_document_context(
         "deposit_amount_ttc": deposit_amount_ttc,
         "remaining_ttc_after_deposit": remaining_ttc_after_deposit,
         "solfege_enabled": solfege_enabled,
-        "solfege_level": str(quote.estimated_solfege_level or "").strip(),
+        "solfege_level": resolved_solfege_level,
         "solfege_duration_minutes": quote.solfege_duration_minutes,
         "solfege_selected_slot": selected_solfege_slot,
+        "solfege_pending_selection": bool(pending_solfege_info.get("has_pending_selection")),
+        "solfege_available_slots": [item for item in pending_solfege_info.get("slot_labels", []) if isinstance(item, str)],
         "masterclass_enabled": masterclass_enabled,
         "masterclass_blocks": masterclass_blocks,
         "pass_recup_mode": pass_recup_mode,
@@ -1830,15 +2048,7 @@ def _build_template_values(
     )
 
     schedule = document_context["schedule"]
-    payment_schedule_rows = [
-        [
-            str(item.get("label") or "-"),
-            f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
-            _schedule_due_label(item),
-            str(item.get("payment_method") or "-"),
-        ]
-        for item in schedule
-    ]
+    payment_schedule_rows = _payment_schedule_rows_for_display(schedule, fallback_currency=currency)
     payment_schedule_table_html = _table_html(
         ["Echeance", "Montant", "Quand", "Type"],
         payment_schedule_rows,
@@ -1877,24 +2087,15 @@ def _build_template_values(
         if sessions
         else "Aucune seance planifiee"
     )
-    if schedule:
-        due_labels = ", ".join(_schedule_due_label(item) for item in schedule)
-        unit_label = "échéance" if len(schedule) == 1 else "échéances"
-        if has_deposit:
-            payment_schedule_summary = (
-                f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à régler par carte bancaire, "
-                f"puis {len(schedule)} {unit_label} : {due_labels}"
-            )
-        else:
-            payment_schedule_summary = f"{len(schedule)} {unit_label} : {due_labels}"
-    else:
-        if has_deposit and remaining_ttc_after_deposit <= Decimal("0.00"):
-            payment_schedule_summary = (
-                f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à régler par carte bancaire "
-                "(solde réglé)."
-            )
-        else:
-            payment_schedule_summary = "Paiement non planifie"
+    payment_method_label = str(document_context["payment_method_label"] or "Paiement non precise")
+    payment_schedule_summary = _payment_schedule_summary_text(
+        schedule=schedule,
+        has_deposit=has_deposit,
+        deposit_amount_ttc=deposit_amount_ttc,
+        currency=currency,
+        payment_method_label=payment_method_label,
+        remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+    )
 
     activities_planning_section_html = _section_html(
         "Les Activites retenues",
@@ -1923,22 +2124,33 @@ def _build_template_values(
         or client_data.get("client_email")
         or "-"
     )
-    payment_method_label = str(document_context["payment_method_label"] or "Paiement non precise")
     solfege_slot = _json_object(document_context.get("solfege_selected_slot"))
-    solfege_slot_label = str(solfege_slot.get("label") or "").strip()
-    if not solfege_slot_label and solfege_slot:
-        day = str(solfege_slot.get("weekday_label") or solfege_slot.get("weekday") or "").strip()
-        start = str(solfege_slot.get("start_time") or "--:--").strip()
-        end = str(solfege_slot.get("end_time") or "--:--").strip()
-        solfege_slot_label = f"{day} {start}-{end}".strip()
+    solfege_slot_label = _slot_label(solfege_slot) if solfege_slot else ""
+    if solfege_slot_label == "-":
+        solfege_slot_label = ""
     solfege_duration = document_context.get("solfege_duration_minutes")
     solfege_duration_label = f" ({solfege_duration} min)" if solfege_duration else ""
-    solfege_slot_suffix = f" · {solfege_slot_label}" if solfege_slot_label else ""
-    solfege_full = (
-        f"Solfege souscrit - Niveau {document_context.get('solfege_level') or '-'}"
-        f"{solfege_duration_label}"
-        f"{solfege_slot_suffix}"
-    )
+    solfege_available_slots = [
+        item
+        for item in _json_list(document_context.get("solfege_available_slots"))
+        if isinstance(item, str) and item.strip()
+    ]
+    if not solfege_available_slots:
+        solfege_available_slots = _resolve_solfege_available_slot_labels(
+            quote=quote,
+            level_code=str(document_context.get("solfege_level") or "").strip(),
+        )
+    solfege_level_label = str(document_context.get("solfege_level") or "-").strip() or "-"
+    show_solfege_pending_notice = bool(document_context.get("solfege_pending_selection")) and not solfege_slot_label
+    solfege_lines: list[str] = []
+    if show_solfege_pending_notice:
+        solfege_lines = [
+            "<strong>Option Solfege : souscrite.</strong>",
+            f"Niveau estime : {escape(solfege_level_label)}{escape(solfege_duration_label)}",
+            "Creneau retenu : Selection a faire",
+        ]
+        if solfege_available_slots:
+            solfege_lines.append(f"Creneaux disponibles : {escape(' ; '.join(solfege_available_slots))}")
     masterclass_blocks = _json_list(document_context.get("masterclass_blocks"))
     masterclass_full = "Masterclass du samedi souscrite."
     if masterclass_blocks:
@@ -2035,7 +2247,13 @@ def _build_template_values(
         + "</div>"
     )
     # Solfege et masterclass restent des activites planning, mais on expose un resume optionnel pour le document.
-    solfege_block_html = ""
+    solfege_block_html = (
+        "<p>"
+        + "<br/>".join(solfege_lines)
+        + "</p>"
+        if show_solfege_pending_notice
+        else ""
+    )
     masterclass_common_text = (
         "Masterclass du samedi (complément aux 2 cours collectifs hebdomadaires) : une session de 3h dédiée à la "
         "pratique au piano, avec un focus approfondi sur la musicalité et l’interprétation."
@@ -3108,7 +3326,6 @@ def _render_quote_pdf_blocks(
             )
         )
 
-    story.append(PageBreak())
     story.append(Paragraph("Recapitulatif financier", styles["h2"]))
     financial_rows: list[list[str]] = []
     if values.get("has_financial_adjustment") == "true":
@@ -3135,20 +3352,15 @@ def _render_quote_pdf_blocks(
         )
     )
 
-    story.append(PageBreak())
+    story.append(Spacer(1, 8))
     story.append(Paragraph("Les modalites de paiement", styles["h1"]))
     story.append(Paragraph(f"Mode de paiement : {escape(values.get('payment_method_label', '-'))}", styles["text"]))
     story.append(Paragraph(escape(values.get("payment_schedule_summary", "Paiement non planifie")), styles["text"]))
-    if len(schedule) > 1:
-        schedule_rows = [
-            [
-                str(item.get("label") or "-"),
-                f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
-                _schedule_due_label(item),
-                str(item.get("payment_method") or "-"),
-            ]
-            for item in schedule
-        ]
+    if bool(context.get("display_flags", {}).get("showPaymentScheduleDetailed")) and schedule:
+        schedule_rows = _payment_schedule_rows_for_display(
+            schedule,
+            fallback_currency=str(values.get("currency") or "EUR"),
+        )
         story.append(
             _table_for_pdf(
                 ["Echeance", "Montant", "Quand", "Type"],
@@ -3240,7 +3452,4 @@ def render_quote_pdf_from_combined_html(
     combined_html: str,
     audience: str = DEFAULT_AUDIENCE,
 ) -> bytes:
-    html_pdf = _render_html_pdf_with_xhtml2pdf(combined_html)
-    if html_pdf:
-        return html_pdf
     return _render_quote_pdf_blocks(db=db, quote=quote, lines=lines, audience=audience)
