@@ -160,7 +160,7 @@ export default function QuoteTemplateEditor({
         value:
           "{page_break_html}"
           + "{header_standard_html}"
-          + "<h2>Informations famille</h2>"
+          + "<h2>Informations de l’élève et du responsable</h2>"
           + "<div class='quote-block'>{prospect_identity_block_html}</div>"
           + "{footer_standard_html}",
       },
@@ -168,30 +168,30 @@ export default function QuoteTemplateEditor({
         key: "block_services",
         label: "Bloc activites retenues",
         value:
-          "<h2>Les Activites retenues</h2>{activities_planning_table_html}",
+          "<h2>Cours et options choisis</h2>{activities_planning_table_html}",
       },
       {
         key: "block_prestations",
         label: "Bloc prestations",
-        value: "<h2>Prestations</h2>{services_table_html}",
+        value: "<h2>Cours inclus dans le devis</h2>{services_table_html}",
       },
       {
         key: "block_material",
         label: "Bloc materiel",
-        value: "<h2>Materiel</h2>{products_table_html}",
+        value: "<h2>Matériel pédagogique</h2>{products_table_html}",
       },
       {
         key: "block_adjustments_table",
         label: "Bloc remises/supplements",
-        value: "<h2>Remises et supplements</h2>{adjustments_table_html}",
+        value: "<h2>Remises appliquées</h2>{adjustments_table_html}",
       },
       {
         key: "block_payment",
         label: "Bloc paiement",
         value:
-          "<h2>Paiement</h2>"
-          + "<p>{payment_schedule_summary}</p>"
+          "<h2>Règlement et échéancier</h2>"
           + "{payment_method_block_html}"
+          + "<p>{payment_schedule_summary}</p>"
           + "{payment_schedule_table_html}",
       },
       {
@@ -203,8 +203,8 @@ export default function QuoteTemplateEditor({
         key: "block_calendar",
         label: "Bloc calendrier",
         value:
-          "<h2>Calendrier des cours</h2>"
-          + "<p>{calendar_summary}</p>"
+          "<h2>Calendrier prévisionnel des cours</h2>"
+          + "<p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>"
           + "{calendar_activity_semesters_html}",
       },
       {

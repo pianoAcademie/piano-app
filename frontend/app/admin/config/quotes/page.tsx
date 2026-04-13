@@ -1531,7 +1531,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 bodyName="body_template"
                 defaultSubject="Votre devis {quote_number} Piano Academie"
                 defaultBody={
-                  "{document_style_html}{cover_page_standard_html}{header_standard_html}<h1>Devis {quote_number}</h1>{page_break_html}<h2>Informations famille</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}<h2>Paiement</h2>{payment_method_block_html}{payment_schedule_section_html}{options_section_html}{calendar_section_html}{financial_recap_block_html}<p><strong>Expiration:</strong> {expires_at}</p>{footer_standard_html}"
+                  "{document_style_html}{cover_page_standard_html}{header_standard_html}<h1>Devis {quote_number}</h1>{page_break_html}<h2>Informations de l’élève et du responsable</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}{financial_recap_block_html}<h2>Règlement et échéancier</h2>{payment_method_block_html}<p>{payment_schedule_summary}</p>{payment_schedule_table_html}{options_section_html}<h2>Calendrier prévisionnel des cours</h2><p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>{calendar_activity_semesters_html}<p><strong>Expiration:</strong> {expires_at}</p>{footer_standard_html}"
                 }
                 variables={templateVariables}
               />
@@ -1621,7 +1621,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                           defaultSubject={prefill?.subject || `Devis {quote_number}`}
                           defaultBody={
                             prefill?.body ||
-                            "{document_style_html}{header_standard_html}<h1>Devis {quote_number}</h1>{page_break_html}<h2>Informations famille</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}<h2>Paiement</h2>{payment_method_block_html}{payment_schedule_section_html}{options_section_html}{calendar_section_html}{financial_recap_block_html}{footer_standard_html}"
+                            "{document_style_html}{header_standard_html}<h1>Devis {quote_number}</h1>{page_break_html}<h2>Informations de l’élève et du responsable</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}{financial_recap_block_html}<h2>Règlement et échéancier</h2>{payment_method_block_html}<p>{payment_schedule_summary}</p>{payment_schedule_table_html}{options_section_html}<h2>Calendrier prévisionnel des cours</h2><p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>{calendar_activity_semesters_html}{footer_standard_html}"
                           }
                           variables={templateVariables}
                         />

@@ -1504,17 +1504,17 @@ def _build_quote_pdf_blocks_html(
 
     template = (
         "<section class='quote-block'>"
-        "<h1>Dossier d inscription</h1>"
+        "<h1>Votre devis d’inscription</h1>"
         "<p><strong>Devis :</strong> {quote_number}</p>"
         "<p><strong>Annee scolaire :</strong> {school_year_label}</p>"
         "<p><strong>Validite :</strong> {expires_at}</p>"
         "<p><strong>Eleve :</strong> {child_full_name}</p>"
         "</section>"
         "{page_break_html}"
-        "<h2>Informations famille</h2>"
+        "<h2>Informations de l’élève et du responsable</h2>"
         "<div class='quote-block'>{prospect_identity_block_html}</div>"
         "{page_break_html}"
-        "<h2>Les Activites retenues</h2>"
+        "<h2>Cours et options choisis</h2>"
         "{activities_planning_table_html}"
         "{services_section_html}"
         "{adjustments_section_html}"
@@ -1522,14 +1522,14 @@ def _build_quote_pdf_blocks_html(
         "{kits_section_html}"
         "{other_fees_section_html}"
         "{financial_recap_block_html}"
-        "<h2>Les modalites de paiement</h2>"
+        "<h2>Règlement et échéancier</h2>"
         "{payment_method_block_html}"
         "<p>{payment_schedule_summary}</p>"
         "{payment_schedule_table_html}"
         "{options_section_html}"
         "{page_break_html}"
-        "<h2>Calendrier des cours</h2>"
-        "<p><strong>Resume :</strong> {calendar_summary}</p>"
+        "<h2>Calendrier prévisionnel des cours</h2>"
+        "<p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>"
         "{calendar_activity_semesters_html}"
         "{page_break_html}"
         "<h2>Conditions generales</h2>"
@@ -1752,7 +1752,7 @@ def _build_template_values(
     )
     financial_recap_block_html = (
         "<div class='quote-block'>"
-        "<h2>Recapitulatif financier</h2>"
+        "<h2>Montant total du devis</h2>"
         f"{financial_recap_lines_html}"
         "</div>"
     )
@@ -1964,16 +1964,16 @@ def _build_template_values(
             payment_schedule_summary = "Paiement non planifie"
 
     activities_planning_section_html = _section_html(
-        "Les Activites retenues",
+        "Cours et options choisis",
         planning_blocks_table_html,
     )
-    services_section_html = _section_html("Prestations", services_table_html)
-    adjustments_section_html = _section_html("Remises et supplements", adjustments_table_html)
-    products_section_html = _section_html("Materiel", products_table_html)
-    kits_section_html = _section_html("Kits", kits_table_html)
+    services_section_html = _section_html("Cours inclus dans le devis", services_table_html)
+    adjustments_section_html = _section_html("Remises appliquées", adjustments_table_html)
+    products_section_html = _section_html("Matériel pédagogique", products_table_html)
+    kits_section_html = _section_html("Frais et services inclus dans l’inscription", kits_table_html)
     other_fees_section_html = _section_html("Autres frais", other_fees_table_html)
     payment_schedule_section_html = _section_html("Echeancier de paiement", payment_schedule_table_html)
-    calendar_section_html = _section_html("Calendrier des cours", calendar_table_html)
+    calendar_section_html = _section_html("Calendrier prévisionnel des cours", calendar_table_html)
 
     cgv_label, _ = _load_terms_template_content(db=db, quote=quote)
     prospect_data = document_context["prospect_data"]
@@ -2161,7 +2161,7 @@ def _build_template_values(
     cover_page_standard_html = (
         "<section class='quote-cover'>"
         f"{cover_logo_html}"
-        "<h1 class='quote-cover-title'>Dossier d inscription</h1>"
+        "<h1 class='quote-cover-title'>Votre devis d’inscription</h1>"
         f"<p class='quote-cover-subtitle'>Annee scolaire {escape(quote.school_year_label or '-')}</p>"
         f"<p class='quote-cover-name'>{escape(prospect_data.get('child_full_name') or recipient_name)}</p>"
         "<div class='quote-cover-meta'>"
@@ -2355,7 +2355,7 @@ def _default_quote_body_template() -> str:
         "<p><strong>Annee scolaire:</strong> {school_year_label}</p>"
         "<p><strong>Expiration:</strong> {expires_at}</p>"
         "{page_break_html}"
-        "<h2>Informations famille</h2>"
+        "<h2>Informations de l’élève et du responsable</h2>"
         "<div class='quote-block'>"
         "{prospect_identity_block_html}"
         "</div>"
@@ -2366,12 +2366,16 @@ def _default_quote_body_template() -> str:
         "{kits_section_html}"
         "{other_fees_section_html}"
         "{deposit_section_html}"
+        "{financial_recap_block_html}"
+        "<h2>Règlement et échéancier</h2>"
         "{payment_method_block_html}"
-        "{payment_schedule_section_html}"
+        "<p>{payment_schedule_summary}</p>"
+        "{payment_schedule_table_html}"
         "{financial_adjustment_section_html}"
         "{options_section_html}"
-        "{calendar_section_html}"
-        "{financial_recap_block_html}"
+        "<h2>Calendrier prévisionnel des cours</h2>"
+        "<p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>"
+        "{calendar_activity_semesters_html}"
         "{footer_standard_html}"
     )
 
@@ -3212,7 +3216,7 @@ def _render_quote_pdf_blocks(
     story: list[Any] = []
 
     story.append(Spacer(1, 18 * mm))
-    story.append(Paragraph("Dossier d inscription", styles["cover_title"]))
+    story.append(Paragraph("Votre devis d’inscription", styles["cover_title"]))
     story.append(Paragraph(f"Devis : {escape(values.get('quote_number', '-'))}", styles["cover_subtitle"]))
     story.append(Paragraph(f"Annee scolaire : {escape(values.get('school_year_label', '-'))}", styles["cover_subtitle"]))
     story.append(Paragraph(f"Validite : {escape(values.get('expires_at', '-'))}", styles["cover_subtitle"]))
@@ -3224,7 +3228,7 @@ def _render_quote_pdf_blocks(
     )
     story.append(PageBreak())
 
-    story.append(Paragraph("Informations famille", styles["h1"]))
+    story.append(Paragraph("Informations de l’élève et du responsable", styles["h1"]))
     identity_rows: list[list[str]] = []
     if str(prospect_data.get("prospect_type") or "").lower() == "child":
         identity_rows.extend(
@@ -3258,7 +3262,7 @@ def _render_quote_pdf_blocks(
     story.append(Spacer(1, 5))
     story.append(PageBreak())
 
-    story.append(Paragraph("Les Activites retenues", styles["h1"]))
+    story.append(Paragraph("Cours et options choisis", styles["h1"]))
     planning_rows: list[list[str]] = []
     for block in planning_blocks:
         activity = str(block.get("activity_label") or "-")
@@ -3284,7 +3288,7 @@ def _render_quote_pdf_blocks(
     )
 
     story.append(Spacer(1, 6))
-    story.append(Paragraph("Prestations", styles["h2"]))
+    story.append(Paragraph("Cours inclus dans le devis", styles["h2"]))
     service_rows = [
         [
             line.title or "-",
@@ -3327,7 +3331,7 @@ def _render_quote_pdf_blocks(
     ]
     if adjustment_rows:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("Remises et supplements", styles["h2"]))
+        story.append(Paragraph("Remises appliquées", styles["h2"]))
         story.append(
             _table_for_pdf(
                 ["Type", "Intitule", "Quantite", "TVA", "PU TTC", "Montant TTC"],
@@ -3362,7 +3366,7 @@ def _render_quote_pdf_blocks(
     ]
     if product_rows:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("Materiel", styles["h2"]))
+        story.append(Paragraph("Matériel pédagogique", styles["h2"]))
         story.append(
             _table_for_pdf(
                 ["Materiel", "Quantite", "TVA", "PU TTC", "Montant TTC"],
@@ -3402,7 +3406,7 @@ def _render_quote_pdf_blocks(
     ]
     if kit_rows:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("Kits", styles["h2"]))
+        story.append(Paragraph("Frais et services inclus dans l’inscription", styles["h2"]))
         story.append(
             _table_for_pdf(
                 ["Kit", "Quantite", "TVA", "PU TTC", "Montant TTC"],
@@ -3437,7 +3441,7 @@ def _render_quote_pdf_blocks(
         )
 
     story.append(PageBreak())
-    story.append(Paragraph("Recapitulatif financier", styles["h2"]))
+    story.append(Paragraph("Montant total du devis", styles["h2"]))
     financial_rows: list[list[str]] = []
     if values.get("has_financial_adjustment") == "true":
         financial_rows.append(["Total TTC avant ajustement", f"{values.get('total_ttc_before_adjustment', '0,00')} {values.get('currency', 'EUR')}"])
@@ -3464,7 +3468,7 @@ def _render_quote_pdf_blocks(
     )
 
     story.append(Spacer(1, 8))
-    story.append(Paragraph("Les modalites de paiement", styles["h1"]))
+    story.append(Paragraph("Règlement et échéancier", styles["h1"]))
     story.append(Paragraph(f"Mode de paiement : {escape(values.get('payment_method_label', '-'))}", styles["text"]))
     story.append(Paragraph(escape(values.get("payment_schedule_summary", "Paiement non planifie")), styles["text"]))
     if len(schedule) > 1:
@@ -3499,8 +3503,8 @@ def _render_quote_pdf_blocks(
             story.append(Paragraph(block_html, styles["text"]))
 
     story.append(PageBreak())
-    story.append(Paragraph("Calendrier des cours", styles["h1"]))
-    story.append(Paragraph(f"Resume : {escape(values.get('calendar_summary', '-'))}", styles["text"]))
+    story.append(Paragraph("Calendrier prévisionnel des cours", styles["h1"]))
+    story.append(Paragraph(f"Vue d’ensemble du calendrier : {escape(values.get('calendar_summary', '-'))}", styles["text"]))
     grouped: dict[str, dict[int, set[int]]] = {}
     for session in sessions:
         parsed = _session_month_day(session.get("date"))
