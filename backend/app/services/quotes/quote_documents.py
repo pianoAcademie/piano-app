@@ -2979,6 +2979,7 @@ class _ReportLabTermsParser(HTMLParser):
         self._current_style = "text"
         self._open_tags: list[tuple[str, str]] = []
         self._ignored_depth = 0
+        self._list_item_depth = 0
 
     def _begin_block(self, style: str) -> None:
         self._flush_block()
@@ -2987,6 +2988,9 @@ class _ReportLabTermsParser(HTMLParser):
     def _append(self, markup: str) -> None:
         if markup:
             self._current.append(markup)
+
+    def _current_markup(self) -> str:
+        return "".join(self._current).strip()
 
     def _close_tag(self, tag: str) -> None:
         if self._open_tags and self._open_tags[-1][0] == tag:
@@ -3012,11 +3016,19 @@ class _ReportLabTermsParser(HTMLParser):
         if self._ignored_depth:
             return
         attrs_dict = {str(key or "").lower(): str(value or "") for key, value in attrs}
-        if normalized_tag in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "tr"}:
+        if normalized_tag == "li":
+            self._begin_block("text")
+            self._list_item_depth += 1
+            self._append("• ")
+            return
+        if normalized_tag in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "tr"}:
+            if self._list_item_depth > 0:
+                current = self._current_markup()
+                if current and current != "•" and current != "• " and not current.endswith("<br/>"):
+                    self._append("<br/>")
+                return
             style = "h1" if normalized_tag == "h1" else "h2" if normalized_tag == "h2" else "h3" if normalized_tag.startswith("h") else "text"
             self._begin_block(style)
-            if normalized_tag == "li":
-                self._append("• ")
             return
         if normalized_tag == "br":
             self._append("<br/>")
@@ -3060,7 +3072,14 @@ class _ReportLabTermsParser(HTMLParser):
         if normalized_tag == "td":
             self._append("  ")
             return
-        if normalized_tag in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "tr"}:
+        if normalized_tag == "li":
+            if self._list_item_depth > 0:
+                self._list_item_depth -= 1
+            self._flush_block()
+            return
+        if normalized_tag in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "tr"}:
+            if self._list_item_depth > 0:
+                return
             self._flush_block()
 
     def handle_data(self, data: str) -> None:
