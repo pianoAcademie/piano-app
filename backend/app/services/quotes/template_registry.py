@@ -47,12 +47,6 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "example": "Marie Dupont",
     },
     {
-        "key": "recipient_email",
-        "label": "Email destinataire",
-        "description": "Email de contact du devis.",
-        "example": "marie@example.com",
-    },
-    {
         "key": "recipient_phone",
         "label": "Telephone destinataire",
         "description": "Numero de telephone utilise pour les notifications SMS du devis.",

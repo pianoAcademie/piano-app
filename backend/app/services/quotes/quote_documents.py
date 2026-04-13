@@ -1177,6 +1177,40 @@ def _normalize_template_source(template: str) -> str:
     return raw
 
 
+def _strip_legacy_recipient_email_markup(template: str) -> str:
+    raw = str(template or "")
+    if re.search(r"\{[\s\xa0]*recipient_email[\s\xa0]*\}", raw, flags=re.IGNORECASE) is None:
+        return raw
+
+    paragraph_pattern = re.compile(
+        r"<p\b[^>]*>.*?\{[\s\xa0]*recipient_email[\s\xa0]*\}.*?</p>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def _replace_paragraph(match: re.Match[str]) -> str:
+        block = match.group(0)
+        plain = re.sub(r"<[^>]+>", " ", block, flags=re.IGNORECASE)
+        plain = re.sub(r"\{\s*recipient_email\s*\}", " ", plain, flags=re.IGNORECASE)
+        normalized = re.sub(r"\s+", " ", html_unescape(plain)).strip().lower()
+
+        if "destinataire" in normalized:
+            updated = re.sub(r"\s*\(\s*\{recipient_email\}\s*\)", "", block, flags=re.IGNORECASE)
+            updated = re.sub(r"\s*[-–—,:]\s*\{recipient_email\}", "", updated, flags=re.IGNORECASE)
+            updated = re.sub(r"\{\s*recipient_email\s*\}", "", updated, flags=re.IGNORECASE)
+            return updated
+
+        if "email" in normalized or "contact" in normalized:
+            return ""
+
+        return re.sub(r"\{\s*recipient_email\s*\}", "", block, flags=re.IGNORECASE)
+
+    cleaned = paragraph_pattern.sub(_replace_paragraph, raw)
+    cleaned = re.sub(r"\s*\(\s*\{recipient_email\}\s*\)", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*[-–—,:]\s*\{recipient_email\}", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\{\s*recipient_email\s*\}", "", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
 def _dedupe_retained_activities_tables(content: str) -> str:
     raw = str(content or "")
     if not raw:
@@ -2284,7 +2318,7 @@ def _default_quote_body_template() -> str:
         "{cover_page_standard_html}"
         "{header_standard_html}"
         "<h1>Devis {quote_number}</h1>"
-        "<p><strong>Destinataire:</strong> {recipient_name} ({recipient_email})</p>"
+        "<p><strong>Destinataire:</strong> {recipient_name}</p>"
         "<p><strong>Annee scolaire:</strong> {school_year_label}</p>"
         "<p><strong>Expiration:</strong> {expires_at}</p>"
         "{page_break_html}"
@@ -2318,6 +2352,7 @@ def _render_quote_body_html(
 ) -> str:
     _, body_template = _load_quote_template_snapshot(db=db, quote=quote)
     template = _normalize_template_source(body_template or _default_quote_body_template())
+    template = _strip_legacy_recipient_email_markup(template)
     lowered_template = template.lower()
     if "{deposit_section_html}" not in lowered_template and "{deposit_block_html}" not in lowered_template:
         if "{payment_method_block_html}" in lowered_template:
@@ -2433,6 +2468,7 @@ def _render_quote_terms_html(
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     normalized_terms = _normalize_template_source(cgv_content)
+    normalized_terms = _strip_legacy_recipient_email_markup(normalized_terms)
     normalized_terms = _normalize_block_placeholder_wrappers(
         normalized_terms,
         keys={
@@ -2923,7 +2959,6 @@ def _render_quote_pdf_blocks(
         )
     )
     story.append(Spacer(1, 5))
-    story.append(Paragraph(f"Email contact : {escape(values.get('recipient_email', '-'))}", styles["text"]))
     story.append(PageBreak())
 
     story.append(Paragraph("Les Activites retenues", styles["h1"]))

@@ -151,7 +151,6 @@ export default function QuoteTemplateEditor({
         value:
           "<h2>Destinataire</h2>"
           + "<p><strong>Nom :</strong> {recipient_name}</p>"
-          + "<p><strong>Email :</strong> {recipient_email}</p>"
           + "<p><strong>Type :</strong> {prospect_type_label}</p>"
           + "{prospect_identity_block_html}",
       },
