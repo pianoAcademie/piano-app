@@ -4,6 +4,7 @@ import base64
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape, unescape as html_unescape
+from html.parser import HTMLParser
 import io
 import logging
 import re
@@ -2499,41 +2500,7 @@ def _render_quote_terms_html(
 ) -> str:
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
-    normalized_terms = _normalize_template_source(cgv_content)
-    normalized_terms = _strip_legacy_recipient_email_markup(normalized_terms)
-    normalized_terms = _normalize_block_placeholder_wrappers(
-        normalized_terms,
-        keys={
-            "document_style_html",
-            "brand_logo_html",
-            "header_standard_html",
-            "cover_page_standard_html",
-            "page_break_html",
-            "footer_standard_html",
-            "prospect_identity_block_html",
-            "payment_method_block_html",
-            "activities_planning_section_html",
-            "services_section_html",
-            "adjustments_section_html",
-            "products_section_html",
-            "kits_section_html",
-            "other_fees_section_html",
-            "payment_schedule_section_html",
-            "calendar_section_html",
-            "payment_schedule_table_html",
-            "calendar_table_html",
-            "calendar_activity_semesters_html",
-            "financial_recap_block_html",
-            "deposit_block_html",
-            "deposit_section_html",
-            "deposit_none_html",
-            "other_fees_table_html",
-        },
-    )
-    rendered_terms = _apply_template(normalized_terms, values=values, html_keys=html_keys, html_output=True)
-    rendered_terms = _cleanup_rendered_block_markup(rendered_terms)
-    rendered_terms = _normalize_template_source(rendered_terms)
-    rendered_terms = _cleanup_legacy_terms_layout(rendered_terms)
+    rendered_terms = _render_terms_content_html(content=cgv_content, values=values, html_keys=html_keys)
     header_html = values.get("header_standard_html", "")
     footer_html = values.get("footer_standard_html", "")
     return (
@@ -2851,6 +2818,285 @@ def _terms_lines_for_pdf(content: str, *, values: dict[str, str]) -> list[str]:
     return lines or ["Aucune condition generale."]
 
 
+_TERMS_RENDER_BLOCK_KEYS = {
+    "document_style_html",
+    "brand_logo_html",
+    "header_standard_html",
+    "cover_page_standard_html",
+    "page_break_html",
+    "footer_standard_html",
+    "prospect_identity_block_html",
+    "solfege_block_html",
+    "masterclass_block_html",
+    "pass_recup_block_html",
+    "pass_recup_compact_notice_html",
+    "options_section_html",
+    "payment_method_block_html",
+    "activities_planning_section_html",
+    "services_section_html",
+    "adjustments_section_html",
+    "products_section_html",
+    "kits_section_html",
+    "other_fees_section_html",
+    "payment_schedule_section_html",
+    "calendar_section_html",
+    "payment_schedule_table_html",
+    "calendar_table_html",
+    "calendar_activity_semesters_html",
+    "financial_recap_block_html",
+    "deposit_block_html",
+    "deposit_section_html",
+    "deposit_none_html",
+    "other_fees_table_html",
+}
+
+
+def _render_terms_content_html(*, content: str, values: dict[str, str], html_keys: set[str]) -> str:
+    normalized_terms = _normalize_template_source(content or "")
+    normalized_terms = _strip_legacy_recipient_email_markup(normalized_terms)
+    normalized_terms = _normalize_block_placeholder_wrappers(
+        normalized_terms,
+        keys=_TERMS_RENDER_BLOCK_KEYS,
+    )
+    rendered_terms = _apply_template(normalized_terms, values=values, html_keys=html_keys, html_output=True)
+    rendered_terms = _cleanup_rendered_block_markup(rendered_terms)
+    rendered_terms = _normalize_template_source(rendered_terms)
+    return _cleanup_legacy_terms_layout(rendered_terms)
+
+
+def _reportlab_font_size(value: str) -> str | None:
+    raw = str(value or "").strip().lower()
+    match = re.search(r"(-?\d+(?:\.\d+)?)\s*(px|pt)?", raw)
+    if match is None:
+        return None
+    amount = float(match.group(1))
+    unit = match.group(2) or "pt"
+    if unit == "px":
+        amount *= 0.75
+    if amount <= 0:
+        return None
+    rounded = round(amount, 1)
+    return str(int(rounded)) if float(rounded).is_integer() else str(rounded)
+
+
+def _reportlab_font_face(*, family: str, bold: bool, italic: bool) -> str | None:
+    raw = str(family or "").strip().strip("'\"")
+    if not raw:
+        return None
+    normalized = raw.casefold()
+    base = "Helvetica"
+    if any(token in normalized for token in ("courier", "mono", "menlo", "monaco", "consolas")):
+        base = "Courier"
+    elif any(token in normalized for token in ("times", "georgia", "serif")):
+        base = "Times"
+    if base == "Helvetica":
+        if bold and italic:
+            return "Helvetica-BoldOblique"
+        if bold:
+            return "Helvetica-Bold"
+        if italic:
+            return "Helvetica-Oblique"
+        return "Helvetica"
+    if base == "Times":
+        if bold and italic:
+            return "Times-BoldItalic"
+        if bold:
+            return "Times-Bold"
+        if italic:
+            return "Times-Italic"
+        return "Times-Roman"
+    if bold and italic:
+        return "Courier-BoldOblique"
+    if bold:
+        return "Courier-Bold"
+    if italic:
+        return "Courier-Oblique"
+    return "Courier"
+
+
+def _inline_style_map(style_value: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for chunk in str(style_value or "").split(";"):
+        if ":" not in chunk:
+            continue
+        key, value = chunk.split(":", 1)
+        normalized_key = key.strip().lower()
+        normalized_value = value.strip()
+        if normalized_key and normalized_value:
+            out[normalized_key] = normalized_value
+    return out
+
+
+def _reportlab_markup_from_attrs(tag: str, attrs: dict[str, str]) -> tuple[str, str]:
+    style_map = _inline_style_map(attrs.get("style", ""))
+    bold = False
+    weight = style_map.get("font-weight", "").strip().lower()
+    if weight == "bold":
+        bold = True
+    elif weight.isdigit():
+        bold = int(weight) >= 600
+    italic = "italic" in style_map.get("font-style", "").strip().lower()
+    underline = "underline" in style_map.get("text-decoration", "").strip().lower()
+    family = attrs.get("face") or style_map.get("font-family", "")
+    size = attrs.get("size") or style_map.get("font-size", "")
+    color = attrs.get("color") or style_map.get("color", "")
+
+    font_attrs: list[str] = []
+    face = _reportlab_font_face(family=family, bold=bold, italic=italic) if family else None
+    if face:
+        font_attrs.append(f"face='{escape(face)}'")
+        bold = False
+        italic = False
+    parsed_size = _reportlab_font_size(size) if size else None
+    if parsed_size:
+        font_attrs.append(f"size='{escape(parsed_size)}'")
+    normalized_color = str(color or "").strip()
+    if normalized_color and re.fullmatch(r"#[0-9a-fA-F]{3,8}|[a-zA-Z]+", normalized_color):
+        font_attrs.append(f"color='{escape(normalized_color)}'")
+
+    open_parts: list[str] = []
+    close_parts: list[str] = []
+    if font_attrs:
+        open_parts.append(f"<font {' '.join(font_attrs)}>")
+        close_parts.insert(0, "</font>")
+    if bold:
+        open_parts.append("<b>")
+        close_parts.insert(0, "</b>")
+    if italic:
+        open_parts.append("<i>")
+        close_parts.insert(0, "</i>")
+    if underline:
+        open_parts.append("<u>")
+        close_parts.insert(0, "</u>")
+    return "".join(open_parts), "".join(close_parts)
+
+
+class _ReportLabTermsParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[tuple[str, str]] = []
+        self._current: list[str] = []
+        self._current_style = "text"
+        self._open_tags: list[tuple[str, str]] = []
+        self._ignored_depth = 0
+
+    def _begin_block(self, style: str) -> None:
+        self._flush_block()
+        self._current_style = style
+
+    def _append(self, markup: str) -> None:
+        if markup:
+            self._current.append(markup)
+
+    def _close_tag(self, tag: str) -> None:
+        if self._open_tags and self._open_tags[-1][0] == tag:
+            _, closer = self._open_tags.pop()
+            self._append(closer)
+
+    def _flush_block(self) -> None:
+        while self._open_tags:
+            _, closer = self._open_tags.pop()
+            self._append(closer)
+        markup = "".join(self._current).strip()
+        markup = re.sub(r"(?:<br\s*/?>\s*){3,}", "<br/><br/>", markup, flags=re.IGNORECASE)
+        if markup:
+            self.blocks.append((self._current_style, markup))
+        self._current = []
+        self._current_style = "text"
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        normalized_tag = tag.lower()
+        if normalized_tag in {"style", "script"}:
+            self._ignored_depth += 1
+            return
+        if self._ignored_depth:
+            return
+        attrs_dict = {str(key or "").lower(): str(value or "") for key, value in attrs}
+        if normalized_tag in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "tr"}:
+            style = "h1" if normalized_tag == "h1" else "h2" if normalized_tag == "h2" else "h3" if normalized_tag.startswith("h") else "text"
+            self._begin_block(style)
+            if normalized_tag == "li":
+                self._append("• ")
+            return
+        if normalized_tag == "br":
+            self._append("<br/>")
+            return
+        if normalized_tag in {"strong", "b"}:
+            self._append("<b>")
+            self._open_tags.append((normalized_tag, "</b>"))
+            return
+        if normalized_tag in {"em", "i"}:
+            self._append("<i>")
+            self._open_tags.append((normalized_tag, "</i>"))
+            return
+        if normalized_tag == "u":
+            self._append("<u>")
+            self._open_tags.append((normalized_tag, "</u>"))
+            return
+        if normalized_tag == "th":
+            if not self._current:
+                self._begin_block("text")
+            self._append("<b>")
+            self._open_tags.append((normalized_tag, "</b>"))
+            return
+        if normalized_tag in {"td", "span", "font"}:
+            if not self._current and normalized_tag == "td":
+                self._begin_block("text")
+            open_markup, close_markup = _reportlab_markup_from_attrs(normalized_tag, attrs_dict)
+            self._append(open_markup)
+            if close_markup:
+                self._open_tags.append((normalized_tag, close_markup))
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized_tag = tag.lower()
+        if normalized_tag in {"style", "script"}:
+            self._ignored_depth = max(0, self._ignored_depth - 1)
+            return
+        if self._ignored_depth:
+            return
+        if normalized_tag in {"strong", "b", "em", "i", "u", "span", "font", "th"}:
+            self._close_tag(normalized_tag)
+            return
+        if normalized_tag == "td":
+            self._append("  ")
+            return
+        if normalized_tag in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "tr"}:
+            self._flush_block()
+
+    def handle_data(self, data: str) -> None:
+        if self._ignored_depth:
+            return
+        text = str(data or "")
+        if not text.strip():
+            if self._current and ("\n" in text or "\r" in text):
+                self._append(" ")
+            return
+        if not self._current:
+            self._begin_block("text")
+        self._append(escape(text))
+
+    def close(self) -> None:
+        super().close()
+        self._flush_block()
+
+
+def _terms_flowables_for_pdf(
+    content: str,
+    *,
+    values: dict[str, str],
+    html_keys: set[str],
+    styles: dict[str, ParagraphStyle],
+) -> list[Paragraph]:
+    rendered_terms = _render_terms_content_html(content=content, values=values, html_keys=html_keys)
+    if not rendered_terms:
+        return [Paragraph("Aucune condition generale.", styles["text"])]
+    parser = _ReportLabTermsParser()
+    parser.feed(rendered_terms)
+    parser.close()
+    blocks = parser.blocks or [("text", "Aucune condition generale.")]
+    return [Paragraph(markup, styles.get(style_name, styles["text"])) for style_name, markup in blocks]
+
+
 def _draw_quote_pdf_header_footer(
     canvas_obj: Any,
     doc: SimpleDocTemplate,
@@ -2917,7 +3163,7 @@ def _render_quote_pdf_blocks(
     lines: list[QuoteLine],
     audience: str,
 ) -> bytes:
-    values, _, context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
+    values, html_keys, context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     prospect_data = context.get("prospect_data", {})
     calendar_snapshot = _json_object(quote.calendar_snapshot)
     sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
@@ -2927,9 +3173,9 @@ def _render_quote_pdf_blocks(
     kit_long_descriptions = _kit_long_descriptions_by_id(db=db, kits=kits)
     kit_composition = _kit_composition_by_id(db=db, kits=kits)
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
-    terms_lines = _terms_lines_for_pdf(cgv_content, values=values)
     schedule = [item for item in _json_list(context.get("schedule")) if isinstance(item, dict)]
     styles = _quote_pdf_styles()
+    terms_flowables = _terms_flowables_for_pdf(cgv_content, values=values, html_keys=html_keys, styles=styles)
     logo_reader = _safe_logo_reader(_account_logo_data_url(db=db))
 
     buffer = io.BytesIO()
@@ -3280,8 +3526,7 @@ def _render_quote_pdf_blocks(
     story.append(PageBreak())
     story.append(Paragraph("Conditions generales", styles["h1"]))
     story.append(Paragraph(escape(cgv_label or "Version non precisee"), styles["h3"]))
-    for line in terms_lines:
-        story.append(Paragraph(escape(line), styles["text"]))
+    story.extend(terms_flowables)
 
     def _on_page(canvas_obj: Any, document: SimpleDocTemplate) -> None:
         _draw_quote_pdf_header_footer(
