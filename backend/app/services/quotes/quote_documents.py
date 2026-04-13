@@ -588,6 +588,28 @@ def _small_description_html(value: Any) -> str:
     )
 
 
+def _unique_text_parts(*parts: Any) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        raw = str(part or "").replace("\r\n", "\n").strip()
+        if not raw:
+            continue
+        kept_lines: list[str] = []
+        for line in raw.split("\n"):
+            text = line.strip()
+            if not text:
+                continue
+            normalized = " ".join(text.split()).casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            kept_lines.append(text)
+        if kept_lines:
+            result.extend(kept_lines)
+    return result
+
+
 def _product_long_descriptions_by_id(*, db: Session | None, products: list[QuoteLine]) -> dict[Any, str]:
     if db is None:
         return {}
@@ -1769,7 +1791,12 @@ def _build_template_values(
                     "html": (
                         f"<div>{escape(line.title or '-')}</div>"
                         + _small_description_html(
-                            product_long_descriptions.get(line.product_id) or line.description
+                            "\n".join(
+                                _unique_text_parts(
+                                    line.description,
+                                    product_long_descriptions.get(line.product_id),
+                                )
+                            )
                         )
                     )
                 },
@@ -1792,7 +1819,12 @@ def _build_template_values(
                     "html": (
                         f"<div>{escape(line.title or '-')}</div>"
                         + _small_description_html(
-                            kit_long_descriptions.get(line.kit_id) or line.description
+                            "\n".join(
+                                _unique_text_parts(
+                                    line.description,
+                                    kit_long_descriptions.get(line.kit_id),
+                                )
+                            )
                         )
                         + _kit_composition_html(kit_composition.get(line.kit_id, []))
                     )
@@ -3046,16 +3078,14 @@ def _render_quote_pdf_blocks(
             {
                 "text": line.title or "-",
                 "subtext": "\n".join(
-                    part
-                    for part in [
-                        str(line.description or "").strip(),
+                    _unique_text_parts(
+                        line.description,
                         (
                             str(product_long_descriptions.get(line.product_id) or "").strip()
                             if line.product_id is not None
                             else ""
                         ),
-                    ]
-                    if part
+                    )
                 ),
             },
             _decimal_str(Decimal(line.quantity or 0)),
@@ -3083,9 +3113,8 @@ def _render_quote_pdf_blocks(
             {
                 "text": line.title or "-",
                 "subtext": "\n".join(
-                    part
-                    for part in [
-                        str(line.description or "").strip(),
+                    _unique_text_parts(
+                        line.description,
                         (
                             str(kit_long_descriptions.get(line.kit_id) or "").strip()
                             if line.kit_id is not None
@@ -3096,8 +3125,7 @@ def _render_quote_pdf_blocks(
                             if line.kit_id is not None and kit_composition.get(line.kit_id)
                             else ""
                         ),
-                    ]
-                    if part
+                    )
                 ),
             },
             _decimal_str(Decimal(line.quantity or 0)),
