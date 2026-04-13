@@ -3198,7 +3198,7 @@ def _render_quote_pdf_blocks(
         )
     )
 
-    story.append(PageBreak())
+    story.append(Spacer(1, 8))
     story.append(Paragraph("Les modalites de paiement", styles["h1"]))
     story.append(Paragraph(f"Mode de paiement : {escape(values.get('payment_method_label', '-'))}", styles["text"]))
     story.append(Paragraph(escape(values.get("payment_schedule_summary", "Paiement non planifie")), styles["text"]))
