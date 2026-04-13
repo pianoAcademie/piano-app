@@ -59,6 +59,7 @@ from app.models.quote import (
     TermsTemplate,
     TermsTemplateVersion,
 )
+from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.quote import (
     PaymentPlanOut,
@@ -1288,7 +1289,112 @@ def _time_from_hhmm(value: str, *, field: str) -> time:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"{field} must be HH:MM") from exc
 
 
-def _prospect_out(row: Prospect) -> ProspectOut:
+def _typeform_parent_address_from_normalized_payload(normalized: dict[str, object]) -> str | None:
+    direct = str(normalized.get("parent_address") or "").strip()
+    if direct:
+        return direct
+    line_1 = str(normalized.get("parent_address_line_1") or "").strip()
+    line_2 = str(normalized.get("parent_address_line_2") or "").strip()
+    city = str(normalized.get("parent_city") or "").strip()
+    postal_code = str(normalized.get("parent_postal_code") or "").strip()
+    country = str(normalized.get("parent_country") or "").strip()
+    locality = " ".join(part for part in [postal_code, city] if part).strip()
+    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+    return ", ".join(parts) if parts else None
+
+
+def _typeform_simplified_answer_value(simplified_answers: list[object], *labels: str) -> str | None:
+    expected = {str(label or "").strip().lower() for label in labels if str(label or "").strip()}
+    if not expected:
+        return None
+    for item in simplified_answers:
+        row = _json_object(item)
+        label = str(row.get("label") or row.get("field_label") or row.get("question") or "").strip().lower()
+        if label not in expected:
+            continue
+        value = str(row.get("value") or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _typeform_parent_address_from_intake(intake: TypeformIntake | None) -> str | None:
+    if intake is None:
+        return None
+    parent_address = _typeform_parent_address_from_normalized_payload(_json_object(intake.normalized_payload_json))
+    if parent_address:
+        return parent_address
+    simplified_answers = _json_list(intake.simplified_response_json)
+    line_1 = _typeform_simplified_answer_value(simplified_answers, "Address", "address", "Adresse", "adresse")
+    line_2 = _typeform_simplified_answer_value(
+        simplified_answers,
+        "Address line 2",
+        "address line 2",
+        "Adresse ligne 2",
+        "Complement d'adresse",
+        "Complément d'adresse",
+    )
+    city = _typeform_simplified_answer_value(simplified_answers, "City/Town", "city/town", "Ville", "ville")
+    postal_code = _typeform_simplified_answer_value(
+        simplified_answers,
+        "Zip/Post Code",
+        "zip/post code",
+        "Code postal",
+        "code postal",
+    )
+    country = _typeform_simplified_answer_value(simplified_answers, "Country", "country", "Pays", "pays")
+    locality = " ".join(part for part in [postal_code, city] if part).strip()
+    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+    return ", ".join(parts) if parts else None
+
+
+def _prospect_meta_with_parent_address_fallback(row: Prospect, parent_address: str | None) -> dict[str, object]:
+    meta = _json_object(row.meta)
+    if not parent_address:
+        return meta
+    prospect_type = str(meta.get("prospect_type") or "").strip().lower()
+    if prospect_type == "child":
+        parent_referent = _json_object(meta.get("parent_referent"))
+        if not str(parent_referent.get("address") or "").strip():
+            parent_referent["address"] = parent_address
+            meta["parent_referent"] = parent_referent
+        return meta
+    if not str(meta.get("adult_address") or "").strip():
+        meta["adult_address"] = parent_address
+    return meta
+
+
+def _typeform_parent_addresses_by_intake_id(db: Session, intake_ids: list[UUID]) -> dict[UUID, str]:
+    unique_intake_ids = list(dict.fromkeys(intake_ids))
+    if not unique_intake_ids:
+        return {}
+    rows = db.scalars(select(TypeformIntake).where(TypeformIntake.id.in_(unique_intake_ids))).all()
+    return {
+        intake.id: parent_address
+        for intake in rows
+        if (parent_address := _typeform_parent_address_from_intake(intake))
+    }
+
+
+def _prospect_meta_with_typeform_fallback(db: Session, row: Prospect) -> dict[str, object]:
+    meta = _json_object(row.meta)
+    intake_id = _parse_uuid_value(meta.get("typeform_intake_id"))
+    if intake_id is None:
+        return meta
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).limit(1))
+    return _prospect_meta_with_parent_address_fallback(row, _typeform_parent_address_from_intake(intake))
+
+
+def _prospect_out(
+    row: Prospect,
+    *,
+    db: Session | None = None,
+    enrich_typeform_meta: bool = False,
+    meta_override: dict[str, object] | None = None,
+) -> ProspectOut:
+    meta = meta_override if meta_override is not None else (row.meta or {})
+    if meta_override is None and enrich_typeform_meta and db is not None:
+        meta = _prospect_meta_with_typeform_fallback(db, row)
     return ProspectOut(
         id=row.id,
         linked_client_id=row.linked_client_id,
@@ -1300,10 +1406,31 @@ def _prospect_out(row: Prospect) -> ProspectOut:
         phone=row.phone,
         source=row.source,
         notes=row.notes,
-        meta=row.meta or {},
+        meta=meta,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def _prospect_out_many(rows: list[Prospect], *, db: Session | None = None, enrich_typeform_meta: bool = False) -> list[ProspectOut]:
+    if not rows:
+        return []
+    if not enrich_typeform_meta or db is None:
+        return [_prospect_out(row) for row in rows]
+
+    intake_ids = [
+        intake_id
+        for row in rows
+        if (intake_id := _parse_uuid_value(_json_object(row.meta).get("typeform_intake_id"))) is not None
+    ]
+    parent_address_by_intake_id = _typeform_parent_addresses_by_intake_id(db, intake_ids)
+    out: list[ProspectOut] = []
+    for row in rows:
+        intake_id = _parse_uuid_value(_json_object(row.meta).get("typeform_intake_id"))
+        parent_address = parent_address_by_intake_id.get(intake_id) if intake_id is not None else None
+        meta = _prospect_meta_with_parent_address_fallback(row, parent_address) if parent_address else _json_object(row.meta)
+        out.append(_prospect_out(row, meta_override=meta))
+    return out
 
 
 def _line_out(row: QuoteLine) -> QuoteLineOut:
@@ -2494,7 +2621,7 @@ def list_prospects(
     elif normalized_type == "adult":
         stmt = stmt.where(func.coalesce(Prospect.meta["prospect_type"].astext, "adult") != "child")
     rows = db.scalars(stmt.order_by(Prospect.created_at.desc()).limit(limit)).all()
-    return [_prospect_out(row) for row in rows]
+    return _prospect_out_many(rows, db=db, enrich_typeform_meta=True)
 
 
 @router.post("/prospects", response_model=ProspectOut, status_code=status.HTTP_201_CREATED)
@@ -2537,7 +2664,7 @@ def create_prospect(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _prospect_out(row)
+    return _prospect_out(row, db=db, enrich_typeform_meta=True)
 
 
 @router.get("/prospects/{prospect_id}", response_model=ProspectOut)
@@ -2549,7 +2676,7 @@ def get_prospect(
     row = db.scalar(select(Prospect).where(Prospect.id == prospect_id))
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prospect not found")
-    return _prospect_out(row)
+    return _prospect_out(row, db=db, enrich_typeform_meta=True)
 
 
 @router.patch("/prospects/{prospect_id}", response_model=ProspectOut)
@@ -2605,7 +2732,7 @@ def update_prospect(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _prospect_out(row)
+    return _prospect_out(row, db=db, enrich_typeform_meta=True)
 
 
 @router.post("/prospects/from-client/{client_id}", response_model=ProspectOut)
