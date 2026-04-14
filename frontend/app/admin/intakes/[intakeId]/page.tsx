@@ -262,10 +262,13 @@ function slotBadgeLabel(option: TypeformSessionMatchOptionOut): string {
 }
 
 function slotOptionTitle(option: TypeformSessionMatchOptionOut): string {
-  if (option.title && option.title !== option.activity_name) {
+  if (option.activity_name) {
+    return option.activity_name;
+  }
+  if (option.title) {
     return option.title;
   }
-  return option.activity_name;
+  return "";
 }
 
 function resolutionObject(detail: TypeformIntakeDetailOut): {
