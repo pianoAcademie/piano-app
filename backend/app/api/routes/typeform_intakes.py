@@ -2316,7 +2316,10 @@ def _analysis_for_intake(
         intake.normalized_payload_json = normalized
         intake.simplified_response_json = simplified_answers
     elif raw_payload:
-        _, refreshed_simplified_answers = _normalize_payload(payload=raw_payload, config=config)
+        refreshed_normalized, refreshed_simplified_answers = _normalize_payload(payload=raw_payload, config=config)
+        if refreshed_normalized != normalized:
+            normalized = refreshed_normalized
+            intake.normalized_payload_json = refreshed_normalized
         if refreshed_simplified_answers != _json_list(intake.simplified_response_json):
             intake.simplified_response_json = refreshed_simplified_answers
 
