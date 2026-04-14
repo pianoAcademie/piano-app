@@ -177,6 +177,39 @@ def _json_list(value: object | None) -> list[object]:
     return []
 
 
+def _coerce_typeform_answers(value: object | None) -> list[TypeformAnswerOut]:
+    answers: list[TypeformAnswerOut] = []
+    for index, item in enumerate(_json_list(value), start=1):
+        row = _json_object(item)
+        key = (
+            _text(row.get("key"))
+            or _text(row.get("field_ref"))
+            or _text(row.get("field_id"))
+            or f"answer_{index}"
+        )
+        label = (
+            _text(row.get("label"))
+            or _text(row.get("field_label"))
+            or _text(row.get("question"))
+            or key
+        )
+        raw_value = row.get("value")
+        if isinstance(raw_value, list):
+            rendered_value = ", ".join(_text(child) for child in raw_value if _text(child))
+        elif isinstance(raw_value, bool):
+            rendered_value = "Oui" if raw_value else "Non"
+        else:
+            rendered_value = _text(raw_value)
+        answers.append(
+            TypeformAnswerOut(
+                key=key,
+                label=label,
+                value=rendered_value,
+            )
+        )
+    return answers
+
+
 def _template_condition_tokens(value: object | None) -> list[str]:
     if value is None:
         return []
@@ -2385,7 +2418,7 @@ def _analysis_for_intake(
     return {
         "config": config,
         "normalized": normalized,
-        "answers": [TypeformAnswerOut(**item) for item in _json_list(intake.simplified_response_json)],
+        "answers": _coerce_typeform_answers(intake.simplified_response_json),
         "client_candidates": client_candidates,
         "family_candidates": family_candidates,
         "effective_resolution": effective_resolution,
