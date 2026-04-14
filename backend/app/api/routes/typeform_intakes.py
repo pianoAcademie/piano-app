@@ -659,6 +659,44 @@ def _mapped_token_list(answer_map: dict[str, object], field_mapping: dict[str, o
     return out
 
 
+def _sanitize_requested_products(
+    requested_products: list[str],
+    *,
+    requested_location: str | None,
+    requested_payment_method: str | None,
+    address_line_1: str | None,
+    address_line_2: str | None,
+    city: str | None,
+    postal_code: str | None,
+    country: str | None,
+    address: str | None,
+) -> list[str]:
+    excluded_tokens = {
+        _normalize_token(value)
+        for value in [
+            requested_location,
+            requested_payment_method,
+            address_line_1,
+            address_line_2,
+            city,
+            postal_code,
+            country,
+            address,
+        ]
+        if _text(value)
+    }
+    cleaned: list[str] = []
+    seen_tokens: set[str] = set()
+    for item in requested_products:
+        text = _text(item)
+        token = _normalize_token(text)
+        if not text or not token or token in excluded_tokens or token in seen_tokens:
+            continue
+        seen_tokens.add(token)
+        cleaned.append(text)
+    return cleaned
+
+
 def _extract_typeform_form_id(payload: dict[str, object]) -> str:
     form_response = _json_object(payload.get("form_response"))
     return _text(form_response.get("form_id")) or _text(payload.get("form_id"))
@@ -799,6 +837,76 @@ def _normalize_payload(
                         "segment": config_segment or None,
                     }
                 )
+
+    address_line_1 = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_address_line_1",
+        fallbacks=["Address", "address", "Adresse", "adresse"],
+    )
+    address_line_2 = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_address_line_2",
+        fallbacks=[
+            "Address line 2",
+            "address line 2",
+            "Adresse ligne 2",
+            "Complement d'adresse",
+            "Complément d'adresse",
+        ],
+    )
+    city = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_city",
+        fallbacks=["City/Town", "city/town", "Ville", "ville"],
+    )
+    postal_code = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_postal_code",
+        fallbacks=["Zip/Post Code", "zip/post code", "Code postal", "code postal"],
+    )
+    country = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "parent_country",
+        fallbacks=["Country", "country", "Pays", "pays"],
+    )
+    requested_payment_method = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "requested_payment_method",
+        fallbacks=[
+            "Mode de règlement souhaité pour l'année à venir",
+            "Mode de reglement souhaite pour l'annee a venir",
+            "Mode de règlement souhaité",
+            "Mode de reglement souhaite",
+        ],
+    )
+    address_parts = [
+        part
+        for part in [
+            address_line_1,
+            address_line_2,
+            " ".join(part for part in [postal_code, city] if part).strip() or None,
+            country,
+        ]
+        if part
+    ]
+    address = ", ".join(address_parts) if address_parts else None
+    requested_products = _sanitize_requested_products(
+        requested_products,
+        requested_location=requested_location,
+        requested_payment_method=requested_payment_method,
+        address_line_1=address_line_1,
+        address_line_2=address_line_2,
+        city=city,
+        postal_code=postal_code,
+        country=country,
+        address=address,
+    )
 
     normalized = {
         "parent_first_name": parent_first_name,
@@ -1493,6 +1601,90 @@ def _requested_summary(normalized: dict[str, object]) -> str | None:
     return " · ".join(parts) if parts else None
 
 
+def _grouped_occurrence_label(option: TypeformSessionMatchOptionOut) -> str:
+    return f"Chaque {option.weekday_label.lower()} · {option.start_time_label}-{option.end_time_label}"
+
+
+def _collapse_session_option_groups(
+    option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]],
+    *,
+    selected_session_id: UUID | None,
+) -> list[TypeformSessionMatchOptionOut]:
+    grouped_rows: dict[str, list[tuple[CourseSession, TypeformSessionMatchOptionOut]]] = {}
+    for session_obj, option in option_rows:
+        group_key = str(session_obj.recurrence_group_id or session_obj.id)
+        grouped_rows.setdefault(group_key, []).append((session_obj, option))
+
+    collapsed: list[TypeformSessionMatchOptionOut] = []
+    for rows in grouped_rows.values():
+        rows.sort(
+            key=lambda row: (
+                row[1].is_full,
+                -row[1].score,
+                row[0].start_at_utc.timestamp(),
+            )
+        )
+        selected_row = next(
+            (
+                row
+                for row in rows
+                if selected_session_id is not None and row[1].session_id == selected_session_id
+            ),
+            None,
+        )
+        chosen_session, chosen_option = selected_row or rows[0]
+        if len(rows) == 1 or chosen_session.recurrence_group_id is None:
+            collapsed.append(chosen_option)
+            continue
+
+        aggregate_is_full = all(option.is_full for _, option in rows)
+        aggregate_seats = max((option.seats_remaining for _, option in rows), default=chosen_option.seats_remaining)
+        aggregate_score = max((option.score for _, option in rows), default=chosen_option.score)
+        occurrence_label = _grouped_occurrence_label(chosen_option)
+        selection_label = " · ".join(
+            part
+            for part in [
+                occurrence_label,
+                chosen_option.activity_name if chosen_option.activity_name else None,
+                chosen_option.location_name,
+                chosen_option.recurrence_label or "Seance ponctuelle",
+                f"places {aggregate_seats}",
+            ]
+            if part
+        )
+        collapsed.append(
+            TypeformSessionMatchOptionOut(
+                session_id=chosen_option.session_id,
+                activity_id=chosen_option.activity_id,
+                activity_name=chosen_option.activity_name,
+                location_id=chosen_option.location_id,
+                location_name=chosen_option.location_name,
+                title=chosen_option.title,
+                start_at=chosen_option.start_at,
+                start_time_label=chosen_option.start_time_label,
+                end_time_label=chosen_option.end_time_label,
+                weekday_label=chosen_option.weekday_label,
+                occurrence_label=occurrence_label,
+                selection_label=selection_label,
+                recurrence_group_id=chosen_option.recurrence_group_id,
+                recurrence_label=chosen_option.recurrence_label,
+                seats_remaining=aggregate_seats,
+                is_full=aggregate_is_full,
+                score=aggregate_score,
+                reasons=list(dict.fromkeys(chosen_option.reasons)),
+            )
+        )
+
+    collapsed.sort(
+        key=lambda item: (
+            item.is_full,
+            -item.score,
+            item.start_at.timestamp(),
+        )
+    )
+    return collapsed
+
+
 def _typeform_session_option_from_row(
     *,
     session_obj: CourseSession,
@@ -1856,7 +2048,7 @@ def _build_session_recommendations(
             runtime_context=runtime_context,
         )
         activity_rows = by_activity.get(line.activity_id, [])
-        options: list[TypeformSessionMatchOptionOut] = []
+        option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
         for session_obj, activity, location, booked_count in activity_rows:
             option = _typeform_session_option_from_row(
                 session_obj=session_obj,
@@ -1871,11 +2063,14 @@ def _build_session_recommendations(
                 requested_times=requested_times,
             )
             if option is not None:
-                options.append(option)
+                option_rows.append((session_obj, option))
 
-        options.sort(key=lambda item: (item.score, item.seats_remaining, -item.start_at.timestamp()), reverse=True)
-        available_options = [item for item in options if not item.is_full]
         selected_session_id = _parse_uuid(selected_session_ids.get(str(line.activity_id)))
+        options = _collapse_session_option_groups(
+            option_rows,
+            selected_session_id=selected_session_id,
+        )
+        available_options = [item for item in options if not item.is_full]
         option_session_ids = {item.session_id for item in options}
         manual_options: list[TypeformSessionMatchOptionOut] = []
         if not options or (selected_session_id is not None and selected_session_id not in option_session_ids):
