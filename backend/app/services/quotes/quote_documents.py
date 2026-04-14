@@ -307,43 +307,52 @@ def _brand_logo_html(*, db: Session | None, variant: str = "header") -> str:
 
 MONTH_LABELS_FR = (
     "Janvier",
-    "Fevrier",
+    "Février",
     "Mars",
     "Avril",
     "Mai",
     "Juin",
     "Juillet",
-    "Aout",
+    "Août",
     "Septembre",
     "Octobre",
     "Novembre",
-    "Decembre",
+    "Décembre",
 )
 
 
-def _session_month_day(value: object) -> tuple[int, int] | None:
+def _session_date_parts(value: object) -> tuple[int, int, int] | None:
     raw = str(value or "").strip()
-    parsed = re.match(r"^\d{4}-(\d{2})-(\d{2})$", raw)
+    parsed = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", raw)
     if parsed is None:
         return None
-    month = int(parsed.group(1))
-    day = int(parsed.group(2))
-    if month < 1 or month > 12 or day < 1 or day > 31:
+    year = int(parsed.group(1))
+    month = int(parsed.group(2))
+    day = int(parsed.group(3))
+    if year < 1900 or year > 3000 or month < 1 or month > 12 or day < 1 or day > 31:
         return None
+    return year, month, day
+
+
+def _session_month_day(value: object) -> tuple[int, int] | None:
+    parsed = _session_date_parts(value)
+    if parsed is None:
+        return None
+    _, month, day = parsed
     return month, day
 
 
-def _calendar_semester_rows(month_map: dict[int, set[int]], *, semester: int) -> list[tuple[str, str]]:
+def _calendar_semester_rows(month_map: dict[tuple[int, int], set[int]], *, semester: int) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
-    for month in sorted(month_map.keys()):
+    for year, month in sorted(month_map.keys()):
         if semester == 1 and not (month >= 9 or month <= 1):
             continue
         if semester == 2 and not (2 <= month <= 8):
             continue
-        days = sorted(month_map.get(month) or set())
+        days = sorted(month_map.get((year, month)) or set())
         if not days:
             continue
-        rows.append((MONTH_LABELS_FR[month - 1], ", ".join(str(day) for day in days)))
+        rows.append((f"{MONTH_LABELS_FR[month - 1]} {year}", ", ".join(str(day) for day in days)))
     return rows
 
 
@@ -363,20 +372,20 @@ def _calendar_summary_text(*, session_count: int, activity_count: int) -> str:
 
 
 def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
-    grouped: dict[str, dict[int, set[int]]] = {}
+    grouped: dict[str, dict[tuple[int, int], set[int]]] = {}
     for session in sessions:
-        parsed = _session_month_day(session.get("date"))
+        parsed = _session_date_parts(session.get("date"))
         if parsed is None:
             continue
-        month, day = parsed
+        year, month, day = parsed
         activity_label = str(session.get("activity_label") or "").strip() or "Cours"
         location_label = str(session.get("location_label") or "").strip()
         title = f"{activity_label} · {location_label}" if location_label else activity_label
         if title not in grouped:
             grouped[title] = {}
-        if month not in grouped[title]:
-            grouped[title][month] = set()
-        grouped[title][month].add(day)
+        if (year, month) not in grouped[title]:
+            grouped[title][(year, month)] = set()
+        grouped[title][(year, month)].add(day)
 
     if not grouped:
         return "<p>Aucune séance planifiée.</p>", 0
@@ -3575,16 +3584,16 @@ def _render_quote_pdf_blocks(
     story.append(PageBreak())
     story.append(Paragraph("Calendrier prévisionnel des cours", styles["h1"]))
     story.append(Paragraph(f"Vue d’ensemble du calendrier : {escape(values.get('calendar_summary', '-'))}", styles["text"]))
-    grouped: dict[str, dict[int, set[int]]] = {}
+    grouped: dict[str, dict[tuple[int, int], set[int]]] = {}
     for session in sessions:
-        parsed = _session_month_day(session.get("date"))
+        parsed = _session_date_parts(session.get("date"))
         if parsed is None:
             continue
-        month, day = parsed
+        year, month, day = parsed
         activity_label = str(session.get("activity_label") or "").strip() or "Cours"
         location_label = str(session.get("location_label") or "").strip()
         title = f"{activity_label} · {location_label}" if location_label else activity_label
-        grouped.setdefault(title, {}).setdefault(month, set()).add(day)
+        grouped.setdefault(title, {}).setdefault((year, month), set()).add(day)
     for idx, title in enumerate(sorted(grouped.keys()), start=1):
         heading = _calendar_group_heading(title, idx)
         month_map = grouped[title]
