@@ -21,7 +21,7 @@ from app.api.routes.quotes import (
     _split_ttc,
     create_quote_from_payload,
 )
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionAudienceScope, SessionStatus
 from app.models.family import ClientFamilyLink
 from app.models.ops import LegalEntity
 from app.models.quote import (
@@ -56,6 +56,7 @@ from app.schemas.typeform_intake import (
 )
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.professor_activation import generate_temporary_password
+from app.services.session_audience import resolve_session_visibility_scopes
 from app.services.security import hash_password
 
 router = APIRouter(prefix="/typeform")
@@ -1662,6 +1663,10 @@ def _safe_zoneinfo(value: str | None) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
+def _session_is_typeform_candidate(session_obj: CourseSession) -> bool:
+    return resolve_session_visibility_scopes(session_obj) != [SessionAudienceScope.PRIVATE]
+
+
 def _requested_summary(normalized: dict[str, object]) -> str | None:
     slot_labels = []
     for item in _json_list(normalized.get("requested_slot_preferences")):
@@ -2087,7 +2092,6 @@ def _build_session_recommendations(
         .where(
             CourseSession.course_type_id.in_(activity_ids),
             CourseSession.status == SessionStatus.SCHEDULED,
-            CourseSession.is_private.is_(False),
             CourseSession.start_at_utc >= _utcnow() - timedelta(hours=1),
         )
     )
@@ -2099,6 +2103,11 @@ def _build_session_recommendations(
     rows = db.execute(
         rows_stmt.order_by(CourseSession.start_at_utc.asc())
     ).all()
+    rows = [
+        (session_obj, activity, location, booked_count)
+        for session_obj, activity, location, booked_count in rows
+        if _session_is_typeform_candidate(session_obj)
+    ]
 
     manual_rows_stmt = (
         select(CourseSession, CourseType, Location, func.coalesce(booked_counts.c.booked_count, 0))
@@ -2107,7 +2116,6 @@ def _build_session_recommendations(
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
         .where(
             CourseSession.status == SessionStatus.SCHEDULED,
-            CourseSession.is_private.is_(False),
             CourseSession.start_at_utc >= _utcnow() - timedelta(hours=1),
         )
     )
@@ -2152,6 +2160,11 @@ def _build_session_recommendations(
     manual_rows = db.execute(
         manual_rows_stmt.order_by(CourseSession.start_at_utc.asc()).limit(250)
     ).all()
+    manual_rows = [
+        (session_obj, activity, location, booked_count)
+        for session_obj, activity, location, booked_count in manual_rows
+        if _session_is_typeform_candidate(session_obj)
+    ]
     selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
 
     recommendations: list[TypeformSessionRecommendationOut] = []
