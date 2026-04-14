@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 import logging
 import re
@@ -1687,6 +1687,18 @@ def _requested_summary(normalized: dict[str, object]) -> str | None:
     return " · ".join(parts) if parts else None
 
 
+def _school_year_bounds_from_label(label: object | None) -> tuple[date, date] | None:
+    normalized = _text(label)
+    match = re.fullmatch(r"(\d{4})\s*[-/]\s*(\d{4})", normalized)
+    if match is None:
+        return None
+    start_year = int(match.group(1))
+    end_year = int(match.group(2))
+    if end_year < start_year:
+        return None
+    return date(start_year, 9, 1), date(end_year, 8, 31)
+
+
 def _grouped_occurrence_label(option: TypeformSessionMatchOptionOut) -> str:
     return f"Chaque {option.weekday_label.lower()} · {option.start_time_label}-{option.end_time_label}"
 
@@ -2049,6 +2061,14 @@ def _build_session_recommendations(
     if not activity_ids:
         return [], [], []
 
+    school_year_bounds = _school_year_bounds_from_label(config.school_year_label if config is not None else None)
+    school_year_start_utc: datetime | None = None
+    school_year_end_utc: datetime | None = None
+    if school_year_bounds is not None:
+        school_year_start, school_year_end = school_year_bounds
+        school_year_start_utc = datetime.combine(school_year_start, time.min, tzinfo=timezone.utc)
+        school_year_end_utc = datetime.combine(school_year_end + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
     booked_counts = (
         select(
             Booking.session_id.label("session_id"),
@@ -2059,7 +2079,7 @@ def _build_session_recommendations(
         .subquery()
     )
 
-    rows = db.execute(
+    rows_stmt = (
         select(CourseSession, CourseType, Location, func.coalesce(booked_counts.c.booked_count, 0))
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
@@ -2070,7 +2090,14 @@ def _build_session_recommendations(
             CourseSession.is_private.is_(False),
             CourseSession.start_at_utc >= _utcnow() - timedelta(hours=1),
         )
-        .order_by(CourseSession.start_at_utc.asc())
+    )
+    if school_year_start_utc is not None and school_year_end_utc is not None:
+        rows_stmt = rows_stmt.where(
+            CourseSession.start_at_utc >= school_year_start_utc,
+            CourseSession.start_at_utc < school_year_end_utc,
+        )
+    rows = db.execute(
+        rows_stmt.order_by(CourseSession.start_at_utc.asc())
     ).all()
 
     manual_rows_stmt = (
@@ -2084,6 +2111,11 @@ def _build_session_recommendations(
             CourseSession.start_at_utc >= _utcnow() - timedelta(hours=1),
         )
     )
+    if school_year_start_utc is not None and school_year_end_utc is not None:
+        manual_rows_stmt = manual_rows_stmt.where(
+            CourseSession.start_at_utc >= school_year_start_utc,
+            CourseSession.start_at_utc < school_year_end_utc,
+        )
 
     by_activity: dict[UUID, list[tuple[CourseSession, CourseType, Location, int]]] = {}
     for session_obj, activity, location, booked_count in rows:
