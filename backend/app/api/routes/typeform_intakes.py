@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import logging
 import re
 from typing import Any
 from uuid import UUID
@@ -58,6 +59,7 @@ from app.services.professor_activation import generate_temporary_password
 from app.services.security import hash_password
 
 router = APIRouter(prefix="/typeform")
+logger = logging.getLogger(__name__)
 
 INTAKE_STATUS_NEW = "NEW"
 INTAKE_STATUS_NORMALIZED = "NORMALIZED"
@@ -341,6 +343,32 @@ def _form_label(config: TypeformFormConfig | None) -> str:
 def _display_name(first_name: object | None, last_name: object | None, fallback: str = "-") -> str:
     label = " ".join(part for part in [_text(first_name), _text(last_name)] if part).strip()
     return label or fallback
+
+
+def _empty_runtime_context(
+    *,
+    config: TypeformFormConfig | None,
+    requested_location: str | None,
+) -> dict[str, object]:
+    default_quote_type = None
+    if config is not None:
+        default_quote_type = _text(config.default_quote_type) or None
+    return {
+        "requested_location": requested_location,
+        "location_id": config.default_location_id if config is not None else None,
+        "location_code": config.location_code if config is not None else None,
+        "location_name": None,
+        "quote_type_id": config.default_quote_type_id if config is not None else None,
+        "quote_type": default_quote_type,
+        "pricing_catalog_id": config.default_pricing_catalog_id if config is not None else None,
+        "pricing_catalog_name": None,
+        "payment_plan_id": config.default_payment_plan_id if config is not None else None,
+        "payment_plan_name": None,
+        "legal_entity_id": config.default_legal_entity_id if config is not None else None,
+        "legal_entity_name": None,
+        "warnings": [],
+        "blockages": [],
+    }
 
 
 def _confidence_label(score: int) -> str:
@@ -663,6 +691,31 @@ def _mapped_scalar(answer_map: dict[str, object], field_mapping: dict[str, objec
             if text:
                 return text
     return None
+
+
+def _scalar_from_answer_map(answer_map: dict[str, object], candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        value = answer_map.get(candidate)
+        if isinstance(value, list):
+            for item in value:
+                text = _text(item)
+                if text:
+                    return text
+        else:
+            text = _text(value)
+            if text:
+                return text
+    return None
+
+
+def _mapped_scalar_with_fallbacks(
+    answer_map: dict[str, object],
+    field_mapping: dict[str, object],
+    field_name: str,
+    *,
+    fallbacks: list[str] | None = None,
+) -> str | None:
+    return _mapped_scalar(answer_map, field_mapping, field_name) or _scalar_from_answer_map(answer_map, fallbacks or [])
 
 
 def _mapped_list(answer_map: dict[str, object], field_mapping: dict[str, object], field_name: str) -> list[object]:
@@ -2432,8 +2485,71 @@ def _analysis_for_intake(
     }
 
 
+def _safe_analysis_for_intake(
+    db: Session,
+    intake: TypeformIntake,
+) -> dict[str, object]:
+    try:
+        return _analysis_for_intake(db, intake)
+    except Exception:
+        logger.exception(
+            "Typeform intake analysis failed for intake_id=%s response_id=%s",
+            intake.id,
+            intake.source_response_id,
+        )
+        config = db.scalar(select(TypeformFormConfig).where(TypeformFormConfig.id == intake.form_config_id)) if intake.form_config_id else None
+        normalized = _json_object(intake.normalized_payload_json)
+        requested_location = _text(normalized.get("requested_location")) or None
+        try:
+            runtime_context = _resolve_form_runtime_context(db, config=config, normalized=normalized)
+        except Exception:
+            logger.exception(
+                "Unable to resolve runtime context for failed intake_id=%s",
+                intake.id,
+            )
+            runtime_context = _empty_runtime_context(
+                config=config,
+                requested_location=requested_location,
+            )
+
+        effective_resolution = _default_resolution(
+            normalized=normalized,
+            stored_resolution=_json_object(intake.resolution_json),
+            client_candidates=[],
+            family_candidates=[],
+        )
+        warnings = [
+            _text(_json_object(item).get("message"))
+            for item in _json_list(intake.warnings_json)
+            if _text(_json_object(item).get("message"))
+        ]
+        blockages = [
+            "Cette intake contient des donnees legacy ou incoherentes qui ont empeche l analyse automatique."
+        ]
+        blockages.extend(
+            _text(_json_object(item).get("message"))
+            for item in _json_list(intake.blocking_reasons_json)
+            if _text(_json_object(item).get("message"))
+        )
+        return {
+            "config": config,
+            "normalized": normalized,
+            "answers": _coerce_typeform_answers(intake.simplified_response_json),
+            "client_candidates": [],
+            "family_candidates": [],
+            "effective_resolution": effective_resolution,
+            "preview_quote": None,
+            "preview_quote_lines_in": [],
+            "session_recommendations": [],
+            "runtime_context": runtime_context,
+            "warnings": list(dict.fromkeys(warnings)),
+            "blockages": list(dict.fromkeys(blockages)),
+            "intake_status": INTAKE_STATUS_BLOCKED,
+        }
+
+
 def _refresh_intake_analysis(db: Session, intake: TypeformIntake) -> dict[str, object]:
-    analysis = _analysis_for_intake(db, intake)
+    analysis = _safe_analysis_for_intake(db, intake)
     intake.intake_status = str(analysis["intake_status"])
     runtime_context = _json_object(analysis.get("runtime_context"))
     intake.detected_location = (
@@ -2453,6 +2569,7 @@ def _refresh_intake_analysis(db: Session, intake: TypeformIntake) -> dict[str, o
 
 def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> TypeformIntakeListOut:
     normalized = _json_object(analysis["normalized"])
+    runtime_context = _json_object(analysis.get("runtime_context"))
     if _lower(normalized.get("customer_type")) == "child":
         prospect_label = _display_name(normalized.get("parent_first_name"), normalized.get("parent_last_name"), _text(normalized.get("parent_email")) or "-")
         child_label = _display_name(normalized.get("child_first_name"), normalized.get("child_last_name"), "-")
@@ -2466,19 +2583,32 @@ def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> Typ
         source_form_label=_form_label(analysis["config"]),
         source_response_id=intake.source_response_id,
         received_at=intake.received_at,
-        intake_status=intake.intake_status,
-        detected_location=intake.detected_location,
-        detected_segment=intake.detected_segment,
-        detected_school_year=intake.detected_school_year,
+        intake_status=_text(analysis.get("intake_status")) or intake.intake_status,
+        detected_location=(
+            _text(runtime_context.get("location_name"))
+            or _text(runtime_context.get("location_code"))
+            or intake.detected_location
+        ),
+        detected_segment=(
+            analysis["config"].audience_segment
+            if analysis["config"] is not None
+            else intake.detected_segment
+        ),
+        detected_school_year=(
+            analysis["config"].school_year_label
+            if analysis["config"] is not None
+            else intake.detected_school_year
+        ),
         prospect_label=prospect_label,
         child_label=child_label,
-        warnings=[_text(_json_object(item).get("message")) for item in _json_list(intake.warnings_json) if _text(_json_object(item).get("message"))],
-        blockages=[_text(_json_object(item).get("message")) for item in _json_list(intake.blocking_reasons_json) if _text(_json_object(item).get("message"))],
+        warnings=[_text(item) for item in _json_list(analysis.get("warnings")) if _text(item)],
+        blockages=[_text(item) for item in _json_list(analysis.get("blockages")) if _text(item)],
         related_quote_id=intake.related_quote_id,
     )
 
 
 def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> TypeformIntakeDetailOut:
+    runtime_context = _json_object(analysis.get("runtime_context"))
     candidates = [
         TypeformMatchCandidateOut(
             kind=item["kind"],
@@ -2502,15 +2632,27 @@ def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> T
         source_form_label=_form_label(analysis["config"]),
         source_response_id=intake.source_response_id,
         received_at=intake.received_at,
-        intake_status=intake.intake_status,
-        detected_location=intake.detected_location,
-        detected_segment=intake.detected_segment,
-        detected_school_year=intake.detected_school_year,
+        intake_status=_text(analysis.get("intake_status")) or intake.intake_status,
+        detected_location=(
+            _text(runtime_context.get("location_name"))
+            or _text(runtime_context.get("location_code"))
+            or intake.detected_location
+        ),
+        detected_segment=(
+            analysis["config"].audience_segment
+            if analysis["config"] is not None
+            else intake.detected_segment
+        ),
+        detected_school_year=(
+            analysis["config"].school_year_label
+            if analysis["config"] is not None
+            else intake.detected_school_year
+        ),
         raw_payload_json=_json_object(intake.raw_payload_json),
         normalized_payload_json=_json_object(analysis["normalized"]),
         answers=analysis["answers"],
-        warnings=[_text(_json_object(item).get("message")) for item in _json_list(intake.warnings_json) if _text(_json_object(item).get("message"))],
-        blockages=[_text(_json_object(item).get("message")) for item in _json_list(intake.blocking_reasons_json) if _text(_json_object(item).get("message"))],
+        warnings=[_text(item) for item in _json_list(analysis.get("warnings")) if _text(item)],
+        blockages=[_text(item) for item in _json_list(analysis.get("blockages")) if _text(item)],
         resolution=analysis["effective_resolution"],
         client_candidates=candidates,
         session_recommendations=analysis["session_recommendations"],
