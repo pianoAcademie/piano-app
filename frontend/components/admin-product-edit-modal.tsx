@@ -95,7 +95,7 @@ export default function AdminProductEditModal({
     setUploadState({ status: "uploading", message: "Import en cours..." });
 
     try {
-      const response = await fetch(`/api/admin/products/${product.id}/image`, {
+      const response = await fetch(`/admin/products/${product.id}/image`, {
         method: "POST",
         body: formData,
       });
