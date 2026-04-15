@@ -1845,6 +1845,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
           locations={activeLocations}
           closeHref={closeModalLink}
           returnTo={addFormReturnTo}
+          errorMessage={errorMessage}
           createAction={createAdminCatalogProductAction}
         />
       ) : null}

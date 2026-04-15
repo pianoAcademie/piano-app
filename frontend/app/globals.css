@@ -7928,6 +7928,14 @@ button.danger:focus-visible {
   border: 1px solid #e6e8ee;
 }
 
+.product-create-modal {
+  width: min(980px, 96vw);
+}
+
+.product-create-modal-card {
+  padding: 0;
+}
+
 .product-edit-modal-form {
   display: flex;
   flex-direction: column;
