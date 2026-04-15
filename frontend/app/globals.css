@@ -7662,6 +7662,45 @@ button.danger:focus-visible {
   gap: 8px;
 }
 
+.catalog-product-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.catalog-product-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.catalog-product-copy p {
+  margin: 0;
+}
+
+.catalog-product-thumb {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 10px;
+  border: 1px solid #e6e8ee;
+  object-fit: cover;
+  background: #f8fafc;
+}
+
+.catalog-product-thumb-mobile {
+  width: 56px;
+  height: 56px;
+  flex-basis: 56px;
+}
+
+.catalog-product-thumb-fallback {
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: #7a879a;
+}
+
 .catalog-mobile-title {
   margin: 0;
   font-weight: 700;

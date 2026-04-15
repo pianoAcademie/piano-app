@@ -131,6 +131,19 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
   }
 }
 
+function ProductThumbnail({ product, size = "desktop" }: { product: AdminCatalogProductOut; size?: "desktop" | "mobile" }): JSX.Element {
+  const className = size === "mobile" ? "catalog-product-thumb catalog-product-thumb-mobile" : "catalog-product-thumb";
+  const initial = (product.title || "?").trim().charAt(0).toUpperCase() || "?";
+  if (product.image_url) {
+    return <img src={product.image_url} alt="" className={className} loading="lazy" />;
+  }
+  return (
+    <span className={`${className} catalog-product-thumb-fallback`} aria-hidden="true">
+      {initial}
+    </span>
+  );
+}
+
 function yesNoLabel(value: boolean): string {
   return value ? "Oui" : "Non";
 }
@@ -849,11 +862,16 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                       return (
                         <tr key={product.id} className={selectedProduct?.id === product.id ? "catalog-selected-row" : ""}>
                           <td>
-                            <Link href={selectLink} className="mode-link">
-                              {product.title}
-                            </Link>
-                            {product.is_virtual ? <p className="muted">Produit virtuel</p> : null}
-                            {product.barcode ? <p className="muted">Code: {product.barcode}</p> : null}
+                            <div className="catalog-product-cell">
+                              <ProductThumbnail product={product} />
+                              <div className="catalog-product-copy">
+                                <Link href={selectLink} className="mode-link">
+                                  {product.title}
+                                </Link>
+                                {product.is_virtual ? <p className="muted">Produit virtuel</p> : null}
+                                {product.barcode ? <p className="muted">Code: {product.barcode}</p> : null}
+                              </div>
+                            </div>
                           </td>
                           <td>{product.category_name || "-"}</td>
                           <td>{product.primary_location_name || "-"}</td>
@@ -883,13 +901,18 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 const editLink = `/admin/products${buildProductsQuery({ ...productsBaseQuery, add: "", editProduct: product.id, product: selectedProductId || product.id })}`;
                 return (
                   <article key={`product-mobile-${product.id}`} className="catalog-mobile-card">
-                    <p className="catalog-mobile-title">{product.title}</p>
-                    <p className="muted">
-                      {product.category_name || "Sans categorie"} · {formatMoney(product.price_incl_vat, "EUR")}
-                    </p>
-                    <p className="muted">
-                      {product.is_virtual ? "Virtuel" : `Stock ${product.stock_global_quantity} / reserve ${product.reserve_stock}`}
-                    </p>
+                    <div className="catalog-product-cell">
+                      <ProductThumbnail product={product} size="mobile" />
+                      <div className="catalog-product-copy">
+                        <p className="catalog-mobile-title">{product.title}</p>
+                        <p className="muted">
+                          {product.category_name || "Sans categorie"} · {formatMoney(product.price_incl_vat, "EUR")}
+                        </p>
+                        <p className="muted">
+                          {product.is_virtual ? "Virtuel" : `Stock ${product.stock_global_quantity} / reserve ${product.reserve_stock}`}
+                        </p>
+                      </div>
+                    </div>
                     <div className="row wrap gap-xs top-gap-sm">
                       <Link className="ghost" href={selectLink}>
                         Voir stock
