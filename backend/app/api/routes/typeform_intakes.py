@@ -784,6 +784,44 @@ def _sanitize_requested_products(
     return cleaned
 
 
+def _requested_payment_method_code(value: object | None) -> str | None:
+    token = _normalize_token(value)
+    if not token:
+        return None
+    if "virement" in token or "bank transfer" in token:
+        return "BANK_TRANSFER"
+    if "carte" in token or token in {"cb", "visa", "mastercard"}:
+        return "CARD"
+    if "cheque" in token:
+        return "CHECK"
+    if "espece" in token:
+        return "CASH"
+    return None
+
+
+def _payment_method_label_from_code(method_code: str | None) -> str | None:
+    normalized = _text(method_code).strip().upper()
+    if not normalized:
+        return None
+    if normalized == "BANK_TRANSFER":
+        return "Virement bancaire"
+    if normalized == "CARD":
+        return "Carte bancaire"
+    if normalized == "CHECK":
+        return "Chèque"
+    if normalized == "CASH":
+        return "Espèces"
+    return normalized
+
+
+def _fallback_requested_payment_method(*, requested_products: list[str]) -> str | None:
+    for item in requested_products:
+        method_code = _requested_payment_method_code(item)
+        if method_code is not None:
+            return _payment_method_label_from_code(method_code)
+    return None
+
+
 def _extract_typeform_form_id(payload: dict[str, object]) -> str:
     form_response = _json_object(payload.get("form_response"))
     return _text(form_response.get("form_id")) or _text(payload.get("form_id"))
@@ -972,6 +1010,9 @@ def _normalize_payload(
             "Mode de reglement souhaite",
         ],
     )
+    requested_payment_method = requested_payment_method or _fallback_requested_payment_method(
+        requested_products=requested_products,
+    )
     address_parts = [
         part
         for part in [
@@ -1010,6 +1051,7 @@ def _normalize_payload(
         "requested_times": requested_times,
         "requested_slot_preferences": requested_slot_preferences,
         "requested_formula_type": requested_formula_type,
+        "requested_payment_method": requested_payment_method,
         "requested_products": requested_products,
         "notes": notes,
     }
@@ -1494,6 +1536,29 @@ def _resolve_form_runtime_context(
 
     runtime_context["quote_type"] = quote_type.name if quote_type is not None else runtime_context.get("quote_type")
     runtime_context["pricing_catalog_name"] = pricing_catalog.name if pricing_catalog is not None else None
+
+    requested_payment_method = _text(normalized.get("requested_payment_method")) or None
+    requested_payment_method_code = _requested_payment_method_code(requested_payment_method)
+    if requested_payment_method_code:
+        candidate_plans = db.scalars(
+            select(PaymentPlan)
+            .where(
+                PaymentPlan.is_active.is_(True),
+                PaymentPlan.payment_method == requested_payment_method_code,
+            )
+            .order_by(PaymentPlan.created_at.asc())
+        ).all()
+        if candidate_plans:
+            if payment_plan is not None and _text(payment_plan.payment_method).strip().upper() == requested_payment_method_code:
+                chosen_payment_plan = payment_plan
+            else:
+                chosen_payment_plan = next(
+                    (item for item in candidate_plans if payment_plan is not None and item.schedule_type == payment_plan.schedule_type),
+                    candidate_plans[0],
+                )
+            runtime_context["payment_plan_id"] = chosen_payment_plan.id
+            payment_plan = chosen_payment_plan
+
     runtime_context["payment_plan_name"] = payment_plan.name if payment_plan is not None else None
     runtime_context["legal_entity_name"] = legal_entity.name if legal_entity is not None else None
     runtime_context["warnings"] = list(dict.fromkeys(warnings))
