@@ -1166,6 +1166,21 @@ def _validate_same_day_slot(*, start_at_utc: datetime, end_at_utc: datetime, is_
         )
 
 
+def _duplicate_auto_cancel_deadline(
+    *,
+    source_start_at_utc: datetime,
+    source_deadline_utc: datetime,
+    duplicate_start_at_utc: datetime,
+) -> datetime:
+    deadline_delta = source_start_at_utc - source_deadline_utc
+    duplicate_deadline = duplicate_start_at_utc - deadline_delta
+    if duplicate_deadline >= duplicate_start_at_utc:
+        # Legacy all-day blockers were created with a deadline equal to the slot start.
+        # Keep duplication working by nudging the copied deadline just before the new slot.
+        return duplicate_start_at_utc - timedelta(seconds=1)
+    return duplicate_deadline
+
+
 def _get_location_or_404(db: Session, location_id: UUID) -> Location:
     location = db.scalar(select(Location).where(Location.id == location_id))
     if location is None:
@@ -3519,7 +3534,6 @@ def duplicate_session_operation(
         for target in targets:
             target_timezone = _normalize_session_timezone(target.timezone or "UTC")
             target_duration = target.end_at_utc - target.start_at_utc
-            target_deadline_delta = target.start_at_utc - target.auto_cancel_deadline_utc
 
             duplicate_start = target.start_at_utc + anchor_shift
             if target.is_all_day:
@@ -3527,7 +3541,11 @@ def duplicate_session_operation(
                 duplicate_end = duplicate_start + timedelta(days=1)
             else:
                 duplicate_end = duplicate_start + target_duration
-            duplicate_deadline = duplicate_start - target_deadline_delta
+            duplicate_deadline = _duplicate_auto_cancel_deadline(
+                source_start_at_utc=target.start_at_utc,
+                source_deadline_utc=target.auto_cancel_deadline_utc,
+                duplicate_start_at_utc=duplicate_start,
+            )
 
             _validate_session_times(
                 start_at_utc=duplicate_start,

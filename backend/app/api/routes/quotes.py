@@ -621,6 +621,11 @@ def _calendar_generated_slot_like_pattern(calendar_id: UUID) -> str:
     return f"{CALENDAR_DEPLOYMENT_BLOCK_PREFIX}|calendar={calendar_id}|%"
 
 
+def _calendar_block_auto_cancel_deadline(*, start_at_utc: datetime) -> datetime:
+    # Keep generated all-day blockers valid for admin duplication/editing flows.
+    return start_at_utc - timedelta(seconds=1)
+
+
 def _school_year_bounds_from_label(label: str) -> tuple[date, date] | None:
     normalized = (label or "").strip()
     match = re.fullmatch(r"(\d{4})\s*[-/]\s*(\d{4})", normalized)
@@ -1072,7 +1077,7 @@ def _deploy_calendar_row(
                     is_all_day=True,
                     capacity_max=0,
                     status=SessionStatus.SCHEDULED,
-                    auto_cancel_deadline_utc=start_at_utc,
+                    auto_cancel_deadline_utc=_calendar_block_auto_cancel_deadline(start_at_utc=start_at_utc),
                     cancel_reason=None,
                     zoom_link=None,
                     is_private=True,
@@ -1093,7 +1098,7 @@ def _deploy_calendar_row(
         target.private_description = marker
         target.is_all_day = True
         target.capacity_max = 0
-        target.auto_cancel_deadline_utc = start_at_utc
+        target.auto_cancel_deadline_utc = _calendar_block_auto_cancel_deadline(start_at_utc=start_at_utc)
         target.status = SessionStatus.SCHEDULED
         target.cancel_reason = None
         target.is_private = True
