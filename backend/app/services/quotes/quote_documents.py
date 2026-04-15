@@ -3782,11 +3782,11 @@ def _render_quote_pdf_blocks(
     story.append(Paragraph("Règlement et échéancier", styles["h1"]))
     special_bank_transfer_deposit_lines = _bank_transfer_deposit_schedule_lines(
         schedule=schedule,
-        has_deposit=_decimal_from_any(values.get("deposit_amount_ttc"), Decimal("0.00")) > Decimal("0.00"),
-        deposit_amount_ttc=_decimal_from_any(values.get("deposit_amount_ttc"), Decimal("0.00")),
+        has_deposit=bool(context.get("deposit_enabled")),
+        deposit_amount_ttc=_decimal_from_any(context.get("deposit_amount_ttc"), Decimal("0.00")),
         currency=str(values.get("currency") or "EUR"),
         payment_method_label=str(values.get("payment_method_label") or "-"),
-        remaining_ttc_after_deposit=_decimal_from_any(values.get("remaining_ttc_after_deposit"), Decimal("0.00")),
+        remaining_ttc_after_deposit=_decimal_from_any(context.get("remaining_ttc_after_deposit"), Decimal("0.00")),
     )
     payment_method_display_label = (
         str(values.get("payment_method_label", "-")).lower()
