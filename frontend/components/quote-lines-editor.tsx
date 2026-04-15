@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type ActivityOption = {
   id: string;
@@ -495,6 +496,9 @@ export default function QuoteLinesEditor({
   defaultVatRate = "0",
   saveAction,
 }: QuoteLinesEditorProps): JSX.Element {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [lines, setLines] = useState<EditableLine[]>(
     initialLines.map((row) => ({
       uid: row.id,
@@ -509,6 +513,28 @@ export default function QuoteLinesEditor({
     })),
   );
   const [editorState, setEditorState] = useState<EditorState | null>(null);
+  const [saveConfirmationMessage, setSaveConfirmationMessage] = useState<string>("");
+  const handledSuccessTokenRef = useRef<string>("");
+
+  useEffect(() => {
+    const okMessage = searchParams?.get("ok")?.trim() ?? "";
+    if (okMessage !== "Lignes devis mises a jour") {
+      return;
+    }
+    const successToken = `${pathname}?${searchParams?.toString() ?? ""}`;
+    if (handledSuccessTokenRef.current === successToken) {
+      return;
+    }
+    handledSuccessTokenRef.current = successToken;
+    setLines((prev) => prev.map((line) => ({ ...line, saved: true, dirty: false })));
+    setEditorState(null);
+    setSaveConfirmationMessage(okMessage);
+    window.alert(okMessage);
+    const nextParams = new URLSearchParams(searchParams?.toString() ?? "");
+    nextParams.delete("ok");
+    const nextQuery = nextParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   const linesJson = useMemo(() => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index))), [lines]);
   const total = useMemo(() => lines.reduce((sum, line) => sum + lineAmount(line), 0), [lines]);
@@ -518,6 +544,12 @@ export default function QuoteLinesEditor({
   const modifiedCount = lines.filter((line) => line.saved && line.dirty).length;
   const newCount = lines.filter((line) => !line.saved).length;
   const pendingSaveCount = lines.filter((line) => !line.saved || line.dirty).length;
+
+  useEffect(() => {
+    if (pendingSaveCount > 0 && saveConfirmationMessage) {
+      setSaveConfirmationMessage("");
+    }
+  }, [pendingSaveCount, saveConfirmationMessage]);
 
   function openCreateModal(kind: LineKind): void {
     setEditorState({
@@ -1006,9 +1038,12 @@ export default function QuoteLinesEditor({
       ) : null}
 
       <div className="row spread wrap top-gap-sm">
-        <p className="quote-total">
-          Total estime TTC: {toMoney(total, currency)} · HT: {toMoney(totalHt, currency)} · TVA: {toMoney(totalVat, currency)}
-        </p>
+        <div>
+          <p className="quote-total">
+            Total estime TTC: {toMoney(total, currency)} · HT: {toMoney(totalHt, currency)} · TVA: {toMoney(totalVat, currency)}
+          </p>
+          {saveConfirmationMessage ? <p className="flash-ok top-gap-sm">{saveConfirmationMessage}</p> : null}
+        </div>
         <button type="submit" disabled={!editable}>Enregistrer les lignes</button>
       </div>
       {!editable ? <p className="muted top-gap-sm">Le devis est immuable apres envoi.</p> : null}
