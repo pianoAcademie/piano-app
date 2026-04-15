@@ -9,6 +9,7 @@ import io
 import logging
 import re
 from typing import Any
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from reportlab.lib import colors
@@ -25,6 +26,7 @@ from xhtml2pdf import pisa
 from app.models.ops import AppSetting
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplateVersion, TermsTemplateVersion
+from app.models.typeform_intake import TypeformIntake
 from app.models.user import User
 
 
@@ -68,6 +70,88 @@ def _json_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     return []
+
+
+def _typeform_parent_address_from_normalized_payload(normalized: dict[str, Any]) -> str:
+    normalized = _json_object(normalized)
+    direct = str(normalized.get("parent_address") or "").strip()
+    if direct:
+        return direct
+    line_1 = str(normalized.get("parent_address_line_1") or "").strip()
+    line_2 = str(normalized.get("parent_address_line_2") or "").strip()
+    city = str(normalized.get("parent_city") or "").strip()
+    postal_code = str(normalized.get("parent_postal_code") or "").strip()
+    country = str(normalized.get("parent_country") or "").strip()
+    locality = " ".join(part for part in [postal_code, city] if part).strip()
+    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+    return ", ".join(parts)
+
+
+def _typeform_simplified_answer_value(simplified_answers: list[Any], *labels: str) -> str:
+    expected = {str(label or "").strip().lower() for label in labels if str(label or "").strip()}
+    if not expected:
+        return ""
+    for item in simplified_answers:
+        row = _json_object(item)
+        label = str(row.get("label") or row.get("field_label") or row.get("question") or "").strip().lower()
+        if label not in expected:
+            continue
+        value = str(row.get("value") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _typeform_parent_address_from_intake(intake: TypeformIntake | None) -> str:
+    if intake is None:
+        return ""
+    parent_address = _typeform_parent_address_from_normalized_payload(_json_object(intake.normalized_payload_json)).strip()
+    if parent_address:
+        return parent_address
+    simplified_answers = _json_list(intake.simplified_response_json)
+    line_1 = _typeform_simplified_answer_value(simplified_answers, "Address", "address", "Adresse", "adresse")
+    line_2 = _typeform_simplified_answer_value(
+        simplified_answers,
+        "Address line 2",
+        "address line 2",
+        "Adresse ligne 2",
+        "Complement d'adresse",
+        "Complément d'adresse",
+    )
+    city = _typeform_simplified_answer_value(simplified_answers, "City/Town", "city/town", "Ville", "ville")
+    postal_code = _typeform_simplified_answer_value(
+        simplified_answers,
+        "Zip/Post Code",
+        "zip/post code",
+        "Code postal",
+        "code postal",
+    )
+    country = _typeform_simplified_answer_value(simplified_answers, "Country", "country", "Pays", "pays")
+    locality = " ".join(part for part in [postal_code, city] if part).strip()
+    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+    return ", ".join(parts)
+
+
+def _typeform_parent_address_from_quote(*, db: Session | None, quote: Quote) -> str:
+    quote_meta = _json_object(quote.meta)
+    typeform_meta = _json_object(quote_meta.get("typeform_intake"))
+    parent_address = _typeform_parent_address_from_normalized_payload(_json_object(typeform_meta.get("normalized_payload"))).strip()
+    if parent_address:
+        return parent_address
+    intake_id = str(typeform_meta.get("intake_id") or "").strip()
+    if not intake_id and db is not None and quote.prospect_id is not None:
+        prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id))
+        if prospect is not None:
+            prospect_meta = _json_object(prospect.meta)
+            intake_id = str(prospect_meta.get("typeform_intake_id") or "").strip()
+    if db is None or not intake_id:
+        return ""
+    try:
+        intake_uuid = UUID(intake_id)
+    except ValueError:
+        return ""
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_uuid))
+    return _typeform_parent_address_from_intake(intake)
 
 
 def _utcnow() -> datetime:
@@ -148,6 +232,8 @@ def _schedule_due_label(item: dict[str, Any]) -> str:
     normalized = due_label.lower()
     if due_type == "on_registration":
         return "à réception de votre facture"
+    if due_type == "on_quote_validation_before_first_course":
+        return "à la validation du devis, avant votre 1er cours"
     if normalized in {
         "a reception",
         "a reception du dossier",
@@ -160,9 +246,81 @@ def _schedule_due_label(item: dict[str, Any]) -> str:
         "à réception de votre facture",
     }:
         return "à réception de votre facture"
+    if normalized in {
+        "a la validation du devis, avant votre 1er cours",
+        "à la validation du devis, avant votre 1er cours",
+    }:
+        return "à la validation du devis, avant votre 1er cours"
     if due_label:
         return due_label
     return due_type or "-"
+
+
+def _payment_schedule_method_subject(method_label: str, *, count: int) -> str:
+    normalized = str(method_label or "").strip().lower()
+    if "virement" in normalized:
+        return "virement bancaire"
+    if "cheque" in normalized or "chèque" in normalized:
+        return "cheque" if count == 1 else "cheques"
+    if "carte" in normalized:
+        return "reglement par carte bancaire"
+    return "reglement"
+
+
+def _is_bank_transfer_payment_method(method_label: str) -> bool:
+    return "virement" in str(method_label or "").strip().lower()
+
+
+def _payment_schedule_summary_text(
+    *,
+    schedule: list[dict[str, Any]],
+    has_deposit: bool,
+    deposit_amount_ttc: Decimal,
+    currency: str,
+    payment_method_label: str,
+    remaining_ttc_after_deposit: Decimal,
+) -> str:
+    if schedule:
+        if len(schedule) == 1:
+            item = schedule[0]
+            amount = _money(
+                _decimal_from_any(item.get("amount_ttc"), Decimal("0.00")),
+                str(item.get("currency") or currency or "EUR"),
+            )
+            item_method_label = str(item.get("payment_method") or payment_method_label or "").strip()
+            method_subject = _payment_schedule_method_subject(item_method_label, count=1)
+            due_label = _schedule_due_label(item)
+            if _is_bank_transfer_payment_method(item_method_label) and due_label == "à réception de votre facture":
+                remaining_sentence = (
+                    f"reglement du solde de {amount} par virement bancaire à réception de votre facture, "
+                    "avant le démarrage des cours"
+                )
+            else:
+                remaining_sentence = f"{method_subject} de {amount} à regler {due_label}"
+            if has_deposit:
+                return (
+                    f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} juste après la validation du devis "
+                    "pour bloquer le créneau, puis "
+                    f"{remaining_sentence}."
+                )
+            return f"{remaining_sentence}."
+
+        unit_label = "échéances"
+        if has_deposit:
+            return (
+                f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} juste après la validation du devis "
+                "pour bloquer le créneau, "
+                f"puis echeancier de {len(schedule)} {unit_label} selon le detail ci-dessous."
+            )
+        return f"Echeancier de {len(schedule)} {unit_label} selon le detail ci-dessous."
+
+    if has_deposit and remaining_ttc_after_deposit <= Decimal("0.00"):
+        return (
+            f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} juste après la validation du devis "
+            "pour bloquer le créneau "
+            "(solde regle)."
+        )
+    return "Paiement non planifié"
 
 
 def _name(first_name: str | None, last_name: str | None, fallback: str = "-") -> str:
@@ -806,6 +964,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         return values
 
     meta = prospect.meta or {}
+    typeform_parent_address = _typeform_parent_address_from_quote(db=db, quote=quote).strip()
     prospect_type = "child" if str(meta.get("prospect_type") or "").strip().lower() == "child" else "adult"
     values["prospect_type"] = prospect_type
     values["prospect_type_label"] = "Enfant" if prospect_type == "child" else "Adulte"
@@ -835,6 +994,8 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
                 if not parent_address:
                     parent_meta_data = parent.meta or {}
                     parent_address = str(parent_meta_data.get("adult_address") or "").strip()
+        if not parent_address:
+            parent_address = typeform_parent_address
 
         values["parent_first_name"] = parent_first_name
         values["parent_last_name"] = parent_last_name
@@ -848,7 +1009,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         values["adult_full_name"] = _name(prospect.first_name, prospect.last_name, fallback="")
         values["adult_email"] = (prospect.email or "").strip().lower()
         values["adult_phone"] = (prospect.phone or "").strip()
-        values["adult_address"] = str(meta.get("adult_address") or "").strip()
+        values["adult_address"] = str(meta.get("adult_address") or typeform_parent_address or "").strip()
 
     return values
 
@@ -1828,10 +1989,25 @@ def _build_template_values(
         "</div>"
     )
     if has_deposit:
+        balance_due_text = ""
+        if schedule and len(schedule) == 1 and remaining_ttc_after_deposit > Decimal("0.00"):
+            due_label = _schedule_due_label(schedule[0])
+            item_method_label = str(schedule[0].get("payment_method") or document_context.get("payment_method_label") or "").strip()
+            if _is_bank_transfer_payment_method(item_method_label) and due_label == "à réception de votre facture":
+                balance_due_text = (
+                    f"Le solde de {_decimal_str(remaining_ttc_after_deposit)} {escape(currency)} sera à régler par virement bancaire "
+                    "à réception de votre facture, avant le démarrage des cours."
+                )
+            else:
+                balance_due_text = (
+                    f"Le solde de {_decimal_str(remaining_ttc_after_deposit)} {escape(currency)} sera à régler {escape(due_label)}."
+                )
+        elif remaining_ttc_after_deposit > Decimal("0.00"):
+            balance_due_text = "Le solde sera à régler selon l échéancier indiqué ci-dessous."
         deposit_block_html = (
-            "<p>Pour confirmer votre inscription et bloquer votre creneau, un acompte est requis des validation du devis. "
-            "Le reglement s effectue en ligne par carte bancaire uniquement. "
-            "Un lien de paiement securise vous sera envoye par email apres approbation du devis.</p>"
+            "<p>Pour confirmer votre inscription et bloquer votre creneau, un acompte est requis juste après la validation du devis.</p>"
+            + (f"<p>{balance_due_text}</p>" if balance_due_text else "")
+            +
             f"<p><strong>Acompte a payer pour valider l inscription :</strong> {_decimal_str(deposit_amount_ttc)} {escape(currency)}</p>"
         )
     else:
@@ -2014,24 +2190,14 @@ def _build_template_values(
         session_count=len(sessions),
         activity_count=calendar_activities_count,
     )
-    if schedule:
-        due_labels = ", ".join(_schedule_due_label(item) for item in schedule)
-        unit_label = "échéance" if len(schedule) == 1 else "échéances"
-        if has_deposit:
-            payment_schedule_summary = (
-                f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à régler par carte bancaire, "
-                f"puis {len(schedule)} {unit_label} : {due_labels}"
-            )
-        else:
-            payment_schedule_summary = f"{len(schedule)} {unit_label} : {due_labels}"
-    else:
-        if has_deposit and remaining_ttc_after_deposit <= Decimal("0.00"):
-            payment_schedule_summary = (
-                f"Acompte de {_decimal_str(deposit_amount_ttc)} {currency} à régler par carte bancaire "
-                "(solde réglé)."
-            )
-        else:
-            payment_schedule_summary = "Paiement non planifié"
+    payment_schedule_summary = _payment_schedule_summary_text(
+        schedule=schedule,
+        has_deposit=has_deposit,
+        deposit_amount_ttc=deposit_amount_ttc,
+        currency=currency,
+        payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
+        remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+    )
 
     activities_planning_section_html = _section_html(
         "Cours et options choisis",
