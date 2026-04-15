@@ -2500,6 +2500,23 @@ def _needs_session_arbitrage(session_recommendations: list[TypeformSessionRecomm
     return any(item.summary_status == "multiple_options" and item.selected_session_id is None for item in session_recommendations)
 
 
+def _draft_quote_warning_for_pending_arbitrage(
+    *,
+    client_arbitrage_required: bool,
+    session_arbitrage_required: bool,
+) -> str | None:
+    if client_arbitrage_required and session_arbitrage_required:
+        return "Devis brouillon cree avec avertissement : des arbitrages client et creneau restent a finaliser."
+    if client_arbitrage_required:
+        return "Devis brouillon cree avec avertissement : la correspondance client reste a finaliser."
+    if session_arbitrage_required:
+        return (
+            "Devis brouillon cree avec avertissement : plusieurs creneaux restent a arbitrer. "
+            "Le planning devra etre finalise dans le devis avant envoi."
+        )
+    return None
+
+
 def _analysis_for_intake(
     db: Session,
     intake: TypeformIntake,
@@ -3679,6 +3696,16 @@ def create_draft_quote_from_typeform_intake(
         )
 
     analysis = _refresh_intake_analysis(db, intake)
+    client_arbitrage_required = _needs_client_arbitrage(
+        analysis["client_candidates"],
+        analysis["family_candidates"],
+        analysis["effective_resolution"],
+    )
+    session_arbitrage_required = _needs_session_arbitrage(analysis["session_recommendations"])
+    pending_arbitrage_warning = _draft_quote_warning_for_pending_arbitrage(
+        client_arbitrage_required=client_arbitrage_required,
+        session_arbitrage_required=session_arbitrage_required,
+    )
     if intake.intake_status == INTAKE_STATUS_IGNORED:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -3689,11 +3716,6 @@ def create_draft_quote_from_typeform_intake(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=" ; ".join(blocking_messages) or "Cette intake comporte encore des blocages.",
-        )
-    if intake.intake_status == INTAKE_STATUS_MATCHING_REQUIRED:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Enregistrez d abord les arbitrages client / creneau avant de generer le devis.",
         )
     config = analysis["config"]
     if config is None:
@@ -3752,6 +3774,22 @@ def create_draft_quote_from_typeform_intake(
         session_recommendations=analysis["session_recommendations"],
         runtime_context=_json_object(analysis.get("runtime_context")),
     )
+    if pending_arbitrage_warning:
+        quote_meta["typeform_pending_arbitrage_at_creation"] = True
+        quote_meta["typeform_creation_warning"] = pending_arbitrage_warning
+        quote_meta["typeform_client_arbitrage_required"] = client_arbitrage_required
+        quote_meta["typeform_session_arbitrage_required"] = session_arbitrage_required
+        quote_meta["typeform_unselected_session_recommendations"] = [
+            {
+                "activity_id": str(item.activity_id),
+                "activity_name": item.activity_name,
+                "summary_status": item.summary_status,
+                "summary_label": item.summary_label,
+                "option_count": len(item.options),
+            }
+            for item in analysis["session_recommendations"]
+            if item.selected_session_id is None
+        ]
     if mode == CLIENT_MODE_EXISTING_FAMILY:
         quote_meta["typeform_selected_family_adult_client_id"] = client_resolution.get("selected_family_adult_client_id")
         quote_meta["typeform_selected_family_child_client_id"] = client_resolution.get("selected_family_child_client_id")
@@ -3804,6 +3842,7 @@ def create_draft_quote_from_typeform_intake(
         intake_id=intake.id,
         quote_id=quote_detail.quote.id,
         intake_status=INTAKE_STATUS_PROCESSED,
+        warning_message=pending_arbitrage_warning,
     )
 
 

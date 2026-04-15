@@ -350,7 +350,6 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const draftQuoteBlocked =
     Boolean(detail.related_quote_id)
     || detail.blockages.length > 0
-    || draftQuoteNeedsArbitrage
     || detail.intake_status === "IGNORED";
 
   return (
@@ -901,14 +900,19 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
               <input type="hidden" name="intake_id" value={detail.id} />
               <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
               <button type="submit" disabled={draftQuoteBlocked}>
-                {detail.related_quote_id ? "Devis deja cree" : "Generer devis brouillon"}
+                {detail.related_quote_id
+                  ? "Devis deja cree"
+                  : draftQuoteNeedsArbitrage
+                  ? "Generer devis brouillon avec avertissement"
+                  : "Generer devis brouillon"}
               </button>
             </form>
           </div>
           {draftQuoteNeedsArbitrage && !detail.related_quote_id ? (
-            <p className="muted top-gap-sm">
-              Enregistrez d abord les arbitrages en attente avant de generer le devis.
-            </p>
+            <section className="flash-warn top-gap-sm">
+              Le devis peut etre genere meme si des arbitrages restent en attente. Un avertissement sera ajoute et le
+              planning devra etre finalise avant envoi.
+            </section>
           ) : null}
 
           {detail.preview_quote ? (
