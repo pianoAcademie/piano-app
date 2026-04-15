@@ -757,6 +757,119 @@ def _modality_label(value: Any) -> str:
     return mapping.get(raw.upper(), raw)
 
 
+def _slot_mode_label(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    mapping = {
+        "ONLINE": "Mode : cours en ligne",
+        "ONSITE": "Mode : cours en présentiel",
+        "HYBRID": "Mode : cours en présentiel ou en ligne",
+        "ANY": "",
+    }
+    return mapping.get(raw.upper(), "")
+
+
+def _extract_slot_label_parts(value: Any) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return "", ""
+    cleaned_parts: list[str] = []
+    mode_label = ""
+    for part in raw.split("·"):
+        text = " ".join(part.strip().split())
+        if not text:
+            continue
+        normalized = text.casefold()
+        upper = text.upper()
+        if upper == "ANY":
+            continue
+        if normalized in {
+            "online",
+            "en ligne",
+            "cours en ligne",
+            "mode : cours en ligne",
+            "mode: cours en ligne",
+            "mode : en ligne",
+            "mode: en ligne",
+        }:
+            mode_label = "Mode : cours en ligne"
+            continue
+        if normalized in {
+            "onsite",
+            "présentiel",
+            "presentiel",
+            "cours en présentiel",
+            "cours en presentiel",
+            "mode : cours en présentiel",
+            "mode : cours en presentiel",
+            "mode: cours en présentiel",
+            "mode: cours en presentiel",
+        }:
+            mode_label = "Mode : cours en présentiel"
+            continue
+        if normalized in {
+            "hybrid",
+            "hybride",
+            "mode : cours en présentiel ou en ligne",
+            "mode: cours en présentiel ou en ligne",
+        }:
+            mode_label = "Mode : cours en présentiel ou en ligne"
+            continue
+        cleaned_parts.append(text)
+    return " · ".join(cleaned_parts), mode_label
+
+
+def _sanitize_slot_label_text(value: Any) -> str:
+    cleaned_label, mode_label = _extract_slot_label_parts(value)
+    if cleaned_label and mode_label:
+        return f"{cleaned_label} · {mode_label}"
+    return cleaned_label or mode_label or str(value or "").strip()
+
+
+def _factorize_slot_labels(labels: list[str]) -> tuple[list[str], str]:
+    sanitized_labels = [_sanitize_slot_label_text(item) for item in labels if str(item or "").strip()]
+    if not sanitized_labels:
+        return [], ""
+    cleaned_labels: list[str] = []
+    mode_labels: list[str] = []
+    for item in sanitized_labels:
+        cleaned_label, mode_label = _extract_slot_label_parts(item)
+        if cleaned_label:
+            cleaned_labels.append(cleaned_label)
+        elif item:
+            cleaned_labels.append(item)
+        if mode_label:
+            mode_labels.append(mode_label)
+    unique_cleaned_labels = list(dict.fromkeys(cleaned_labels))
+    unique_mode_labels = list(dict.fromkeys(mode_labels))
+    if unique_mode_labels and len(unique_mode_labels) == 1 and len(mode_labels) == len(sanitized_labels):
+        return unique_cleaned_labels, unique_mode_labels[0]
+    return sanitized_labels, ""
+
+
+def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "") -> str:
+    label = _sanitize_slot_label_text(value.get("label"))
+    if label:
+        return label
+    weekday = str(value.get("weekday_label") or "").strip() or _weekday_label(value.get("weekday"))
+    start = str(value.get("start_time") or value.get("start") or "").strip()
+    end = str(value.get("end_time") or value.get("end") or "").strip()
+    location_label = str(value.get("location_label") or fallback_location_label or "").strip()
+    modality_label = _slot_mode_label(value.get("modality"))
+
+    parts: list[str] = []
+    if weekday and weekday != "-":
+        parts.append(f"{weekday} {start}-{end}".strip() if start and end else weekday)
+    elif start and end:
+        parts.append(f"{start}-{end}")
+    if modality_label:
+        parts.append(modality_label)
+    if location_label:
+        parts.append(location_label)
+    return _sanitize_slot_label_text(" · ".join(part for part in parts if part).strip()) or "-"
+
+
 def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
     blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     rows: list[list[str]] = []
@@ -765,7 +878,7 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
         for raw_slot in _json_list(block.get("pending_slot_options")):
             if not isinstance(raw_slot, dict):
                 continue
-            label = str(raw_slot.get("label") or "").strip()
+            label = _slot_label(raw_slot, fallback_location_label=str(block.get("location_label") or "").strip())
             if label:
                 pending_slot_labels.append(label)
                 continue
@@ -1229,7 +1342,7 @@ def _solfege_pending_block_info(snapshot: dict[str, Any]) -> dict[str, Any]:
         for raw_slot in _json_list(raw.get("pending_slot_options")):
             if not isinstance(raw_slot, dict):
                 continue
-            label = str(raw_slot.get("label") or "").strip()
+            label = _slot_label(raw_slot, fallback_location_label=str(raw.get("location_label") or "").strip())
             if label:
                 slot_labels.append(label)
                 continue
@@ -1260,7 +1373,7 @@ def _solfege_pending_block_info(snapshot: dict[str, Any]) -> dict[str, Any]:
                 if part
             )
             if label:
-                slot_labels.append(label)
+                slot_labels.append(_sanitize_slot_label_text(label))
 
     return {
         "has_pending_selection": has_pending_selection,
@@ -2368,20 +2481,16 @@ def _build_template_values(
     )
     payment_method_label = str(document_context["payment_method_label"] or "Paiement non précisé")
     solfege_slot = _json_object(document_context.get("solfege_selected_slot"))
-    solfege_slot_label = str(solfege_slot.get("label") or "").strip()
-    if not solfege_slot_label and solfege_slot:
-        day = str(solfege_slot.get("weekday_label") or solfege_slot.get("weekday") or "").strip()
-        start = str(solfege_slot.get("start_time") or "--:--").strip()
-        end = str(solfege_slot.get("end_time") or "--:--").strip()
-        solfege_slot_label = f"{day} {start}-{end}".strip()
+    solfege_slot_label = _slot_label(solfege_slot) if solfege_slot else ""
     solfege_duration = document_context.get("solfege_duration_minutes")
     solfege_duration_label = f" ({solfege_duration} min)" if solfege_duration else ""
     solfege_slot_suffix = f" · {solfege_slot_label}" if solfege_slot_label else ""
     solfege_available_slots = [
-        str(item).strip()
+        _sanitize_slot_label_text(item)
         for item in _json_list(document_context.get("solfege_available_slots"))
         if str(item).strip()
     ]
+    solfege_display_slots, solfege_mode_label = _factorize_slot_labels(solfege_available_slots)
     solfege_full = (
         f"Solfege souscrit - Niveau {document_context.get('solfege_level') or '-'}"
         f"{solfege_duration_label}"
@@ -2491,8 +2600,10 @@ def _build_template_values(
             f"Niveau estimé : {escape(str(document_context.get('solfege_level') or '-'))}{escape(solfege_duration_label)}",
             "Créneau retenu : Sélection à faire",
         ]
-        if solfege_available_slots:
-            solfege_lines.append(f"Créneaux disponibles : {escape(' ; '.join(solfege_available_slots))}")
+        if solfege_display_slots:
+            solfege_lines.append(f"Créneaux disponibles : {escape(' ; '.join(solfege_display_slots))}")
+        if solfege_mode_label:
+            solfege_lines.append(escape(solfege_mode_label))
         solfege_block_html = "<p>" + "<br/>".join(solfege_lines) + "</p>"
     elif display_flags["showSolfegeSection"]:
         solfege_block_html = f"<p><strong>Option Solfege : souscrite.</strong><br/>{escape(solfege_full)}</p>"
@@ -2523,7 +2634,12 @@ def _build_template_values(
         else ""
     )
     pass_recup_compact_notice_html = (
-        "<p><strong>Option Pass Récup : non souscrite.</strong></p>"
+        "<p><strong>Option Pass Récup : non souscrite.</strong>"
+        "<br/><font size='10' color='#6b7280'><i>"
+        "Ce pass permet de rattraper un cours collectif manqué sur un créneau en présentiel "
+        "(si une place est disponible), ou à défaut, sur un créneau collectif en ligne dédié."
+        "<br/>&bull; Limité à 4 rattrapages par an"
+        "</i></font></p>"
         if display_flags["showPassRecupCompactNotice"]
         else ""
     )
