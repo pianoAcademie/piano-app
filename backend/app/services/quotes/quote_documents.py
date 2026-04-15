@@ -928,8 +928,10 @@ def _kit_composition_by_id(*, db: Session | None, kits: list[QuoteLine]) -> dict
     result: dict[Any, list[str]] = {}
     for kit_id, quantity, product_title in rows:
         label = str(product_title or "Produit").strip() or "Produit"
+        quantity_value = _decimal_from_any(quantity, Decimal("1"))
         quantity_label = _compact_quantity_label(quantity)
-        result.setdefault(kit_id, []).append(f"{label} x {quantity_label}")
+        rendered_label = f"{label} x {quantity_label}" if quantity_value > Decimal("1") else label
+        result.setdefault(kit_id, []).append(rendered_label)
     return result
 
 
@@ -939,7 +941,7 @@ def _kit_composition_html(items: list[str]) -> str:
     rendered_items = "<br/>".join(escape(item) for item in items)
     return (
         "<div style='font-size:10px;line-height:1.35;color:#475467;margin-top:4px;'>"
-        "<strong>Composition :</strong><br/>"
+        "<strong>Comprend :</strong><br/>"
         f"{rendered_items}"
         "</div>"
     )
@@ -3699,7 +3701,7 @@ def _render_quote_pdf_blocks(
                             else ""
                         ),
                         (
-                            "Composition :\n" + "\n".join(kit_composition.get(line.kit_id, []))
+                            "Comprend :\n" + "\n".join(kit_composition.get(line.kit_id, []))
                             if line.kit_id is not None and kit_composition.get(line.kit_id)
                             else ""
                         ),
