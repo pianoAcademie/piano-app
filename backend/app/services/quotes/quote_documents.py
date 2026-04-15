@@ -893,7 +893,7 @@ def _pending_planning_block_display(block: dict[str, Any]) -> tuple[str, str, st
         if level_label:
             activity_label += f" – niveau {level_label}"
         activity_label += " (inclus dans le devis)"
-        return activity_label, "Créneau à sélectionner", "-", "-"
+        return activity_label, "-", "Créneau à sélectionner", "-"
     return str(block.get("activity_label") or "-").strip() or "-", "Sélection à faire", "Sélection à faire", "-"
 
 
