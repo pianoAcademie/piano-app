@@ -11089,8 +11089,6 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
       body: JSON.stringify({
         calendar_snapshot: snapshot,
         meta: currentMeta,
-        estimated_solfege_level: null,
-        selected_solfege_slot: null,
       }),
     },
     token,

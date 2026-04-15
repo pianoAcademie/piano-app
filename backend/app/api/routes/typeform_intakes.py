@@ -3471,6 +3471,27 @@ def _calendar_snapshot_from_analysis(
         if pending_recommendation is not None:
             resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
             resolved_location_name = _text(runtime_context.get("location_name")) or pending_recommendation.requested_location or None
+            pending_slot_options = [
+                {
+                    "weekday": DAY_ALIASES.get(_normalize_token(option.weekday_label)),
+                    "weekday_label": option.weekday_label,
+                    "start_time": option.start_time_label,
+                    "end_time": option.end_time_label,
+                    "duration_minutes": None,
+                    "location_id": str(option.location_id),
+                    "location_label": option.location_name,
+                    "modality": "ONLINE" if _is_online_runtime_context(runtime_context) else "ONSITE",
+                    "label": " · ".join(
+                        part
+                        for part in (
+                            " ".join(part for part in (option.weekday_label, option.start_time_label) if part),
+                            option.location_name,
+                        )
+                        if part
+                    ),
+                }
+                for option in pending_recommendation.options
+            ]
             blocks.append(
                 {
                     "activity_id": str(pending_recommendation.activity_id),
@@ -3486,6 +3507,8 @@ def _calendar_snapshot_from_analysis(
                     "end_time": "",
                     "modality": "online" if _is_online_runtime_context(runtime_context) else None,
                     "selection_pending": True,
+                    "pending_solfege_level": estimated_solfege_level,
+                    "pending_slot_options": pending_slot_options,
                 }
             )
 

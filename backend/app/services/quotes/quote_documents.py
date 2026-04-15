@@ -1196,6 +1196,79 @@ def _masterclass_blocks_from_calendar_snapshot(snapshot: dict[str, Any]) -> list
     return deduped
 
 
+def _extract_solfege_level_from_text(value: Any) -> str:
+    raw = str(value or "").strip()
+    match = re.search(r"niveau\s*([1-5])", raw, flags=re.IGNORECASE)
+    if match and match.group(1):
+        return match.group(1)
+    return ""
+
+
+def _solfege_pending_block_info(snapshot: dict[str, Any]) -> dict[str, Any]:
+    has_pending_selection = False
+    level_code = ""
+    slot_labels: list[str] = []
+
+    for raw in _json_list(snapshot.get("blocks")):
+        if not isinstance(raw, dict):
+            continue
+        activity_label = str(raw.get("activity_label") or "").strip()
+        activity_code = str(raw.get("activity_code") or raw.get("activity_service_code") or "").strip()
+        haystack = f"{activity_label} {activity_code}".strip().lower()
+        if "solfege" not in haystack:
+            continue
+        try:
+            weekday_value = int(raw.get("weekday") or -99)
+        except (TypeError, ValueError):
+            weekday_value = -99
+        selection_pending = bool(raw.get("selection_pending")) or weekday_value == -1
+        if selection_pending:
+            has_pending_selection = True
+        if not level_code:
+            level_code = str(raw.get("pending_solfege_level") or "").strip() or _extract_solfege_level_from_text(activity_label)
+        for raw_slot in _json_list(raw.get("pending_slot_options")):
+            if not isinstance(raw_slot, dict):
+                continue
+            label = str(raw_slot.get("label") or "").strip()
+            if label:
+                slot_labels.append(label)
+                continue
+            weekday_text = str(raw_slot.get("weekday_label") or "").strip() or _weekday_label(raw_slot.get("weekday"))
+            start = str(raw_slot.get("start_time") or raw_slot.get("start") or "").strip()
+            end = str(raw_slot.get("end_time") or raw_slot.get("end") or "").strip()
+            if weekday_text and start and end:
+                slot_labels.append(f"{weekday_text} {start}-{end}")
+
+    for raw_recommendation in _json_list(snapshot.get("typeform_recommendations")):
+        recommendation = _json_object(raw_recommendation)
+        if str(recommendation.get("selected_session_id") or "").strip():
+            continue
+        activity_name = str(recommendation.get("activity_name") or "").strip()
+        if "solfege" not in activity_name.lower():
+            continue
+        has_pending_selection = True
+        if not level_code:
+            level_code = _extract_solfege_level_from_text(activity_name)
+        for raw_option in _json_list(recommendation.get("options")):
+            option = _json_object(raw_option)
+            weekday_text = str(option.get("weekday_label") or "").strip()
+            start = str(option.get("start_time_label") or "").strip()
+            location = str(option.get("location_name") or "").strip()
+            label = " · ".join(
+                part
+                for part in (" ".join(part for part in (weekday_text, start) if part), location)
+                if part
+            )
+            if label:
+                slot_labels.append(label)
+
+    return {
+        "has_pending_selection": has_pending_selection,
+        "level_code": level_code,
+        "slot_labels": _unique_text_parts(*slot_labels),
+    }
+
+
 def _resolve_pass_recup_enabled(*, meta: dict[str, Any], lines: list[QuoteLine]) -> bool:
     mode = str(meta.get("pass_recup_mode") or "").strip().lower()
     if mode == "enabled":
@@ -1250,6 +1323,7 @@ def _extract_document_context(
     if not selected_solfege_slot:
         selected_solfege_slot = solfege_selected_slot
 
+    pending_solfege_info = _solfege_pending_block_info(calendar_snapshot)
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
     masterclass_blocks_calendar = _masterclass_blocks_from_calendar_snapshot(calendar_snapshot)
@@ -1275,6 +1349,7 @@ def _extract_document_context(
         or quote.solfege_duration_minutes
         or selected_solfege_slot
         or activity_solfege
+        or pending_solfege_info.get("has_pending_selection")
     )
     masterclass_enabled = (
         bool(masterclass_blocks)
@@ -1324,9 +1399,11 @@ def _extract_document_context(
         "deposit_amount_ttc": deposit_amount_ttc,
         "remaining_ttc_after_deposit": remaining_ttc_after_deposit,
         "solfege_enabled": solfege_enabled,
-        "solfege_level": str(quote.estimated_solfege_level or "").strip(),
+        "solfege_level": str(quote.estimated_solfege_level or pending_solfege_info.get("level_code") or "").strip(),
         "solfege_duration_minutes": quote.solfege_duration_minutes,
         "solfege_selected_slot": selected_solfege_slot,
+        "solfege_pending_selection": bool(pending_solfege_info.get("has_pending_selection")),
+        "solfege_available_slots": [item for item in pending_solfege_info.get("slot_labels", []) if isinstance(item, str)],
         "masterclass_enabled": masterclass_enabled,
         "masterclass_blocks": masterclass_blocks,
         "pass_recup_mode": pass_recup_mode,
@@ -2300,11 +2377,17 @@ def _build_template_values(
     solfege_duration = document_context.get("solfege_duration_minutes")
     solfege_duration_label = f" ({solfege_duration} min)" if solfege_duration else ""
     solfege_slot_suffix = f" · {solfege_slot_label}" if solfege_slot_label else ""
+    solfege_available_slots = [
+        str(item).strip()
+        for item in _json_list(document_context.get("solfege_available_slots"))
+        if str(item).strip()
+    ]
     solfege_full = (
         f"Solfege souscrit - Niveau {document_context.get('solfege_level') or '-'}"
         f"{solfege_duration_label}"
         f"{solfege_slot_suffix}"
     )
+    show_solfege_pending_notice = bool(document_context.get("solfege_pending_selection")) and not solfege_slot_label
     masterclass_blocks = _json_list(document_context.get("masterclass_blocks"))
     masterclass_full = "Masterclass du samedi souscrite."
     if masterclass_blocks:
@@ -2402,6 +2485,17 @@ def _build_template_values(
     )
     # Solfege et masterclass restent des activites planning, mais on expose un resume optionnel pour le document.
     solfege_block_html = ""
+    if show_solfege_pending_notice:
+        solfege_lines = [
+            "<strong>Option Solfege : souscrite.</strong>",
+            f"Niveau estimé : {escape(str(document_context.get('solfege_level') or '-'))}{escape(solfege_duration_label)}",
+            "Créneau retenu : Sélection à faire",
+        ]
+        if solfege_available_slots:
+            solfege_lines.append(f"Créneaux disponibles : {escape(' ; '.join(solfege_available_slots))}")
+        solfege_block_html = "<p>" + "<br/>".join(solfege_lines) + "</p>"
+    elif display_flags["showSolfegeSection"]:
+        solfege_block_html = f"<p><strong>Option Solfege : souscrite.</strong><br/>{escape(solfege_full)}</p>"
     masterclass_common_text = (
         "Masterclass du samedi (complément aux 2 cours collectifs hebdomadaires) : une session de 3h dédiée à la "
         "pratique au piano, avec un focus approfondi sur la musicalité et l’interprétation."
@@ -2428,11 +2522,16 @@ def _build_template_values(
         if display_flags["showPassRecupSection"]
         else ""
     )
+    pass_recup_compact_notice_html = (
+        "<p><strong>Option Pass Récup : non souscrite.</strong></p>"
+        if display_flags["showPassRecupCompactNotice"]
+        else ""
+    )
     options_section_html = _section_html(
         "Vos options",
         "".join(
             fragment
-            for fragment in (solfege_block_html, masterclass_block_html, pass_recup_block_html)
+            for fragment in (solfege_block_html, masterclass_block_html, pass_recup_block_html, pass_recup_compact_notice_html)
             if str(fragment or "").strip()
         ),
     )
@@ -2564,6 +2663,7 @@ def _build_template_values(
         "solfege_block_html": solfege_block_html,
         "masterclass_block_html": masterclass_block_html,
         "pass_recup_block_html": pass_recup_block_html,
+        "pass_recup_compact_notice_html": pass_recup_compact_notice_html,
         "options_section_html": options_section_html,
         "payment_method_block_html": payment_method_block_html,
         "activities_planning_section_html": activities_planning_section_html,
@@ -2600,6 +2700,7 @@ def _build_template_values(
         "solfege_block_html",
         "masterclass_block_html",
         "pass_recup_block_html",
+        "pass_recup_compact_notice_html",
         "options_section_html",
         "payment_method_block_html",
         "activities_planning_section_html",
@@ -3822,6 +3923,7 @@ def _render_quote_pdf_blocks(
         _apply_template("{solfege_block_html}", values=values, html_keys={"solfege_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
         _apply_template("{masterclass_block_html}", values=values, html_keys={"masterclass_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
         _apply_template("{pass_recup_block_html}", values=values, html_keys={"pass_recup_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
+        _apply_template("{pass_recup_compact_notice_html}", values=values, html_keys={"pass_recup_compact_notice_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
     ]
     option_blocks = [block.strip() for block in option_blocks if str(block or "").strip()]
     if option_blocks:
