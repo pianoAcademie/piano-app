@@ -1871,6 +1871,7 @@ def _build_template_values(
     )
     total_before_adjustment = (total_ttc - adjustment_signed_amount).quantize(Decimal("0.01"))
     total_after_adjustment = total_ttc
+    schedule = [item for item in _json_list(document_context.get("schedule")) if isinstance(item, dict)]
     has_deposit = bool(document_context.get("deposit_enabled"))
     deposit_amount_ttc = _decimal_from_any(document_context.get("deposit_amount_ttc"), Decimal("0.00")).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
