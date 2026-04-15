@@ -49,6 +49,7 @@ import type {
   AdminPlanningActivitiesOut,
   AdminCatalogCategoryOut,
   AdminCatalogProductOut,
+  AdminCatalogProductImageUploadOut,
   AdminCatalogReorderProductOut,
   AdminCatalogStockTransferOut,
   AdminCatalogKitOut,
@@ -7955,12 +7956,26 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   const priceInclVat = parseNonNegativeDecimal(String(formData.get("price_incl_vat") ?? ""));
   const vatRateInput = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? ""));
   const reserveStockInput = parseNonNegativeInt(String(formData.get("reserve_stock") ?? ""));
+  const imageFileEntry = formData.get("image_file");
+  const imageFile =
+    typeof File !== "undefined" && imageFileEntry instanceof File && imageFileEntry.size > 0
+      ? imageFileEntry
+      : null;
   const vatRate = vatRateInput ?? 20;
   const reserveStock = reserveStockInput ?? 0;
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
   const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
   if (!title || !categoryId || priceInclVat === null) {
     redirect(appendQueryMessage(returnTo, "error", "Titre, categorie et prix TTC obligatoires"));
+  }
+  if (imageFile) {
+    const allowedImageTypes = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+    if (imageFile.size > 5 * 1024 * 1024) {
+      redirect(appendQueryMessage(returnTo, "error", "Fichier image trop lourd (max 5 MB)"));
+    }
+    if (!allowedImageTypes.has((imageFile.type || "").toLowerCase())) {
+      redirect(appendQueryMessage(returnTo, "error", "Formats image autorises: JPG, PNG, WEBP"));
+    }
   }
   const divisor = 1 + vatRate / 100;
   if (!Number.isFinite(divisor) || divisor <= 0) {
@@ -8000,11 +8015,27 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
+  let successMessage = "Produit cree";
+  if (imageFile) {
+    const uploadPayload = new FormData();
+    uploadPayload.set("file", imageFile, imageFile.name || "image");
+    const uploadResult = await backendRequest<AdminCatalogProductImageUploadOut>(
+      `/api/v1/admin/config/catalog/products/${result.data.id}/image`,
+      {
+        method: "POST",
+        body: uploadPayload,
+      },
+      token,
+    );
+    if (!uploadResult.ok) {
+      successMessage = "Produit cree, mais import image en echec";
+    }
+  }
   revalidatePath("/admin/config");
   revalidatePath("/admin/products");
   let successPath = removeQueryParam(removeQueryParam(returnTo, "ok"), "error");
   successPath = removeQueryParam(successPath, "add");
-  redirect(appendQueryMessage(successPath, "ok", "Produit cree"));
+  redirect(appendQueryMessage(successPath, "ok", successMessage));
 }
 
 export async function updateAdminCatalogProductAction(formData: FormData): Promise<void> {

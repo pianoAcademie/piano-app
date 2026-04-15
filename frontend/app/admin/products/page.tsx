@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import AdminProductActionsMenu from "../../../components/admin-product-actions-menu";
+import AdminProductCreateModal from "../../../components/admin-product-create-modal";
 import AdminProductEditModal from "../../../components/admin-product-edit-modal";
 import {
   cancelAdminCatalogTransferAction,
@@ -1816,141 +1817,13 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
       ) : null}
 
       {showAddForm ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Ajouter produit">
-          <section className="modal-panel modal-day-details">
-            <div className="row spread">
-              <h3 className="modal-title">Ajouter un produit</h3>
-              <Link href={closeModalLink} className="ghost" aria-label="Fermer">
-                Fermer
-              </Link>
-            </div>
-            <section className="modal-card">
-              <form action={createAdminCatalogProductAction} className="grid cols-3 config-form-grid">
-                <input type="hidden" name="return_to" value={addFormReturnTo} />
-
-                <label className="span-2">
-                  Titre *
-                  <input type="text" name="title" required maxLength={255} placeholder="Partition Niveau 1" />
-                </label>
-
-                <label>
-                  Categorie *
-                  <select name="category_id" defaultValue="" required>
-                    <option value="">Selectionner...</option>
-                    {activeCategories.map((categoryRow) => (
-                      <option key={categoryRow.id} value={categoryRow.id}>
-                        {categoryRow.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
-                  Tarif TTC *
-                  <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
-                </label>
-
-                <label>
-                  Tarif HT (optionnel)
-                  <input type="number" name="price_excl_vat" min="0" step="0.01" placeholder="Calcule automatiquement si vide" />
-                </label>
-
-                <label>
-                  TVA (%) (optionnel, defaut 20)
-                  <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" />
-                </label>
-
-                <label>
-                  Local principal (optionnel)
-                  <select name="primary_location_id" defaultValue="">
-                    <option value="">-</option>
-                    {activeLocations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
-                  Code-barres (optionnel)
-                  <input type="text" name="barcode" maxLength={120} />
-                </label>
-
-                <label>
-                  Stock de reserve (optionnel)
-                  <input type="number" name="reserve_stock" min="0" step="1" defaultValue="0" />
-                </label>
-
-                <label>
-                  Statut commande (optionnel)
-                  <select name="reorder_status" defaultValue="NORMAL">
-                    <option value="NORMAL">Normal</option>
-                    <option value="TO_ORDER">A commander</option>
-                    <option value="ORDERED">Commande passee</option>
-                    <option value="RECEIVED">Recu</option>
-                  </select>
-                </label>
-
-                <fieldset className="span-3">
-                  <legend>Type de produit</legend>
-                  <div className="row">
-                    <label className="checkline">
-                      <input type="radio" name="is_virtual" value="false" defaultChecked />
-                      Produit physique (stock gere)
-                    </label>
-                    <label className="checkline">
-                      <input type="radio" name="is_virtual" value="true" />
-                      Produit virtuel (pas de stock)
-                    </label>
-                  </div>
-                </fieldset>
-
-                <label>
-                  Lien web (optionnel)
-                  <input type="url" name="web_link" />
-                </label>
-
-                <label className="span-2">
-                  Visuel URL (optionnel)
-                  <input type="url" name="image_url" />
-                </label>
-
-                <label className="span-2">
-                  Description courte (optionnel)
-                  <input type="text" name="short_description" maxLength={500} />
-                </label>
-
-                <label className="span-3">
-                  Description longue (optionnel)
-                  <textarea name="long_description" rows={3} maxLength={12000} />
-                </label>
-
-                <label className="checkline">
-                  <input type="checkbox" name="purchasable_online" />
-                  Achetable en ligne
-                </label>
-
-                <label className="checkline">
-                  <input type="checkbox" name="is_public" defaultChecked />
-                  Public (visible client)
-                </label>
-
-                <label className="checkline">
-                  <input type="checkbox" name="active" defaultChecked />
-                  Actif
-                </label>
-
-                <div className="row span-3 modal-actions-end">
-                  <Link className="ghost" href={closeModalLink}>
-                    Annuler
-                  </Link>
-                  <button type="submit">Ajouter</button>
-                </div>
-              </form>
-            </section>
-          </section>
-        </section>
+        <AdminProductCreateModal
+          categories={activeCategories}
+          locations={activeLocations}
+          closeHref={closeModalLink}
+          returnTo={addFormReturnTo}
+          createAction={createAdminCatalogProductAction}
+        />
       ) : null}
 
       {editedProduct ? (
