@@ -870,6 +870,33 @@ def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "") -> 
     return _sanitize_slot_label_text(" · ".join(part for part in parts if part).strip()) or "-"
 
 
+def _is_solfege_planning_block(block: dict[str, Any]) -> bool:
+    activity_label = str(block.get("activity_label") or "").strip()
+    activity_code = str(block.get("activity_code") or block.get("activity_service_code") or "").strip()
+    pending_level = str(block.get("pending_solfege_level") or "").strip()
+    haystack = f"{activity_label} {activity_code}".strip().lower()
+    return bool(pending_level) or "solfege" in haystack
+
+
+def _solfege_included_pending_notice_text() -> str:
+    return "Le tarif total du présent devis inclut le solfège en ligne. Seul le choix du créneau reste à confirmer."
+
+
+def _pending_planning_block_display(block: dict[str, Any]) -> tuple[str, str, str, str]:
+    if _is_solfege_planning_block(block):
+        level_label = str(block.get("pending_solfege_level") or "").strip() or _extract_solfege_level_from_text(
+            block.get("activity_label")
+        )
+        activity_label = "Cours de solfège"
+        if str(block.get("modality") or "").strip().upper() == "ONLINE":
+            activity_label += " en ligne"
+        if level_label:
+            activity_label += f" – niveau {level_label}"
+        activity_label += " (inclus dans le devis)"
+        return activity_label, "Créneau à sélectionner", "-", "-"
+    return str(block.get("activity_label") or "-").strip() or "-", "Sélection à faire", "Sélection à faire", "-"
+
+
 def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
     blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     rows: list[list[str]] = []
@@ -899,12 +926,11 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
             activity_type = _modality_label(block.get("modality"))
         location_label = str(block.get("location_label") or "-").strip() or "-"
         if selection_pending:
-            weekday = "Selection a faire"
-            if deduped_pending_slots:
-                time_range = "Selection a faire · Creneaux disponibles: " + " ; ".join(deduped_pending_slots)
-            else:
-                time_range = "Selection a faire"
-            duration = "-"
+            activity_label, weekday, time_range, duration = _pending_planning_block_display(block)
+            if _is_solfege_planning_block(block):
+                activity_type = "Solfège"
+            elif deduped_pending_slots:
+                time_range = "Sélection à faire"
         else:
             weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"))
             start_time = str(block.get("start_time") or "").strip()
@@ -2604,6 +2630,7 @@ def _build_template_values(
             solfege_lines.append(f"Créneaux disponibles : {escape(' ; '.join(solfege_display_slots))}")
         if solfege_mode_label:
             solfege_lines.append(escape(solfege_mode_label))
+        solfege_lines.append(escape(_solfege_included_pending_notice_text()))
         solfege_block_html = "<p>" + "<br/>".join(solfege_lines) + "</p>"
     elif display_flags["showSolfegeSection"]:
         solfege_block_html = f"<p><strong>Option Solfege : souscrite.</strong><br/>{escape(solfege_full)}</p>"
@@ -3804,6 +3831,13 @@ def _render_quote_pdf_blocks(
             end_time=block.get("end_time"),
             fallback_minutes=block.get("duration_minutes"),
         )
+        try:
+            weekday_value = int(block.get("weekday") or -99)
+        except (TypeError, ValueError):
+            weekday_value = -99
+        selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
+        if selection_pending:
+            activity, day, time_range, duration = _pending_planning_block_display(block)
         planning_rows.append([activity, location, day, time_range, duration])
     story.append(
         _table_for_pdf(
