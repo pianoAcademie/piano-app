@@ -550,7 +550,8 @@ function planningVisualSummary(sessions: Array<Record<string, unknown>>): Planni
   }
 
   const toEntries = (monthMap: Map<number, number[]>, semester: 1 | 2): Array<{ monthLabel: string; days: string }> => {
-    const months = Array.from(monthMap.keys()).sort((a, b) => a - b);
+    const schoolYearMonthOrder = (month: number): number => (month >= 9 ? month : month + 12);
+    const months = Array.from(monthMap.keys()).sort((a, b) => schoolYearMonthOrder(a) - schoolYearMonthOrder(b));
     return months
       .filter((month) => (semester === 1 ? month >= 9 || month <= 1 : month >= 2 && month <= 8))
       .map((month) => {

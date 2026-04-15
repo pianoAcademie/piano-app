@@ -407,8 +407,11 @@ function summarizeBySemester(dates: string[], semester: 1 | 2): Array<{ monthLab
     }
     grouped.get(month)?.push(day);
   }
+
+  const schoolYearMonthOrder = (month: number): number => (month >= 9 ? month : month + 12);
+
   return Array.from(grouped.entries())
-    .sort((a, b) => a[0] - b[0])
+    .sort((a, b) => schoolYearMonthOrder(a[0]) - schoolYearMonthOrder(b[0]))
     .map(([month, days]) => ({
       monthLabel: MONTH_LABELS[month - 1] || String(month),
       days: Array.from(new Set(days)).sort((a, b) => a - b).join(", "),
