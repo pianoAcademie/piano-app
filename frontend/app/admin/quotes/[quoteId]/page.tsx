@@ -269,6 +269,12 @@ type QuoteDocumentPreviewOut = {
   payment_schedule_compact_notice: string;
 };
 
+type QuoteSchoolCalendarResolveOut = {
+  calendar: Record<string, unknown> | null;
+  holiday_dates: string[];
+  closure_dates: string[];
+};
+
 function messagingTemplateRef(template: AdminMessagingTemplateOut): string {
   if (template.kind === "PREDEFINED") {
     return `predefined:${template.code || ""}`;
@@ -647,6 +653,141 @@ function getPlanningBlocks(snapshot: Record<string, unknown>): Array<Record<stri
     return [];
   }
   return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+}
+
+function normalizeCalendarDateList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      value
+        .map((item) => String(item).trim())
+        .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item)),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function normalizePlanningBlockModality(value: unknown): "ONLINE" | "ONSITE" | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "ONLINE" || normalized === "ONSITE") {
+    return normalized;
+  }
+  return null;
+}
+
+async function hydratePlanningSnapshotForEditor({
+  snapshot,
+  token,
+  schoolYearLabel,
+  activities,
+}: {
+  snapshot: Record<string, unknown>;
+  token: string;
+  schoolYearLabel: string | null;
+  activities: AdminActivityOut[];
+}): Promise<Record<string, unknown>> {
+  const blocks = getPlanningBlocks(snapshot);
+  if (blocks.length === 0) {
+    return snapshot;
+  }
+
+  const activityById = new Map(activities.map((activity) => [activity.id, activity]));
+  const calendarCache = new Map<string, QuoteSchoolCalendarResolveOut>();
+  let didMutate = false;
+
+  const nextBlocks = await Promise.all(
+    blocks.map(async (block) => {
+      const activityId = String(block.activity_id ?? "").trim();
+      const locationId = String(block.location_id ?? "").trim();
+      const activity = activityById.get(activityId);
+      const shouldExcludeHolidays = activity?.exclude_holidays_in_recurrence !== false;
+      const shouldExcludeVacations = activity?.exclude_school_vacations_in_recurrence !== false;
+      const hasHolidayDates = Array.isArray(block.holiday_dates);
+      const hasClosureDates = Array.isArray(block.closure_dates);
+      const currentHolidayDates = shouldExcludeHolidays ? normalizeCalendarDateList(block.holiday_dates) : [];
+      const currentClosureDates = shouldExcludeVacations ? normalizeCalendarDateList(block.closure_dates) : [];
+
+      if ((!shouldExcludeHolidays || hasHolidayDates) && (!shouldExcludeVacations || hasClosureDates)) {
+        if (!shouldExcludeHolidays && hasHolidayDates) {
+          didMutate = true;
+          return { ...block, holiday_dates: [] };
+        }
+        if (!shouldExcludeVacations && hasClosureDates) {
+          didMutate = true;
+          return { ...block, closure_dates: [] };
+        }
+        return block;
+      }
+
+      if (!locationId) {
+        didMutate = true;
+        return {
+          ...block,
+          holiday_dates: shouldExcludeHolidays ? currentHolidayDates : [],
+          closure_dates: shouldExcludeVacations ? currentClosureDates : [],
+        };
+      }
+
+      const resolvedModality =
+        normalizePlanningBlockModality(block.modality) ?? normalizePlanningBlockModality(activity?.mode);
+      const cacheKey = `${locationId}|${schoolYearLabel || ""}|${resolvedModality || ""}`;
+      let resolvedCalendar = calendarCache.get(cacheKey);
+      if (!resolvedCalendar) {
+        const query = new URLSearchParams();
+        if (schoolYearLabel) {
+          query.set("school_year_label", schoolYearLabel);
+        }
+        if (resolvedModality) {
+          query.set("modality", resolvedModality);
+        }
+        const suffix = query.toString() ? `?${query.toString()}` : "";
+        const result = await backendRequest<QuoteSchoolCalendarResolveOut>(
+          `/api/v1/quote-school-calendars/active/by-location/${encodeURIComponent(locationId)}${suffix}`,
+          {},
+          token,
+        );
+        resolvedCalendar = result.ok
+          ? result.data
+          : { calendar: null, holiday_dates: currentHolidayDates, closure_dates: currentClosureDates };
+        calendarCache.set(cacheKey, resolvedCalendar);
+      }
+
+      const nextHolidayDates = shouldExcludeHolidays
+        ? normalizeCalendarDateList(resolvedCalendar.holiday_dates)
+        : [];
+      const nextClosureDates = shouldExcludeVacations
+        ? normalizeCalendarDateList(resolvedCalendar.closure_dates)
+        : [];
+      const nextCalendarName =
+        String(block.calendar_name ?? "").trim() || String(resolvedCalendar.calendar?.name ?? "").trim();
+
+      if (
+        JSON.stringify(nextHolidayDates) === JSON.stringify(currentHolidayDates) &&
+        JSON.stringify(nextClosureDates) === JSON.stringify(currentClosureDates) &&
+        nextCalendarName === String(block.calendar_name ?? "")
+      ) {
+        return block;
+      }
+
+      didMutate = true;
+      return {
+        ...block,
+        calendar_name: nextCalendarName,
+        holiday_dates: nextHolidayDates,
+        closure_dates: nextClosureDates,
+      };
+    }),
+  );
+
+  if (!didMutate) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    blocks: nextBlocks,
+  };
 }
 
 type QuoteFinancialAdjustment = {
@@ -1093,6 +1234,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const activityPrices = activityPricesResult?.ok ? activityPricesResult.data : [];
   const productPrices = productPricesResult?.ok ? productPricesResult.data : [];
   const kitPrices = kitPricesResult?.ok ? kitPricesResult.data : [];
+  const planningSnapshotForEditor = await hydratePlanningSnapshotForEditor({
+    snapshot: detail.quote.calendar_snapshot || {},
+    token,
+    schoolYearLabel: detail.quote.school_year_label,
+    activities,
+  });
 
   const activityIds = Array.from(new Set(
     detail.lines
@@ -1311,8 +1458,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       </section>
     ) : null;
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
-  const calendarSessions = getCalendarSessions(detail.quote.calendar_snapshot || {});
-  const planningBlocks = getPlanningBlocks(detail.quote.calendar_snapshot || {});
+  const calendarSessions = getCalendarSessions(planningSnapshotForEditor);
+  const planningBlocks = getPlanningBlocks(planningSnapshotForEditor);
   const planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }> = {};
   for (const session of calendarSessions) {
     const activityId = String(session.activity_id ?? "").trim();
@@ -1552,7 +1699,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     { label: "Mode cible", value: integrationTargetMode },
     { label: "Contact payeur", value: ownerName },
     { label: "Eleve(s)", value: readStringMeta(detail.quote.meta || {}, "integration_students_label", ownerName) },
-    { label: "Activites acceptees", value: String(getPlanningBlocks(detail.quote.calendar_snapshot || {}).length || 0) },
+    { label: "Activites acceptees", value: String(getPlanningBlocks(planningSnapshotForEditor).length || 0) },
     { label: "Creneaux a creer / maj", value: String(calendarSessions.length) },
     { label: "Annee scolaire", value: detail.quote.school_year_label || "-" },
     {
@@ -1693,7 +1840,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     activities: quickActivities,
     sessionsByActivityId: quickSessionsByActivityId,
     plans: quickPlans,
-    calendarSnapshot: detail.quote.calendar_snapshot || {},
+    calendarSnapshot: planningSnapshotForEditor,
     followupId: activeFollowup?.id || null,
     followupStatus: activeFollowup?.status || null,
     scenario: quickScenario,
@@ -2531,7 +2678,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               location_id: row.location_id,
               modality: row.modality,
             }))}
-            initialSnapshot={detail.quote.calendar_snapshot}
+            initialSnapshot={planningSnapshotForEditor}
             initialMeta={detail.quote.meta || {}}
             saveAction={updateQuotePlanningAction}
           />
