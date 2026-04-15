@@ -214,7 +214,7 @@ export default function AdminProductEditModal({
             <input type="hidden" name="image_url" value={imageUrl} />
             <label className="span-3 product-image-url-field">
               URL image
-              <input type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://..." />
+              <input type="text" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://... ou /admin/products/images/..." />
               <small className="muted">Champ optionnel pour coller ou corriger directement le visuel sans ouvrir d options avancees.</small>
             </label>
           </section>

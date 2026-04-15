@@ -7881,7 +7881,7 @@ button.danger:focus-visible {
 
 .product-edit-modal {
   width: min(980px, 96vw);
-  max-height: 86vh;
+  max-height: 92vh;
   padding: 0;
   overflow: hidden;
   background: #fff;
@@ -7892,7 +7892,7 @@ button.danger:focus-visible {
 .product-edit-modal-form {
   display: flex;
   flex-direction: column;
-  height: min(76vh, 760px);
+  height: min(84vh, 860px);
 }
 
 .product-edit-modal-header {
@@ -7924,7 +7924,7 @@ button.danger:focus-visible {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 14px 16px 20px;
+  padding: 14px 16px 32px;
   display: grid;
   gap: 14px;
 }
