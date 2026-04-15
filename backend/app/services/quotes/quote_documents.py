@@ -2183,6 +2183,14 @@ def _build_template_values(
     )
 
     schedule = document_context["schedule"]
+    special_bank_transfer_deposit_lines = _bank_transfer_deposit_schedule_lines(
+        schedule=schedule,
+        has_deposit=has_deposit,
+        deposit_amount_ttc=deposit_amount_ttc,
+        currency=currency,
+        payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
+        remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+    )
     payment_schedule_rows = [
         [
             str(item.get("label") or "-"),
