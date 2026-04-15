@@ -7073,49 +7073,86 @@ def list_quote_school_calendar_generated_slots(
 def resolve_quote_school_calendar_for_location(
     location_id: UUID,
     school_year_label: str | None = Query(default=None),
+    modality: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteSchoolCalendarResolveOut:
     rows = _load_quote_school_calendars(db)
     normalized_year = (school_year_label or "").strip().lower()
-    selected: QuoteSchoolCalendarOut | None = None
-    for raw in rows:
-        try:
-            item = _calendar_out(raw)
-        except Exception:
-            continue
-        if not item.is_active:
-            continue
-        if item.location_id != location_id:
-            continue
-        if normalized_year and item.school_year_label.strip().lower() != normalized_year:
-            continue
-        if selected is None or item.updated_at > selected.updated_at:
-            selected = item
-    if selected is None:
-        return QuoteSchoolCalendarResolveOut(calendar=None, holiday_dates=[], closure_dates=[])
-    holiday_days = set(selected.holiday_dates)
-    closure_days = set(selected.closure_dates)
-    deployment_slots = _list_calendar_generated_slots(db, calendar_id=selected.id, location_id=selected.location_id)
-    if deployment_slots:
-        generated_holidays: set[date] = set()
-        generated_closures: set[date] = set()
-        for slot in deployment_slots:
-            if slot.status.upper() == "CANCELLED":
+    normalized_modality = str(modality or "").strip().upper()
+    effective_location_id = location_id
+    if normalized_modality == "ONLINE":
+        fallback_location = db.scalar(select(Location).where(Location.id == location_id).limit(1))
+        fallback_code = (fallback_location.code if fallback_location is not None else "").strip().upper()
+        if fallback_location is None or (not fallback_location.is_online and fallback_code != "ONLINE"):
+            online_location = db.scalar(
+                select(Location)
+                .where(
+                    Location.active.is_(True),
+                    or_(Location.is_online.is_(True), func.upper(Location.code) == "ONLINE"),
+                )
+                .order_by(
+                    case((Location.is_online.is_(True), 0), else_=1),
+                    Location.name.asc(),
+                )
+                .limit(1)
+            )
+            if online_location is not None:
+                effective_location_id = online_location.id
+
+    def matching_calendars(target_location_id: UUID) -> list[QuoteSchoolCalendarOut]:
+        out: list[QuoteSchoolCalendarOut] = []
+        for raw in rows:
+            try:
+                item = _calendar_out(raw)
+            except Exception:
                 continue
-            if CALENDAR_DEPLOYMENT_REASON_HOLIDAY in slot.reason_types:
-                generated_holidays.add(slot.date)
-            if CALENDAR_DEPLOYMENT_REASON_VACATION in slot.reason_types or CALENDAR_DEPLOYMENT_REASON_CLOSURE in slot.reason_types:
-                generated_closures.add(slot.date)
-        if generated_holidays or generated_closures:
-            holiday_days = generated_holidays
-            closure_days = generated_closures
-    vacation_days = _expand_vacation_periods(selected.vacation_periods)
-    merged_closure_days = sorted({*closure_days, *vacation_days})
+            if not item.is_active:
+                continue
+            if item.location_id != target_location_id:
+                continue
+            if normalized_year and item.school_year_label.strip().lower() != normalized_year:
+                continue
+            out.append(item)
+        out.sort(key=lambda item: item.updated_at, reverse=True)
+        return out
+
+    selected = matching_calendars(effective_location_id)
+    if not selected and effective_location_id != location_id:
+        selected = matching_calendars(location_id)
+    if not selected:
+        return QuoteSchoolCalendarResolveOut(calendar=None, holiday_dates=[], closure_dates=[])
+    representative = selected[0]
+    merged_holiday_days: set[date] = set()
+    merged_closure_days: set[date] = set()
+    for calendar in selected:
+        holiday_days = set(calendar.holiday_dates)
+        closure_days = set(calendar.closure_dates)
+        deployment_slots = _list_calendar_generated_slots(db, calendar_id=calendar.id, location_id=calendar.location_id)
+        if deployment_slots:
+            generated_holidays: set[date] = set()
+            generated_closures: set[date] = set()
+            for slot in deployment_slots:
+                if slot.status.upper() == "CANCELLED":
+                    continue
+                if CALENDAR_DEPLOYMENT_REASON_HOLIDAY in slot.reason_types:
+                    generated_holidays.add(slot.date)
+                if (
+                    CALENDAR_DEPLOYMENT_REASON_VACATION in slot.reason_types
+                    or CALENDAR_DEPLOYMENT_REASON_CLOSURE in slot.reason_types
+                ):
+                    generated_closures.add(slot.date)
+            if generated_holidays or generated_closures:
+                holiday_days = generated_holidays
+                closure_days = generated_closures
+        vacation_days = _expand_vacation_periods(calendar.vacation_periods)
+        merged_holiday_days.update(holiday_days)
+        merged_closure_days.update(closure_days)
+        merged_closure_days.update(vacation_days)
     return QuoteSchoolCalendarResolveOut(
-        calendar=selected,
-        holiday_dates=sorted(holiday_days),
-        closure_dates=merged_closure_days,
+        calendar=representative,
+        holiday_dates=sorted(merged_holiday_days),
+        closure_dates=sorted(merged_closure_days),
     )
 
 
