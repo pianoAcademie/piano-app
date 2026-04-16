@@ -1152,9 +1152,9 @@ def _quote_template_disables_pass_recup(*, db: Session | None, quote: Quote) -> 
             str(meta.get("template_name") or "").strip().lower(),
         ]
     )
-    if target == "eveil":
+    if target in {"eveil", "initiation"}:
         return True
-    return any("eveil" in item for item in candidates if item)
+    return any(("eveil" in item) or ("initiation" in item) for item in candidates if item)
 
 
 def _load_terms_template_content(*, db: Session | None, quote: Quote) -> tuple[str, str]:

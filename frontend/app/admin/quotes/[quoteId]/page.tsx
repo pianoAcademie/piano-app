@@ -1660,11 +1660,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       return false;
     }
     const target = String(selectedTemplate.target || "").trim().toLowerCase();
-    if (target === "eveil") {
+    if (target === "eveil" || target === "initiation") {
       return true;
     }
     const haystack = `${selectedTemplate.name || ""} ${selectedTemplate.code || ""}`.trim().toLowerCase();
-    return haystack.includes("eveil");
+    return haystack.includes("eveil") || haystack.includes("initiation");
   })();
   const templateOptions = (() => {
     if (!selectedTemplate) {
