@@ -223,7 +223,7 @@ function resolvePlanningCalendarPreset(
   if (exact) {
     return exact;
   }
-  return calendarPresetMap.get(planningCalendarPresetKey(locationId, ""));
+  return calendarPresetMap.get(planningCalendarPresetKey(locationId, "")) ?? null;
 }
 
 function timeToMinutes(value: string): number | null {
