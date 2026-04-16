@@ -105,6 +105,7 @@ type QuoteLineOut = {
   amount_ht: string;
   amount_vat: string;
   amount_ttc: string;
+  meta: Record<string, unknown>;
 };
 
 type QuoteOut = {

@@ -37,6 +37,7 @@ type InitialQuoteLine = {
   quantity: string;
   vat_rate: string;
   unit_price_ttc: string;
+  meta?: Record<string, unknown>;
 };
 
 type LineKind = "activity" | "product" | "kit" | "discount" | "surcharge";
@@ -49,6 +50,8 @@ type EditableLine = {
   quantity: string;
   vatRate: string;
   unitPrice: string;
+  meta: Record<string, unknown>;
+  manualUnitPriceOverride: boolean;
   saved: boolean;
   dirty: boolean;
 };
@@ -194,6 +197,12 @@ function normalizePercentInput(value: string | null | undefined): string {
 }
 
 function buildLinePayload(line: EditableLine, index: number): Record<string, unknown> {
+  const meta: Record<string, unknown> = { ...(line.meta || {}) };
+  if (line.manualUnitPriceOverride) {
+    meta.manual_unit_price_override = true;
+  } else {
+    delete meta.manual_unit_price_override;
+  }
   if (line.kind === "discount") {
     return {
       line_category: "product",
@@ -203,6 +212,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
+      meta,
       sort_order: index,
     };
   }
@@ -215,6 +225,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
+      meta,
       sort_order: index,
     };
   }
@@ -228,6 +239,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: line.unitPrice || "0",
+      meta,
       sort_order: index,
     };
   }
@@ -241,6 +253,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: line.unitPrice || "0",
+      meta,
       sort_order: index,
     };
   }
@@ -253,6 +266,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
     quantity: normalizeQuantityInput(line.quantity),
     vat_rate: line.vatRate || "0",
     unit_price_ttc: line.unitPrice || "0",
+    meta,
     sort_order: index,
   };
 }
@@ -463,7 +477,8 @@ function editableLineChanged(current: EditableLine, next: EditableLine): boolean
     || String(current.title) !== String(next.title)
     || String(current.quantity) !== String(next.quantity)
     || String(current.vatRate) !== String(next.vatRate)
-    || String(current.unitPrice) !== String(next.unitPrice);
+    || String(current.unitPrice) !== String(next.unitPrice)
+    || current.manualUnitPriceOverride !== next.manualUnitPriceOverride;
 }
 
 function newLine(kind: LineKind, defaultVatRate: string): EditableLine {
@@ -475,8 +490,27 @@ function newLine(kind: LineKind, defaultVatRate: string): EditableLine {
     quantity: "1",
     vatRate: kind === "discount" || kind === "surcharge" ? "0.00" : normalizePercentInput(defaultVatRate),
     unitPrice: "0",
+    meta: {},
+    manualUnitPriceOverride: false,
     saved: false,
     dirty: true,
+  };
+}
+
+function editableLineFromInitial(row: InitialQuoteLine): EditableLine {
+  const meta = row.meta && typeof row.meta === "object" ? row.meta : {};
+  return {
+    uid: row.id,
+    kind: inferKind(row),
+    refId: inferRefId(row),
+    title: row.title || "",
+    quantity: normalizeQuantityInput(row.quantity),
+    vatRate: normalizePercentInput(row.vat_rate),
+    unitPrice: row.unit_price_ttc || "0",
+    meta,
+    manualUnitPriceOverride: meta.manual_unit_price_override === true,
+    saved: true,
+    dirty: false,
   };
 }
 
@@ -499,22 +533,33 @@ export default function QuoteLinesEditor({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [lines, setLines] = useState<EditableLine[]>(
-    initialLines.map((row) => ({
-      uid: row.id,
-      kind: inferKind(row),
-      refId: inferRefId(row),
-      title: row.title || "",
-      quantity: normalizeQuantityInput(row.quantity),
-      vatRate: normalizePercentInput(row.vat_rate),
-      unitPrice: row.unit_price_ttc || "0",
-      saved: true,
-      dirty: false,
-    })),
+  const initialLinesSignature = useMemo(
+    () => JSON.stringify(
+      initialLines.map((row) => ({
+        id: row.id,
+        line_type: row.line_type,
+        activity_id: row.activity_id,
+        product_id: row.product_id,
+        kit_id: row.kit_id,
+        title: row.title,
+        quantity: row.quantity,
+        vat_rate: row.vat_rate,
+        unit_price_ttc: row.unit_price_ttc,
+        meta: row.meta ?? {},
+      })),
+    ),
+    [initialLines],
   );
+  const mappedInitialLines = useMemo(() => initialLines.map(editableLineFromInitial), [initialLinesSignature]);
+  const [lines, setLines] = useState<EditableLine[]>(() => mappedInitialLines);
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   const [saveConfirmationMessage, setSaveConfirmationMessage] = useState<string>("");
   const handledSuccessTokenRef = useRef<string>("");
+
+  useEffect(() => {
+    setLines(mappedInitialLines);
+    setEditorState(null);
+  }, [mappedInitialLines]);
 
   useEffect(() => {
     const okMessage = searchParams?.get("ok")?.trim() ?? "";
@@ -595,7 +640,7 @@ export default function QuoteLinesEditor({
       return;
     }
     if (!refId) {
-      updateEditor({ refId: "", title: "", unitPrice: "0" });
+      updateEditor({ refId: "", title: "", unitPrice: "0", manualUnitPriceOverride: false });
       return;
     }
     setEditorState((prev) => {
@@ -618,6 +663,7 @@ export default function QuoteLinesEditor({
             title: activity?.name ?? "Activite",
             vatRate: shouldPrefillVat ? (defaultVatRate || "0") : line.vatRate,
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+            manualUnitPriceOverride: false,
           },
         };
       }
@@ -634,6 +680,7 @@ export default function QuoteLinesEditor({
             title: product?.title ?? "Produit",
             vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+            manualUnitPriceOverride: false,
           },
         };
       }
@@ -649,6 +696,7 @@ export default function QuoteLinesEditor({
           title: kit?.title ?? "Kit",
           vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
           unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+          manualUnitPriceOverride: false,
         },
       };
     });
@@ -979,7 +1027,7 @@ export default function QuoteLinesEditor({
                     type="number"
                     step="0.01"
                     value={editorLine.unitPrice}
-                    onChange={(event) => updateEditor({ unitPrice: event.target.value })}
+                    onChange={(event) => updateEditor({ unitPrice: event.target.value, manualUnitPriceOverride: true })}
                     required
                     disabled={!editable}
                   />
@@ -995,7 +1043,7 @@ export default function QuoteLinesEditor({
                       <button
                         type="button"
                         className="ghost small-btn"
-                        onClick={() => updateEditor({ unitPrice: editorResolvedSourcePrice.unitPrice })}
+                        onClick={() => updateEditor({ unitPrice: editorResolvedSourcePrice.unitPrice, manualUnitPriceOverride: false })}
                         disabled={!editable}
                       >
                         Reappliquer ce tarif

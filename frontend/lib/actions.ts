@@ -9634,6 +9634,7 @@ type QuoteWizardLinePayload = {
   vat_rate: string;
   unit_price_ttc: string;
   sort_order: number;
+  meta: Record<string, unknown>;
 };
 
 function safeAdminQuotesPath(path: string, fallback = "/admin/quotes"): string {
@@ -10029,6 +10030,10 @@ function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
       const vatRate = String(row.vat_rate ?? "").trim();
       const unitPrice = String(row.unit_price_ttc ?? "").trim();
       const sortOrder = Number.parseInt(String(row.sort_order ?? "0"), 10);
+      const meta =
+        row.meta && typeof row.meta === "object" && !Array.isArray(row.meta)
+          ? (row.meta as Record<string, unknown>)
+          : {};
       if ((lineCategory !== "service" && lineCategory !== "product") || (lineType !== "item" && lineType !== "discount" && lineType !== "surcharge")) {
         continue;
       }
@@ -10069,6 +10074,7 @@ function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
         vat_rate: vatRate || "0",
         unit_price_ttc: unitPrice,
         sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+        meta,
       });
     }
     return out;
@@ -10278,6 +10284,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
       quantity: line.quantity,
       vat_rate: line.vat_rate,
       unit_price_ttc: line.unit_price_ttc,
+      meta: line.meta,
       pricing_unit: line.line_category === "service" ? "session" : "item",
       sort_order: line.sort_order,
     })),
