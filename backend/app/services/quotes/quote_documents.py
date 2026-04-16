@@ -827,6 +827,28 @@ def _sanitize_slot_label_text(value: Any) -> str:
     return cleaned_label or mode_label or str(value or "").strip()
 
 
+def _replace_word_preserving_case(value: str, pattern: str, replacement: str) -> str:
+    def _repl(match: re.Match[str]) -> str:
+        matched = match.group(0)
+        if matched.isupper():
+            return replacement.upper()
+        if matched[:1].isupper():
+            return replacement.capitalize()
+        return replacement
+
+    return re.sub(pattern, _repl, value, flags=re.IGNORECASE)
+
+
+def _harmonize_display_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return text
+    text = _replace_word_preserving_case(text, r"\bsolfege\b", "solfège")
+    text = _replace_word_preserving_case(text, r"\bpresentiel\b", "présentiel")
+    text = _replace_word_preserving_case(text, r"\bcontrole\b", "contrôle")
+    return text
+
+
 def _factorize_slot_labels(labels: list[str]) -> tuple[list[str], str]:
     sanitized_labels = [_sanitize_slot_label_text(item) for item in labels if str(item or "").strip()]
     if not sanitized_labels:
@@ -894,7 +916,7 @@ def _pending_planning_block_display(block: dict[str, Any]) -> tuple[str, str, st
             activity_label += f" – niveau {level_label}"
         activity_label += " (inclus dans le devis)"
         return activity_label, "-", "Créneau à sélectionner", "-"
-    return str(block.get("activity_label") or "-").strip() or "-", "Sélection à faire", "Sélection à faire", "-"
+    return _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-"), "Sélection à faire", "Sélection à faire", "-"
 
 
 def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
@@ -920,10 +942,11 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
         except (TypeError, ValueError):
             weekday_value = -99
         selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
-        activity_label = str(block.get("activity_label") or "-").strip() or "-"
+        activity_label = _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-")
         activity_type = str(block.get("activity_type_label") or "").strip()
         if not activity_type:
             activity_type = _modality_label(block.get("modality"))
+        activity_type = _harmonize_display_text(activity_type)
         location_label = str(block.get("location_label") or "-").strip() or "-"
         if selection_pending:
             activity_label, weekday, time_range, duration = _pending_planning_block_display(block)
@@ -2310,7 +2333,7 @@ def _build_template_values(
         ["Activité", "Quantité", "Durée", "TVA", "PU TTC", "Montant TTC"],
         [
             [
-                line.title or "-",
+                _harmonize_display_text(line.title or "-"),
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
@@ -2390,7 +2413,7 @@ def _build_template_values(
                     if (line.master_item_type or "").strip().lower() == "discount_rule"
                     else "Supplément"
                 ),
-                line.title or "-",
+                _harmonize_display_text(line.title or "-"),
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -2404,7 +2427,7 @@ def _build_template_values(
         ["Intitulé", "Quantité", "TVA", "PU TTC", "Montant TTC"],
         [
             [
-                line.title or "-",
+                _harmonize_display_text(line.title or "-"),
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -2423,7 +2446,7 @@ def _build_template_values(
                 else "Supplément"
                 if (line.line_type or "").strip().lower() == "surcharge"
                 else ("Service" if (line.line_category or "").lower() == "service" else ("Kit" if line.kit_id else "Matériel")),
-                line.title or "-",
+                _harmonize_display_text(line.title or "-"),
                 _decimal_str(Decimal(line.quantity or 0)),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -2656,7 +2679,7 @@ def _build_template_values(
     solfege_block_html = ""
     if show_solfege_pending_notice:
         solfege_lines = [
-            "<strong>Option Solfege : souscrite.</strong>",
+            "<strong>Option solfège : incluse dans le présent devis.</strong>",
             f"Niveau estimé : {escape(str(document_context.get('solfege_level') or '-'))}{escape(solfege_duration_label)}",
             "Créneau retenu : Sélection à faire",
         ]
@@ -2667,7 +2690,7 @@ def _build_template_values(
         solfege_lines.append(escape(_solfege_included_pending_notice_text()))
         solfege_block_html = "<p>" + "<br/>".join(solfege_lines) + "</p>"
     elif display_flags["showSolfegeSection"]:
-        solfege_block_html = f"<p><strong>Option Solfege : souscrite.</strong><br/>{escape(solfege_full)}</p>"
+        solfege_block_html = f"<p><strong>Option solfège : incluse dans le présent devis.</strong><br/>{escape(solfege_full)}</p>"
     masterclass_common_text = (
         "Masterclass du samedi (complément aux 2 cours collectifs hebdomadaires) : une session de 3h dédiée à la "
         "pratique au piano, avec un focus approfondi sur la musicalité et l’interprétation."
@@ -3854,7 +3877,7 @@ def _render_quote_pdf_blocks(
     story.append(Paragraph("Cours et options choisis", styles["h1"]))
     planning_rows: list[list[str]] = []
     for block in planning_blocks:
-        activity = str(block.get("activity_label") or "-")
+        activity = _harmonize_display_text(str(block.get("activity_label") or "-"))
         location = str(block.get("location_label") or "-")
         day = str(block.get("weekday_label") or _weekday_label(block.get("weekday")) or "-")
         start = str(block.get("start_time") or "").strip()
@@ -3887,7 +3910,7 @@ def _render_quote_pdf_blocks(
     story.append(Paragraph("Cours inclus dans le devis", styles["h2"]))
     service_rows = [
         [
-            line.title or "-",
+            _harmonize_display_text(line.title or "-"),
             _decimal_str(Decimal(line.quantity or 0)),
             f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
@@ -3917,7 +3940,7 @@ def _render_quote_pdf_blocks(
                 if (line.master_item_type or "").strip().lower() == "discount_rule"
                 else "Supplément"
             ),
-            line.title or "-",
+            _harmonize_display_text(line.title or "-"),
             _decimal_str(Decimal(line.quantity or 0)),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
@@ -3941,7 +3964,7 @@ def _render_quote_pdf_blocks(
     product_rows = [
         [
             {
-                "text": line.title or "-",
+                "text": _harmonize_display_text(line.title or "-"),
                 "subtext": "\n".join(
                     _unique_text_parts(
                         line.description,
@@ -3976,7 +3999,7 @@ def _render_quote_pdf_blocks(
     kit_rows = [
         [
             {
-                "text": line.title or "-",
+                "text": _harmonize_display_text(line.title or "-"),
                 "subtext": "\n".join(
                     _unique_text_parts(
                         line.description,
@@ -4015,7 +4038,7 @@ def _render_quote_pdf_blocks(
 
     other_fee_rows = [
         [
-            line.title or "-",
+            _harmonize_display_text(line.title or "-"),
             _decimal_str(Decimal(line.quantity or 0)),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
