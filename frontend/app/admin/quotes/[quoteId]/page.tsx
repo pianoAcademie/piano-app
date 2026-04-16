@@ -736,6 +736,37 @@ function normalizeCalendarDateList(value: unknown): string[] {
   ).sort((left, right) => left.localeCompare(right));
 }
 
+function deriveSchoolYearLabelFromDate(value: unknown): string | null {
+  const trimmed = String(value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return null;
+  }
+  const year = Number.parseInt(trimmed.slice(0, 4), 10);
+  const month = Number.parseInt(trimmed.slice(5, 7), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null;
+  }
+  const startYear = month >= 9 ? year : year - 1;
+  return `${startYear}-${startYear + 1}`;
+}
+
+function derivePlanningSnapshotSchoolYearLabel(
+  snapshot: Record<string, unknown>,
+  fallback: string | null | undefined,
+): string | null {
+  const labels = Array.from(
+    new Set(
+      getPlanningBlocks(snapshot)
+        .map((block) => deriveSchoolYearLabelFromDate(block.start_date))
+        .filter((label): label is string => Boolean(label)),
+    ),
+  );
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  return fallback || null;
+}
+
 function normalizePlanningBlockModality(value: unknown): "ONLINE" | "ONSITE" | null {
   const normalized = String(value ?? "").trim().toUpperCase();
   if (normalized === "ONLINE" || normalized === "ONSITE") {
@@ -1365,9 +1396,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const kits = kitsResult.ok ? kitsResult.data : [];
   const locations = locationsResult.ok ? locationsResult.data : [];
   const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
+  const planningEditorSchoolYearLabel = derivePlanningSnapshotSchoolYearLabel(
+    detail.quote.calendar_snapshot || {},
+    detail.quote.school_year_label,
+  );
   const planningCalendarPresets = await loadPlanningCalendarPresets({
     token,
-    schoolYearLabel: detail.quote.school_year_label,
+    schoolYearLabel: planningEditorSchoolYearLabel,
     locations,
   });
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
@@ -1384,7 +1419,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const planningSnapshotForEditor = await hydratePlanningSnapshotForEditor({
     snapshot: detail.quote.calendar_snapshot || {},
     token,
-    schoolYearLabel: detail.quote.school_year_label,
+    schoolYearLabel: planningEditorSchoolYearLabel,
     activities,
   });
 
@@ -2823,7 +2858,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             quoteId={detail.quote.id}
             returnTo={selfPath}
             editable={detail.quote.status === "created"}
-            schoolYearLabel={detail.quote.school_year_label}
+            schoolYearLabel={planningEditorSchoolYearLabel}
             activities={activities.map((row) => ({
               id: row.id,
               name: row.name,

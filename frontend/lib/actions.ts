@@ -10161,6 +10161,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   if (planningBlocks === null) {
     redirect(appendQueryMessage(returnTo, "error", "Planning devis invalide"));
   }
+  const effectivePlanningSchoolYearLabel = deriveSchoolYearLabelFromBlocks(planningBlocks, schoolYearLabel);
   const resolvedEstimatedSolfegeLevel = estimatedSolfegeLevel;
   const resolvedSolfegeSlot = parsedSolfegeSlot || null;
   const calendarActivityId = parseUuid(String(formData.get("calendar_activity_id") ?? ""));
@@ -10207,7 +10208,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
       blocks: planningBlocks,
       token,
       returnTo,
-      schoolYearLabel,
+      schoolYearLabel: effectivePlanningSchoolYearLabel,
     });
   } else if (startDate && endDate && startTime && endTime && weekdays.length > 0) {
     const preview = await backendRequest<Record<string, unknown>>(
@@ -10265,7 +10266,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     payment_plan_id: paymentPlanId,
     quote_template_uuid: quoteTemplateUuid,
     terms_template_id: termsTemplateId,
-    school_year_label: schoolYearLabel,
+    school_year_label: effectivePlanningSchoolYearLabel,
     currency,
     language,
     vat_rate: tvaRate,
@@ -10907,6 +10908,23 @@ function deriveSchoolYearLabelFromDate(dateRaw: string): string | null {
   return `${startYear}-${endYear}`;
 }
 
+function deriveSchoolYearLabelFromBlocks(
+  blocks: QuotePlanningBlockInput[],
+  fallback: string | null,
+): string | null {
+  const labels = Array.from(
+    new Set(
+      blocks
+        .map((block) => deriveSchoolYearLabelFromDate(block.start_date))
+        .filter((label): label is string => Boolean(label)),
+    ),
+  );
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  return fallback;
+}
+
 async function buildCalendarSnapshotFromBlocks({
   blocks,
   token,
@@ -10993,7 +11011,7 @@ async function buildCalendarSnapshotFromBlocks({
   }));
 
   for (const block of normalizedBlocks) {
-    const inferredSchoolYearLabel = schoolYearLabel || deriveSchoolYearLabelFromDate(block.start_date) || null;
+    const inferredSchoolYearLabel = deriveSchoolYearLabelFromDate(block.start_date) || schoolYearLabel || null;
     const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel);
     const holidayDates = block.exclude_holidays_in_recurrence === false ? [] : resolvedCalendar.holiday_dates;
     const closureDates = block.exclude_school_vacations_in_recurrence === false ? [] : resolvedCalendar.closure_dates;
@@ -11113,7 +11131,13 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
   delete currentMeta.selected_solfege_slot;
 
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
-  let snapshot = await buildCalendarSnapshotFromBlocks({ blocks, token, returnTo, schoolYearLabel });
+  const effectivePlanningSchoolYearLabel = deriveSchoolYearLabelFromBlocks(blocks, schoolYearLabel);
+  let snapshot = await buildCalendarSnapshotFromBlocks({
+    blocks,
+    token,
+    returnTo,
+    schoolYearLabel: effectivePlanningSchoolYearLabel,
+  });
   if (snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)) {
     const next = { ...(snapshot as Record<string, unknown>) };
     delete next.solfege;
@@ -11127,6 +11151,7 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
       method: "PATCH",
       body: JSON.stringify({
         calendar_snapshot: snapshot,
+        school_year_label: effectivePlanningSchoolYearLabel,
         meta: currentMeta,
       }),
     },
