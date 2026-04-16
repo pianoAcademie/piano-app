@@ -293,7 +293,7 @@ def _bank_transfer_deposit_schedule_lines(
     deposit_amount = _money(deposit_amount_ttc, currency)
     remaining_amount = _money(remaining_ttc_after_deposit, currency)
     return [
-        f"Afin de bloquer définitivement le créneau, un acompte de {deposit_amount} devra être réglé par virement bancaire juste après la validation du devis.",
+        f"Afin de bloquer définitivement le créneau, un acompte de {deposit_amount} devra être réglé par virement bancaire dès validation du devis.",
         "Une facture d’acompte sera émise après validation du devis.",
         f"Le solde de {remaining_amount} devra être réglé par virement bancaire à réception de la facture de solde, avant le démarrage des cours.",
     ]
@@ -337,7 +337,7 @@ def _payment_schedule_summary_text(
                 remaining_sentence = f"{method_subject} de {amount} à regler {due_label}"
             if has_deposit:
                 return (
-                    f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} juste après la validation du devis "
+                    f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} dès validation du devis "
                     "pour bloquer le créneau, puis "
                     f"{remaining_sentence}."
                 )
@@ -346,7 +346,7 @@ def _payment_schedule_summary_text(
         unit_label = "échéances"
         if has_deposit:
             return (
-                f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} juste après la validation du devis "
+                f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} dès validation du devis "
                 "pour bloquer le créneau, "
                 f"puis echeancier de {len(schedule)} {unit_label} selon le detail ci-dessous."
             )
@@ -354,7 +354,7 @@ def _payment_schedule_summary_text(
 
     if has_deposit and remaining_ttc_after_deposit <= Decimal("0.00"):
         return (
-            f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} juste après la validation du devis "
+            f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} dès validation du devis "
             "pour bloquer le créneau "
             "(solde regle)."
         )
@@ -916,7 +916,7 @@ def _pending_planning_block_display(block: dict[str, Any]) -> tuple[str, str, st
             activity_label += f" – niveau {level_label}"
         activity_label += " (inclus dans le devis)"
         return activity_label, "-", "Créneau à sélectionner", "-"
-    return _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-"), "Sélection à faire", "Sélection à faire", "-"
+    return _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-"), "à sélectionner", "à sélectionner", "-"
 
 
 def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
@@ -953,7 +953,7 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
             if _is_solfege_planning_block(block):
                 activity_type = "Solfège"
             elif deduped_pending_slots:
-                time_range = "Sélection à faire"
+                time_range = "à sélectionner"
         else:
             weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"))
             start_time = str(block.get("start_time") or "").strip()
@@ -1363,7 +1363,7 @@ def _masterclass_blocks_from_calendar_snapshot(snapshot: dict[str, Any]) -> list
         session_label = str(raw.get("session_label") or "").strip()
         if not session_label:
             if selection_pending:
-                session_label = "Selection a faire"
+                session_label = "à sélectionner"
             elif weekday_label and start_time and end_time:
                 session_label = f"{weekday_label} {start_time}-{end_time}"
             elif weekday_label:
@@ -2319,7 +2319,7 @@ def _build_template_values(
         elif remaining_ttc_after_deposit > Decimal("0.00"):
             balance_due_text = "Le solde sera à régler selon l échéancier indiqué ci-dessous."
         deposit_block_html = (
-            "<p>Pour confirmer votre inscription et bloquer votre creneau, un acompte est requis juste après la validation du devis.</p>"
+            "<p>Pour confirmer votre inscription et bloquer votre creneau, un acompte est requis dès validation du devis.</p>"
             + (f"<p>{balance_due_text}</p>" if balance_due_text else "")
             +
             f"<p><strong>Acompte a payer pour valider l inscription :</strong> {_decimal_str(deposit_amount_ttc)} {escape(currency)}</p>"
@@ -2681,7 +2681,7 @@ def _build_template_values(
         solfege_lines = [
             "<strong>Option solfège : incluse dans le présent devis.</strong>",
             f"Niveau estimé : {escape(str(document_context.get('solfege_level') or '-'))}{escape(solfege_duration_label)}",
-            "Créneau retenu : Sélection à faire",
+            "Créneau retenu : à sélectionner",
         ]
         if solfege_display_slots:
             solfege_lines.append(f"Créneaux disponibles : {escape(' ; '.join(solfege_display_slots))}")
