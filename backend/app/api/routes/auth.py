@@ -423,10 +423,16 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
             detail="User is inactive",
         )
 
+    expires_minutes = (
+        settings.admin_access_token_expire_minutes
+        if user.role.value == "admin"
+        else settings.access_token_expire_minutes
+    )
+
     access_token = create_access_token(
         subject=str(user.id),
         role=user.role.value,
-        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+        expires_delta=timedelta(minutes=expires_minutes),
     )
 
     return TokenResponse(access_token=access_token)

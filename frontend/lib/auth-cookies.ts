@@ -9,6 +9,25 @@ export const PORTAL_RETURN_TO_COOKIE = "portal_return_to";
 const EIGHT_HOURS_IN_SECONDS = 60 * 60 * 8;
 const TOKEN_EXPIRY_SKEW_SECONDS = 30;
 
+function parsePositiveInteger(raw: string | undefined): number | null {
+  if (!raw) {
+    return null;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function adminCookieMaxAgeSeconds(): number {
+  const configuredMinutes = parsePositiveInteger(process.env.ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES);
+  if (configuredMinutes !== null) {
+    return configuredMinutes * 60;
+  }
+  return EIGHT_HOURS_IN_SECONDS;
+}
+
 function isSecureCookie(): boolean {
   const cookieSecureOverride = (process.env.COOKIE_SECURE ?? "").trim().toLowerCase();
   if (cookieSecureOverride === "true" || cookieSecureOverride === "1") {
@@ -143,7 +162,7 @@ export function getTokenForPathname(pathname: string): string | null {
 }
 
 export function setAdminToken(token: string, options: { maxAge?: number } = {}): void {
-  const maxAge = options.maxAge ?? EIGHT_HOURS_IN_SECONDS;
+  const maxAge = options.maxAge ?? adminCookieMaxAgeSeconds();
   setCookieValue(ADMIN_ACCESS_TOKEN_COOKIE, token, { path: "/", maxAge });
 }
 
