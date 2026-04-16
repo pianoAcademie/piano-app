@@ -2719,11 +2719,11 @@ def _build_template_values(
     )
     pass_recup_compact_notice_html = (
         "<p><strong>Option Pass Récup : non souscrite.</strong>"
-        "<br/><font size='10' color='#6b7280'><i>"
+        "<br/><span style='display:inline-block;font-size:10px;line-height:1.45;color:#6b7280;font-style:italic;'>"
         "Ce pass permet de rattraper un cours collectif manqué sur un créneau en présentiel "
         "(si une place est disponible), ou à défaut, sur un créneau collectif en ligne dédié."
         "<br/>&bull; Limité à 4 rattrapages par an"
-        "</i></font></p>"
+        "</span></p>"
         if display_flags["showPassRecupCompactNotice"]
         else ""
     )
