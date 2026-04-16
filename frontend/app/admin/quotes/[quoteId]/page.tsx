@@ -299,6 +299,57 @@ function messagingTemplateOptionLabel(template: AdminMessagingTemplateOut): stri
   return `${template.name} · ${suffix}`;
 }
 
+function normalizeTemplateAudienceText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function templateAudienceScore(template: AdminMessagingTemplateOut, audience: "child" | "adult"): number {
+  const haystack = normalizeTemplateAudienceText(`${template.name || ""} ${template.code || ""}`);
+  if (!haystack.trim()) {
+    return 0;
+  }
+  const childTokens = ["enfant", "child", "eleve", "famille", "parent"];
+  const adultTokens = ["adulte", "adult"];
+  const wantedTokens = audience === "child" ? childTokens : adultTokens;
+  const unwantedTokens = audience === "child" ? adultTokens : childTokens;
+  let score = 0;
+  for (const token of wantedTokens) {
+    if (haystack.includes(token)) {
+      score += 2;
+    }
+  }
+  for (const token of unwantedTokens) {
+    if (haystack.includes(token)) {
+      score -= 3;
+    }
+  }
+  return score;
+}
+
+function resolveAudienceAwareTemplateRef(
+  templates: AdminMessagingTemplateOut[],
+  *,
+  audience: "child" | "adult",
+  fallbackRef: string,
+): string {
+  let bestTemplate: AdminMessagingTemplateOut | null = null;
+  let bestScore = 0;
+  for (const template of templates) {
+    const score = templateAudienceScore(template, audience);
+    if (score > bestScore) {
+      bestScore = score;
+      bestTemplate = template;
+    }
+  }
+  if (bestTemplate) {
+    return messagingTemplateRef(bestTemplate);
+  }
+  return fallbackRef;
+}
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -1470,6 +1521,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const defaultSendTemplateRef =
     messagingSettings?.quote_send_template_ref ||
     (quoteSendTemplates[0] ? messagingTemplateRef(quoteSendTemplates[0]) : "");
+  const defaultSendTemplateRefForQuote = resolveAudienceAwareTemplateRef(quoteSendTemplates, {
+    audience: isChildSource ? "child" : "adult",
+    fallbackRef: defaultSendTemplateRef,
+  });
   const defaultSendSmsTemplateRef =
     messagingSettings?.quote_send_sms_template_ref ||
     (quoteSendSmsTemplates[0] ? messagingTemplateRef(quoteSendSmsTemplates[0]) : "");
@@ -2151,7 +2206,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                         <input type="hidden" name="recipient_email" value={ownerEmail} />
                         <label>
                           Template email
-                          <select name="template_ref" defaultValue={defaultSendTemplateRef} disabled={!ownerEmail || quoteSendTemplates.length === 0}>
+                          <select name="template_ref" defaultValue={defaultSendTemplateRefForQuote} disabled={!ownerEmail || quoteSendTemplates.length === 0}>
                             {quoteSendTemplates.map((template) => (
                               <option key={`primary-send-${template.id}`} value={messagingTemplateRef(template)}>
                                 {messagingTemplateOptionLabel(template)}
@@ -2227,7 +2282,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                         </label>
                         <label>
                           Template email
-                          <select name="template_ref" defaultValue={defaultSendTemplateRef} disabled={quoteSendTemplates.length === 0}>
+                          <select name="template_ref" defaultValue={defaultSendTemplateRefForQuote} disabled={quoteSendTemplates.length === 0}>
                             {quoteSendTemplates.map((template) => (
                               <option key={`third-send-${template.id}`} value={messagingTemplateRef(template)}>
                                 {messagingTemplateOptionLabel(template)}
