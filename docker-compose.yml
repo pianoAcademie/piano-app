@@ -50,6 +50,8 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8000:8000"
+    volumes:
+      - catalog_product_images:/app/uploads/catalog-products
     depends_on:
       db:
         condition: service_healthy
@@ -144,3 +146,4 @@ services:
 
 volumes:
   postgres_data:
+  catalog_product_images:
