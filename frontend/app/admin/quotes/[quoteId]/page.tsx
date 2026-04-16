@@ -775,8 +775,10 @@ async function hydratePlanningSnapshotForEditor({
       const hasClosureDates = Array.isArray(block.closure_dates);
       const currentHolidayDates = shouldExcludeHolidays ? normalizeCalendarDateList(block.holiday_dates) : [];
       const currentClosureDates = shouldExcludeVacations ? normalizeCalendarDateList(block.closure_dates) : [];
+      const hasResolvedHolidayDates = !shouldExcludeHolidays || currentHolidayDates.length > 0;
+      const hasResolvedClosureDates = !shouldExcludeVacations || currentClosureDates.length > 0;
 
-      if ((!shouldExcludeHolidays || hasHolidayDates) && (!shouldExcludeVacations || hasClosureDates)) {
+      if (hasResolvedHolidayDates && hasResolvedClosureDates) {
         if (!shouldExcludeHolidays && hasHolidayDates) {
           didMutate = true;
           return { ...block, holiday_dates: [] };
