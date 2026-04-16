@@ -231,7 +231,10 @@ type TermsTemplateOut = {
 
 type QuoteTemplateV2Out = {
   id: string;
+  code: string;
   name: string;
+  template_type: string;
+  target?: string | null;
   language: string;
   is_default: boolean;
 };
@@ -1596,6 +1599,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const totalBeforeAdjustment = Number.isFinite(totalTtcNumber) ? totalTtcNumber - signedAdjustment : null;
   const languageQuoteTemplates = quoteTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
   const selectedTemplate = quoteTemplates.find((row) => row.id === quoteTemplateId);
+  const hidePassRecupForTemplate = (() => {
+    if (!selectedTemplate) {
+      return false;
+    }
+    const target = String(selectedTemplate.target || "").trim().toLowerCase();
+    if (target === "eveil") {
+      return true;
+    }
+    const haystack = `${selectedTemplate.name || ""} ${selectedTemplate.code || ""}`.trim().toLowerCase();
+    return haystack.includes("eveil");
+  })();
   const templateOptions = (() => {
     if (!selectedTemplate) {
       return languageQuoteTemplates;
@@ -2517,14 +2531,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               <option value="debt">Dette</option>
             </select>
           </label>
-          <label>
-            Option Pass Recup
-            <select name="pass_recup_mode" defaultValue={passRecupMode} disabled={detail.quote.status !== "created"}>
-              <option value="auto">Automatique (selon lignes devis)</option>
-              <option value="enabled">Souscrite</option>
-              <option value="disabled">Non souscrite</option>
-            </select>
-          </label>
+          {!hidePassRecupForTemplate ? (
+            <label>
+              Option Pass Recup
+              <select name="pass_recup_mode" defaultValue={passRecupMode} disabled={detail.quote.status !== "created"}>
+                <option value="auto">Automatique (selon lignes devis)</option>
+                <option value="enabled">Souscrite</option>
+                <option value="disabled">Non souscrite</option>
+              </select>
+            </label>
+          ) : null}
           <label>
             Acompte preinscription
             <select

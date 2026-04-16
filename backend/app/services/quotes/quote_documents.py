@@ -25,7 +25,7 @@ from xhtml2pdf import pisa
 
 from app.models.ops import AppSetting
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
-from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplateVersion, TermsTemplateVersion
+from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplate, QuoteTemplateVersion, TermsTemplateVersion
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import User
 
@@ -1101,6 +1101,38 @@ def _load_quote_template_snapshot(*, db: Session | None, quote: Quote) -> tuple[
     return subject, body
 
 
+def _quote_template_disables_pass_recup(*, db: Session | None, quote: Quote) -> bool:
+    candidates: list[str] = []
+    target = ""
+    if db is not None:
+        template: QuoteTemplate | None = None
+        if quote.quote_template_id is not None:
+            template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == quote.quote_template_id))
+        elif quote.quote_template_version_id is not None:
+            version = db.scalar(select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == quote.quote_template_version_id))
+            if version is not None:
+                template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == version.quote_template_id))
+        if template is not None:
+            target = str(template.target or "").strip().lower()
+            candidates.extend(
+                [
+                    str(template.name or "").strip().lower(),
+                    str(template.code or "").strip().lower(),
+                ]
+            )
+    meta = _json_object(quote.meta)
+    candidates.extend(
+        [
+            str(meta.get("quote_template_name") or "").strip().lower(),
+            str(meta.get("quote_template_code") or "").strip().lower(),
+            str(meta.get("template_name") or "").strip().lower(),
+        ]
+    )
+    if target == "eveil":
+        return True
+    return any("eveil" in item for item in candidates if item)
+
+
 def _load_terms_template_content(*, db: Session | None, quote: Quote) -> tuple[str, str]:
     if db is not None and quote.terms_template_version_id is not None:
         version = db.scalar(select(TermsTemplateVersion).where(TermsTemplateVersion.id == quote.terms_template_version_id))
@@ -1481,7 +1513,8 @@ def _extract_document_context(
         masterclass_blocks_deduped.append(item)
     masterclass_blocks = masterclass_blocks_deduped
     pass_recup_mode = str(meta.get("pass_recup_mode") or "").strip().lower() or "auto"
-    pass_recup_enabled = _resolve_pass_recup_enabled(meta=meta, lines=lines)
+    pass_recup_allowed = not _quote_template_disables_pass_recup(db=db, quote=quote)
+    pass_recup_enabled = pass_recup_allowed and _resolve_pass_recup_enabled(meta=meta, lines=lines)
 
     solfege_enabled = bool(
         quote.estimated_solfege_level
@@ -1524,7 +1557,7 @@ def _extract_document_context(
         "showMasterclassSection": masterclass_enabled,
         "showMasterclassCompactNotice": not masterclass_enabled,
         "showPassRecupSection": pass_recup_enabled,
-        "showPassRecupCompactNotice": not pass_recup_enabled,
+        "showPassRecupCompactNotice": pass_recup_allowed and not pass_recup_enabled,
     }
     return {
         "audience": audience,
@@ -1546,6 +1579,7 @@ def _extract_document_context(
         "masterclass_enabled": masterclass_enabled,
         "masterclass_blocks": masterclass_blocks,
         "pass_recup_mode": pass_recup_mode,
+        "pass_recup_allowed": pass_recup_allowed,
         "pass_recup_enabled": pass_recup_enabled,
         "display_flags": display_flags,
         "prospect_data": prospect_data,
