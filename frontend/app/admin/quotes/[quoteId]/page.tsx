@@ -278,6 +278,14 @@ type QuoteSchoolCalendarResolveOut = {
   closure_dates: string[];
 };
 
+type PlanningCalendarPreset = {
+  location_id: string;
+  modality: string;
+  calendar_name: string;
+  holiday_dates: string[];
+  closure_dates: string[];
+};
+
 function messagingTemplateRef(template: AdminMessagingTemplateOut): string {
   if (template.kind === "PREDEFINED") {
     return `predefined:${template.code || ""}`;
@@ -793,6 +801,48 @@ async function hydratePlanningSnapshotForEditor({
   };
 }
 
+async function loadPlanningCalendarPresets({
+  token,
+  schoolYearLabel,
+  locations,
+}: {
+  token: string;
+  schoolYearLabel: string | null;
+  locations: LocationOut[];
+}): Promise<PlanningCalendarPreset[]> {
+  if (locations.length === 0) {
+    return [];
+  }
+  const modalities = ["", "ONSITE", "ONLINE"] as const;
+  const rows = await Promise.all(
+    locations.flatMap((location) =>
+      modalities.map(async (modality) => {
+        const query = new URLSearchParams();
+        if (schoolYearLabel) {
+          query.set("school_year_label", schoolYearLabel);
+        }
+        if (modality) {
+          query.set("modality", modality);
+        }
+        const suffix = query.toString() ? `?${query.toString()}` : "";
+        const result = await backendRequest<QuoteSchoolCalendarResolveOut>(
+          `/api/v1/quote-school-calendars/active/by-location/${encodeURIComponent(location.id)}${suffix}`,
+          {},
+          token,
+        );
+        return {
+          location_id: location.id,
+          modality,
+          calendar_name: result.ok ? String(result.data.calendar?.name ?? "").trim() : "",
+          holiday_dates: result.ok ? normalizeCalendarDateList(result.data.holiday_dates) : [],
+          closure_dates: result.ok ? normalizeCalendarDateList(result.data.closure_dates) : [],
+        };
+      }),
+    ),
+  );
+  return rows;
+}
+
 type QuoteFinancialAdjustment = {
   type: "none" | "credit" | "debt";
   amountTtc: number;
@@ -1226,6 +1276,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const kits = kitsResult.ok ? kitsResult.data : [];
   const locations = locationsResult.ok ? locationsResult.data : [];
   const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
+  const planningCalendarPresets = await loadPlanningCalendarPresets({
+    token,
+    schoolYearLabel: detail.quote.school_year_label,
+    locations,
+  });
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   const clients = clientsResult.ok ? clientsResult.data : [];
   const documentPreview = documentPreviewResult.ok ? documentPreviewResult.data : null;
@@ -2677,6 +2732,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               name: row.name,
               code: row.code,
               service_code: row.service_code,
+              mode: row.mode,
               duration_minutes: row.duration_minutes,
               exclude_holidays_in_recurrence: row.exclude_holidays_in_recurrence,
               exclude_school_vacations_in_recurrence: row.exclude_school_vacations_in_recurrence,
@@ -2685,6 +2741,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               id: row.id,
               name: row.name,
             }))}
+            calendarPresets={planningCalendarPresets}
             solfegeRules={solfegeRules.map((row) => ({
               id: row.id,
               level_code: row.level_code,
