@@ -816,9 +816,25 @@ async function hydratePlanningSnapshotForEditor({
           {},
           token,
         );
-        resolvedCalendar = result.ok
-          ? result.data
-          : { calendar: null, holiday_dates: currentHolidayDates, closure_dates: currentClosureDates };
+        if (!result.ok) {
+          resolvedCalendar = { calendar: null, holiday_dates: currentHolidayDates, closure_dates: currentClosureDates };
+        } else if (result.data.calendar || !schoolYearLabel) {
+          resolvedCalendar = result.data;
+        } else {
+          const fallbackQuery = new URLSearchParams();
+          if (resolvedModality) {
+            fallbackQuery.set("modality", resolvedModality);
+          }
+          const fallbackSuffix = fallbackQuery.toString() ? `?${fallbackQuery.toString()}` : "";
+          const fallbackResult = await backendRequest<QuoteSchoolCalendarResolveOut>(
+            `/api/v1/quote-school-calendars/active/by-location/${encodeURIComponent(locationId)}${fallbackSuffix}`,
+            {},
+            token,
+          );
+          resolvedCalendar = fallbackResult.ok
+            ? fallbackResult.data
+            : { calendar: null, holiday_dates: currentHolidayDates, closure_dates: currentClosureDates };
+        }
         calendarCache.set(cacheKey, resolvedCalendar);
       }
 
@@ -887,12 +903,28 @@ async function loadPlanningCalendarPresets({
           {},
           token,
         );
+        let resolvedCalendar = result.ok ? result.data : null;
+        if (resolvedCalendar && !resolvedCalendar.calendar && schoolYearLabel) {
+          const fallbackQuery = new URLSearchParams();
+          if (modality) {
+            fallbackQuery.set("modality", modality);
+          }
+          const fallbackSuffix = fallbackQuery.toString() ? `?${fallbackQuery.toString()}` : "";
+          const fallbackResult = await backendRequest<QuoteSchoolCalendarResolveOut>(
+            `/api/v1/quote-school-calendars/active/by-location/${encodeURIComponent(location.id)}${fallbackSuffix}`,
+            {},
+            token,
+          );
+          if (fallbackResult.ok) {
+            resolvedCalendar = fallbackResult.data;
+          }
+        }
         return {
           location_id: location.id,
           modality,
-          calendar_name: result.ok ? String(result.data.calendar?.name ?? "").trim() : "",
-          holiday_dates: result.ok ? normalizeCalendarDateList(result.data.holiday_dates) : [],
-          closure_dates: result.ok ? normalizeCalendarDateList(result.data.closure_dates) : [],
+          calendar_name: resolvedCalendar ? String(resolvedCalendar.calendar?.name ?? "").trim() : "",
+          holiday_dates: resolvedCalendar ? normalizeCalendarDateList(resolvedCalendar.holiday_dates) : [],
+          closure_dates: resolvedCalendar ? normalizeCalendarDateList(resolvedCalendar.closure_dates) : [],
         };
       }),
     ),
