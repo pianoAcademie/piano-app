@@ -26,7 +26,7 @@ export async function POST(request: Request, context: { params: { quoteId: strin
   }
 
   const payload = incoming as PreviewPayload;
-  const response = await fetch(`${backendUrl()}/api/v1/admin/quotes/${quoteId}/email/preview`, {
+  const response = await fetch(`${backendUrl()}/api/v1/quotes/${quoteId}/email/preview`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
