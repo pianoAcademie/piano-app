@@ -1261,7 +1261,9 @@ def _list_calendar_generated_slots_for_location(
     db: Session,
     *,
     location_id: UUID,
+    school_year_label: str | None = None,
 ) -> list[QuoteSchoolCalendarGeneratedSlotOut]:
+    bounds = _school_year_bounds_from_label(str(school_year_label or ""))
     rows = db.scalars(
         select(CourseSession)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
@@ -1281,6 +1283,10 @@ def _list_calendar_generated_slots_for_location(
         is_legacy = (row.private_description or "").strip() == CALENDAR_DEPLOYMENT_LEGACY_BLOCK_MARKER
         if parsed_day is None:
             parsed_day = row.start_at_utc.date()
+        if bounds is not None:
+            school_year_start, school_year_end = bounds
+            if parsed_day < school_year_start or parsed_day > school_year_end:
+                continue
         if not reason_types and is_legacy:
             reason_types = {CALENDAR_DEPLOYMENT_REASON_VACATION}
         out.append(
@@ -7225,10 +7231,18 @@ def resolve_quote_school_calendar_for_location(
     selected = matching_calendars(effective_location_id)
     if not selected and effective_location_id != location_id:
         selected = matching_calendars(location_id)
+    deployment_slots = _list_calendar_generated_slots_for_location(
+        db,
+        location_id=effective_location_id,
+        school_year_label=school_year_label,
+    )
+    if not deployment_slots and effective_location_id != location_id:
+        deployment_slots = _list_calendar_generated_slots_for_location(
+            db,
+            location_id=location_id,
+            school_year_label=school_year_label,
+        )
     if not selected:
-        deployment_slots = _list_calendar_generated_slots_for_location(db, location_id=effective_location_id)
-        if not deployment_slots and effective_location_id != location_id:
-            deployment_slots = _list_calendar_generated_slots_for_location(db, location_id=location_id)
         if not deployment_slots:
             return QuoteSchoolCalendarResolveOut(calendar=None, holiday_dates=[], closure_dates=[])
         holiday_days = {
@@ -7277,6 +7291,16 @@ def resolve_quote_school_calendar_for_location(
         merged_holiday_days.update(holiday_days)
         merged_closure_days.update(closure_days)
         merged_closure_days.update(vacation_days)
+    for slot in deployment_slots:
+        if slot.status.upper() == "CANCELLED":
+            continue
+        if CALENDAR_DEPLOYMENT_REASON_HOLIDAY in slot.reason_types:
+            merged_holiday_days.add(slot.date)
+        if (
+            CALENDAR_DEPLOYMENT_REASON_VACATION in slot.reason_types
+            or CALENDAR_DEPLOYMENT_REASON_CLOSURE in slot.reason_types
+        ):
+            merged_closure_days.add(slot.date)
     return QuoteSchoolCalendarResolveOut(
         calendar=representative,
         holiday_dates=sorted(merged_holiday_days),
