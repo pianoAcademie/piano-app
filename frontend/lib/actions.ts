@@ -10695,6 +10695,7 @@ export async function updateQuoteLinesAction(formData: FormData): Promise<void> 
       vat_rate: line.vat_rate,
       unit_price_ttc: line.unit_price_ttc,
       pricing_unit: line.line_category === "service" ? "session" : "item",
+      meta: line.meta,
       sort_order: line.sort_order,
     })),
   };
