@@ -467,6 +467,7 @@ def _document_style_html() -> str:
         ".quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:middle !important;height:auto !important;min-height:30px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
         ".quote-table td{border:1px solid #d3dbe7 !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;vertical-align:middle !important;color:#111827 !important;line-height:1.45 !important;height:auto !important;min-height:30px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
         ".quote-table td>*{margin-top:0;margin-bottom:0;}"
+        "font[size='10']{font-size:10px !important;line-height:1.45 !important;color:#6b7280 !important;}"
         ".quote-footer{width:100%;border-collapse:collapse;margin-top:12px;padding-top:8px;border-top:1px solid #cdd4de;font-size:10px;color:#475467;}"
         ".quote-footer td{vertical-align:top;}"
         ".quote-terms-title{margin-top:0;}"
@@ -2114,6 +2115,7 @@ def _pdf_shell_html(*, content_html: str, header_html: str, footer_html: str) ->
         ".quote-content th,.quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:middle !important;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;height:auto !important;min-height:30px;}"
         ".quote-content td,.quote-table td{border:1px solid #d3dbe7 !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;vertical-align:middle !important;color:#111827 !important;line-height:1.45 !important;word-break:break-word !important;white-space:normal !important;overflow-wrap:anywhere !important;height:auto !important;min-height:30px;}"
         ".quote-content td>*{margin-top:0 !important;margin-bottom:0 !important;}"
+        ".quote-content font[size='10'],font[size='10']{font-size:10px !important;line-height:1.45 !important;color:#6b7280 !important;}"
         ".quote-content thead,thead{display:table-header-group !important;}"
         ".quote-content tfoot,tfoot{display:table-footer-group !important;}"
         ".quote-content tr,tr{page-break-inside:auto !important;break-inside:auto !important;height:auto !important;}"
@@ -2719,11 +2721,11 @@ def _build_template_values(
     )
     pass_recup_compact_notice_html = (
         "<p><strong>Option Pass Récup : non souscrite.</strong>"
-        "<br/><span style='display:inline-block;font-size:10px;line-height:1.45;color:#6b7280;font-style:italic;'>"
+        "<br/><font size='10' color='#6b7280'><i>"
         "Ce pass permet de rattraper un cours collectif manqué sur un créneau en présentiel "
         "(si une place est disponible), ou à défaut, sur un créneau collectif en ligne dédié."
         "<br/>&bull; Limité à 4 rattrapages par an"
-        "</span></p>"
+        "</i></font></p>"
         if display_flags["showPassRecupCompactNotice"]
         else ""
     )
