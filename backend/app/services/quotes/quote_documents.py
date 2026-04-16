@@ -271,6 +271,10 @@ def _is_bank_transfer_payment_method(method_label: str) -> bool:
     return "virement" in str(method_label or "").strip().lower()
 
 
+def _is_card_payment_method(method_label: str) -> bool:
+    return "carte" in str(method_label or "").strip().lower()
+
+
 def _bank_transfer_deposit_schedule_lines(
     *,
     schedule: list[dict[str, Any]],
@@ -299,6 +303,34 @@ def _bank_transfer_deposit_schedule_lines(
     ]
 
 
+def _card_deposit_schedule_lines(
+    *,
+    schedule: list[dict[str, Any]],
+    has_deposit: bool,
+    deposit_amount_ttc: Decimal,
+    currency: str,
+    payment_method_label: str,
+    remaining_ttc_after_deposit: Decimal,
+) -> list[str]:
+    if not has_deposit or deposit_amount_ttc <= Decimal("0.00") or remaining_ttc_after_deposit <= Decimal("0.00"):
+        return []
+    if len(schedule) != 1:
+        return []
+    item = schedule[0]
+    item_method_label = str(item.get("payment_method") or payment_method_label or "").strip()
+    if not _is_card_payment_method(item_method_label):
+        return []
+    if _schedule_due_label(item) != "à réception de votre facture":
+        return []
+    deposit_amount = _money(deposit_amount_ttc, currency)
+    remaining_amount = _money(remaining_ttc_after_deposit, currency)
+    return [
+        f"Paiement d’un acompte de {deposit_amount} dès validation du devis, afin de bloquer le créneau.",
+        "Une facture d’acompte sera envoyée et devra être réglée rapidement après validation en ligne.",
+        f"Le solde de {remaining_amount} devra être réglé par carte bancaire à réception de la facture correspondante, avant le démarrage des cours.",
+    ]
+
+
 def _payment_schedule_summary_text(
     *,
     schedule: list[dict[str, Any]],
@@ -309,6 +341,15 @@ def _payment_schedule_summary_text(
     remaining_ttc_after_deposit: Decimal,
 ) -> str:
     if special_lines := _bank_transfer_deposit_schedule_lines(
+        schedule=schedule,
+        has_deposit=has_deposit,
+        deposit_amount_ttc=deposit_amount_ttc,
+        currency=currency,
+        payment_method_label=payment_method_label,
+        remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+    ):
+        return " ".join(special_lines)
+    if special_lines := _card_deposit_schedule_lines(
         schedule=schedule,
         has_deposit=has_deposit,
         deposit_amount_ttc=deposit_amount_ttc,
@@ -2468,6 +2509,15 @@ def _build_template_values(
         payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
         remaining_ttc_after_deposit=remaining_ttc_after_deposit,
     )
+    special_card_deposit_lines = _card_deposit_schedule_lines(
+        schedule=schedule,
+        has_deposit=has_deposit,
+        deposit_amount_ttc=deposit_amount_ttc,
+        currency=currency,
+        payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
+        remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+    )
+    special_deposit_lines = special_bank_transfer_deposit_lines or special_card_deposit_lines
     payment_schedule_rows = [
         [
             str(item.get("label") or "-"),
@@ -2482,7 +2532,7 @@ def _build_template_values(
         payment_schedule_rows,
         empty_label="Aucun échéancier.",
     )
-    if special_bank_transfer_deposit_lines:
+    if special_deposit_lines:
         payment_schedule_table_html = ""
     elif not display_flags["showPaymentScheduleDetailed"]:
         compact_notice = str(document_context["payment_schedule_compact_notice"] or "").strip()
@@ -2526,7 +2576,7 @@ def _build_template_values(
     )
     payment_schedule_summary = (
         ""
-        if special_bank_transfer_deposit_lines
+        if special_deposit_lines
         else _payment_schedule_summary_text(
             schedule=schedule,
             has_deposit=has_deposit,
@@ -2740,8 +2790,8 @@ def _build_template_values(
     payment_instruction = str(document_context.get("payment_instruction") or "").strip()
     payment_method_display_label = payment_method_label.lower() if special_bank_transfer_deposit_lines else payment_method_label
     payment_method_block_html = f"<p><strong>Mode de paiement :</strong> {escape(payment_method_display_label)}</p>"
-    if special_bank_transfer_deposit_lines:
-        payment_method_block_html += "".join(f"<p>{escape(line)}</p>" for line in special_bank_transfer_deposit_lines)
+    if special_deposit_lines:
+        payment_method_block_html += "".join(f"<p>{escape(line)}</p>" for line in special_deposit_lines)
     if payment_instruction:
         payment_method_block_html = (
             f"{payment_method_block_html}<p><strong>Consignes :</strong> {escape(payment_instruction)}</p>"
@@ -4098,18 +4148,27 @@ def _render_quote_pdf_blocks(
         payment_method_label=str(values.get("payment_method_label") or "-"),
         remaining_ttc_after_deposit=_decimal_from_any(context.get("remaining_ttc_after_deposit"), Decimal("0.00")),
     )
+    special_card_deposit_lines = _card_deposit_schedule_lines(
+        schedule=schedule,
+        has_deposit=bool(context.get("deposit_enabled")),
+        deposit_amount_ttc=_decimal_from_any(context.get("deposit_amount_ttc"), Decimal("0.00")),
+        currency=str(values.get("currency") or "EUR"),
+        payment_method_label=str(values.get("payment_method_label") or "-"),
+        remaining_ttc_after_deposit=_decimal_from_any(context.get("remaining_ttc_after_deposit"), Decimal("0.00")),
+    )
+    special_deposit_lines = special_bank_transfer_deposit_lines or special_card_deposit_lines
     payment_method_display_label = (
         str(values.get("payment_method_label", "-")).lower()
         if special_bank_transfer_deposit_lines
         else str(values.get("payment_method_label", "-"))
     )
     story.append(Paragraph(f"Mode de paiement : {escape(payment_method_display_label)}", styles["text"]))
-    if special_bank_transfer_deposit_lines:
-        for line in special_bank_transfer_deposit_lines:
+    if special_deposit_lines:
+        for line in special_deposit_lines:
             story.append(Paragraph(escape(line), styles["text"]))
     else:
         story.append(Paragraph(escape(values.get("payment_schedule_summary", "Paiement non planifié")), styles["text"]))
-    if not special_bank_transfer_deposit_lines and len(schedule) > 1:
+    if not special_deposit_lines and len(schedule) > 1:
         schedule_rows = [
             [
                 str(item.get("label") or "-"),
