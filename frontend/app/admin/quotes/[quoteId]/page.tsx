@@ -331,9 +331,13 @@ function templateAudienceScore(template: AdminMessagingTemplateOut, audience: "c
 
 function resolveAudienceAwareTemplateRef(
   templates: AdminMessagingTemplateOut[],
-  *,
-  audience: "child" | "adult",
-  fallbackRef: string,
+  {
+    audience,
+    fallbackRef,
+  }: {
+    audience: "child" | "adult";
+    fallbackRef: string;
+  },
 ): string {
   let bestTemplate: AdminMessagingTemplateOut | null = null;
   let bestScore = 0;
@@ -1441,6 +1445,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const clientKindLabel = labelForClientKind(selectedClient?.client_kind);
   const sourceTypeLabel = prospectTypeLabel !== "-" ? prospectTypeLabel : clientKindLabel;
   const sourceTypeOrigin = prospectTypeLabel !== "-" ? "prospect" : clientKindLabel !== "-" ? "client" : "inconnu";
+  const isChildSource = prospectType === "child" || selectedClient?.client_kind === "CHILD";
   const parentReferent = readObject(prospectMeta.parent_referent);
   const parentReferentName = parentReferent
     ? displayName(
