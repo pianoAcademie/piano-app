@@ -80,6 +80,7 @@ from app.schemas.quote import (
     QuoteCancelRequest,
     QuoteCreateRequest,
     QuoteDetailOut,
+    QuoteEmailPreviewOut,
     QuoteEventOut,
     QuoteFollowupOut,
     QuoteFollowupPaymentMethodRequest,
@@ -128,6 +129,7 @@ from app.services.quotes.email_templates import (
     USAGE_CONTEXT_QUOTE_REJECTED,
     USAGE_CONTEXT_QUOTE_REMINDER,
     USAGE_CONTEXT_QUOTE_SEND,
+    render_quote_email_template,
     send_quote_templated_email,
     send_quote_templated_sms,
 )
@@ -423,9 +425,14 @@ def _build_payment_terms_snapshot_from_plan(
                 currency=(quote.currency or "EUR").upper(),
             )
         )
+    normalized_payment_method = plan.payment_method.strip().upper()
+    if deposit_amount_ttc > Decimal("0.00") and normalized_payment_method == "BANK_TRANSFER" and len(schedule) == 1:
+        schedule[0]["due_type"] = "on_quote_validation_before_first_course"
+        schedule[0]["due_label"] = _monthly_first_due_label()
+
     installment_count = len(schedule)
     visibility_raw = rules.get("schedule_visibility") if isinstance(rules.get("schedule_visibility"), dict) else {}
-    show_schedule_to_client_default = installment_count > 1
+    show_schedule_to_client_default = installment_count > 0
     schedule_visibility = {
         AUDIENCE_ADMIN_PREVIEW: _bool_or_default((visibility_raw or {}).get(AUDIENCE_ADMIN_PREVIEW), True),
         AUDIENCE_PUBLIC_PAGE: _bool_or_default(
@@ -439,7 +446,6 @@ def _build_payment_terms_snapshot_from_plan(
     }
     check_submission_address = str(rules.get("check_submission_address") or "").strip()
     check_submission_instruction = str(rules.get("check_submission_instruction") or "").strip()
-    normalized_payment_method = plan.payment_method.strip().upper()
     is_check_family = normalized_payment_method in {
         "CHECK",
         "CHECK_2",
@@ -1864,6 +1870,21 @@ def _quote_activity_context(
     return first_activity_id, service_code
 
 
+def _active_solfege_rule_for_level(db: Session, *, level_code: str | None) -> SolfegeLevelRule | None:
+    normalized_level = str(level_code or "").strip()
+    if not normalized_level:
+        return None
+    return db.scalar(
+        select(SolfegeLevelRule)
+        .where(
+            SolfegeLevelRule.level_code == normalized_level,
+            SolfegeLevelRule.is_active.is_(True),
+        )
+        .order_by(SolfegeLevelRule.created_at.desc())
+        .limit(1)
+    )
+
+
 def _resolve_document_binding(
     db: Session,
     *,
@@ -3046,15 +3067,7 @@ def create_quote_from_payload(
     )
 
     if row.estimated_solfege_level:
-        solfege_rule = db.scalar(
-            select(SolfegeLevelRule)
-            .where(
-                SolfegeLevelRule.level_code == row.estimated_solfege_level,
-                SolfegeLevelRule.is_active.is_(True),
-            )
-            .order_by(SolfegeLevelRule.created_at.desc())
-            .limit(1)
-        )
+        solfege_rule = _active_solfege_rule_for_level(db, level_code=row.estimated_solfege_level)
         if solfege_rule is not None:
             row.solfege_duration_minutes = int(solfege_rule.duration_minutes)
 
@@ -3232,11 +3245,17 @@ def update_quote(
         row.expiry_days = int(payload.expiry_days)
         row.expires_at = _utcnow() + timedelta(days=int(payload.expiry_days))
         document_dirty = True
-    if payload.estimated_solfege_level is not None:
-        row.estimated_solfege_level = payload.estimated_solfege_level
+    if "estimated_solfege_level" in payload.model_fields_set:
+        next_solfege_level = str(payload.estimated_solfege_level or "").strip() or None
+        row.estimated_solfege_level = next_solfege_level
+        if next_solfege_level:
+            solfege_rule = _active_solfege_rule_for_level(db, level_code=next_solfege_level)
+            row.solfege_duration_minutes = int(solfege_rule.duration_minutes) if solfege_rule is not None else None
+        else:
+            row.solfege_duration_minutes = None
         document_dirty = True
-    if payload.selected_solfege_slot is not None:
-        row.selected_solfege_slot = payload.selected_solfege_slot
+    if "selected_solfege_slot" in payload.model_fields_set:
+        row.selected_solfege_slot = payload.selected_solfege_slot or {}
         document_dirty = True
     if payload.calendar_snapshot is not None:
         row.calendar_snapshot = payload.calendar_snapshot
@@ -3795,6 +3814,43 @@ def send_quote(
     db.commit()
     db.refresh(quote)
     return _quote_detail_out(db, quote)
+
+
+@router.post("/quotes/{quote_id}/email/preview", response_model=QuoteEmailPreviewOut)
+def preview_quote_email(
+    quote_id: UUID,
+    payload: QuoteSendRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteEmailPreviewOut:
+    quote = _load_quote(db, quote_id)
+    token_updated = not quote.public_token or not quote.pdf_token
+    _ensure_public_token(quote)
+    if token_updated:
+        db.add(quote)
+        db.commit()
+        db.refresh(quote)
+
+    recipient = _resolve_recipient_email(db, quote, explicit_email=payload.recipient_email)
+    if recipient is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No recipient email resolved for quote")
+
+    lines = _load_quote_lines(db, quote.id)
+    rendered = render_quote_email_template(
+        db,
+        quote=quote,
+        lines=lines,
+        recipient_email=recipient,
+        usage_context=USAGE_CONTEXT_QUOTE_SEND,
+        template_ref=payload.template_ref,
+    )
+    return QuoteEmailPreviewOut(
+        recipient_email=rendered.recipient_email,
+        template_ref=rendered.template_ref,
+        subject=rendered.subject,
+        body=rendered.body,
+        body_format=rendered.body_format,
+    )
 
 
 @router.post("/quotes/{quote_id}/resend", response_model=QuoteDetailOut)

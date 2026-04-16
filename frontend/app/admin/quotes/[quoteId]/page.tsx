@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 import CopyLinkButton from "../../../../components/copy-link-button";
+import QuoteEmailPreviewSubmitButton from "../../../../components/quote-email-preview-submit-button";
 import QuoteClientMatchCard from "../../../../components/quotes/quote-client-match-card";
 import QuoteIntegrationProjectionCard from "../../../../components/quotes/quote-integration-projection-card";
 import QuoteIntegrationResultCard from "../../../../components/quotes/quote-integration-result-card";
@@ -796,8 +797,7 @@ async function hydratePlanningSnapshotForEditor({
         };
       }
 
-      const resolvedModality =
-        normalizePlanningBlockModality(block.modality) ?? normalizePlanningBlockModality(activity?.mode);
+      const resolvedModality = normalizePlanningBlockModality(block.modality) ?? normalizePlanningBlockModality(activity?.mode);
       const cacheKey = `${locationId}|${schoolYearLabel || ""}|${resolvedModality || ""}`;
       let resolvedCalendar = calendarCache.get(cacheKey);
       if (!resolvedCalendar) {
@@ -826,8 +826,7 @@ async function hydratePlanningSnapshotForEditor({
       const nextClosureDates = shouldExcludeVacations
         ? normalizeCalendarDateList(resolvedCalendar.closure_dates)
         : [];
-      const nextCalendarName =
-        String(block.calendar_name ?? "").trim() || String(resolvedCalendar.calendar?.name ?? "").trim();
+      const nextCalendarName = String(block.calendar_name ?? "").trim() || String(resolvedCalendar.calendar?.name ?? "").trim();
 
       if (
         JSON.stringify(nextHolidayDates) === JSON.stringify(currentHolidayDates) &&
@@ -1757,6 +1756,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const restorePublicResponseFormId = `quote-restore-public-response-form-${detail.quote.id}`;
   const sendPrimaryFormId = `quote-send-primary-form-${detail.quote.id}`;
   const sendThirdPartyFormId = `quote-send-third-party-form-${detail.quote.id}`;
+  const sendEmailPreviewPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}/email-preview`;
 
   const quoteBasePath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}`;
   const sectionHref = (section: QuoteWorkspaceSection): string =>
@@ -2248,12 +2248,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           <small className="muted top-gap-sm">Aucun numero mobile resolu pour proposer l envoi par SMS.</small>
                         )}
                         <div className="top-gap-sm">
-                          <ConfirmSubmitButton
+                          <QuoteEmailPreviewSubmitButton
                             formId={sendPrimaryFormId}
+                            previewUrl={sendEmailPreviewPath}
                             label={canSendQuote ? `Envoyer au ${primaryRecipientLabel}` : `Renvoyer au ${primaryRecipientLabel}`}
                             title={primarySendTitle}
                             description={primarySendDescription}
-                            confirmLabel={canSendQuote ? "Envoyer" : "Renvoyer"}
+                            confirmLabel={canSendQuote ? "Envoyer le devis" : "Renvoyer le devis"}
                             disabled={!ownerEmail}
                           />
                         </div>
@@ -2296,12 +2297,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           </select>
                         </label>
                         <div className="row wrap gap-sm top-gap-sm">
-                          <ConfirmSubmitButton
+                          <QuoteEmailPreviewSubmitButton
                             formId={sendThirdPartyFormId}
+                            previewUrl={sendEmailPreviewPath}
                             label={canSendQuote ? "Envoyer" : "Renvoyer"}
-                            title={canSendQuote ? "Confirmer l'envoi au tiers ?" : "Confirmer le renvoi au tiers ?"}
-                            description="Le devis sera envoye a l'adresse email tiers renseignee ci-dessus."
-                            confirmLabel={canSendQuote ? "Envoyer" : "Renvoyer"}
+                            title={canSendQuote ? "Verifier l'email au tiers avant envoi" : "Verifier l'email au tiers avant renvoi"}
+                            description="Relisez le destinataire, le sujet et le message qui seront envoyes a l'adresse email tiers renseignee ci-dessus."
+                            confirmLabel={canSendQuote ? "Envoyer le devis" : "Renvoyer le devis"}
                           />
                         </div>
                       </form>

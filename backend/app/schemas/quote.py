@@ -231,6 +231,14 @@ class QuoteSendRequest(BaseModel):
     sms_template_ref: str | None = Field(default=None, max_length=120)
 
 
+class QuoteEmailPreviewOut(BaseModel):
+    recipient_email: str = Field(min_length=3, max_length=255)
+    template_ref: str = Field(min_length=1, max_length=120)
+    subject: str
+    body: str
+    body_format: str = Field(default="TEXT", max_length=16)
+
+
 class QuoteCancelRequest(BaseModel):
     notify_recipient: bool = True
     recipient_email: str | None = Field(default=None, min_length=3, max_length=255)
