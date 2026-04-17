@@ -2377,7 +2377,7 @@ def _build_template_values(
         [
             [
                 _harmonize_display_text(line.title or "-"),
-                _decimal_str(Decimal(line.quantity or 0)),
+                _compact_quantity_label(line.quantity),
                 f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -2405,7 +2405,7 @@ def _build_template_values(
                         )
                     )
                 },
-                _decimal_str(Decimal(line.quantity or 0)),
+                _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
@@ -2434,7 +2434,7 @@ def _build_template_values(
                         + _kit_composition_html(kit_composition.get(line.kit_id, []))
                     )
                 },
-                _decimal_str(Decimal(line.quantity or 0)),
+                _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
@@ -2457,7 +2457,7 @@ def _build_template_values(
                     else "Supplément"
                 ),
                 _harmonize_display_text(line.title or "-"),
-                _decimal_str(Decimal(line.quantity or 0)),
+                _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
@@ -2471,7 +2471,7 @@ def _build_template_values(
         [
             [
                 _harmonize_display_text(line.title or "-"),
-                _decimal_str(Decimal(line.quantity or 0)),
+                _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
@@ -2490,7 +2490,7 @@ def _build_template_values(
                 if (line.line_type or "").strip().lower() == "surcharge"
                 else ("Service" if (line.line_category or "").lower() == "service" else ("Kit" if line.kit_id else "Matériel")),
                 _harmonize_display_text(line.title or "-"),
-                _decimal_str(Decimal(line.quantity or 0)),
+                _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
                 _money(Decimal(line.amount_ttc or 0), currency),
@@ -3963,7 +3963,7 @@ def _render_quote_pdf_blocks(
     service_rows = [
         [
             _harmonize_display_text(line.title or "-"),
-            _decimal_str(Decimal(line.quantity or 0)),
+            _compact_quantity_label(line.quantity),
             f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
@@ -3993,7 +3993,7 @@ def _render_quote_pdf_blocks(
                 else "Supplément"
             ),
             _harmonize_display_text(line.title or "-"),
-            _decimal_str(Decimal(line.quantity or 0)),
+            _compact_quantity_label(line.quantity),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
             _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
@@ -4028,7 +4028,7 @@ def _render_quote_pdf_blocks(
                     )
                 ),
             },
-            _decimal_str(Decimal(line.quantity or 0)),
+            _compact_quantity_label(line.quantity),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
             _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
@@ -4068,7 +4068,7 @@ def _render_quote_pdf_blocks(
                     )
                 ),
             },
-            _decimal_str(Decimal(line.quantity or 0)),
+            _compact_quantity_label(line.quantity),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
             _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
@@ -4091,7 +4091,7 @@ def _render_quote_pdf_blocks(
     other_fee_rows = [
         [
             _harmonize_display_text(line.title or "-"),
-            _decimal_str(Decimal(line.quantity or 0)),
+            _compact_quantity_label(line.quantity),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
             _money(Decimal(line.amount_ttc or 0), values.get("currency", "EUR")),
