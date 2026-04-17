@@ -60,6 +60,7 @@ MESSAGING_SETTINGS_QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_KEY = "config_messaging_q
 MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY = "config_messaging_quote_reminder_enabled"
 MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY = "config_messaging_quote_reminder_sms_enabled"
 MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY = "config_messaging_quote_reminder_lead_hours"
+MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_CSV_KEY = "config_messaging_quote_reminder_lead_hours_csv"
 MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY = "config_messaging_quote_daily_job_local_time"
 MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY = "config_messaging_quote_auto_cancel_enabled"
 MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY = "config_messaging_quote_auto_cancel_delay_hours"
@@ -188,6 +189,45 @@ def _sanitize_int(raw: object, *, default: int, minimum: int, maximum: int) -> i
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, value))
+
+
+def _sanitize_int_list(
+    raw: object,
+    *,
+    default: list[int],
+    minimum: int,
+    maximum: int,
+    max_items: int = 8,
+) -> list[int]:
+    if raw is None:
+        values = default
+    elif isinstance(raw, (list, tuple, set)):
+        values = [str(item).strip() for item in raw]
+    else:
+        text = str(raw).strip()
+        if not text:
+            values = default
+        else:
+            values = [chunk.strip() for chunk in text.replace(";", ",").split(",")]
+    normalized: list[int] = []
+    for item in values:
+        try:
+            parsed = int(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        parsed = max(minimum, min(maximum, parsed))
+        if parsed in normalized:
+            continue
+        normalized.append(parsed)
+        if len(normalized) >= max_items:
+            break
+    if not normalized:
+        normalized = [max(minimum, min(maximum, value)) for value in default]
+    return sorted(normalized, reverse=True)
+
+
+def _format_int_list_csv(raw: list[int]) -> str:
+    return ",".join(str(item) for item in raw)
 
 
 def _mask_secret(raw: str | None) -> str:
@@ -1297,6 +1337,7 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_CSV_KEY,
         MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY,
         MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY,
@@ -1429,6 +1470,28 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
             minimum=1,
             maximum=168,
         ),
+        "quote_reminder_lead_hours_values": _sanitize_int_list(
+            _get_setting_value(
+                db,
+                MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_CSV_KEY,
+                _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY, "24"),
+            ),
+            default=[24],
+            minimum=1,
+            maximum=168,
+        ),
+        "quote_reminder_lead_hours_csv": _format_int_list_csv(
+            _sanitize_int_list(
+                _get_setting_value(
+                    db,
+                    MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_CSV_KEY,
+                    _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY, "24"),
+                ),
+                default=[24],
+                minimum=1,
+                maximum=168,
+            )
+        ),
         "quote_daily_job_local_time": _sanitize_local_time(
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY, "07:00"),
             default="07:00",
@@ -1496,6 +1559,7 @@ def save_messaging_settings(
     quote_reminder_enabled: bool,
     quote_reminder_sms_enabled: bool,
     quote_reminder_lead_hours: int,
+    quote_reminder_lead_hours_csv: str,
     quote_daily_job_local_time: str,
     quote_auto_cancel_enabled: bool,
     quote_auto_cancel_delay_hours: int,
@@ -1665,10 +1729,21 @@ def save_messaging_settings(
         MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY,
         "true" if quote_reminder_sms_enabled else "false",
     )
+    normalized_reminder_lead_hours = _sanitize_int_list(
+        quote_reminder_lead_hours_csv or quote_reminder_lead_hours,
+        default=[quote_reminder_lead_hours],
+        minimum=1,
+        maximum=168,
+    )
     _set_setting_value(
         db,
         MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY,
-        str(_sanitize_int(quote_reminder_lead_hours, default=24, minimum=1, maximum=168)),
+        str(min(normalized_reminder_lead_hours)),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_CSV_KEY,
+        _format_int_list_csv(normalized_reminder_lead_hours),
     )
     _set_setting_value(
         db,

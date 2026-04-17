@@ -9004,6 +9004,7 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
     quote_reminder_enabled: checkboxField(formData, "quote_reminder_enabled"),
     quote_reminder_sms_enabled: checkboxField(formData, "quote_reminder_sms_enabled"),
     quote_reminder_lead_hours: Number.parseInt(String(formData.get("quote_reminder_lead_hours") ?? "").trim() || "24", 10),
+    quote_reminder_lead_hours_csv: String(formData.get("quote_reminder_lead_hours_csv") ?? "").trim() || "24",
     quote_daily_job_local_time: String(formData.get("quote_daily_job_local_time") ?? "").trim() || "07:00",
     quote_auto_cancel_enabled: checkboxField(formData, "quote_auto_cancel_enabled"),
     quote_auto_cancel_delay_hours: Number.parseInt(String(formData.get("quote_auto_cancel_delay_hours") ?? "").trim() || "24", 10),

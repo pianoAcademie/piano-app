@@ -284,6 +284,27 @@ function messagingTemplateOptionLabel(template: AdminMessagingTemplateOut): stri
   return `${template.name} · ${suffix}`;
 }
 
+function formatQuoteReminderDelay(hours: number): string {
+  if (hours > 0 && hours % 24 === 0) {
+    return `J-${hours / 24}`;
+  }
+  return `${hours} h`;
+}
+
+function formatQuoteReminderDelayList(values: number[] | null | undefined, fallbackHours: number): string {
+  const normalized = Array.from(
+    new Set(
+      (values || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    ),
+  ).sort((left, right) => right - left);
+  if (normalized.length === 0) {
+    normalized.push(fallbackHours);
+  }
+  return normalized.map((value) => formatQuoteReminderDelay(value)).join(", ");
+}
+
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
   if (Array.isArray(value)) {
@@ -2275,16 +2296,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         Envoyer aussi un SMS de rappel avant expiration
                       </label>
                       <label>
-                        Delai de rappel avant expiration (heures)
+                        Delais de relance avant expiration
                         <input
-                          type="number"
-                          name="quote_reminder_lead_hours"
-                          min={1}
-                          max={240}
-                          defaultValue={messagingSettings.quote_reminder_lead_hours}
+                          type="text"
+                          name="quote_reminder_lead_hours_csv"
+                          defaultValue={messagingSettings.quote_reminder_lead_hours_csv || String(messagingSettings.quote_reminder_lead_hours)}
+                          placeholder="120,24"
                         />
+                        <input type="hidden" name="quote_reminder_lead_hours" value={messagingSettings.quote_reminder_lead_hours} />
                         <span className="muted">
-                          Exemple: <strong>24</strong> pour une relance la veille.
+                          Exemple: <strong>120,24</strong> pour des relances a J-5 puis J-1.
                         </span>
                       </label>
                       <label className="checkline">
@@ -2353,7 +2374,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       </p>
                       <p className="muted">
                         Job devis quotidien: <strong>{messagingSettings.quote_daily_job_local_time}</strong> dans le fuseau du devis.
-                        Rappel {messagingSettings.quote_reminder_enabled ? "actif" : "desactive"} ({messagingSettings.quote_reminder_lead_hours} h avant) ·
+                        Rappel {messagingSettings.quote_reminder_enabled ? "actif" : "desactive"} ({formatQuoteReminderDelayList(messagingSettings.quote_reminder_lead_hours_values, messagingSettings.quote_reminder_lead_hours)} avant) ·
                         rappel SMS {messagingSettings.quote_reminder_sms_enabled ? "actif" : "desactive"} ·
                         auto-annulation {messagingSettings.quote_auto_cancel_enabled ? "active" : "desactive"} ({messagingSettings.quote_auto_cancel_delay_hours} h apres expiration) ·
                         annulation SMS {messagingSettings.quote_cancel_sms_notification_enabled ? "active" : "desactive"}.

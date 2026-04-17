@@ -32,7 +32,7 @@ ARCHIVABLE_QUOTE_STATUSES = {"created", "sent", "approved", "expired", "change_r
 @dataclass(frozen=True)
 class QuoteDailyLifecycleSettings:
     reminder_enabled: bool
-    reminder_lead_hours: int
+    reminder_lead_hours_values: tuple[int, ...]
     daily_job_local_time: time
     auto_cancel_enabled: bool
     auto_cancel_delay_hours: int
@@ -71,7 +71,17 @@ def _load_quote_lifecycle_settings(db: Session) -> QuoteDailyLifecycleSettings:
         parsed_local_time = time(hour=7, minute=0)
     return QuoteDailyLifecycleSettings(
         reminder_enabled=bool(payload.get("quote_reminder_enabled", True)),
-        reminder_lead_hours=max(int(payload.get("quote_reminder_lead_hours") or 24), 1),
+        reminder_lead_hours_values=tuple(
+            sorted(
+                {
+                    max(int(item), 1)
+                    for item in (payload.get("quote_reminder_lead_hours_values") or [payload.get("quote_reminder_lead_hours") or 24])
+                    if str(item or "").strip()
+                },
+                reverse=True,
+            )
+            or (24,)
+        ),
         daily_job_local_time=parsed_local_time.replace(second=0, microsecond=0),
         auto_cancel_enabled=bool(payload.get("quote_auto_cancel_enabled", True)),
         auto_cancel_delay_hours=max(int(payload.get("quote_auto_cancel_delay_hours") or 24), 0),
@@ -115,6 +125,45 @@ def _trigger_due(
     return now.astimezone(zone) >= trigger_at
 
 
+def _trigger_due_today(
+    *,
+    now: datetime,
+    zone: ZoneInfo,
+    reference_at: datetime,
+    local_time: time,
+) -> bool:
+    localized_reference = reference_at.astimezone(zone)
+    trigger_at = datetime.combine(localized_reference.date(), local_time, tzinfo=zone)
+    localized_now = now.astimezone(zone)
+    return localized_now.date() == trigger_at.date() and localized_now >= trigger_at
+
+
+def _quote_reminder_offsets_sent(quote: Quote) -> set[int]:
+    meta = quote.meta if isinstance(quote.meta, dict) else {}
+    raw = meta.get("reminder_offsets_sent")
+    if not isinstance(raw, list):
+        return set()
+    out: set[int] = set()
+    for item in raw:
+        try:
+            parsed = int(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            out.add(parsed)
+    return out
+
+
+def _mark_quote_reminder_offset_sent(quote: Quote, *, offset_hours: int, now: datetime) -> None:
+    meta = dict(quote.meta or {})
+    sent_offsets = _quote_reminder_offsets_sent(quote)
+    sent_offsets.add(offset_hours)
+    meta["reminder_offsets_sent"] = sorted(sent_offsets, reverse=True)
+    quote.meta = meta
+    quote.reminder_sent_at = now
+    quote.updated_at = now
+
+
 def _load_lines_for_quotes(db: Session, quote_ids: list[UUID]) -> dict[UUID, list[QuoteLine]]:
     if not quote_ids:
         return {}
@@ -140,11 +189,14 @@ def _queue_email_if_new(
     template_ref: str | None,
     now: datetime,
     delivery_enabled: bool,
+    dedupe_suffix: str | None = None,
 ) -> bool:
     if not delivery_enabled:
         return False
     normalized_recipient = recipient_email.strip().lower()
     message_key = f"{kind}:{quote.id}:{normalized_recipient}"
+    if dedupe_suffix:
+        message_key = f"{message_key}:{dedupe_suffix}"
     existing = db.scalar(select(QuoteEmailOutbox).where(QuoteEmailOutbox.message_key == message_key))
     if existing is not None:
         return False
@@ -254,13 +306,15 @@ def run_quote_daily_lifecycle_job(
         },
     )
     try:
-        if settings.reminder_enabled:
+        if settings.reminder_enabled and settings.reminder_lead_hours_values:
+            max_reminder_lead_hours = max(settings.reminder_lead_hours_values)
             reminder_quotes = db.scalars(
                 select(Quote)
                 .where(
                     Quote.status.in_(sorted(REMINDER_ELIGIBLE_STATUSES)),
                     Quote.expires_at.is_not(None),
-                    Quote.reminder_sent_at.is_(None),
+                    Quote.expires_at > ts,
+                    Quote.expires_at <= ts + timedelta(hours=max_reminder_lead_hours + 24),
                 )
                 .order_by(Quote.expires_at.asc())
                 .limit(limit)
@@ -272,13 +326,19 @@ def run_quote_daily_lifecycle_job(
                 if quote.expires_at is None or quote.expires_at <= ts:
                     continue
                 zone = _quote_timezone(db, quote)
-                reminder_reference = quote.expires_at - timedelta(hours=settings.reminder_lead_hours)
-                if not _trigger_due(
-                    now=ts,
-                    zone=zone,
-                    reference_at=reminder_reference,
-                    local_time=settings.daily_job_local_time,
-                ):
+                already_sent_offsets = _quote_reminder_offsets_sent(quote)
+                due_offsets = [
+                    offset
+                    for offset in settings.reminder_lead_hours_values
+                    if offset not in already_sent_offsets
+                    and _trigger_due_today(
+                        now=ts,
+                        zone=zone,
+                        reference_at=quote.expires_at - timedelta(hours=offset),
+                        local_time=settings.daily_job_local_time,
+                    )
+                ]
+                if not due_offsets:
                     continue
                 recipient = (
                     str((quote.meta or {}).get("recipient_email") or "").strip().lower()
@@ -295,57 +355,58 @@ def run_quote_daily_lifecycle_job(
                         context_json={"quote_id": str(quote.id)},
                     )
                     continue
-                email_sent = False
-                sms_sent = False
-                try:
-                    if recipient:
-                        email_sent = _queue_email_if_new(
+                for offset_hours in due_offsets:
+                    email_sent = False
+                    sms_sent = False
+                    try:
+                        if recipient:
+                            email_sent = _queue_email_if_new(
+                                db,
+                                quote=quote,
+                                lines=quote_lines_by_id.get(quote.id, []),
+                                kind="reminder",
+                                usage_context=USAGE_CONTEXT_QUOTE_REMINDER,
+                                recipient_email=recipient,
+                                template_ref=settings.quote_reminder_template_ref,
+                                now=ts,
+                                delivery_enabled=settings.delivery_enabled,
+                                dedupe_suffix=f"{offset_hours}h",
+                            )
+                        if recipient_phone and settings.quote_reminder_sms_enabled:
+                            sms_sent = _send_sms_if_enabled(
+                                db,
+                                quote=quote,
+                                lines=quote_lines_by_id.get(quote.id, []),
+                                kind="reminder",
+                                usage_context=USAGE_CONTEXT_QUOTE_REMINDER,
+                                recipient_phone=recipient_phone,
+                                template_ref=settings.quote_reminder_sms_template_ref,
+                                now=ts,
+                                delivery_enabled=settings.sms_delivery_enabled,
+                            )
+                    except Exception as exc:
+                        failed += 1
+                        append_job_run_log(
                             db,
-                            quote=quote,
-                            lines=quote_lines_by_id.get(quote.id, []),
-                            kind="reminder",
-                            usage_context=USAGE_CONTEXT_QUOTE_REMINDER,
-                            recipient_email=recipient,
-                            template_ref=settings.quote_reminder_template_ref,
-                            now=ts,
-                            delivery_enabled=settings.delivery_enabled,
+                            job_run_id=job_run.id,
+                            level="error",
+                            message="Reminder send failed",
+                            context_json={"quote_id": str(quote.id), "offset_hours": offset_hours, "error": str(exc)},
                         )
-                    if recipient_phone and settings.quote_reminder_sms_enabled:
-                        sms_sent = _send_sms_if_enabled(
-                            db,
-                            quote=quote,
-                            lines=quote_lines_by_id.get(quote.id, []),
-                            kind="reminder",
-                            usage_context=USAGE_CONTEXT_QUOTE_REMINDER,
-                            recipient_phone=recipient_phone,
-                            template_ref=settings.quote_reminder_sms_template_ref,
-                            now=ts,
-                            delivery_enabled=settings.sms_delivery_enabled,
+                        continue
+                    if email_sent or sms_sent:
+                        reminders_sent += 1
+                        _mark_quote_reminder_offset_sent(quote, offset_hours=offset_hours, now=ts)
+                        db.add(quote)
+                        db.add(
+                            QuoteEvent(
+                                quote_id=quote.id,
+                                event_type="quote_reminder_sent",
+                                actor_type="system",
+                                payload={"kind": "reminder", "offset_hours": offset_hours},
+                                created_at=ts,
+                            )
                         )
-                except Exception as exc:
-                    failed += 1
-                    append_job_run_log(
-                        db,
-                        job_run_id=job_run.id,
-                        level="error",
-                        message="Reminder send failed",
-                        context_json={"quote_id": str(quote.id), "error": str(exc)},
-                    )
-                    continue
-                if email_sent or sms_sent:
-                    reminders_sent += 1
-                    quote.reminder_sent_at = ts
-                    quote.updated_at = ts
-                    db.add(quote)
-                    db.add(
-                        QuoteEvent(
-                            quote_id=quote.id,
-                            event_type="quote_reminder_sent",
-                            actor_type="system",
-                            payload={"kind": "reminder"},
-                            created_at=ts,
-                        )
-                    )
 
         expiring_quotes = db.scalars(
             select(Quote)

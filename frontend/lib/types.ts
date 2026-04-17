@@ -1597,6 +1597,8 @@ export type AdminMessagingSettingsOut = {
   quote_reminder_enabled: boolean;
   quote_reminder_sms_enabled: boolean;
   quote_reminder_lead_hours: number;
+  quote_reminder_lead_hours_csv: string;
+  quote_reminder_lead_hours_values: number[];
   quote_daily_job_local_time: string;
   quote_auto_cancel_enabled: boolean;
   quote_auto_cancel_delay_hours: number;
