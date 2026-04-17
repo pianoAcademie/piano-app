@@ -694,15 +694,27 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT,
         name="Devis - Rappel avant expiration",
         channel="EMAIL",
-        subject="Rappel: votre devis {quote_number} expire bientot",
-        body=(
-            "<p>Bonjour {recipient_name},</p>"
-            "<p>Votre devis <strong>{quote_number}</strong> arrive a expiration.</p>"
-            "<p><strong>Expiration :</strong> {expires_at_local}<br>"
-            "<strong>Total TTC :</strong> {total_ttc} {currency}</p>"
-            "<p><a href=\"{quote_public_url}\">Consulter le devis</a><br>"
-            "<a href=\"{quote_pdf_url}\">Telecharger le PDF</a></p>"
-            "<p>Piano Academie</p>"
+        subject="Rappel : votre devis {quote_number} expire bientot",
+        body=_email_layout(
+            _email_title(
+                "Votre devis arrive bientot a expiration",
+                "Bonjour {recipient_name}, voici un rappel avant l expiration de votre devis Piano Academie.",
+            ),
+            _email_summary(
+                [
+                    ("Devis", "{quote_number}"),
+                    ("Expiration", "{expires_at_local}"),
+                    ("Total TTC", "{total_ttc} {currency}"),
+                ]
+            ),
+            _email_button("{quote_public_url}", "Consulter le devis"),
+            _email_secondary(
+                "Vous pouvez aussi retrouver votre document en version PDF : "
+                "<a href=\"{quote_pdf_url}\">telecharger le PDF</a>."
+            ),
+            _email_secondary(
+                "Si vous avez besoin d un ajustement ou d un nouvel echange, notre equipe reste a votre disposition."
+            ),
         ),
         description="Rappel automatique avant expiration d un devis.",
         variables_hint=(
@@ -716,13 +728,22 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT,
         name="Devis - Annulation",
         channel="EMAIL",
-        subject="Votre devis {quote_number} a ete annule",
-        body=(
-            "<p>Bonjour {recipient_name},</p>"
-            "<p>Votre devis <strong>{quote_number}</strong> a ete annule.</p>"
-            "<p><strong>Statut :</strong> {quote_status_label}</p>"
-            "<p>Si besoin, notre equipe peut vous preparer une nouvelle proposition.</p>"
-            "<p>Piano Academie</p>"
+        subject="Votre devis {quote_number} n est plus valable",
+        body=_email_layout(
+            _email_title(
+                "Votre devis n est plus valable",
+                "Bonjour {recipient_name}, le devis ci-dessous a ete annule et n est plus disponible a la validation.",
+            ),
+            _email_summary(
+                [
+                    ("Devis", "{quote_number}"),
+                    ("Statut", "{quote_status_label}"),
+                    ("Date d annulation", "{cancelled_at_local}"),
+                ]
+            ),
+            _email_secondary(
+                "Si vous souhaitez poursuivre votre inscription, notre equipe peut vous preparer une nouvelle proposition."
+            ),
         ),
         description="Notification d annulation manuelle ou automatique d un devis.",
         variables_hint="{quote_number} {recipient_name} {quote_status_label} {cancelled_at_local}",
@@ -799,8 +820,8 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         channel="SMS",
         subject=None,
         body=(
-            "Rappel Piano Academie: votre devis {quote_number} expire le {expires_at_local}. "
-            "Consulter: {quote_public_url}"
+            "Piano Academie : votre devis {quote_number} expire le {expires_at_local}. "
+            "Consultez-le ici : {quote_public_url}"
         ),
         description="Rappel automatique par SMS avant expiration d un devis.",
         variables_hint="{quote_number} {expires_at_local} {quote_public_url} {recipient_name}",
@@ -812,7 +833,8 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         channel="SMS",
         subject=None,
         body=(
-            "Votre devis {quote_number} a ete annule. Si besoin, Piano Academie peut vous preparer une nouvelle proposition."
+            "Piano Academie : votre devis {quote_number} n est plus valable. "
+            "Nous pouvons vous adresser un nouveau devis si besoin."
         ),
         description="Notification SMS d annulation manuelle ou automatique d un devis.",
         variables_hint="{quote_number} {quote_status_label} {cancelled_at_local} {recipient_name}",
