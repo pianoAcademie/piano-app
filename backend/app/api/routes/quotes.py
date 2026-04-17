@@ -387,6 +387,10 @@ def _bool_or_default(value: object, default: bool) -> bool:
     return default
 
 
+def _monthly_first_due_label() -> str:
+    return "a la validation du devis, avant votre 1er cours"
+
+
 def _build_payment_terms_snapshot_from_plan(
     *,
     quote: Quote,
