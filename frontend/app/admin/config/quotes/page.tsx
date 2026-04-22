@@ -442,59 +442,64 @@ const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
   { value: 6, label: "Dimanche" },
 ];
 
-const PAYMENT_PLAN_PRESET_OPTIONS: Array<{ value: string; label: string; payment_method: string; schedule_type: string }> = [
-  { value: "Carte bancaire", label: "Carte bancaire", payment_method: "CARD", schedule_type: "single" },
-  { value: "Carte bancaire mensuelle", label: "Carte bancaire mensuelle", payment_method: "CARD_MONTHLY", schedule_type: "monthly" },
-  { value: "Cheque en 1 fois", label: "Cheque en 1 fois", payment_method: "CHECK", schedule_type: "single" },
-  { value: "Cheque en 2 fois", label: "Cheque en 2 fois", payment_method: "CHECK", schedule_type: "split_2" },
-  { value: "Cheque en 4 fois", label: "Cheque en 4 fois", payment_method: "CHECK", schedule_type: "split_4" },
-  { value: "Virement bancaire", label: "Virement bancaire", payment_method: "BANK_TRANSFER", schedule_type: "single" },
-  { value: "Especes", label: "Especes", payment_method: "CASH", schedule_type: "single" },
-  { value: "4 fois avec frais", label: "4 fois avec frais", payment_method: "CARD_4X_FEES", schedule_type: "split_4" },
+const PAYMENT_PLAN_PRESET_OPTIONS: Array<{ value: string; payment_method: string; schedule_type: string }> = [
+  { value: "Carte bancaire", payment_method: "CARD", schedule_type: "single" },
+  { value: "Carte bancaire mensuelle", payment_method: "CARD_MONTHLY", schedule_type: "monthly" },
+  { value: "Cheque en 1 fois", payment_method: "CHECK", schedule_type: "single" },
+  { value: "Cheque en 2 fois", payment_method: "CHECK", schedule_type: "split_2" },
+  { value: "Cheque en 4 fois", payment_method: "CHECK", schedule_type: "split_4" },
+  { value: "Virement bancaire", payment_method: "BANK_TRANSFER", schedule_type: "single" },
+  { value: "Especes", payment_method: "CASH", schedule_type: "single" },
+  { value: "4 fois avec frais", payment_method: "CARD_4X_FEES", schedule_type: "split_4" },
 ];
 
-const PAYMENT_SCHEDULE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "single", label: "Paiement unitaire" },
-  { value: "split_2", label: "Paiement en 2 fois" },
-  { value: "split_3", label: "Paiement en 3 fois" },
-  { value: "split_4", label: "Paiement en 4 fois" },
-  { value: "monthly", label: "Paiement mensuel" },
+const PAYMENT_SCHEDULE_TYPE_OPTIONS: Array<{ value: string }> = [
+  { value: "single" },
+  { value: "split_2" },
+  { value: "split_3" },
+  { value: "split_4" },
+  { value: "monthly" },
 ];
 
-const MONTH_OPTIONS: Array<{ value: number; label: string }> = [
-  { value: 1, label: "Janvier" },
-  { value: 2, label: "Fevrier" },
-  { value: 3, label: "Mars" },
-  { value: 4, label: "Avril" },
-  { value: 5, label: "Mai" },
-  { value: 6, label: "Juin" },
-  { value: 7, label: "Juillet" },
-  { value: 8, label: "Aout" },
-  { value: 9, label: "Septembre" },
-  { value: 10, label: "Octobre" },
-  { value: 11, label: "Novembre" },
-  { value: 12, label: "Decembre" },
-];
+const PAYMENT_METHOD_OPTIONS = ["CARD", "CARD_MONTHLY", "CHECK", "BANK_TRANSFER", "CASH", "CARD_4X_FEES"] as const;
+const MONTH_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
 function weekdayLabel(day: number): string {
   return WEEKDAY_OPTIONS.find((option) => option.value === day)?.label ?? String(day);
 }
 
-function paymentScheduleTypeLabel(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  const fromCatalog = PAYMENT_SCHEDULE_TYPE_OPTIONS.find((item) => item.value === normalized)?.label;
-  return (fromCatalog ?? value) || "-";
+function paymentPlanPresetLabel(value: string, language: UiLanguage): string {
+  const normalized = value.trim();
+  if (normalized === "Carte bancaire") return uiText(language, "admin.quote_config.payment_preset_card");
+  if (normalized === "Carte bancaire mensuelle") return uiText(language, "admin.quote_config.payment_preset_card_monthly");
+  if (normalized === "Cheque en 1 fois") return uiText(language, "admin.quote_config.payment_preset_check_single");
+  if (normalized === "Cheque en 2 fois") return uiText(language, "admin.quote_config.payment_preset_check_split_2");
+  if (normalized === "Cheque en 4 fois") return uiText(language, "admin.quote_config.payment_preset_check_split_4");
+  if (normalized === "Virement bancaire") return uiText(language, "admin.quote_detail.payment_method_bank_transfer");
+  if (normalized === "Especes") return uiText(language, "admin.quote_detail.payment_method_cash");
+  if (normalized === "4 fois avec frais") return uiText(language, "admin.quote_detail.payment_method_card_4x_fees");
+  return value || "-";
 }
 
-function paymentMethodLabel(value: string): string {
+function paymentScheduleTypeLabel(value: string, language: UiLanguage): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "single") return uiText(language, "admin.quote_config.payment_schedule_single");
+  if (normalized === "split_2") return uiText(language, "admin.quote_config.payment_schedule_split_2");
+  if (normalized === "split_3") return uiText(language, "admin.quote_config.payment_schedule_split_3");
+  if (normalized === "split_4") return uiText(language, "admin.quote_config.payment_schedule_split_4");
+  if (normalized === "monthly") return uiText(language, "admin.quote_config.payment_schedule_monthly");
+  return value || "-";
+}
+
+function paymentMethodLabel(value: string, language: UiLanguage): string {
   const normalized = value.trim().toUpperCase();
   if (!normalized) return "-";
-  if (normalized === "CARD") return "Carte bancaire";
-  if (normalized === "CARD_MONTHLY") return "Carte bancaire mensuelle";
-  if (normalized === "CHECK") return "Cheque";
-  if (normalized === "BANK_TRANSFER") return "Virement bancaire";
-  if (normalized === "CASH") return "Especes";
-  if (normalized === "CARD_4X_FEES") return "4 fois avec frais";
+  if (normalized === "CARD") return uiText(language, "admin.quote_detail.payment_method_card");
+  if (normalized === "CARD_MONTHLY") return uiText(language, "admin.quote_detail.payment_method_card_monthly");
+  if (normalized === "CHECK") return uiText(language, "admin.quote_detail.payment_method_check");
+  if (normalized === "BANK_TRANSFER") return uiText(language, "admin.quote_detail.payment_method_bank_transfer");
+  if (normalized === "CASH") return uiText(language, "admin.quote_detail.payment_method_cash");
+  if (normalized === "CARD_4X_FEES") return uiText(language, "admin.quote_detail.payment_method_card_4x_fees");
   return value;
 }
 
@@ -506,12 +511,16 @@ function paymentInstallmentCount(rules: Record<string, unknown>): string {
   return String(raw);
 }
 
-function paymentFeePercent(rules: Record<string, unknown>): string {
+function paymentFeePercent(rules: Record<string, unknown>, language: UiLanguage): string {
   const raw = Number.parseFloat(String(rules.fee_percent ?? ""));
+  const locale = language === "en" ? "en-US" : "fr-FR";
   if (!Number.isFinite(raw) || raw <= 0) {
-    return "0 %";
+    return `0 ${uiText(language, "admin.quote_config.percent_symbol")}`;
   }
-  return `${raw.toFixed(2).replace(".", ",")} %`;
+  return `${new Intl.NumberFormat(locale, {
+    minimumFractionDigits: raw % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(raw)} ${uiText(language, "admin.quote_config.percent_symbol")}`;
 }
 
 function paymentDeferredMonthValue(rules: Record<string, unknown>, index: number): string {
@@ -529,6 +538,14 @@ function paymentScheduleVisibilityFlag(rules: Record<string, unknown>, key: "pub
     return true;
   }
   return Boolean((raw as Record<string, unknown>)[key]);
+}
+
+function monthLabel(month: number, language: UiLanguage): string {
+  const locale = language === "en" ? "en-US" : "fr-FR";
+  const label = new Intl.DateTimeFormat(locale, { month: "long", timeZone: "UTC" }).format(
+    new Date(Date.UTC(2026, month - 1, 1)),
+  );
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function modalityLabel(value: string | null, language: UiLanguage): string {
@@ -772,6 +789,22 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
         .filter((value) => value.length > 0),
     ),
   ).sort((a, b) => a.localeCompare(b, sortLocale));
+  const paymentPlanPresetOptions = PAYMENT_PLAN_PRESET_OPTIONS.map((option) => ({
+    ...option,
+    label: paymentPlanPresetLabel(option.value, language),
+  }));
+  const paymentMethodOptions = PAYMENT_METHOD_OPTIONS.map((value) => ({
+    value,
+    label: paymentMethodLabel(value, language),
+  }));
+  const paymentScheduleTypeOptions = PAYMENT_SCHEDULE_TYPE_OPTIONS.map((option) => ({
+    ...option,
+    label: paymentScheduleTypeLabel(option.value, language),
+  }));
+  const paymentMonthOptions = MONTH_VALUES.map((value) => ({
+    value,
+    label: monthLabel(value, language),
+  }));
   const defaultQuoteTemplateSubject = language === "en"
     ? "Your Piano Academie quote {quote_number}"
     : "Votre devis {quote_number} Piano Academie";
@@ -1276,99 +1309,96 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "payment_plans" ? (
         <section className="card">
-          <h3>Plans de paiement</h3>
-          <p className="muted">Configuration metier guidee: libelle commercial, methode, type d echeancier et frais. Le code et les regles techniques sont generes automatiquement.</p>
+          <h3>{t("admin.quote_config.payment_plans_title")}</h3>
+          <p className="muted">{t("admin.quote_config.payment_plans_subtitle")}</p>
           <form action={createAdminPaymentPlanConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("payment_plans")} />
             <label className="span-2">
-              Plan de paiement / libelle commercial
+              {t("admin.quote_config.payment_plan_preset_label")}
               <select name="plan_label_preset" defaultValue="Carte bancaire" required>
-                <option value="">Selectionner</option>
-                {PAYMENT_PLAN_PRESET_OPTIONS.map((option) => (
+                <option value="">{t("admin.quote_config.select_option")}</option>
+                {paymentPlanPresetOptions.map((option) => (
                   <option key={`preset-create-${option.value}`} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
             <label>
-              Methode de paiement
+              {t("admin.quote_config.payment_method")}
               <select name="payment_method" defaultValue="CARD" required>
-                <option value="CARD">Carte bancaire</option>
-                <option value="CARD_MONTHLY">Carte bancaire mensuelle</option>
-                <option value="CHECK">Cheque</option>
-                <option value="BANK_TRANSFER">Virement bancaire</option>
-                <option value="CASH">Especes</option>
-                <option value="CARD_4X_FEES">4 fois avec frais</option>
+                {paymentMethodOptions.map((option) => (
+                  <option key={`payment-method-create-${option.value}`} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </label>
             <label>
-              Type d echeancier
+              {t("admin.quote_config.payment_schedule_type")}
               <select name="schedule_type" defaultValue="single" required>
-                {PAYMENT_SCHEDULE_TYPE_OPTIONS.map((option) => (
+                {paymentScheduleTypeOptions.map((option) => (
                   <option key={`schedule-create-${option.value}`} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
             <label>
-              Frais (%)
+              {t("admin.quote_config.fees_percent")}
               <input type="number" name="fee_percent" min={0} max={100} step="0.01" defaultValue="0" />
             </label>
             <label>
-              Encaissement 2e echeance (mois)
+              {t("admin.quote_config.due_month_2")}
               <select name="due_month_2" defaultValue="2">
-                <option value="">Auto</option>
-                {MONTH_OPTIONS.map((option) => (
+                <option value="">{t("admin.quote_config.auto_option")}</option>
+                {paymentMonthOptions.map((option) => (
                   <option key={`create-month2-${option.value}`} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
             <label>
-              Encaissement 3e echeance (mois)
+              {t("admin.quote_config.due_month_3")}
               <select name="due_month_3" defaultValue="2">
-                <option value="">Auto</option>
-                {MONTH_OPTIONS.map((option) => (
+                <option value="">{t("admin.quote_config.auto_option")}</option>
+                {paymentMonthOptions.map((option) => (
                   <option key={`create-month3-${option.value}`} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
             <label>
-              Encaissement 4e echeance (mois)
+              {t("admin.quote_config.due_month_4")}
               <select name="due_month_4" defaultValue="4">
-                <option value="">Auto</option>
-                {MONTH_OPTIONS.map((option) => (
+                <option value="">{t("admin.quote_config.auto_option")}</option>
+                {paymentMonthOptions.map((option) => (
                   <option key={`create-month4-${option.value}`} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
             <label className="checkline">
               <input type="checkbox" name="collect_all_checks_upfront" defaultChecked />
-              Tous les cheques envoyes en meme temps
+              {t("admin.quote_config.collect_all_checks_upfront")}
             </label>
             <label className="checkline">
               <input type="checkbox" name="show_schedule_public" defaultChecked />
-              Afficher l echeancier detaille (page publique)
+              {t("admin.quote_config.show_schedule_public")}
             </label>
             <label className="checkline">
               <input type="checkbox" name="show_schedule_pdf" defaultChecked />
-              Afficher l echeancier detaille (PDF client)
+              {t("admin.quote_config.show_schedule_pdf")}
             </label>
             <label className="span-2">
-              Adresse de reception des cheques (optionnel)
-              <textarea name="check_submission_address" rows={2} placeholder="Piano Academie, [adresse postale]" />
+              {t("admin.quote_config.check_submission_address_optional")}
+              <textarea name="check_submission_address" rows={2} placeholder={t("admin.quote_config.check_submission_address_placeholder")} />
             </label>
             <label className="span-2">
-              Consigne affichee dans le devis (optionnel)
+              {t("admin.quote_config.check_submission_instruction_optional")}
               <textarea
                 name="check_submission_instruction"
                 rows={2}
-                placeholder="Le 1er cheque est encaisse a reception. Le 2e cheque est encaisse debut fevrier."
+                placeholder={t("admin.quote_config.check_submission_instruction_placeholder")}
               />
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
-              Actif
+              {t("common.active")}
             </label>
             <div className="row span-4">
-              <button type="submit">Ajouter le plan</button>
+              <button type="submit">{t("admin.quote_config.add_payment_plan")}</button>
             </div>
           </form>
 
@@ -1376,81 +1406,78 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Libelle</th>
-                  <th>Methode</th>
-                  <th>Echeancier</th>
-                  <th>Echeances</th>
-                  <th>Frais</th>
-                  <th>Consignes</th>
-                  <th>Statut</th>
-                  <th>Actions</th>
+                  <th>{t("admin.quote_config.label")}</th>
+                  <th>{t("admin.quote_config.payment_method")}</th>
+                  <th>{t("admin.quote_config.payment_schedule_type")}</th>
+                  <th>{t("admin.quote_config.installments")}</th>
+                  <th>{t("admin.quote_config.fees_percent")}</th>
+                  <th>{t("admin.quote_config.instructions")}</th>
+                  <th>{t("common.status")}</th>
+                  <th>{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {paymentPlans.length === 0 ? (
-                  <tr><td colSpan={8}><p className="muted">Aucun plan de paiement.</p></td></tr>
+                  <tr><td colSpan={8}><p className="muted">{t("admin.quote_config.no_payment_plans")}</p></td></tr>
                 ) : (
                   paymentPlans.map((row) => (
                     <tr key={row.id}>
                       <td>
-                        <strong>{row.name}</strong>
+                        <strong>{paymentPlanPresetLabel(row.name, language)}</strong>
                         <div className="muted"><code>{row.code}</code></div>
                       </td>
-                      <td>{paymentMethodLabel(row.payment_method)}</td>
-                      <td>{paymentScheduleTypeLabel(row.schedule_type)}</td>
+                      <td>{paymentMethodLabel(row.payment_method, language)}</td>
+                      <td>{paymentScheduleTypeLabel(row.schedule_type, language)}</td>
                       <td>{paymentInstallmentCount(row.schedule_rules || {})}</td>
-                      <td>{paymentFeePercent(row.schedule_rules || {})}</td>
+                      <td>{paymentFeePercent(row.schedule_rules || {}, language)}</td>
                       <td>
                         {String((row.schedule_rules?.check_submission_instruction ?? "") || "").trim() || "-"}
                       </td>
-                      <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span></td>
+                      <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span></td>
                       <td>
                         <details>
-                          <summary className="mode-link">Modifier</summary>
+                          <summary className="mode-link">{t("common.edit")}</summary>
                           <form action={updateAdminPaymentPlanConfigAction} className="grid config-form-grid top-gap-sm">
                             <input type="hidden" name="plan_id" value={row.id} />
                             <input type="hidden" name="return_to" value={buildQuotesConfigHref("payment_plans")} />
                             <input type="hidden" name="name_current" value={row.name} />
                             <label className="span-2">
-                              Plan de paiement / libelle commercial
+                              {t("admin.quote_config.payment_plan_preset_label")}
                               <select name="plan_label_preset" defaultValue={PAYMENT_PLAN_PRESET_OPTIONS.some((item) => item.value === row.name) ? row.name : ""}>
-                                <option value="">Conserver actuel</option>
-                                {PAYMENT_PLAN_PRESET_OPTIONS.map((option) => (
+                                <option value="">{t("admin.quote_config.keep_current_option")}</option>
+                                {paymentPlanPresetOptions.map((option) => (
                                   <option key={`preset-edit-${row.id}-${option.value}`} value={option.value}>{option.label}</option>
                                 ))}
                               </select>
                             </label>
                             <label className="span-2">
-                              Libelle personnalise (optionnel)
-                              <input type="text" name="name_custom" maxLength={180} placeholder={row.name} />
+                              {t("admin.quote_config.custom_label_optional")}
+                              <input type="text" name="name_custom" maxLength={180} placeholder={paymentPlanPresetLabel(row.name, language)} />
                             </label>
                             <label>
-                              Methode de paiement
+                              {t("admin.quote_config.payment_method")}
                               <select name="payment_method" defaultValue={row.payment_method} required>
                                 {!["CARD", "CARD_MONTHLY", "CHECK", "BANK_TRANSFER", "CASH", "CARD_4X_FEES"].includes(row.payment_method) ? (
                                   <option value={row.payment_method}>{row.payment_method}</option>
                                 ) : null}
-                                <option value="CARD">Carte bancaire</option>
-                                <option value="CARD_MONTHLY">Carte bancaire mensuelle</option>
-                                <option value="CHECK">Cheque</option>
-                                <option value="BANK_TRANSFER">Virement bancaire</option>
-                                <option value="CASH">Especes</option>
-                                <option value="CARD_4X_FEES">4 fois avec frais</option>
+                                {paymentMethodOptions.map((option) => (
+                                  <option key={`payment-method-edit-${row.id}-${option.value}`} value={option.value}>{option.label}</option>
+                                ))}
                               </select>
                             </label>
                             <label>
-                              Type d echeancier
+                              {t("admin.quote_config.payment_schedule_type")}
                               <select name="schedule_type" defaultValue={row.schedule_type} required>
                                 {!PAYMENT_SCHEDULE_TYPE_OPTIONS.some((option) => option.value === row.schedule_type) ? (
                                   <option value={row.schedule_type}>{row.schedule_type}</option>
                                 ) : null}
-                                {PAYMENT_SCHEDULE_TYPE_OPTIONS.map((option) => (
+                                {paymentScheduleTypeOptions.map((option) => (
                                   <option key={`schedule-edit-${row.id}-${option.value}`} value={option.value}>{option.label}</option>
                                 ))}
                               </select>
                             </label>
                             <label>
-                              Frais (%)
+                              {t("admin.quote_config.fees_percent")}
                               <input
                                 type="number"
                                 name="fee_percent"
@@ -1461,28 +1488,28 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                               />
                             </label>
                             <label>
-                              Encaissement 2e echeance (mois)
+                              {t("admin.quote_config.due_month_2")}
                               <select name="due_month_2" defaultValue={paymentDeferredMonthValue(row.schedule_rules || {}, 0)}>
-                                <option value="">Auto</option>
-                                {MONTH_OPTIONS.map((option) => (
+                                <option value="">{t("admin.quote_config.auto_option")}</option>
+                                {paymentMonthOptions.map((option) => (
                                   <option key={`edit-${row.id}-month2-${option.value}`} value={option.value}>{option.label}</option>
                                 ))}
                               </select>
                             </label>
                             <label>
-                              Encaissement 3e echeance (mois)
+                              {t("admin.quote_config.due_month_3")}
                               <select name="due_month_3" defaultValue={paymentDeferredMonthValue(row.schedule_rules || {}, 1)}>
-                                <option value="">Auto</option>
-                                {MONTH_OPTIONS.map((option) => (
+                                <option value="">{t("admin.quote_config.auto_option")}</option>
+                                {paymentMonthOptions.map((option) => (
                                   <option key={`edit-${row.id}-month3-${option.value}`} value={option.value}>{option.label}</option>
                                 ))}
                               </select>
                             </label>
                             <label>
-                              Encaissement 4e echeance (mois)
+                              {t("admin.quote_config.due_month_4")}
                               <select name="due_month_4" defaultValue={paymentDeferredMonthValue(row.schedule_rules || {}, 2)}>
-                                <option value="">Auto</option>
-                                {MONTH_OPTIONS.map((option) => (
+                                <option value="">{t("admin.quote_config.auto_option")}</option>
+                                {paymentMonthOptions.map((option) => (
                                   <option key={`edit-${row.id}-month4-${option.value}`} value={option.value}>{option.label}</option>
                                 ))}
                               </select>
@@ -1493,7 +1520,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 name="collect_all_checks_upfront"
                                 defaultChecked={Boolean(row.schedule_rules?.collect_all_checks_upfront ?? true)}
                               />
-                              Tous les cheques envoyes en meme temps
+                              {t("admin.quote_config.collect_all_checks_upfront")}
                             </label>
                             <label className="checkline">
                               <input
@@ -1501,7 +1528,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 name="show_schedule_public"
                                 defaultChecked={paymentScheduleVisibilityFlag(row.schedule_rules || {}, "public_page")}
                               />
-                              Afficher l echeancier detaille (page publique)
+                              {t("admin.quote_config.show_schedule_public")}
                             </label>
                             <label className="checkline">
                               <input
@@ -1509,10 +1536,10 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 name="show_schedule_pdf"
                                 defaultChecked={paymentScheduleVisibilityFlag(row.schedule_rules || {}, "client_pdf")}
                               />
-                              Afficher l echeancier detaille (PDF client)
+                              {t("admin.quote_config.show_schedule_pdf")}
                             </label>
                             <label className="span-2">
-                              Adresse de reception des cheques (optionnel)
+                              {t("admin.quote_config.check_submission_address_optional")}
                               <textarea
                                 name="check_submission_address"
                                 rows={2}
@@ -1520,7 +1547,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                               />
                             </label>
                             <label className="span-2">
-                              Consigne affichee dans le devis (optionnel)
+                              {t("admin.quote_config.check_submission_instruction_optional")}
                               <textarea
                                 name="check_submission_instruction"
                                 rows={2}
@@ -1529,16 +1556,16 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                              Actif
+                              {t("common.active")}
                             </label>
                             <div className="row">
-                              <button type="submit">Enregistrer</button>
+                              <button type="submit">{t("common.save")}</button>
                             </div>
                           </form>
                           <form action={deleteAdminPaymentPlanConfigAction} className="row top-gap-sm">
                             <input type="hidden" name="plan_id" value={row.id} />
                             <input type="hidden" name="return_to" value={buildQuotesConfigHref("payment_plans")} />
-                            <button type="submit" className="danger">Supprimer</button>
+                            <button type="submit" className="danger">{t("common.delete")}</button>
                           </form>
                         </details>
                       </td>
