@@ -4674,6 +4674,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       />
                       <ListRow title="Pays residence" right={labelFromOptions(COUNTRY_OPTIONS, me.residence_country)} />
                       <ListRow title="Devise" right={labelFromOptions(CURRENCY_OPTIONS, me.preferred_currency)} />
+                      <ListRow title="Langue" right={me.preferred_language === "en" ? "English" : "Francais"} />
                       <ListRow title="Fuseau" right={labelFromOptions(TIMEZONE_OPTIONS, me.timezone)} />
                     </div>
                     <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
@@ -4793,6 +4794,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </p>
                     <p><strong>Pays residence:</strong> {labelFromOptions(COUNTRY_OPTIONS, me.residence_country)}</p>
                     <p><strong>Devise:</strong> {labelFromOptions(CURRENCY_OPTIONS, me.preferred_currency)}</p>
+                    <p><strong>Langue:</strong> {me.preferred_language === "en" ? "English" : "Francais"}</p>
                     <p><strong>Fuseau:</strong> {labelFromOptions(TIMEZONE_OPTIONS, me.timezone)}</p>
                   </div>
                 </Card>
@@ -4952,6 +4954,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             {currency.label}
                           </option>
                         ))}
+                      </select>
+                    </label>
+                    <label>
+                      Langue
+                      <select name="preferred_language" defaultValue={me.preferred_language || "fr"} required>
+                        <option value="fr">Francais</option>
+                        <option value="en">English</option>
                       </select>
                     </label>
                     <label>

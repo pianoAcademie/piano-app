@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.catalog import Location
 from app.models.quote import Quote, QuoteLine
 from app.services.email_delivery import send_email
+from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
     QUOTE_APPROVED_TEMPLATE_REF_DEFAULT,
     QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT,
@@ -71,8 +72,25 @@ def _render_template(template: str, context: dict[str, str]) -> str:
         return normalized.strip()
 
 
-def _quote_status_label(status: str | None) -> str:
+def _quote_status_label(status: str | None, *, language: str | None = None) -> str:
     normalized = (status or "").strip().lower()
+    if normalize_language(language) == "en":
+        if normalized == "created":
+            return "Draft"
+        if normalized == "sent":
+            return "Sent"
+        if normalized == "change_requested":
+            return "Change requested"
+        if normalized == "approved":
+            return "Approved"
+        if normalized == "rejected":
+            return "Rejected"
+        if normalized == "expired":
+            return "Expired"
+        if normalized == "cancelled":
+            return "Cancelled"
+        return normalized or "-"
+
     if normalized == "created":
         return "Brouillon"
     if normalized == "sent":
@@ -166,6 +184,7 @@ def build_quote_email_context(
 ) -> dict[str, str]:
     values, _, _ = build_quote_template_values(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     timezone_name = _quote_timezone_name(db, quote)
+    normalized_language = normalize_language(quote.language)
     public_url = str(values.get("quote_public_url") or "").strip()
     pdf_url = str(values.get("quote_pdf_url") or "").strip()
     if not public_url and quote.public_token:
@@ -183,7 +202,7 @@ def build_quote_email_context(
             "recipient_email": (recipient_email or "").strip().lower(),
             "recipient_phone": (recipient_phone or "").strip(),
             "quote_status": str(quote.status or "").strip(),
-            "quote_status_label": _quote_status_label(quote.status),
+            "quote_status_label": _quote_status_label(quote.status, language=normalized_language),
             "quote_timezone": timezone_name,
             "quote_public_url": public_url,
             "quote_pdf_url": pdf_url,
@@ -213,6 +232,7 @@ def render_quote_email_template(
         channel="EMAIL",
         usage_context=usage_context,
         active_only=True,
+        language=quote.language,
     )
     context = build_quote_email_context(db, quote=quote, lines=lines, recipient_email=recipient_email)
     subject = _render_template(str(template.get("subject") or ""), context)
@@ -283,6 +303,7 @@ def render_quote_sms_template(
         channel="SMS",
         usage_context=usage_context,
         active_only=True,
+        language=quote.language,
     )
     context = build_quote_email_context(db, quote=quote, lines=lines, recipient_phone=recipient_phone)
     body = _render_template(str(template.get("body") or ""), context)
@@ -316,7 +337,7 @@ def send_quote_templated_sms(
         to_phone=rendered.recipient_phone,
         message=rendered.body,
         context=sms_context,
-        subject=f"Devis {quote.quote_number}",
+        subject=(f"Quote {quote.quote_number}" if normalize_language(quote.language) == "en" else f"Devis {quote.quote_number}"),
         db=db,
     )
     return rendered, result

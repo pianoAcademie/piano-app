@@ -59,6 +59,7 @@ from app.schemas.admin import (
     ProfessorPermissionOut,
     ProfessorPermissionUpdateRequest,
 )
+from app.services.i18n import normalize_language
 from app.services.professor_activation import (
     generate_temporary_password,
 )
@@ -273,7 +274,11 @@ def _send_professor_password_reset_link(
     }
 
     try:
-        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET)
+        template = resolve_predefined_template(
+            db,
+            code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
+            language=normalize_language(user.preferred_language),
+        )
         subject_template = str(template.get("subject") or "").strip() or DEFAULT_RESET_SUBJECT
         body_template = str(template.get("body") or "").strip() or DEFAULT_RESET_BODY
         body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"

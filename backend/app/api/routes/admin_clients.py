@@ -135,6 +135,7 @@ from app.services.client_purchase_notifications import send_payment_success_noti
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
+from app.services.i18n import normalize_language
 from app.services.invoice_documents import (
     InvoicePeriodLine,
     build_company_identity_snapshot,
@@ -1500,8 +1501,9 @@ def _build_range_invoice_email_defaults(
 
     normalized_kind = "REMINDER" if kind == "REMINDER" else "INVOICE"
     template_code = "INVOICE" if normalized_kind == "INVOICE" else "INVOICE_REMINDER"
+    language = normalize_language(client.preferred_language)
     try:
-        template = resolve_predefined_template(db, code=template_code)
+        template = resolve_predefined_template(db, code=template_code, language=language)
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if not bool(template.get("active", True)):
@@ -1521,8 +1523,9 @@ def _build_range_invoice_email_defaults(
     totals_by_currency = dict(metadata.get("totals_by_currency") or {})
     first_currency = next(iter(sorted(totals_by_currency.keys())), "EUR")
     amount_due = str(totals_by_currency.get(first_currency) or "0.00")
+    fallback_first_name = "Customer" if language == "en" else "Client"
     context = {
-        "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email,
+        "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email or fallback_first_name,
         "last_name": (billing_profile.last_name or client.last_name or "").strip(),
         "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
         "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
@@ -1699,6 +1702,7 @@ def _send_invoice_range_booking_confirmation_emails(
                 timezone_name=session_obj.timezone,
                 location_name=location_label,
                 teacher_name=teacher_label,
+                language=recipient_user.preferred_language if recipient_user is not None else None,
             )
         else:
             rendered = None
@@ -1731,6 +1735,7 @@ def _send_invoice_range_booking_confirmation_emails(
                 timezone_name=session_obj.timezone,
                 location_name=location_label,
                 teacher_name=teacher_label,
+                language="fr",
             )
             if rendered is None:
                 continue
@@ -1811,6 +1816,7 @@ def _send_invoice_range_payment_success_emails(
         payment_url=_normalize_optional(str(metadata.get("payment_url") or "")) or invoice_url,
         issued_date=_normalize_optional(str(metadata.get("issued_date") or "")),
         due_date=_normalize_optional(str(metadata.get("due_date") or "")),
+        language=client.preferred_language,
     )
     return any(value for value in result.values())
 
@@ -3283,6 +3289,7 @@ def _client_out(
         important_info=client.important_info,
         private_note=client.private_note,
         residence_country=client.residence_country,
+        preferred_language=client.preferred_language,
         preferred_currency=client.preferred_currency,
         timezone=client.timezone,
         first_course_at=client.first_course_at,
@@ -3644,7 +3651,7 @@ def get_admin_client_password_email_template(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminClientPasswordEmailTemplateOut:
     try:
-        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD)
+        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD, language="fr")
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return AdminClientPasswordEmailTemplateOut(
@@ -4362,6 +4369,7 @@ def create_admin_client(
         important_info=_normalize_optional(payload.important_info),
         private_note=_normalize_optional(payload.private_note),
         residence_country=_normalize_required(payload.residence_country, "residence_country").upper(),
+        preferred_language=normalize_language(payload.preferred_language),
         preferred_currency=_normalize_required(payload.preferred_currency, "preferred_currency").upper(),
         timezone=_validate_timezone(payload.timezone),
         portal_contact_visible=bool(payload.portal_contact_visible),
@@ -4476,6 +4484,12 @@ def patch_admin_client(
     if "residence_country" in changes:
         client.residence_country = _normalize_required(changes["residence_country"], "residence_country").upper()
 
+    if "preferred_language" in changes:
+        preferred_language = _normalize_required(changes["preferred_language"], "preferred_language").lower()
+        if preferred_language not in {"fr", "en"}:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid preferred_language")
+        client.preferred_language = preferred_language
+
     if "preferred_currency" in changes:
         client.preferred_currency = _normalize_required(changes["preferred_currency"], "preferred_currency").upper()
 
@@ -4534,7 +4548,11 @@ def send_admin_client_password_email(
 
     temporary_password = generate_temporary_password()
     try:
-        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD)
+        template = resolve_predefined_template(
+            db,
+            code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
+            language=normalize_language(client.preferred_language),
+        )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     subject_template = str(template.get("subject") or "")
@@ -5333,7 +5351,11 @@ def send_admin_client_subscription_payment_email(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Client email is missing")
 
     try:
-        template = resolve_predefined_template(db, code="PAYMENT")
+        template = resolve_predefined_template(
+            db,
+            code="PAYMENT",
+            language=normalize_language(client.preferred_language),
+        )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -7985,13 +8007,14 @@ def download_admin_client_range_invoice(
         total_to_pay_by_currency=total_to_pay_by_currency,
         payment_link_url=payment_link_url,
         watermark=(
-            "PAYE"
+            ("PAID" if normalize_language(client.preferred_language) == "en" else "PAYE")
             if ((invoice_status or "").strip().upper() in {"PAID", "PAYE"})
             else None
         ),
         legal_entity_id=resolved_seller_legal_entity_id,
         billing_entity=resolved_billing_entity,
         company_identity_override=frozen_company_identity,
+        language=normalize_language(client.preferred_language),
     )
     file_name = f"{resolved_invoice_number}.pdf".replace('"', "")
     return Response(
@@ -8930,9 +8953,14 @@ def download_admin_client_payment_invoice(
         note=None,
         client_billing_address=_billing_address_label(billing_profile),
         due_date=payment.occurred_at.date(),
-        watermark=("PAYE" if (payment.invoice_status or "").strip().upper() == "PAID" else None),
+        watermark=(
+            "PAID"
+            if normalize_language(payment_user.preferred_language) == "en" and (payment.invoice_status or "").strip().upper() == "PAID"
+            else ("PAYE" if (payment.invoice_status or "").strip().upper() == "PAID" else None)
+        ),
         legal_entity_id=payment.seller_legal_entity_id,
         billing_entity=_payment_billing_entity(payment),
+        language=normalize_language(payment_user.preferred_language),
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")

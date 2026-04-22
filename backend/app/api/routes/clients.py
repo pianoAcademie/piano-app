@@ -98,6 +98,7 @@ from app.schemas.user import (
 )
 from app.services.family_billing import resolve_billing_profile
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
+from app.services.i18n import normalize_language
 from app.services.invoice_documents import (
     InvoicePeriodLine,
     build_company_identity_snapshot,
@@ -1872,6 +1873,12 @@ def patch_client_me(
     if "residence_country" in changes:
         current_user.residence_country = _normalize_required(changes["residence_country"], "residence_country").upper()
 
+    if "preferred_language" in changes:
+        preferred_language = _normalize_required(changes["preferred_language"], "preferred_language").lower()
+        if preferred_language not in {"fr", "en"}:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid preferred_language")
+        current_user.preferred_language = preferred_language
+
     if "preferred_currency" in changes:
         current_user.preferred_currency = _normalize_required(changes["preferred_currency"], "preferred_currency").upper()
 
@@ -3265,6 +3272,7 @@ def confirm_client_payment(
                     paid_at=subscription.last_payment_at or _utcnow(),
                     amount_paid=amount_due,
                     currency=currency_code,
+                    language=owner.preferred_language,
                 )
             except Exception:
                 logger.exception("Unable to send paid confirmation emails for subscription=%s", subscription.id)
@@ -3541,6 +3549,7 @@ def download_client_invoice(
             legal_entity_id=legal_entity_id,
             billing_entity=billing_entity,
             company_identity_override=frozen_company_identity,
+            language=normalize_language(current_user.preferred_language),
         )
 
         file_name = f"{invoice_number}.pdf".replace('"', "")
@@ -3620,6 +3629,7 @@ def _render_client_payment_invoice_response(
         due_date=payment.occurred_at.date(),
         legal_entity_id=payment.seller_legal_entity_id,
         billing_entity=billing_entity,
+        language=normalize_language(payment_user.preferred_language),
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")

@@ -284,7 +284,9 @@ class AdminMessagingTemplateOut(BaseModel):
     channel: AdminMessagingChannel
     kind: AdminMessagingTemplateKind
     subject: str | None = None
+    subject_translations: dict[str, str] = Field(default_factory=dict)
     body: str
+    body_translations: dict[str, str] = Field(default_factory=dict)
     body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
     usage_contexts: list[str] = Field(default_factory=list)
@@ -296,7 +298,9 @@ class AdminMessagingTemplateOut(BaseModel):
 
 class AdminMessagingPredefinedTemplateUpdateRequest(BaseModel):
     subject: str | None = Field(default=None, max_length=255)
+    subject_translations: dict[str, str] = Field(default_factory=dict)
     body: str = Field(min_length=1, max_length=12000)
+    body_translations: dict[str, str] = Field(default_factory=dict)
     body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
 
@@ -305,7 +309,9 @@ class AdminMessagingCustomTemplateCreateRequest(BaseModel):
     channel: AdminMessagingChannel
     name: str = Field(min_length=1, max_length=180)
     subject: str | None = Field(default=None, max_length=255)
+    subject_translations: dict[str, str] = Field(default_factory=dict)
     body: str = Field(min_length=1, max_length=12000)
+    body_translations: dict[str, str] = Field(default_factory=dict)
     body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
     usage_contexts: list[str] = Field(default_factory=list)
@@ -314,7 +320,9 @@ class AdminMessagingCustomTemplateCreateRequest(BaseModel):
 class AdminMessagingCustomTemplateUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     subject: str | None = Field(default=None, max_length=255)
+    subject_translations: dict[str, str] = Field(default_factory=dict)
     body: str = Field(min_length=1, max_length=12000)
+    body_translations: dict[str, str] = Field(default_factory=dict)
     body_format: AdminMessageBodyFormat = "TEXT"
     active: bool = True
     usage_contexts: list[str] = Field(default_factory=list)
@@ -742,6 +750,7 @@ class AdminClientOut(BaseModel):
     important_info: str | None
     private_note: str | None
     residence_country: str
+    preferred_language: str = "fr"
     preferred_currency: str
     timezone: str
     first_course_at: datetime | None = None
@@ -837,6 +846,7 @@ class AdminClientUpdateRequest(BaseModel):
     important_info: str | None = Field(default=None, min_length=1, max_length=1000)
     private_note: str | None = Field(default=None, min_length=1, max_length=5000)
     residence_country: str | None = Field(default=None, min_length=2, max_length=2)
+    preferred_language: str | None = Field(default=None, min_length=2, max_length=8)
     preferred_currency: str | None = Field(default=None, min_length=3, max_length=3)
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
     portal_contact_visible: bool | None = None
@@ -865,6 +875,7 @@ class AdminClientCreateRequest(BaseModel):
     important_info: str | None = Field(default=None, min_length=1, max_length=1000)
     private_note: str | None = Field(default=None, min_length=1, max_length=5000)
     residence_country: str = Field(default="FR", min_length=2, max_length=2)
+    preferred_language: str = Field(default="fr", min_length=2, max_length=8)
     preferred_currency: str = Field(default="EUR", min_length=3, max_length=3)
     timezone: str = Field(default="Europe/Paris", min_length=2, max_length=100)
     portal_contact_visible: bool = True

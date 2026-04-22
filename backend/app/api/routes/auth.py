@@ -34,6 +34,7 @@ from app.schemas.auth import (
 )
 from app.schemas.user import UserOut
 from app.services.email_delivery import send_email
+from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
     resolve_frontend_base_url,
@@ -194,9 +195,13 @@ def _frontend_url(db: Session, *, path: str) -> str:
     return candidate.rstrip("/") + path
 
 
-def _password_reset_template(db: Session) -> tuple[str, str, str]:
+def _password_reset_template(db: Session, *, language: str | None = None) -> tuple[str, str, str]:
     try:
-        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET)
+        template = resolve_predefined_template(
+            db,
+            code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
+            language=normalize_language(language),
+        )
         if not template.get("active", True):
             return DEFAULT_PASSWORD_RESET_SUBJECT, DEFAULT_PASSWORD_RESET_BODY, "TEXT"
         subject = str(template.get("subject") or "").strip() or DEFAULT_PASSWORD_RESET_SUBJECT
@@ -486,7 +491,10 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
             "reset_url": reset_url,
             "login_url": login_url,
         }
-        subject_template, body_template, body_format = _password_reset_template(db)
+        subject_template, body_template, body_format = _password_reset_template(
+            db,
+            language=user.preferred_language,
+        )
         subject = _render_template(subject_template, context)
         body = _render_template(body_template, context)
         sender = resolve_sender_profile(db, sender_kind="STUDIO")

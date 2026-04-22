@@ -1390,7 +1390,17 @@ def _serialize_messaging_template(raw: dict[str, object]) -> AdminMessagingTempl
         channel=AdminMessagingChannel(str(raw.get("channel") or "EMAIL")),
         kind=AdminMessagingTemplateKind(str(raw.get("kind") or "CUSTOM")),
         subject=(str(raw["subject"]) if raw.get("subject") is not None else None),
+        subject_translations=(
+            {str(key): str(value) for key, value in raw.get("subject_translations", {}).items()}
+            if isinstance(raw.get("subject_translations"), dict)
+            else {}
+        ),
         body=str(raw.get("body") or ""),
+        body_translations=(
+            {str(key): str(value) for key, value in raw.get("body_translations", {}).items()}
+            if isinstance(raw.get("body_translations"), dict)
+            else {}
+        ),
         body_format="HTML" if str(raw.get("body_format") or "").strip().upper() == "HTML" else "TEXT",
         active=bool(raw.get("active", True)),
         usage_contexts=[
@@ -2558,7 +2568,9 @@ def update_admin_predefined_messaging_template(
             db,
             code=template_code,
             subject=payload.subject,
+            subject_translations=payload.subject_translations,
             body=payload.body,
+            body_translations=payload.body_translations,
             body_format=payload.body_format,
             active=payload.active,
         )
@@ -2596,7 +2608,9 @@ def create_admin_custom_messaging_template(
             channel=payload.channel.value,
             name=payload.name,
             subject=payload.subject,
+            subject_translations=payload.subject_translations,
             body=payload.body,
+            body_translations=payload.body_translations,
             body_format=payload.body_format,
             active=payload.active,
             usage_contexts=payload.usage_contexts,
@@ -2620,7 +2634,9 @@ def update_admin_custom_messaging_template(
             template_id=template_id,
             name=payload.name,
             subject=payload.subject,
+            subject_translations=payload.subject_translations,
             body=payload.body,
+            body_translations=payload.body_translations,
             body_format=payload.body_format,
             active=payload.active,
             usage_contexts=payload.usage_contexts,

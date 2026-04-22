@@ -835,6 +835,13 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   </select>
                 </label>
                 <label>
+                  Langue
+                  <select name="preferred_language" defaultValue="fr">
+                    <option value="fr">Francais</option>
+                    <option value="en">English</option>
+                  </select>
+                </label>
+                <label>
                   Fuseau horaire
                   <select name="timezone" defaultValue={DEFAULT_TIMEZONE}>
                     {TIMEZONE_OPTIONS.map((item) => (
@@ -972,6 +979,13 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                             {currency.label}
                           </option>
                         ))}
+                      </select>
+                    </label>
+                    <label>
+                      Langue parent
+                      <select name="adult_preferred_language" defaultValue="fr">
+                        <option value="fr">Francais</option>
+                        <option value="en">English</option>
                       </select>
                     </label>
                     <label>

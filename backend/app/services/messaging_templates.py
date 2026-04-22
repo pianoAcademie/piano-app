@@ -15,6 +15,14 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.ops import AppSetting
+from app.services.i18n import (
+    DEFAULT_LANGUAGE,
+    build_translations_payload,
+    normalize_language,
+    normalize_text,
+    normalize_translations,
+    translations_for_storage,
+)
 
 MessagingChannel = Literal["EMAIL", "SMS", "GROUP_NOTE"]
 MessagingTemplateKind = Literal["PREDEFINED", "CUSTOM"]
@@ -149,6 +157,43 @@ class MessagingSmsDeliveryConfig:
     sender: str
     brevo_api_key: str
     frontend_base_url: str
+
+
+def _resolve_template_text(
+    base_value: object,
+    translations: dict[str, object] | None,
+    *,
+    language: str | None = None,
+    max_length: int | None = None,
+) -> str | None:
+    normalized_language = normalize_language(language)
+    normalized_translations = normalize_translations(translations, max_length=max_length)
+    translated = normalized_translations.get(normalized_language)
+    if translated is not None:
+        return translated
+
+    base_text = normalize_text(base_value, max_length=max_length)
+    if base_text is not None:
+        return base_text
+
+    fallback = normalized_translations.get(DEFAULT_LANGUAGE)
+    if fallback is not None:
+        return fallback
+
+    for value in normalized_translations.values():
+        return value
+    return None
+
+
+def _merge_template_translations(
+    default_translations: dict[str, object] | None,
+    override_translations: dict[str, object] | None,
+    *,
+    max_length: int | None = None,
+) -> dict[str, str]:
+    merged = normalize_translations(default_translations, max_length=max_length)
+    merged.update(normalize_translations(override_translations, max_length=max_length))
+    return dict(sorted(merged.items()))
 
 
 def resolve_brevo_email_webhook_url(db: Session | None = None) -> str:
@@ -1312,6 +1357,292 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
     ),
 )
 
+PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
+    PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD: {
+        "subject": {"en": "Activate your Piano Academie client account"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "Your client access is ready.\n"
+                "Login: {email}\n"
+                "Temporary password: {temporary_password}\n"
+                "Sign in: {login_url}\n\n"
+                "Please sign in and change this password.\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET: {
+        "subject": {"en": "Reset your Piano Academie password"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "We received a password reset request.\n"
+                "To set a new password, click this link:\n"
+                "{reset_url}\n\n"
+                "If you did not request this, you can safely ignore this email.\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD: {
+        "subject": {"en": "Activate your Piano Academie teacher account"},
+        "body": {
+            "en": (
+                "Hello {full_name},\n\n"
+                "Your teacher account is active.\n"
+                "Login: {email}\n"
+                "Temporary password: {temporary_password}\n"
+                "Sign in: {login_url}\n\n"
+                "Please sign in and update this password.\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT: {
+        "subject": {"en": "Your Piano Academie quote {quote_number}"},
+        "body": {
+            "en": (
+                "<p>Hello {recipient_name},</p>"
+                "<p>Your quote <strong>{quote_number}</strong> is now available.</p>"
+                "<p><strong>Total incl. VAT:</strong> {total_ttc} {currency}<br>"
+                "<strong>Expiry:</strong> {expires_at_local}</p>"
+                "<p><a href=\"{quote_public_url}\">View and respond to the quote</a><br>"
+                "<a href=\"{quote_pdf_url}\">Download the PDF</a></p>"
+                "<p>Piano Academie</p>"
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT: {
+        "subject": {"en": "Reminder: your quote {quote_number} expires soon"},
+        "body": {
+            "en": _email_layout(
+                _email_title(
+                    "Your quote will expire soon",
+                    "Hello {recipient_name}, this is a reminder before your Piano Academie quote expires.",
+                ),
+                _email_summary(
+                    [
+                        ("Quote", "{quote_number}"),
+                        ("Expiry", "{expires_at_local}"),
+                        ("Total incl. VAT", "{total_ttc} {currency}"),
+                    ]
+                ),
+                _email_button("{quote_public_url}", "View quote"),
+                _email_secondary(
+                    "You can also access the PDF version here: "
+                    "<a href=\"{quote_pdf_url}\">download the PDF</a>."
+                ),
+                _email_secondary(
+                    "If you need any adjustment or would like to discuss the quote, our team is here to help."
+                ),
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT: {
+        "subject": {"en": "Your quote {quote_number} is no longer valid"},
+        "body": {
+            "en": _email_layout(
+                _email_title(
+                    "Your quote is no longer valid",
+                    "Hello {recipient_name}, the quote below has been cancelled and can no longer be approved.",
+                ),
+                _email_summary(
+                    [
+                        ("Quote", "{quote_number}"),
+                        ("Status", "{quote_status_label}"),
+                        ("Cancellation date", "{cancelled_at_local}"),
+                    ]
+                ),
+                _email_secondary(
+                    "If you would still like to continue your enrolment, our team can prepare a new proposal for you."
+                ),
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT: {
+        "subject": {"en": "Your approval of quote {quote_number} has been recorded"},
+        "body": {
+            "en": (
+                "<p>Hello {recipient_name},</p>"
+                "<p>We confirm that your approval of quote <strong>{quote_number}</strong> has been recorded.</p>"
+                "<p><strong>Status:</strong> {quote_status_label}</p>"
+                "<p>You can keep your access link here if needed: "
+                "<a href=\"{quote_public_url}\">view the quote</a>.</p>"
+                "<p>Piano Academie</p>"
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT: {
+        "subject": {"en": "Your rejection of quote {quote_number} has been recorded"},
+        "body": {
+            "en": (
+                "<p>Hello {recipient_name},</p>"
+                "<p>We confirm that your rejection of quote <strong>{quote_number}</strong> has been recorded.</p>"
+                "<p><strong>Status:</strong> {quote_status_label}</p>"
+                "<p>If your plans change, our team can prepare a new proposal.</p>"
+                "<p>Piano Academie</p>"
+            )
+        },
+    },
+    PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT: {
+        "subject": {"en": "Your change request for quote {quote_number} has been received"},
+        "body": {
+            "en": (
+                "<p>Hello {recipient_name},</p>"
+                "<p>We confirm that your request to update quote <strong>{quote_number}</strong> has been received.</p>"
+                "<p>Our team will review it and get back to you shortly.</p>"
+                "<p>You can review the quote here: <a href=\"{quote_public_url}\">view the quote</a>.</p>"
+                "<p>Piano Academie</p>"
+            )
+        },
+    },
+    PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT: {
+        "body": {
+            "en": (
+                "Hello {recipient_name}, your quote {quote_number} ({total_ttc} {currency}) is available: "
+                "{quote_public_url}"
+            )
+        }
+    },
+    PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT: {
+        "body": {
+            "en": (
+                "Piano Academie: your quote {quote_number} expires on {expires_at_local}. "
+                "View it here: {quote_public_url}"
+            )
+        }
+    },
+    PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT: {
+        "body": {
+            "en": (
+                "Piano Academie: your quote {quote_number} is no longer valid. "
+                "We can prepare a new quote for you if needed."
+            )
+        }
+    },
+    "EVENT_REMINDER": {
+        "subject": {"en": "Lesson reminder"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "This is a reminder for your lesson {session_title} on {session_start_human}.\n"
+                "Location: {location_label}\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    "EVENT_CANCELLED": {
+        "subject": {"en": "Your lesson has been cancelled"},
+        "body": {
+            "en": "Hello {first_name},\n\nThe lesson {session_title} has been cancelled.\n\nPiano Academie"
+        },
+    },
+    "INVOICE": {
+        "subject": {"en": "Your Piano Academie invoice"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "Your invoice {invoice_number} is now available.\n"
+                "Download: {invoice_url}\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    "INVOICE_PAID": {
+        "subject": {"en": "Your invoice {invoice_number} is available and already paid"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "Your invoice {invoice_number} is available and has already been paid.\n"
+                "Download: {invoice_url}\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    "INVOICE_REMINDER": {
+        "subject": {"en": "Invoice reminder"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "This is a reminder regarding your invoice.\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    "PAYMENT": {
+        "subject": {"en": "Complete your Piano Academie payment"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "Your purchase for {plan_name} is ready.\n"
+                "Amount due: {amount_due} {currency}\n"
+                "Payment method: {payment_method}\n\n"
+                "Payment link: {payment_url}\n"
+                "Subscription reference: {subscription_reference}\n\n"
+                "View terms and conditions: {legal_terms_url}\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    "PAYMENT_CONFIRMED": {
+        "subject": {"en": "Piano Academie payment confirmation"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "We confirm receipt of your payment for {plan_name}.\n"
+                "Amount paid: {amount_paid} {currency}\n"
+                "Subscription reference: {subscription_reference}\n"
+                "Payment date: {paid_at}\n\n"
+                "View your transactions: {transactions_url}\n"
+                "Download your invoice ({invoice_number}): {invoice_url}\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    "REFUND_ISSUED": {
+        "subject": {"en": "Refund confirmation"},
+        "body": {"en": "Hello {first_name},\n\nYour refund has been approved.\n\nPiano Academie"},
+    },
+    "AUTOMATIC_PAYMENT_FAILED": {
+        "subject": {"en": "Automatic payment failed"},
+        "body": {
+            "en": "Hello {first_name},\n\nThe latest automatic payment has failed.\n\nPiano Academie"
+        },
+    },
+    "BANK_TRANSFER_FAILED": {
+        "subject": {"en": "Bank transfer failed"},
+        "body": {"en": "Hello {first_name},\n\nThe latest bank transfer could not be validated.\n\nPiano Academie"},
+    },
+    "BIRTHDAY_EMAIL": {
+        "subject": {"en": "Happy birthday"},
+        "body": {
+            "en": (
+                "Hello {first_name},\n\n"
+                "The whole Piano Academie team wishes you a very happy birthday.\n\n"
+                "Piano Academie"
+            )
+        },
+    },
+    "LESSON_NOTES": {
+        "subject": {"en": "Lesson notes"},
+        "body": {"en": "Hello {first_name},\n\nPlease find your lesson notes below.\n\nPiano Academie"},
+    },
+    "NEW_FILE_ADDED": {
+        "subject": {"en": "New document available"},
+        "body": {"en": "Hello {first_name},\n\nA new document has been added to your space.\n\nPiano Academie"},
+    },
+    "SMS_AUTOMATIC_PAYMENT_FAILED": {
+        "body": {"en": "Automatic payment failed. Please contact Piano Academie."}
+    },
+    "SMS_CANCELLED_EVENT": {"body": {"en": "Your lesson {session_title} has been cancelled."}},
+    "SMS_EVENT_REMINDER": {"body": {"en": "Reminder: lesson {session_title} on {session_start_human}."}},
+    "SMS_INVOICE": {"body": {"en": "Your Piano Academie invoice is available."}},
+    "SMS_INVOICE_REMINDER": {"body": {"en": "Invoice reminder from Piano Academie."}},
+    "SMS_PAYMENT": {"body": {"en": "Payment pending for {plan_name}: {amount_due} {currency}. {payment_url}"}},
+    "SMS_REFUND_ISSUED": {"body": {"en": "Your refund has been issued."}},
+}
+
 PREDEFINED_TEMPLATE_BY_CODE: dict[str, MessagingTemplateDefinition] = {
     template.code: template for template in PREDEFINED_TEMPLATE_DEFINITIONS
 }
@@ -1834,7 +2165,9 @@ def _custom_templates(db: Session) -> list[dict[str, object]]:
                 "name": _sanitize_text(str(row.get("name", "")), max_length=180),
                 "channel": channel,
                 "subject": _sanitize_optional_text(row.get("subject"), max_length=255),
+                "subject_translations": normalize_translations(row.get("subject_translations"), max_length=255),
                 "body": _sanitize_text(str(row.get("body", "")), max_length=12000),
+                "body_translations": normalize_translations(row.get("body_translations"), max_length=12000),
                 "body_format": _normalize_body_format(row.get("body_format"), default="TEXT"),
                 "active": bool(row.get("active", True)),
                 "usage_contexts": _normalize_usage_contexts(row.get("usage_contexts")),
@@ -1853,6 +2186,7 @@ def resolve_predefined_template(
     db: Session,
     *,
     code: str,
+    language: str | None = None,
 ) -> dict[str, object]:
     normalized_code = code.strip().upper()
     definition = PREDEFINED_TEMPLATE_BY_CODE.get(normalized_code)
@@ -1873,13 +2207,30 @@ def resolve_predefined_template(
             max_length=12000,
         )
 
+    default_translations = PREDEFINED_TEMPLATE_TRANSLATIONS.get(normalized_code, {})
+
     subject: str | None
+    subject_translations: dict[str, str] = {}
     if definition.channel == "EMAIL":
-        subject = _sanitize_optional_text(override.get("subject"), max_length=255) or legacy_subject or definition.subject
+        subject_base = _sanitize_optional_text(override.get("subject"), max_length=255) or legacy_subject or definition.subject
+        subject_translations = _merge_template_translations(
+            default_translations.get("subject"),
+            override.get("subject_translations") if isinstance(override.get("subject_translations"), dict) else None,
+            max_length=255,
+        )
+        subject = _resolve_template_text(subject_base, subject_translations, language=language, max_length=255)
+        subject_translations = build_translations_payload(subject_base, subject_translations, max_length=255)
     else:
         subject = None
 
-    body = _sanitize_text(str(override.get("body") or legacy_body or definition.body), max_length=12000) or definition.body
+    body_base = _sanitize_text(str(override.get("body") or legacy_body or definition.body), max_length=12000) or definition.body
+    body_translations = _merge_template_translations(
+        default_translations.get("body"),
+        override.get("body_translations") if isinstance(override.get("body_translations"), dict) else None,
+        max_length=12000,
+    )
+    body = _resolve_template_text(body_base, body_translations, language=language, max_length=12000) or definition.body
+    body_translations = build_translations_payload(body_base, body_translations, max_length=12000)
     body_format = _normalize_body_format(override.get("body_format"), default=definition.body_format)
     if definition.channel != "EMAIL":
         body_format = "TEXT"
@@ -1893,7 +2244,9 @@ def resolve_predefined_template(
         "channel": definition.channel,
         "kind": "PREDEFINED",
         "subject": subject,
+        "subject_translations": subject_translations,
         "body": body,
+        "body_translations": body_translations,
         "body_format": body_format,
         "active": active,
         "usage_contexts": list(definition.usage_contexts),
@@ -1912,6 +2265,8 @@ def upsert_predefined_template(
     body: str,
     body_format: str,
     active: bool,
+    subject_translations: dict[str, object] | None = None,
+    body_translations: dict[str, object] | None = None,
 ) -> dict[str, object]:
     normalized_code = code.strip().upper()
     definition = PREDEFINED_TEMPLATE_BY_CODE.get(normalized_code)
@@ -1935,7 +2290,13 @@ def upsert_predefined_template(
     now = _utcnow()
     overrides[normalized_code] = {
         "subject": cleaned_subject,
+        "subject_translations": (
+            translations_for_storage(cleaned_subject, subject_translations, max_length=255)
+            if definition.channel == "EMAIL"
+            else {}
+        ),
         "body": cleaned_body,
+        "body_translations": translations_for_storage(cleaned_body, body_translations, max_length=12000),
         "body_format": cleaned_body_format,
         "active": bool(active),
         "updated_at": now.isoformat(),
@@ -1978,13 +2339,14 @@ def list_messaging_templates(
     kind: MessagingTemplateKind | None = None,
     usage_context: str | None = None,
     active_only: bool = False,
+    language: str | None = None,
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     normalized_usage_context = _normalize_usage_context(usage_context)
 
     if kind in {None, "PREDEFINED"}:
         for definition in list_predefined_template_definitions(channel=channel):
-            template = resolve_predefined_template(db, code=definition.code)
+            template = resolve_predefined_template(db, code=definition.code, language=language)
             if active_only and not template["active"]:
                 continue
             if normalized_usage_context and normalized_usage_context not in list(template.get("usage_contexts") or []):
@@ -1995,14 +2357,41 @@ def list_messaging_templates(
         for row in _custom_templates(db):
             if channel is not None and row["channel"] != channel:
                 continue
+            subject_translations = build_translations_payload(
+                row.get("subject"),
+                row.get("subject_translations") if isinstance(row.get("subject_translations"), dict) else None,
+                max_length=255,
+            )
+            body_translations = build_translations_payload(
+                row.get("body"),
+                row.get("body_translations") if isinstance(row.get("body_translations"), dict) else None,
+                max_length=12000,
+            )
             template = {
                 "id": row["id"],
                 "code": None,
                 "name": row["name"] or "Modele personnalise",
                 "channel": row["channel"],
                 "kind": "CUSTOM",
-                "subject": row["subject"] if row["channel"] == "EMAIL" else None,
-                "body": row["body"],
+                "subject": (
+                    _resolve_template_text(
+                        row.get("subject"),
+                        row.get("subject_translations") if isinstance(row.get("subject_translations"), dict) else None,
+                        language=language,
+                        max_length=255,
+                    )
+                    if row["channel"] == "EMAIL"
+                    else None
+                ),
+                "subject_translations": subject_translations if row["channel"] == "EMAIL" else {},
+                "body": _resolve_template_text(
+                    row.get("body"),
+                    row.get("body_translations") if isinstance(row.get("body_translations"), dict) else None,
+                    language=language,
+                    max_length=12000,
+                )
+                or "",
+                "body_translations": body_translations,
                 "body_format": _normalize_body_format(row.get("body_format"), default="TEXT"),
                 "active": bool(row["active"]),
                 "usage_contexts": list(row.get("usage_contexts") or []),
@@ -2031,6 +2420,8 @@ def create_custom_template(
     body_format: str,
     active: bool,
     usage_contexts: list[str] | None = None,
+    subject_translations: dict[str, object] | None = None,
+    body_translations: dict[str, object] | None = None,
 ) -> dict[str, object]:
     cleaned_name = _sanitize_text(name, max_length=180)
     if not cleaned_name:
@@ -2056,7 +2447,13 @@ def create_custom_template(
             "name": cleaned_name,
             "channel": channel,
             "subject": cleaned_subject,
+            "subject_translations": (
+                translations_for_storage(cleaned_subject, subject_translations, max_length=255)
+                if channel == "EMAIL"
+                else {}
+            ),
             "body": cleaned_body,
+            "body_translations": translations_for_storage(cleaned_body, body_translations, max_length=12000),
             "body_format": cleaned_body_format,
             "active": bool(active),
             "usage_contexts": _normalize_usage_contexts(usage_contexts),
@@ -2081,6 +2478,8 @@ def update_custom_template(
     body_format: str,
     active: bool,
     usage_contexts: list[str] | None = None,
+    subject_translations: dict[str, object] | None = None,
+    body_translations: dict[str, object] | None = None,
 ) -> dict[str, object]:
     rows = _custom_templates(db)
     now = _utcnow()
@@ -2110,7 +2509,13 @@ def update_custom_template(
 
     match["name"] = cleaned_name
     match["subject"] = cleaned_subject
+    match["subject_translations"] = (
+        translations_for_storage(cleaned_subject, subject_translations, max_length=255)
+        if channel == "EMAIL"
+        else {}
+    )
     match["body"] = cleaned_body
+    match["body_translations"] = translations_for_storage(cleaned_body, body_translations, max_length=12000)
     match["body_format"] = cleaned_body_format
     match["active"] = bool(active)
     match["usage_contexts"] = _normalize_usage_contexts(usage_contexts)
@@ -2168,6 +2573,7 @@ def resolve_messaging_template_ref(
     channel: MessagingChannel = "EMAIL",
     usage_context: str | None = None,
     active_only: bool = True,
+    language: str | None = None,
 ) -> dict[str, object]:
     normalized_ref = _sanitize_template_ref(template_ref, default=default_ref)
     kind, separator, raw_identifier = normalized_ref.partition(":")
@@ -2177,9 +2583,12 @@ def resolve_messaging_template_ref(
     normalized_kind = kind.strip().lower()
     identifier = _sanitize_text(raw_identifier, max_length=120)
     if normalized_kind == "predefined":
-        template = resolve_predefined_template(db, code=identifier)
+        template = resolve_predefined_template(db, code=identifier, language=language)
     elif normalized_kind == "custom":
-        template = next((item for item in list_messaging_templates(db, kind="CUSTOM") if item["id"] == identifier), None)
+        template = next(
+            (item for item in list_messaging_templates(db, kind="CUSTOM", language=language) if item["id"] == identifier),
+            None,
+        )
         if template is None:
             raise KeyError("Custom template not found")
     else:

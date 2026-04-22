@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.ops import AppSetting, LegalEntity
+from app.services.i18n import normalize_language
 
 INVOICE_TEMPLATE_SETTING_KEY = "config_invoice_template_text_v1"
 INVOICE_NUMBER_FORMAT_SETTING_KEY = "config_invoice_number_format_v1"
@@ -234,14 +235,19 @@ def render_invoice_text(
     refund_reason: str | None,
     legal_entity_id: UUID | None = None,
     billing_entity: str | None = None,
+    language: str | None = None,
 ) -> str:
     template, _ = get_invoice_template(db)
     identity = _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
+    normalized_language = normalize_language(language)
 
     refund_info = ""
     if refunded_at is not None:
         reason = refund_reason or "-"
-        refund_info = f"Rembourse le: {refunded_at.strftime('%d/%m/%Y %H:%M')} | Motif: {reason}"
+        refund_info = (
+            f"{_invoice_text(normalized_language, 'refunded_on')}: {refunded_at.strftime('%d/%m/%Y %H:%M')} | "
+            f"{_invoice_text(normalized_language, 'refund_reason')}: {reason}"
+        )
 
     values = {
         "invoice_number": invoice_number,
@@ -612,6 +618,83 @@ COUNTRY_NAME_BY_CODE = {
     "DE": "Allemagne",
 }
 
+INVOICE_TEXT: dict[str, dict[str, str]] = {
+    "fr": {
+        "document_title": "FACTURE",
+        "number_label": "Numero: {invoice_number}",
+        "date_label": "Date: {issued_at}",
+        "share_capital_label": "Capital social: {share_capital}",
+        "vat_number_label": "TVA intracom: {vat_number}",
+        "phone_label": "Telephone: {phone}",
+        "invoice_for": "Facture pour",
+        "invoice_date": "Date de la facture: {issued_at}",
+        "due_date": "Date d echeance: {due_date}",
+        "table_date": "Date",
+        "table_service": "Prestation",
+        "table_qty": "Qt",
+        "table_ht": "HT",
+        "table_vat_rate": "TVA%",
+        "table_vat": "TVA",
+        "table_ttc": "TTC",
+        "totals_title": "Totaux",
+        "totals_currency_vat": "Devise / TVA",
+        "balance_title": "Solde",
+        "opening_balance": "Ancien Solde",
+        "opening_balance_at": "Ancien Solde au {date}",
+        "period_amount": "Montant periode facturee ({currency})",
+        "applied_payments": "Paiements enregistres ({currency})",
+        "total_to_pay": "Montant total a payer ({currency})",
+        "online_payment_title": "Paiement en ligne",
+        "online_payment_button": "Payer en ligne",
+        "adjustments_title": "Remises et supplements (detail par type)",
+        "adjustment_fallback": "Ajustement",
+        "note_title": "Note",
+        "footer_phone": "Tel",
+        "refunded_on": "Rembourse le",
+        "refund_reason": "Motif",
+    },
+    "en": {
+        "document_title": "INVOICE",
+        "number_label": "Number: {invoice_number}",
+        "date_label": "Date: {issued_at}",
+        "share_capital_label": "Share capital: {share_capital}",
+        "vat_number_label": "VAT number: {vat_number}",
+        "phone_label": "Phone: {phone}",
+        "invoice_for": "Bill to",
+        "invoice_date": "Invoice date: {issued_at}",
+        "due_date": "Due date: {due_date}",
+        "table_date": "Date",
+        "table_service": "Description",
+        "table_qty": "Qty",
+        "table_ht": "Excl. VAT",
+        "table_vat_rate": "VAT%",
+        "table_vat": "VAT",
+        "table_ttc": "Incl. VAT",
+        "totals_title": "Totals",
+        "totals_currency_vat": "Currency / VAT",
+        "balance_title": "Balance",
+        "opening_balance": "Previous balance",
+        "opening_balance_at": "Previous balance on {date}",
+        "period_amount": "Billed period amount ({currency})",
+        "applied_payments": "Recorded payments ({currency})",
+        "total_to_pay": "Total amount due ({currency})",
+        "online_payment_title": "Online payment",
+        "online_payment_button": "Pay online",
+        "adjustments_title": "Discounts and surcharges (breakdown by type)",
+        "adjustment_fallback": "Adjustment",
+        "note_title": "Note",
+        "footer_phone": "Phone",
+        "refunded_on": "Refunded on",
+        "refund_reason": "Reason",
+    },
+}
+
+
+def _invoice_text(language: str | None, key: str, **values: object) -> str:
+    normalized_language = normalize_language(language)
+    template = INVOICE_TEXT.get(normalized_language, INVOICE_TEXT["fr"]).get(key, key)
+    return template.format(**values)
+
 
 def _country_display_name(raw: str | None) -> str:
     value = (raw or "").strip()
@@ -856,30 +939,34 @@ def company_identity_from_snapshot(snapshot: object) -> CompanyIdentity | None:
     )
 
 
-def _company_legal_summary(identity: CompanyIdentity) -> str:
+def _company_legal_summary(identity: CompanyIdentity, *, language: str | None = None) -> str:
     parts = [
         identity.company_legal_form or "",
-        f"Capital social: {identity.company_share_capital}" if identity.company_share_capital else "",
+        (
+            _invoice_text(language, "share_capital_label", share_capital=identity.company_share_capital)
+            if identity.company_share_capital
+            else ""
+        ),
     ]
     return " | ".join(part for part in parts if part).strip()
 
 
-def _company_issuer_lines(identity: CompanyIdentity) -> list[str]:
+def _company_issuer_lines(identity: CompanyIdentity, *, language: str | None = None) -> list[str]:
     lines = [identity.company_name]
     lines.extend(
         [
             f"SIREN: {identity.company_siren}",
-            f"TVA intracom: {identity.company_vat_number}",
-            f"Telephone: {identity.company_phone}",
+            _invoice_text(language, "vat_number_label", vat_number=identity.company_vat_number),
+            _invoice_text(language, "phone_label", phone=identity.company_phone),
             f"Email: {identity.company_email}",
         ]
     )
     return lines
 
 
-def _company_footer_lines(identity: CompanyIdentity) -> tuple[str, str]:
+def _company_footer_lines(identity: CompanyIdentity, *, language: str | None = None) -> tuple[str, str]:
     line_1_parts = [identity.company_name]
-    legal_summary = _company_legal_summary(identity)
+    legal_summary = _company_legal_summary(identity, language=language)
     if legal_summary:
         line_1_parts.append(legal_summary)
     if identity.company_siret:
@@ -888,7 +975,7 @@ def _company_footer_lines(identity: CompanyIdentity) -> tuple[str, str]:
 
     line_2_parts = []
     if identity.company_phone:
-        line_2_parts.append(f"Tel: {identity.company_phone}")
+        line_2_parts.append(f"{_invoice_text(language, 'footer_phone')}: {identity.company_phone}")
     if identity.company_email:
         line_2_parts.append(identity.company_email)
     if identity.company_address:
@@ -918,6 +1005,7 @@ def render_invoice_period_pdf(
     watermark: str | None = None,
     legal_entity_id: UUID | None = None,
     billing_entity: str | None = None,
+    language: str | None = None,
     company_identity_override: CompanyIdentity | None = None,
 ) -> bytes:
     identity = company_identity_override or _company_identity(
@@ -925,6 +1013,7 @@ def render_invoice_period_pdf(
         legal_entity_id=legal_entity_id,
         billing_entity=billing_entity,
     )
+    normalized_language = normalize_language(language)
     pdf = _SimplePdfDocument()
     logo_resource_name: str | None = None
     logo_width = 0.0
@@ -983,11 +1072,21 @@ def render_invoice_period_pdf(
             )
             title_x = left + logo_width + 12.0
         pdf.text(x=title_x, top_y=34.0, value=identity.company_name, size=20, bold=True, color=(1, 1, 1))
-        pdf.text(x=title_x, top_y=54.0, value="FACTURE", size=12, bold=True, color=(0.95, 0.78, 0.48))
+        pdf.text(
+            x=title_x,
+            top_y=54.0,
+            value=_invoice_text(normalized_language, "document_title"),
+            size=12,
+            bold=True,
+            color=(0.95, 0.78, 0.48),
+        )
         pdf.text_right(
             right_x=right - 2.0,
             top_y=30.0,
-            value=_truncate_text(f"Numero: {invoice_number}", 54),
+            value=_truncate_text(
+                _invoice_text(normalized_language, "number_label", invoice_number=invoice_number),
+                54,
+            ),
             size=11,
             bold=True,
             color=(1, 1, 1),
@@ -995,13 +1094,13 @@ def render_invoice_period_pdf(
         pdf.text_right(
             right_x=right - 2.0,
             top_y=48.0,
-            value=f"Date: {issued_at.strftime('%d/%m/%Y')}",
+            value=_invoice_text(normalized_language, "date_label", issued_at=issued_at.strftime("%d/%m/%Y")),
             size=10,
             color=(0.92, 0.93, 0.96),
         )
 
         # Bloc identite emetteur
-        issuer_lines = _company_issuer_lines(identity)
+        issuer_lines = _company_issuer_lines(identity, language=normalized_language)
         issuer_top_y = 116.0
         issuer_line_height = 16.0
         for index, line in enumerate(issuer_lines):
@@ -1018,15 +1117,25 @@ def render_invoice_period_pdf(
 
         # Bloc client facture
         billing_address = _ascii_safe((client_billing_address or "").strip()) or "-"
-        pdf.text(x=330.0, top_y=116.0, value="Facture pour", size=11, bold=True)
+        pdf.text(x=330.0, top_y=116.0, value=_invoice_text(normalized_language, "invoice_for"), size=11, bold=True)
         pdf.text(x=330.0, top_y=134.0, value=client_name, size=10, bold=True)
         for index, chunk in enumerate(_wrap_text(billing_address, 34)):
             pdf.text(x=330.0, top_y=150.0 + (index * 14.0), value=chunk, size=10)
-        pdf.text(x=330.0, top_y=196.0, value=f"Date de la facture: {issued_at.strftime('%d/%m/%Y')}", size=10, bold=True)
+        pdf.text(
+            x=330.0,
+            top_y=196.0,
+            value=_invoice_text(normalized_language, "invoice_date", issued_at=issued_at.strftime("%d/%m/%Y")),
+            size=10,
+            bold=True,
+        )
         pdf.text(
             x=330.0,
             top_y=212.0,
-            value=f"Date d echeance: {(due_date or issued_at.date()).strftime('%d/%m/%Y')}",
+            value=_invoice_text(
+                normalized_language,
+                "due_date",
+                due_date=(due_date or issued_at.date()).strftime("%d/%m/%Y"),
+            ),
             size=10,
             bold=True,
         )
@@ -1039,13 +1148,19 @@ def render_invoice_period_pdf(
             stroke_color=(0.82, 0.86, 0.91),
             fill_color=(0.95, 0.96, 0.98),
         )
-        pdf.text(x=col_date_x, top_y=282.0, value="Date", size=9, bold=True)
-        pdf.text(x=col_label_x, top_y=282.0, value="Prestation", size=9, bold=True)
-        pdf.text_right(right_x=col_qty_right, top_y=282.0, value="Qt", size=9, bold=True)
-        pdf.text_right(right_x=col_ht_right, top_y=282.0, value="HT", size=9, bold=True)
-        pdf.text_right(right_x=col_vat_rate_right, top_y=282.0, value="TVA%", size=9, bold=True)
-        pdf.text_right(right_x=col_vat_right, top_y=282.0, value="TVA", size=9, bold=True)
-        pdf.text_right(right_x=col_ttc_right, top_y=282.0, value="TTC", size=9, bold=True)
+        pdf.text(x=col_date_x, top_y=282.0, value=_invoice_text(normalized_language, "table_date"), size=9, bold=True)
+        pdf.text(x=col_label_x, top_y=282.0, value=_invoice_text(normalized_language, "table_service"), size=9, bold=True)
+        pdf.text_right(right_x=col_qty_right, top_y=282.0, value=_invoice_text(normalized_language, "table_qty"), size=9, bold=True)
+        pdf.text_right(right_x=col_ht_right, top_y=282.0, value=_invoice_text(normalized_language, "table_ht"), size=9, bold=True)
+        pdf.text_right(
+            right_x=col_vat_rate_right,
+            top_y=282.0,
+            value=_invoice_text(normalized_language, "table_vat_rate"),
+            size=9,
+            bold=True,
+        )
+        pdf.text_right(right_x=col_vat_right, top_y=282.0, value=_invoice_text(normalized_language, "table_vat"), size=9, bold=True)
+        pdf.text_right(right_x=col_ttc_right, top_y=282.0, value=_invoice_text(normalized_language, "table_ttc"), size=9, bold=True)
 
     def draw_table_header_for_new_page() -> float:
         draw_header()
@@ -1103,7 +1218,7 @@ def render_invoice_period_pdf(
         label, currency, amount = raw
         normalized_adjustments.append(
             (
-                _ascii_safe(str(label).strip()) or "Ajustement",
+                _ascii_safe(str(label).strip()) or _invoice_text(normalized_language, "adjustment_fallback"),
                 _ascii_safe(str(currency).strip().upper()) or "EUR",
                 Decimal(amount).quantize(Decimal("0.01")),
             )
@@ -1167,13 +1282,13 @@ def render_invoice_period_pdf(
         current_row_top = 140.0
 
     current_row_top += 20
-    pdf.text(x=left, top_y=current_row_top, value="Totaux", size=11, bold=True)
+    pdf.text(x=left, top_y=current_row_top, value=_invoice_text(normalized_language, "totals_title"), size=11, bold=True)
     current_row_top += 16
     pdf.rect(x=left, top_y=current_row_top, width=right - left, height=22.0, stroke_color=(0.82, 0.86, 0.91), fill_color=(0.95, 0.96, 0.98))
-    pdf.text(x=col_label_x, top_y=current_row_top + 14, value="Devise / TVA", size=9, bold=True)
-    pdf.text_right(right_x=totals_col_ht_right, top_y=current_row_top + 14, value="HT", size=9, bold=True)
-    pdf.text_right(right_x=totals_col_vat_right, top_y=current_row_top + 14, value="TVA", size=9, bold=True)
-    pdf.text_right(right_x=totals_col_ttc_right, top_y=current_row_top + 14, value="TTC", size=9, bold=True)
+    pdf.text(x=col_label_x, top_y=current_row_top + 14, value=_invoice_text(normalized_language, "totals_currency_vat"), size=9, bold=True)
+    pdf.text_right(right_x=totals_col_ht_right, top_y=current_row_top + 14, value=_invoice_text(normalized_language, "table_ht"), size=9, bold=True)
+    pdf.text_right(right_x=totals_col_vat_right, top_y=current_row_top + 14, value=_invoice_text(normalized_language, "table_vat"), size=9, bold=True)
+    pdf.text_right(right_x=totals_col_ttc_right, top_y=current_row_top + 14, value=_invoice_text(normalized_language, "table_ttc"), size=9, bold=True)
     current_row_top += 22
 
     if totals_by_currency_and_vat_rate:
@@ -1240,7 +1355,7 @@ def render_invoice_period_pdf(
 
     if summary_currencies:
         current_row_top += 14.0
-        pdf.text(x=left, top_y=current_row_top, value="Solde", size=10, bold=True)
+        pdf.text(x=left, top_y=current_row_top, value=_invoice_text(normalized_language, "balance_title"), size=10, bold=True)
         current_row_top += 14.0
         for currency_code in summary_currencies:
             opening_amount = Decimal(normalized_opening_balance_by_currency.get(currency_code, Decimal("0.00"))).quantize(Decimal("0.01"))
@@ -1256,7 +1371,11 @@ def render_invoice_period_pdf(
             total_to_pay_amount = Decimal(
                 normalized_total_to_pay_by_currency.get(currency_code, period_amount)
             ).quantize(Decimal("0.01"))
-            opening_label = f"Ancien Solde au {period_start_label}" if period_start_label else "Ancien Solde"
+            opening_label = (
+                _invoice_text(normalized_language, "opening_balance_at", date=period_start_label)
+                if period_start_label
+                else _invoice_text(normalized_language, "opening_balance")
+            )
             show_opening_balance = opening_amount != Decimal("0.00") or applied_payments_amount == Decimal("0.00")
             if show_opening_balance:
                 pdf.text(x=col_label_x, top_y=current_row_top, value=opening_label, size=9)
@@ -1267,7 +1386,12 @@ def render_invoice_period_pdf(
                     size=9,
                 )
                 current_row_top += 14.0
-            pdf.text(x=col_label_x, top_y=current_row_top, value=f"Montant periode facturee ({currency_code})", size=9)
+            pdf.text(
+                x=col_label_x,
+                top_y=current_row_top,
+                value=_invoice_text(normalized_language, "period_amount", currency=currency_code),
+                size=9,
+            )
             pdf.text_right(
                 right_x=totals_col_ttc_right,
                 top_y=current_row_top,
@@ -1276,7 +1400,12 @@ def render_invoice_period_pdf(
             )
             current_row_top += 14.0
             if applied_payments_amount != Decimal("0.00"):
-                pdf.text(x=col_label_x, top_y=current_row_top, value=f"Paiements enregistres ({currency_code})", size=9)
+                pdf.text(
+                    x=col_label_x,
+                    top_y=current_row_top,
+                    value=_invoice_text(normalized_language, "applied_payments", currency=currency_code),
+                    size=9,
+                )
                 pdf.text_right(
                     right_x=totals_col_ttc_right,
                     top_y=current_row_top,
@@ -1284,7 +1413,13 @@ def render_invoice_period_pdf(
                     size=9,
                 )
                 current_row_top += 14.0
-            pdf.text(x=col_label_x, top_y=current_row_top, value=f"Montant total a payer ({currency_code})", size=10, bold=True)
+            pdf.text(
+                x=col_label_x,
+                top_y=current_row_top,
+                value=_invoice_text(normalized_language, "total_to_pay", currency=currency_code),
+                size=10,
+                bold=True,
+            )
             pdf.text_right(
                 right_x=totals_col_ttc_right,
                 top_y=current_row_top,
@@ -1296,7 +1431,13 @@ def render_invoice_period_pdf(
             current_row_top += 26.0
 
     if payment_link_text:
-        pdf.text(x=col_label_x, top_y=current_row_top, value="Paiement en ligne", size=9, bold=True)
+        pdf.text(
+            x=col_label_x,
+            top_y=current_row_top,
+            value=_invoice_text(normalized_language, "online_payment_title"),
+            size=9,
+            bold=True,
+        )
         current_row_top += 10.0
         button_x = col_label_x
         button_top = current_row_top
@@ -1311,7 +1452,7 @@ def render_invoice_period_pdf(
             fill_color=(0.83, 0.69, 0.22),
             stroke_width=0.8,
         )
-        button_label = "Payer en ligne"
+        button_label = _invoice_text(normalized_language, "online_payment_button")
         button_text_width = _text_width_estimate(button_label, size=9)
         button_text_x = button_x + max(8.0, (button_width - button_text_width) / 2.0)
         pdf.text(
@@ -1340,7 +1481,13 @@ def render_invoice_period_pdf(
             draw_header()
             current_row_top = 140.0
         current_row_top += 16.0
-        pdf.text(x=left, top_y=current_row_top, value="Remises et supplements (detail par type)", size=10, bold=True)
+        pdf.text(
+            x=left,
+            top_y=current_row_top,
+            value=_invoice_text(normalized_language, "adjustments_title"),
+            size=10,
+            bold=True,
+        )
         current_row_top += 14.0
         for label, currency, amount in normalized_adjustments:
             pdf.rect(x=left, top_y=current_row_top, width=right - left, height=18.0, stroke_color=(0.90, 0.92, 0.95))
@@ -1366,7 +1513,7 @@ def render_invoice_period_pdf(
             if note_lines:
                 note_lines[-1] = _truncate_text(note_lines[-1], 96) + "..."
 
-        pdf.text(x=left, top_y=note_title_top, value="Note", size=11, bold=True)
+        pdf.text(x=left, top_y=note_title_top, value=_invoice_text(normalized_language, "note_title"), size=11, bold=True)
         for index, chunk in enumerate(note_lines):
             pdf.text(x=left, top_y=note_line_top + (index * line_height), value=chunk, size=10)
 
@@ -1383,7 +1530,7 @@ def render_invoice_period_pdf(
                 ),
             )
 
-    footer_line_1, footer_line_2 = _company_footer_lines(identity)
+    footer_line_1, footer_line_2 = _company_footer_lines(identity, language=normalized_language)
     for page_idx in range(len(pdf._pages)):
         pdf._push_on_page(
             page_idx,

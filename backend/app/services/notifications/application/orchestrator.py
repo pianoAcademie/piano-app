@@ -218,6 +218,7 @@ def schedule_booking_created_notifications(
             timezone_name=session_obj.timezone,
             location_name=location_label,
             teacher_name=teacher_label,
+            language=client_contact.preferred_language if client_contact is not None else None,
         )
     else:
         rendered = None
@@ -266,6 +267,7 @@ def schedule_booking_created_notifications(
             timezone_name=session_obj.timezone,
             location_name=location_label,
             teacher_name=teacher_label,
+            language="fr",
         )
         if rendered is None:
             continue

@@ -27,6 +27,7 @@ from app.services.invoice_documents import (
     reserve_next_invoice_number,
 )
 from app.services.invoice_number_service import InvoiceNumberService
+from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
     render_template_content,
     resolve_frontend_base_url,
@@ -67,6 +68,7 @@ class BookingReceiptSnapshot:
     customer_first_name: str | None
     customer_last_name: str | None
     customer_email: str | None
+    customer_language: str
     customer_name: str
     customer_billing_address: str
     student_id: UUID | None
@@ -345,6 +347,7 @@ def build_booking_receipt_snapshot(
         customer_first_name=billing_profile.first_name,
         customer_last_name=billing_profile.last_name,
         customer_email=_normalize_optional(billing_profile.email),
+        customer_language=normalize_language(billing_profile.preferred_language),
         customer_name=customer_name,
         customer_billing_address=_billing_address_label(billing_profile),
         student_id=owner.id if is_distinct_student else None,
@@ -804,9 +807,10 @@ def _send_template_email_with_optional_attachment(
     context: dict[str, str],
     delivery_context: str,
     attachment: tuple[str, bytes] | None = None,
+    language: str | None = None,
 ) -> str | None:
     try:
-        template = resolve_predefined_template(db, code=template_code)
+        template = resolve_predefined_template(db, code=template_code, language=normalize_language(language))
     except KeyError:
         logger.warning("Unknown predefined template for payment receipt notifications: %s", template_code)
         return None
@@ -854,12 +858,13 @@ def send_payment_receipt_notifications(
         context=context,
         delivery_context=PAYMENT_RECEIPT_CONTEXT,
         attachment=attachment,
+        language=snapshot.customer_language,
     ):
         sent_any = True
 
     if send_admin_copy:
         try:
-            template = resolve_predefined_template(db, code=PAYMENT_RECEIPT_ADMIN_TEMPLATE_CODE)
+            template = resolve_predefined_template(db, code=PAYMENT_RECEIPT_ADMIN_TEMPLATE_CODE, language="fr")
         except KeyError:
             template = None
         if template is not None and bool(template.get("active", True)):
@@ -906,12 +911,13 @@ def send_payment_refund_notifications(
         to_email=recipient_email,
         context=context,
         delivery_context=PAYMENT_REFUND_CONTEXT,
+        language=snapshot.customer_language,
     ):
         sent_any = True
 
     if send_admin_copy:
         try:
-            template = resolve_predefined_template(db, code=PAYMENT_REFUND_ADMIN_TEMPLATE_CODE)
+            template = resolve_predefined_template(db, code=PAYMENT_REFUND_ADMIN_TEMPLATE_CODE, language="fr")
         except KeyError:
             template = None
         if template is not None and bool(template.get("active", True)):
@@ -1141,7 +1147,11 @@ def send_final_invoice_email(
         "account_url": account_url,
     }
     try:
-        template = resolve_predefined_template(db, code="INVOICE_PAID" if is_already_paid else "INVOICE")
+        template = resolve_predefined_template(
+            db,
+            code="INVOICE_PAID" if is_already_paid else "INVOICE",
+            language=normalize_language(customer.preferred_language),
+        )
     except KeyError:
         return None
     sender = resolve_sender_profile(db, sender_kind="STUDIO")

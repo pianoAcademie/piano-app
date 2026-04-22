@@ -168,6 +168,7 @@ async def payment_webhook(
                         paid_at=sub.last_payment_at or _utcnow(),
                         amount_paid=amount_paid,
                         currency=(plan.currency_code or owner.preferred_currency or "EUR"),
+                        language=owner.preferred_language,
                     )
                 except Exception:
                     logger.exception("Unable to send paid confirmation emails for subscription=%s", sub.id)

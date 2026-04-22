@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.services.email_delivery import send_email
+from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
     render_template_content,
     resolve_frontend_base_url,
@@ -39,9 +40,10 @@ def _send_template_email(
     context: dict[str, str],
     to_email: str,
     delivery_context: str,
+    language: str | None = None,
 ) -> str | None:
     try:
-        template = resolve_predefined_template(db, code=template_code)
+        template = resolve_predefined_template(db, code=template_code, language=normalize_language(language))
     except KeyError:
         logger.warning("Unknown predefined template for purchase notifications: %s", template_code)
         return None
@@ -89,6 +91,7 @@ def send_payment_success_notifications(
     payment_url: str | None = None,
     issued_date: str | None = None,
     due_date: str | None = None,
+    language: str | None = None,
 ) -> dict[str, str | None]:
     safe_first_name = (first_name or "").strip() or to_email
     safe_last_name = (last_name or "").strip()
@@ -134,6 +137,7 @@ def send_payment_success_notifications(
             context=context,
             to_email=to_email,
             delivery_context="CLIENT_PAYMENT_CONFIRMED",
+            language=language,
         ),
         "invoice_message_id": _send_template_email(
             db,
@@ -141,6 +145,7 @@ def send_payment_success_notifications(
             context=context,
             to_email=to_email,
             delivery_context="CLIENT_INVOICE_PAID",
+            language=language,
         ),
     }
 
@@ -156,6 +161,7 @@ def send_client_payment_success_notifications(
     paid_at: datetime,
     amount_paid: Decimal | None = None,
     currency: str | None = None,
+    language: str | None = None,
 ) -> dict[str, str | None]:
     transactions_url = _frontend_url(f"/dashboard?tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}")
     invoice_url = _frontend_url(f"/api/v1/public/invoices/plans/{subscription_id}/download")
@@ -175,6 +181,7 @@ def send_client_payment_success_notifications(
         invoice_number=invoice_number,
         issued_date=paid_at.strftime("%d/%m/%Y"),
         due_date=paid_at.strftime("%d/%m/%Y"),
+        language=language,
     )
 
 

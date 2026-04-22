@@ -68,6 +68,7 @@ class User(Base):
     important_info: Mapped[str | None] = mapped_column(Text, nullable=True)
     private_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     residence_country: Mapped[str] = mapped_column(String(2), nullable=False, server_default=text("'FR'"))
+    preferred_language: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'fr'"))
     preferred_currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'Europe/Paris'"))
     first_course_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

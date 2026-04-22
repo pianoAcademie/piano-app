@@ -3348,6 +3348,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <strong>{labelFromOptions(CURRENCY_OPTIONS, client.preferred_currency)}</strong>
                 </article>
                 <article className="item row spread">
+                  <span className="muted">Langue</span>
+                  <strong>{client.preferred_language === "en" ? "English" : "Francais"}</strong>
+                </article>
+                <article className="item row spread">
                   <span className="muted">Fuseau horaire</span>
                   <strong>{client.timezone}</strong>
                 </article>
@@ -3598,6 +3602,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             {currency.label}
                           </option>
                         ))}
+                      </select>
+                    </label>
+                    <label>
+                      Langue
+                      <select name="preferred_language" defaultValue={client.preferred_language || "fr"} required>
+                        <option value="fr">Francais</option>
+                        <option value="en">English</option>
                       </select>
                     </label>
 
@@ -3904,6 +3915,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
+                  Langue
+                  <select name="child_preferred_language" defaultValue="fr">
+                    <option value="fr">Francais</option>
+                    <option value="en">English</option>
+                  </select>
+                </label>
+                <label>
                   Fuseau
                   <select name="child_timezone" defaultValue={DEFAULT_TIMEZONE}>
                     {TIMEZONE_OPTIONS.map((item) => (
@@ -4017,6 +4035,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         {currency.label}
                       </option>
                     ))}
+                  </select>
+                </label>
+                <label>
+                  Langue
+                  <select name="adult_preferred_language" defaultValue="fr">
+                    <option value="fr">Francais</option>
+                    <option value="en">English</option>
                   </select>
                 </label>
                 <label>

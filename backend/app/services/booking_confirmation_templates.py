@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
+from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
     render_template_content,
     resolve_frontend_base_url,
@@ -49,40 +50,73 @@ def _default_rendered_email(
     *,
     audience: Literal["CLIENT", "ADMIN"],
     context: dict[str, str],
+    language: str | None = None,
 ) -> RenderedBookingConfirmationEmail:
+    normalized_language = normalize_language(language)
     teacher_name = context.get("teacher_name", "").strip()
     if audience == "ADMIN":
-        subject = f"Nouvelle reservation confirmee - {context['activity_name']}"
+        if normalized_language == "en":
+            subject = f"New confirmed booking - {context['activity_name']}"
+            body = (
+                "A booking has been confirmed.\n\n"
+                f"Student: {context['student_name']}\n"
+                f"Activity: {context['activity_name']}\n"
+                f"Date: {context['session_date']}\n"
+                f"Time: {context['session_time']}\n"
+                f"Location: {context['location_name']}\n"
+            )
+        else:
+            subject = f"Nouvelle reservation confirmee - {context['activity_name']}"
+            body = (
+                "Une reservation a ete confirmee.\n\n"
+                f"Eleve: {context['student_name']}\n"
+                f"Activite: {context['activity_name']}\n"
+                f"Date: {context['session_date']}\n"
+                f"Heure: {context['session_time']}\n"
+                f"Lieu: {context['location_name']}\n"
+            )
+        if teacher_name:
+            body += f"{'Teacher' if normalized_language == 'en' else 'Professeur'}: {teacher_name}\n"
+        return RenderedBookingConfirmationEmail(subject=subject, body=body, body_format="TEXT")
+
+    if normalized_language == "en":
+        subject = f"Your booking is confirmed - {context['activity_name']}"
         body = (
-            "Une reservation a ete confirmee.\n\n"
+            f"Hello {context['recipient_name']},\n\n"
+            "Your booking is confirmed.\n\n"
+            f"Student: {context['student_name']}\n"
+            f"Activity: {context['activity_name']}\n"
+            f"Date: {context['session_date']}\n"
+            f"Time: {context['session_time']}\n"
+            f"Location: {context['location_name']}\n"
+            f"My account: {context['account_url']}\n\n"
+            "Piano Academie"
+        )
+        if teacher_name:
+            body = body.replace(
+                f"Location: {context['location_name']}\n",
+                f"Location: {context['location_name']}\nTeacher: {teacher_name}\n",
+                1,
+            )
+    else:
+        subject = f"Confirmation de votre reservation - {context['activity_name']}"
+        body = (
+            f"Bonjour {context['recipient_name']},\n\n"
+            "Votre reservation est confirmee.\n\n"
             f"Eleve: {context['student_name']}\n"
             f"Activite: {context['activity_name']}\n"
             f"Date: {context['session_date']}\n"
             f"Heure: {context['session_time']}\n"
             f"Lieu: {context['location_name']}\n"
+            f"Mon compte: {context['account_url']}\n\n"
+            "Piano Academie"
         )
         if teacher_name:
-            body += f"Professeur: {teacher_name}\n"
-        return RenderedBookingConfirmationEmail(subject=subject, body=body, body_format="TEXT")
-
-    subject = f"Confirmation de votre reservation - {context['activity_name']}"
-    body = (
-        f"Bonjour {context['recipient_name']},\n\n"
-        "Votre reservation est confirmee.\n\n"
-        f"Eleve: {context['student_name']}\n"
-        f"Activite: {context['activity_name']}\n"
-        f"Date: {context['session_date']}\n"
-        f"Heure: {context['session_time']}\n"
-        f"Lieu: {context['location_name']}\n"
-        f"Mon compte: {context['account_url']}\n\n"
-        "Piano Academie"
-    )
-    if teacher_name:
-        body = body.replace(
-            f"Lieu: {context['location_name']}\n",
-            f"Lieu: {context['location_name']}\nProfesseur: {teacher_name}\n",
-            1,
-        )
+            body = body.replace(
+                f"Lieu: {context['location_name']}\n",
+                f"Lieu: {context['location_name']}\nProfesseur: {teacher_name}\n",
+                1,
+            )
     return RenderedBookingConfirmationEmail(subject=subject, body=body, body_format="TEXT")
 
 
@@ -125,11 +159,13 @@ def render_booking_confirmation_email(
     timezone_name: str | None,
     location_name: str | None,
     teacher_name: str | None,
+    language: str | None = None,
 ) -> RenderedBookingConfirmationEmail | None:
+    normalized_language = normalize_language(language)
     localized_start = _localized_start_at(start_at, timezone_name)
     normalized_teacher_name = _normalize_teacher_name(teacher_name)
     context = {
-        "recipient_name": (recipient_name or "").strip() or ("Administration" if audience == "ADMIN" else "Client"),
+            "recipient_name": (recipient_name or "").strip() or ("Administration" if audience == "ADMIN" else ("Customer" if normalized_language == "en" else "Client")),
         "student_name": student_name.strip() or "-",
         "activity_name": activity_name.strip() or "-",
         "session_date": localized_start.strftime("%d/%m/%Y"),
@@ -146,9 +182,9 @@ def render_booking_confirmation_email(
         else PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION
     )
     try:
-        template = resolve_predefined_template(db, code=template_code)
+        template = resolve_predefined_template(db, code=template_code, language=normalized_language)
     except KeyError:
-        return _default_rendered_email(audience=audience, context=context)
+        return _default_rendered_email(audience=audience, context=context, language=normalized_language)
 
     if not bool(template.get("active", True)):
         return None
@@ -156,7 +192,7 @@ def render_booking_confirmation_email(
     subject_template = str(template.get("subject") or "").strip()
     body_template = str(template.get("body") or "").strip()
     if not subject_template or not body_template:
-        return _default_rendered_email(audience=audience, context=context)
+        return _default_rendered_email(audience=audience, context=context, language=normalized_language)
 
     body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
     rendered = RenderedBookingConfirmationEmail(

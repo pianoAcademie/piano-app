@@ -39,6 +39,7 @@ class UserOut(BaseModel):
     lesson_reminder_email_opt_in: bool
     lesson_reminder_sms_opt_in: bool
     residence_country: str
+    preferred_language: str
     preferred_currency: str
     timezone: str
     client_status: ClientStatus
@@ -65,6 +66,7 @@ class ClientMeUpdateRequest(BaseModel):
     lesson_reminder_email_opt_in: bool | None = None
     lesson_reminder_sms_opt_in: bool | None = None
     residence_country: str | None = Field(default=None, min_length=2, max_length=2)
+    preferred_language: str | None = Field(default=None, min_length=2, max_length=8)
     preferred_currency: str | None = Field(default=None, min_length=3, max_length=3)
     timezone: str | None = Field(default=None, min_length=2, max_length=100)
 

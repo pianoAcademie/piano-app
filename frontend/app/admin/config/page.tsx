@@ -2860,8 +2860,23 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             {editingTemplate.channel === "EMAIL" ? (
                               <>
                                 <label>
-                                  Objet du courriel
-                                  <input type="text" name="subject" defaultValue={editingTemplate.subject ?? ""} maxLength={255} required />
+                                  Objet du courriel (Francais)
+                                  <input
+                                    type="text"
+                                    name="subject_fr"
+                                    defaultValue={editingTemplate.subject_translations.fr ?? editingTemplate.subject ?? ""}
+                                    maxLength={255}
+                                    required
+                                  />
+                                </label>
+                                <label>
+                                  Subject (English)
+                                  <input
+                                    type="text"
+                                    name="subject_en"
+                                    defaultValue={editingTemplate.subject_translations.en ?? ""}
+                                    maxLength={255}
+                                  />
                                 </label>
                               </>
                             ) : null}
@@ -2896,11 +2911,23 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             ) : null}
 
                             <label className="messaging-editor-label">
-                              Message
+                              Message (Francais)
                               <RichMessageEditor
-                                name="body"
+                                name="body_fr"
                                 formatName="body_format"
-                                defaultValue={editingTemplate.body}
+                                defaultValue={editingTemplate.body_translations.fr ?? editingTemplate.body}
+                                defaultFormat={editingTemplate.body_format}
+                                rows={20}
+                                maxLength={12000}
+                              />
+                            </label>
+
+                            <label className="messaging-editor-label">
+                              Message (English)
+                              <RichMessageEditor
+                                name="body_en"
+                                formatName="body_format_en"
+                                defaultValue={editingTemplate.body_translations.en ?? ""}
                                 defaultFormat={editingTemplate.body_format}
                                 rows={20}
                                 maxLength={12000}
@@ -2929,7 +2956,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             </label>
                             <label>
                               Objet (email uniquement)
-                              <input type="text" name="subject" maxLength={255} />
+                              <input type="text" name="subject_fr" maxLength={255} />
+                            </label>
+                            <label>
+                              Subject (English)
+                              <input type="text" name="subject_en" maxLength={255} />
                             </label>
                             {newCustomTemplateChannel !== "GROUP_NOTE" ? (
                               <fieldset className="span-2 config-subsection">
@@ -2945,8 +2976,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </fieldset>
                             ) : null}
                             <label className="messaging-editor-label">
-                              Message
-                              <RichMessageEditor name="body" formatName="body_format" rows={20} maxLength={12000} />
+                              Message (Francais)
+                              <RichMessageEditor name="body_fr" formatName="body_format" rows={20} maxLength={12000} />
+                            </label>
+                            <label className="messaging-editor-label">
+                              Message (English)
+                              <RichMessageEditor name="body_en" formatName="body_format_en" rows={20} maxLength={12000} />
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="active" defaultChecked />

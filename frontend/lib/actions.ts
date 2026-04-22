@@ -132,6 +132,30 @@ function optionalField(formData: FormData, fieldName: string): string | null {
   return value || null;
 }
 
+function localizedBaseField(formData: FormData, fieldName: string): string | null {
+  return optionalField(formData, `${fieldName}_fr`) ?? optionalField(formData, fieldName);
+}
+
+function localizedTranslationsField(formData: FormData, fieldName: string): Record<string, string> {
+  const translations: Record<string, string> = {};
+  const frenchValue = optionalField(formData, `${fieldName}_fr`) ?? optionalField(formData, fieldName);
+  const englishValue = optionalField(formData, `${fieldName}_en`);
+
+  if (frenchValue) {
+    translations.fr = frenchValue;
+  }
+  if (englishValue) {
+    translations.en = englishValue;
+  }
+
+  return translations;
+}
+
+function supportedLanguageField(formData: FormData, fieldName: string, fallback = "fr"): string {
+  const value = String(formData.get(fieldName) ?? fallback).trim().toLowerCase();
+  return value === "en" ? "en" : "fr";
+}
+
 function emailListField(formData: FormData, fieldName: string): string[] | null {
   const value = String(formData.get(fieldName) ?? "").trim();
   if (!value) {
@@ -1314,6 +1338,7 @@ export async function updateProfileAction(formData: FormData): Promise<void> {
   }
 
   const residence_country = String(formData.get("residence_country") ?? "").trim().toUpperCase();
+  const preferred_language = supportedLanguageField(formData, "preferred_language");
   const preferred_currency = String(formData.get("preferred_currency") ?? "").trim().toUpperCase();
   const timezone = String(formData.get("timezone") ?? "").trim();
 
@@ -1339,6 +1364,7 @@ export async function updateProfileAction(formData: FormData): Promise<void> {
     lesson_reminder_email_opt_in: checkboxField(formData, "lesson_reminder_email_opt_in"),
     lesson_reminder_sms_opt_in: checkboxField(formData, "lesson_reminder_sms_opt_in"),
     residence_country,
+    preferred_language,
     preferred_currency,
     timezone,
   };
@@ -3307,6 +3333,7 @@ export async function updateAdminClientAction(formData: FormData): Promise<void>
   const firstName = String(formData.get("first_name") ?? "").trim();
   const lastName = String(formData.get("last_name") ?? "").trim();
   const residence_country = String(formData.get("residence_country") ?? "").trim().toUpperCase();
+  const preferred_language = supportedLanguageField(formData, "preferred_language");
   const preferred_currency = String(formData.get("preferred_currency") ?? "").trim().toUpperCase();
   const timezone = String(formData.get("timezone") ?? "").trim();
   const address_country = String(formData.get("address_country") ?? "").trim().toUpperCase();
@@ -3337,6 +3364,7 @@ export async function updateAdminClientAction(formData: FormData): Promise<void>
     important_info: optionalField(formData, "important_info"),
     private_note: optionalField(formData, "private_note"),
     residence_country,
+    preferred_language,
     preferred_currency,
     timezone,
     portal_contact_visible: checkboxFieldWithDefault(formData, "portal_contact_visible", true),
@@ -5049,6 +5077,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
   const firstName = String(formData.get("first_name") ?? "").trim();
   const lastName = String(formData.get("last_name") ?? "").trim();
   const residence_country = String(formData.get("residence_country") ?? "FR").trim().toUpperCase();
+  const preferred_language = supportedLanguageField(formData, "preferred_language");
   const preferred_currency = String(formData.get("preferred_currency") ?? "EUR").trim().toUpperCase();
   const timezone = String(formData.get("timezone") ?? "Europe/Paris").trim();
   const address_country = String(formData.get("address_country") ?? "FR").trim().toUpperCase();
@@ -5087,6 +5116,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
     important_info: optionalField(formData, "important_info"),
     private_note: optionalField(formData, "private_note"),
     residence_country,
+    preferred_language,
     preferred_currency,
     timezone,
     portal_contact_visible: isChildClient ? false : checkboxFieldWithDefault(formData, "portal_contact_visible", true),
@@ -5121,6 +5151,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
     const newAdultFirstName = String(formData.get("adult_first_name") ?? "").trim();
     const newAdultLastName = String(formData.get("adult_last_name") ?? "").trim();
     const newAdultCountry = String(formData.get("adult_residence_country") ?? "FR").trim().toUpperCase();
+    const newAdultPreferredLanguage = supportedLanguageField(formData, "adult_preferred_language", preferred_language);
     const newAdultCurrency = String(formData.get("adult_preferred_currency") ?? "EUR").trim().toUpperCase();
     const newAdultTimezone = String(formData.get("adult_timezone") ?? "Europe/Paris").trim();
     const newAdultAddressCountry = String(formData.get("adult_address_country") ?? "FR").trim().toUpperCase();
@@ -5158,6 +5189,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
             home_phone: optionalField(formData, "adult_home_phone"),
             phone: optionalField(formData, "adult_mobile_phone_1"),
             residence_country: newAdultCountry,
+            preferred_language: newAdultPreferredLanguage,
             preferred_currency: newAdultCurrency,
             timezone: newAdultTimezone,
             client_status: newAdultStatus,
@@ -5227,6 +5259,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
   const firstName = String(formData.get("child_first_name") ?? "").trim();
   const lastName = String(formData.get("child_last_name") ?? "").trim();
   const residence_country = String(formData.get("child_residence_country") ?? "FR").trim().toUpperCase();
+  const preferred_language = supportedLanguageField(formData, "child_preferred_language");
   const preferred_currency = String(formData.get("child_preferred_currency") ?? "EUR").trim().toUpperCase();
   const timezone = String(formData.get("child_timezone") ?? "Europe/Paris").trim();
   const address_country = String(formData.get("child_address_country") ?? "FR").trim().toUpperCase();
@@ -5264,6 +5297,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
         lesson_reminder_email_opt_in: false,
         lesson_reminder_sms_opt_in: false,
         residence_country,
+        preferred_language,
         preferred_currency,
         timezone,
         client_status: childStatus,
@@ -5324,6 +5358,7 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
   const firstName = String(formData.get("adult_first_name") ?? "").trim();
   const lastName = String(formData.get("adult_last_name") ?? "").trim();
   const residence_country = String(formData.get("adult_residence_country") ?? "FR").trim().toUpperCase();
+  const preferred_language = supportedLanguageField(formData, "adult_preferred_language");
   const preferred_currency = String(formData.get("adult_preferred_currency") ?? "EUR").trim().toUpperCase();
   const timezone = String(formData.get("adult_timezone") ?? "Europe/Paris").trim();
   const address_country = String(formData.get("adult_address_country") ?? "FR").trim().toUpperCase();
@@ -5354,6 +5389,7 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
         home_phone: optionalField(formData, "adult_home_phone"),
         phone: optionalField(formData, "adult_mobile_phone_1"),
         residence_country,
+        preferred_language,
         preferred_currency,
         timezone,
         client_status: adultStatus,
@@ -9140,8 +9176,10 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
   const templateCode = String(formData.get("template_code") ?? "").trim().toUpperCase();
   const templateId = String(formData.get("template_id") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
-  const subject = optionalField(formData, "subject");
-  const body = String(formData.get("body") ?? "").trim();
+  const subject = localizedBaseField(formData, "subject");
+  const subjectTranslations = localizedTranslationsField(formData, "subject");
+  const body = localizedBaseField(formData, "body") ?? "";
+  const bodyTranslations = localizedTranslationsField(formData, "body");
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const active = checkboxField(formData, "active");
   const usageContexts = parseStringList(formData.getAll("usage_contexts"));
@@ -9172,7 +9210,14 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
       `/api/v1/admin/config/messaging-templates/predefined/${encodeURIComponent(templateCode)}`,
       {
         method: "PUT",
-        body: JSON.stringify({ subject, body, body_format: bodyFormat, active }),
+        body: JSON.stringify({
+          subject,
+          subject_translations: subjectTranslations,
+          body,
+          body_translations: bodyTranslations,
+          body_format: bodyFormat,
+          active,
+        }),
       },
       token,
     );
@@ -9203,7 +9248,9 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
     channel: templateChannel,
     name,
     subject,
+    subject_translations: subjectTranslations,
     body,
+    body_translations: bodyTranslations,
     body_format: bodyFormat,
     active,
     usage_contexts: usageContexts,

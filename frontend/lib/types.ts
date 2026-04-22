@@ -3,6 +3,8 @@ export type AuthLoginResponse = {
   token_type: string;
 };
 
+export type LocalizedTextMap = Record<string, string>;
+
 export type UserOut = {
   id: string;
   email: string;
@@ -34,6 +36,7 @@ export type UserOut = {
   phone_suspended_at: string | null;
   phone_suspension_reason: string | null;
   residence_country: string;
+  preferred_language: string;
   preferred_currency: string;
   timezone: string;
   is_active: boolean;
@@ -230,6 +233,7 @@ export type AdminClientOut = {
   phone_suspended_at: string | null;
   phone_suspension_reason: string | null;
   residence_country: string;
+  preferred_language: string;
   preferred_currency: string;
   timezone: string;
   is_active: boolean;
@@ -1621,7 +1625,9 @@ export type AdminMessagingTemplateOut = {
   channel: AdminMessagingChannel;
   kind: AdminMessagingTemplateKind;
   subject: string | null;
+  subject_translations: LocalizedTextMap;
   body: string;
+  body_translations: LocalizedTextMap;
   body_format: "TEXT" | "HTML";
   active: boolean;
   usage_contexts: string[];
