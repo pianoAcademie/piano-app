@@ -11,6 +11,8 @@ type ConditionalConfirmSubmitButtonProps = {
   description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  closeAriaLabel?: string;
+  missingFormError?: string;
   className?: string;
   disabled?: boolean;
 };
@@ -39,6 +41,8 @@ export default function ConditionalConfirmSubmitButton({
   description = "",
   confirmLabel = "Confirmer",
   cancelLabel = "Annuler",
+  closeAriaLabel = "Fermer",
+  missingFormError = "Formulaire introuvable.",
   className,
   disabled = false,
 }: ConditionalConfirmSubmitButtonProps): JSX.Element {
@@ -53,7 +57,7 @@ export default function ConditionalConfirmSubmitButton({
   const getForm = (): HTMLFormElement | null => {
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) {
-      setErrorMessage("Formulaire introuvable.");
+      setErrorMessage(missingFormError);
       setOpen(true);
       return null;
     }
@@ -94,7 +98,7 @@ export default function ConditionalConfirmSubmitButton({
       {open ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <button className="modal-close-x" type="button" onClick={close} aria-label="Fermer">
+            <button className="modal-close-x" type="button" onClick={close} aria-label={closeAriaLabel}>
               ×
             </button>
             <h3 className="modal-title">{title}</h3>

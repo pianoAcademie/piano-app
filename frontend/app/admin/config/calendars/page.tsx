@@ -20,7 +20,8 @@ import {
   updateAdminQuoteSchoolCalendarGroupAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
-import type { LocationOut } from "../../../../lib/types";
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import type { LocationOut, UserOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -124,18 +125,18 @@ function calendarDatesText(dates: string[]): string {
   return dates.join("\n");
 }
 
-function deploymentStatusLabel(value: string): string {
+function deploymentStatusLabel(value: string, language: UiLanguage): string {
   const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "deployed") {
-    return "Deploye";
+    return uiText(language, "admin.calendars.deployment_deployed");
   }
   if (normalized === "stale") {
-    return "A resynchroniser";
+    return uiText(language, "admin.calendars.deployment_stale");
   }
   if (normalized === "removed") {
-    return "Retire";
+    return uiText(language, "admin.calendars.deployment_removed");
   }
-  return "Non deploye";
+  return uiText(language, "admin.calendars.deployment_not_deployed");
 }
 
 function deploymentStatusClass(value: string): string {
@@ -196,11 +197,39 @@ function calendarLocationSummary(names: string[]): string {
   return `${preview} +${names.length - 4}`;
 }
 
+function deploymentReasonLabel(value: string, language: UiLanguage): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "holiday") {
+    return uiText(language, "admin.calendars.reason_holiday");
+  }
+  if (normalized === "vacation") {
+    return uiText(language, "admin.calendars.reason_vacation");
+  }
+  if (normalized === "closure") {
+    return uiText(language, "admin.calendars.reason_closure");
+  }
+  return value || "-";
+}
+
+function deploymentReasonListLabel(values: string[], language: UiLanguage): string {
+  if (!values.length) {
+    return "-";
+  }
+  return values.map((value) => deploymentReasonLabel(value, language)).join(", ");
+}
+
 export default async function AdminSchoolCalendarsPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const params = searchParams ?? {};
   const okMessage = readParam(params, "ok");
@@ -223,17 +252,18 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
   const quoteSchoolCalendars = quoteSchoolCalendarsResult.ok
     ? quoteSchoolCalendarsResult.data
     : (() => {
-        loadErrors.push(`Calendriers scolaires: ${quoteSchoolCalendarsResult.message}`);
+        loadErrors.push(`${t("admin.calendars.load_school_calendars")}: ${quoteSchoolCalendarsResult.message}`);
         return [] as QuoteSchoolCalendarOut[];
       })();
   const locations = locationsResult.ok
     ? locationsResult.data
     : (() => {
-        loadErrors.push(`Lieux: ${locationsResult.message}`);
+        loadErrors.push(`${t("admin.calendars.load_locations")}: ${locationsResult.message}`);
         return [] as LocationOut[];
       })();
 
   const locationById = new Map(locations.map((row) => [row.id, row.name]));
+  const sortLocale = language === "en" ? "en" : "fr";
   const filteredCalendars = quoteSchoolCalendars.filter((row) => {
     if (locationFilter && row.location_id !== locationFilter) {
       return false;
@@ -268,11 +298,11 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       },
       new Map(),
     ).values(),
-  ).sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  ).sort((a, b) => a.name.localeCompare(b.name, sortLocale));
   const groupSummaries: CalendarGroupSummary[] = groupedCalendars.map((group) => {
     const representative = [...group.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0] ?? group.items[0];
     const locationNames = Array.from(new Set(group.items.map((item) => locationById.get(item.location_id) || item.location_id))).sort((a, b) =>
-      a.localeCompare(b, "fr")
+      a.localeCompare(b, sortLocale)
     );
     const activeSlots = group.items.reduce((sum, item) => sum + Number(item.deployment_generated_active_count || 0), 0);
     const hasStale = group.items.some((item) => item.deployment_status === "stale");
@@ -284,7 +314,13 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       location_names: locationNames,
       active_slots: activeSlots,
       badge_class: hasStale ? "status-warn" : allDeployed ? "status-ok" : allRemoved ? "status-off" : "status-warn",
-      badge_label: hasStale ? "A resynchroniser" : allDeployed ? "Deploye" : allRemoved ? "Retire" : "Partiel",
+      badge_label: hasStale
+        ? t("admin.calendars.deployment_stale")
+        : allDeployed
+          ? t("admin.calendars.deployment_deployed")
+          : allRemoved
+            ? t("admin.calendars.deployment_removed")
+            : t("admin.calendars.deployment_partial"),
       is_fully_removed: allRemoved,
     };
   });
@@ -336,7 +372,9 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
               token,
             );
             if (!result.ok) {
-              loadErrors.push(`Preview deploiement ${item.name} (${locationById.get(item.location_id) || item.location_id}): ${result.message}`);
+              loadErrors.push(
+                `${t("admin.calendars.load_preview")}: ${item.name} (${locationById.get(item.location_id) || item.location_id}): ${result.message}`,
+              );
               return null;
             }
             return { calendar: item, preview: result.data };
@@ -380,7 +418,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
     : null;
   const generatedSlots = generatedSlotsResult?.ok ? generatedSlotsResult.data : [];
   if (generatedSlotsResult && !generatedSlotsResult.ok) {
-    loadErrors.push(`Creneaux generes: ${generatedSlotsResult.message}`);
+    loadErrors.push(`${t("admin.calendars.load_generated_slots")}: ${generatedSlotsResult.message}`);
   }
   const generatedGroupSlots = generatedGroup
     ? (
@@ -392,7 +430,9 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
               token,
             );
             if (!result.ok) {
-              loadErrors.push(`Creneaux du bloc ${generatedGroup.name} (${locationById.get(item.location_id) || item.location_id}): ${result.message}`);
+              loadErrors.push(
+                `${t("admin.calendars.load_group_slots")}: ${generatedGroup.name} (${locationById.get(item.location_id) || item.location_id}): ${result.message}`,
+              );
               return [] as GeneratedGroupSlotRow[];
             }
             const locationName = locationById.get(item.location_id) || item.location_id;
@@ -401,7 +441,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
         )
       )
         .flat()
-        .sort((a, b) => `${a.date}-${a.location_name}-${a.title}`.localeCompare(`${b.date}-${b.location_name}-${b.title}`, "fr"))
+        .sort((a, b) => `${a.date}-${a.location_name}-${a.title}`.localeCompare(`${b.date}-${b.location_name}-${b.title}`, sortLocale))
     : [];
   const modalErrorMessage = errorMessage || "";
 
@@ -444,19 +484,33 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       ) : null}
       <div className="grid cols-2 config-form-grid">
         <label>
-          Nom du bloc
-          <input type="text" name="name" defaultValue={params.defaults.name} required maxLength={180} placeholder="Calendrier Paris 2026-2027" />
+          {t("admin.calendars.block_name")}
+          <input
+            type="text"
+            name="name"
+            defaultValue={params.defaults.name}
+            required
+            maxLength={180}
+            placeholder={t("admin.calendars.block_name_placeholder")}
+          />
         </label>
         <label>
-          Annee scolaire
-          <input type="text" name="school_year_label" defaultValue={params.defaults.schoolYearLabel} required maxLength={40} placeholder="2026-2027" />
+          {t("admin.calendars.school_year")}
+          <input
+            type="text"
+            name="school_year_label"
+            defaultValue={params.defaults.schoolYearLabel}
+            required
+            maxLength={40}
+            placeholder={t("admin.calendars.school_year_placeholder")}
+          />
         </label>
       </div>
 
       <section className="calendar-editor-section">
         <header className="calendar-editor-section-header">
-          <h4>Locaux cibles</h4>
-          <p className="muted">Le meme bloc sera applique sur tous les locaux coches.</p>
+          <h4>{t("admin.calendars.target_locations_title")}</h4>
+          <p className="muted">{t("admin.calendars.target_locations_help")}</p>
         </header>
         <fieldset className="calendar-locations-fieldset">
           <div className="calendar-location-grid">
@@ -477,41 +531,42 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
 
       <section className="calendar-editor-section">
         <header className="calendar-editor-section-header">
-          <h4>Saisie des dates</h4>
-          <p className="muted">Ajoutez ou corrigez directement une date oubliee, puis enregistrez le bloc.</p>
+          <h4>{t("admin.calendars.date_entry_title")}</h4>
+          <p className="muted">{t("admin.calendars.date_entry_help")}</p>
         </header>
         <div className="calendar-inline-help">
-          <strong>Saisie rapide</strong>
+          <strong>{t("admin.calendars.quick_entry_title")}</strong>
           <p className="muted">
-            Vacances: une ligne = <code>YYYY-MM-DD | YYYY-MM-DD | Libelle</code>. Jours feries et fermetures: une date par ligne.
+            {t("admin.calendars.quick_entry_help")} <code>{t("admin.calendars.quick_entry_format")}</code>.{" "}
+            {t("admin.calendars.quick_entry_single_date")}
           </p>
         </div>
         <div className="grid cols-3 config-form-grid calendar-editor-text-grid">
           <label className="calendar-textarea-field">
-            Vacances scolaires (periodes)
+            {t("admin.calendars.vacation_periods")}
             <textarea
               name="vacation_periods_text"
               rows={8}
               defaultValue={params.defaults.vacationPeriodsText}
-              placeholder={"2026-10-17 | 2026-11-01 | Vacances Toussaint\n2026-12-19 | 2027-01-03 | Vacances Noel"}
+              placeholder={t("admin.calendars.vacation_periods_placeholder")}
             />
           </label>
           <label className="calendar-textarea-field">
-            Jours feries (une date par ligne)
+            {t("admin.calendars.holidays")}
             <textarea
               name="holiday_dates_text"
               rows={8}
               defaultValue={params.defaults.holidayDatesText}
-              placeholder={"2026-11-11\n2026-12-25\n2027-01-01"}
+              placeholder={t("admin.calendars.holidays_placeholder")}
             />
           </label>
           <label className="calendar-textarea-field">
-            Fermetures exceptionnelles (une date par ligne)
+            {t("admin.calendars.closures")}
             <textarea
               name="closure_dates_text"
               rows={8}
               defaultValue={params.defaults.closureDatesText}
-              placeholder={"2026-09-02\n2027-05-19"}
+              placeholder={t("admin.calendars.closures_placeholder")}
             />
           </label>
         </div>
@@ -519,13 +574,13 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
 
       <section className="calendar-editor-section">
         <header className="calendar-editor-section-header">
-          <h4>Options</h4>
-          <p className="muted">Choisissez si le bloc reste actif et s il doit etre redeploye tout de suite.</p>
+          <h4>{t("admin.calendars.options_title")}</h4>
+          <p className="muted">{t("admin.calendars.options_help")}</p>
         </header>
         <div className="calendar-editor-toggle-grid">
           <label className="checkline">
             <input type="checkbox" name="is_active" defaultChecked={params.defaults.isActive} />
-            Actif
+            {t("common.active")}
           </label>
           <label className="checkline">
             <input type="checkbox" name="apply_to_management_planning" />
@@ -536,12 +591,12 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
 
       <footer className="calendar-editor-footer">
         <div className="calendar-editor-footer-copy">
-          <p className="muted">{params.footerNote || "Les changements sont appliques a tout le bloc, local par local."}</p>
+          <p className="muted">{params.footerNote || t("admin.calendars.footer_default")}</p>
           {params.extraActions}
         </div>
         <div className="row wrap gap-sm">
           <Link className="ghost" href={params.cancelHref}>
-            Annuler
+            {t("common.cancel")}
           </Link>
           <button type="submit">{params.submitLabel}</button>
         </div>
@@ -554,33 +609,31 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Calendriers scolaires</h2>
-            <p className="muted">
-              Referentiel global des vacances, jours feries et fermetures, reutilise dans les devis et la gestion des plannings.
-            </p>
+            <h2>{t("admin.calendars.page_title")}</h2>
+            <p className="muted">{t("admin.calendars.page_subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href="/admin/config">Retour Configuration</Link>
-            <Link className="ghost" href="/admin/config/quotes">Configuration Devis</Link>
+            <Link className="ghost" href="/admin/config">{t("admin.calendars.back_config")}</Link>
+            <Link className="ghost" href="/admin/config/quotes">{t("admin.calendars.back_quotes_config")}</Link>
           </div>
         </div>
       </section>
 
       {okMessage ? (
         <section className="card calendar-feedback-banner calendar-feedback-banner-ok" role="status">
-          <strong>Action enregistree</strong>
+          <strong>{t("admin.calendars.feedback_saved_title")}</strong>
           <p>{okMessage}</p>
         </section>
       ) : null}
       {errorMessage ? (
         <section className="card calendar-feedback-banner calendar-feedback-banner-error" role="alert">
-          <strong>Action non terminee</strong>
+          <strong>{t("admin.calendars.feedback_failed_title")}</strong>
           <p>{errorMessage}</p>
         </section>
       ) : null}
       {loadErrors.length > 0 ? (
         <section className="card">
-          <h3>Erreurs de chargement</h3>
+          <h3>{t("admin.calendars.loading_errors")}</h3>
           <ul className="config-error-list">
             {loadErrors.map((message) => (
               <li key={message} className="flash-err">{message}</li>
@@ -592,35 +645,35 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h3>Calendriers scolaires par local</h3>
-            <p className="muted">Travaillez par blocs calendaires, puis ouvrez le detail par local uniquement quand c est necessaire.</p>
+            <h3>{t("admin.calendars.group_section_title")}</h3>
+            <p className="muted">{t("admin.calendars.group_section_subtitle")}</p>
           </div>
           <Link className="ghost" href={createModalPath}>
-            Ajouter un calendrier
+            {t("admin.calendars.add_calendar")}
           </Link>
         </div>
 
         <section className="top-gap-sm">
           <div className="row spread wrap gap-sm">
             <div>
-              <h4>Blocs calendaires</h4>
-              <p className="muted">Travaillez d abord au niveau du bloc: un libelle, une annee, des dates communes et une liste de locaux.</p>
+              <h4>{t("admin.calendars.blocks_title")}</h4>
+              <p className="muted">{t("admin.calendars.blocks_subtitle")}</p>
             </div>
-            <span className="status-pill status-info">{groupSummaries.length} bloc(s)</span>
+            <span className="status-pill status-info">{t("admin.calendars.block_count", { count: groupSummaries.length })}</span>
           </div>
           {groupSummaries.length === 0 ? (
-            <p className="muted">Aucun bloc de calendrier pour les filtres en cours.</p>
+            <p className="muted">{t("admin.calendars.no_group_blocks")}</p>
           ) : (
             <div className="table-wrap top-gap-sm">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Bloc</th>
-                    <th>Annee</th>
-                    <th>Locaux</th>
-                    <th>Deploiement</th>
-                    <th>Creneaux actifs</th>
-                    <th>Actions</th>
+                    <th>{t("admin.calendars.column_block")}</th>
+                    <th>{t("admin.calendars.column_year")}</th>
+                    <th>{t("admin.calendars.column_locations")}</th>
+                    <th>{t("admin.calendars.column_deployment")}</th>
+                    <th>{t("admin.calendars.column_active_slots")}</th>
+                    <th>{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -645,7 +698,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                               generatedGroup: generatedGroupKey,
                             })}
                           >
-                            Modifier le bloc
+                            {t("admin.calendars.edit_block")}
                           </Link>
                           <Link
                             className="ghost"
@@ -659,35 +712,35 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                               generatedGroup: group.key,
                             })}
                           >
-                            Voir tous les creneaux
+                            {t("admin.calendars.view_all_slots")}
                           </Link>
                           <form action={previewAdminQuoteSchoolCalendarGroupDeploymentAction}>
                             {group.items.map((item) => (
                               <input key={`${group.key}-preview-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
                             ))}
                             <input type="hidden" name="return_to" value={returnPath} />
-                            <button type="submit" className="ghost">Previsualiser</button>
+                            <button type="submit" className="ghost">{t("admin.calendars.preview")}</button>
                           </form>
                           <form action={deployAdminQuoteSchoolCalendarGroupAction}>
                             {group.items.map((item) => (
                               <input key={`${group.key}-deploy-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
                             ))}
                             <input type="hidden" name="return_to" value={returnPath} />
-                            <button type="submit">Deployer</button>
+                            <button type="submit">{t("admin.calendars.deploy")}</button>
                           </form>
                           <form action={syncAdminQuoteSchoolCalendarGroupAction}>
                             {group.items.map((item) => (
                               <input key={`${group.key}-sync-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
                             ))}
                             <input type="hidden" name="return_to" value={returnPath} />
-                            <button type="submit" className="ghost">Resynchroniser</button>
+                            <button type="submit" className="ghost">{t("admin.calendars.resync")}</button>
                           </form>
                           <form action={removeAdminQuoteSchoolCalendarGroupDeploymentAction}>
                             {group.items.map((item) => (
                               <input key={`${group.key}-remove-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
                             ))}
                             <input type="hidden" name="return_to" value={returnPath} />
-                            <button type="submit" className="danger">Retirer</button>
+                            <button type="submit" className="danger">{t("admin.calendars.remove")}</button>
                           </form>
                           {group.is_fully_removed ? (
                             <>
@@ -701,10 +754,11 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                               </form>
                               <ConfirmSubmitButton
                                 formId={`calendar-group-delete-${group.key}`}
-                                label="Supprimer"
-                                title="Supprimer ce bloc retire ?"
-                                description={`Le bloc ${group.name} sera supprime pour ${group.items.length} local(aux). Cette action est irreversible.`}
-                                confirmLabel="Supprimer le bloc"
+                                label={t("common.delete")}
+                                title={t("admin.calendars.delete_block_title")}
+                                description={t("admin.calendars.delete_block_description", { name: group.name, count: group.items.length })}
+                                confirmLabel={t("admin.calendars.delete_block_confirm")}
+                                closeAriaLabel={t("common.close")}
                                 className="danger"
                               />
                             </>
@@ -723,71 +777,72 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       <section className="card top-gap-sm">
         <div className="row spread wrap gap-sm">
           <div>
-            <h4>Administration fine par local</h4>
-            <p className="muted">
-              Filtrez puis traitez plusieurs lignes locales a la fois. Retire signifie que les creneaux bloquants generes ont ete supprimes du planning, pas que le calendrier a disparu.
-            </p>
+            <h4>{t("admin.calendars.fine_admin_title")}</h4>
+            <p className="muted">{t("admin.calendars.fine_admin_subtitle")}</p>
           </div>
-          <span className="status-pill status-info">{filteredCalendars.length} calendrier(s) visible(s)</span>
+          <span className="status-pill status-info">{t("admin.calendars.visible_count", { count: filteredCalendars.length })}</span>
         </div>
         <form method="GET" className="grid cols-4 config-form-grid top-gap-sm">
           {generatedFor ? <input type="hidden" name="generated_for" value={generatedFor} /> : null}
           {previewGroupKey ? <input type="hidden" name="preview_group" value={previewGroupKey} /> : null}
           <label>
-            Local
+            {t("common.location")}
             <select name="location_filter" defaultValue={locationFilter || ""}>
-              <option value="">Tous</option>
+              <option value="">{t("common.all")}</option>
               {locations.map((row) => (
                 <option key={`calendar-filter-location-${row.id}`} value={row.id}>{row.name}</option>
               ))}
             </select>
           </label>
           <label>
-            Deploiement
+            {t("admin.calendars.column_deployment")}
             <select name="deployment_filter" defaultValue={deploymentFilter || ""}>
-              <option value="">Tous</option>
-              <option value="not_deployed">Non deploye</option>
-              <option value="deployed">Deploye</option>
-              <option value="stale">A resynchroniser</option>
-              <option value="removed">Retire</option>
+              <option value="">{t("common.all")}</option>
+              <option value="not_deployed">{t("admin.calendars.deployment_not_deployed")}</option>
+              <option value="deployed">{t("admin.calendars.deployment_deployed")}</option>
+              <option value="stale">{t("admin.calendars.deployment_stale")}</option>
+              <option value="removed">{t("admin.calendars.deployment_removed")}</option>
             </select>
           </label>
           <label>
-            Statut
+            {t("common.status")}
             <select name="status_filter" defaultValue={statusFilter || ""}>
-              <option value="">Tous</option>
-              <option value="active">Actif</option>
-              <option value="inactive">Inactif</option>
+              <option value="">{t("common.all")}</option>
+              <option value="active">{t("common.active")}</option>
+              <option value="inactive">{t("common.inactive")}</option>
             </select>
           </label>
           <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
-            <button type="submit" className="ghost">Filtrer</button>
-            <Link className="ghost" href={resetFiltersPath}>Reinitialiser</Link>
+            <button type="submit" className="ghost">{t("admin.quotes.filter")}</button>
+            <Link className="ghost" href={resetFiltersPath}>{t("common.reset")}</Link>
           </div>
         </form>
         <form id="calendar-bulk-form" action={bulkAdminQuoteSchoolCalendarsAction} className="grid cols-4 config-form-grid top-gap-sm">
           <input type="hidden" name="return_to" value={returnPath} />
           <input type="hidden" name="success_return_to" value={basePath} />
           <label className="span-2">
-            Action de masse
+            {t("admin.calendars.bulk_action")}
             <select name="bulk_action" defaultValue="SYNC">
-              <option value="DEPLOY">Deployer les selections</option>
-              <option value="SYNC">Resynchroniser les selections</option>
-              <option value="REMOVE">Retirer les creneaux generes</option>
-              <option value="DELETE">Supprimer les calendriers selectionnes</option>
+              <option value="DEPLOY">{t("admin.calendars.bulk_deploy_selected")}</option>
+              <option value="SYNC">{t("admin.calendars.bulk_sync_selected")}</option>
+              <option value="REMOVE">{t("admin.calendars.bulk_remove_selected")}</option>
+              <option value="DELETE">{t("admin.calendars.bulk_delete_selected")}</option>
             </select>
           </label>
           <div className="span-2 row wrap gap-sm" style={{ alignItems: "end" }}>
             <ConditionalConfirmSubmitButton
               formId="calendar-bulk-form"
-              label="Appliquer"
+              label={t("common.apply")}
               confirmFieldName="bulk_action"
               confirmFieldValue="DELETE"
-              title="Supprimer les calendriers selectionnes ?"
-              description="Les calendriers coches seront supprimes definitivement. Si certains ont encore des creneaux generes, ils seront retires du planning avant suppression."
-              confirmLabel="Supprimer la selection"
+              title={t("admin.calendars.bulk_delete_title")}
+              description={t("admin.calendars.bulk_delete_description")}
+              confirmLabel={t("admin.calendars.bulk_delete_confirm")}
+              cancelLabel={t("common.cancel")}
+              closeAriaLabel={t("common.close")}
+              missingFormError={t("admin.calendars.form_not_found")}
             />
-            <span className="muted">Cochez les lignes a traiter dans le tableau ci-dessous. Les suppressions demandent une confirmation.</span>
+            <span className="muted">{t("admin.calendars.bulk_hint")}</span>
           </div>
         </form>
 
@@ -795,22 +850,22 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
           <table className="data-table">
             <thead>
               <tr>
-                <th>Selection</th>
-                <th>Nom</th>
-                <th>Annee</th>
-                <th>Local</th>
-                <th>Vacances</th>
-                <th>Feries</th>
-                <th>Fermetures</th>
-                <th>Deploiement</th>
-                <th>Creneaux actifs</th>
-                <th>Statut</th>
-                <th>Actions</th>
+                <th>{t("admin.calendars.column_selection")}</th>
+                <th>{t("common.name")}</th>
+                <th>{t("admin.calendars.column_year")}</th>
+                <th>{t("common.location")}</th>
+                <th>{t("admin.calendars.column_vacations")}</th>
+                <th>{t("admin.calendars.column_holidays")}</th>
+                <th>{t("admin.calendars.column_closures")}</th>
+                <th>{t("admin.calendars.column_deployment")}</th>
+                <th>{t("admin.calendars.column_active_slots")}</th>
+                <th>{t("common.status")}</th>
+                <th>{t("common.actions")}</th>
               </tr>
             </thead>
             <tbody>
               {filteredCalendars.length === 0 ? (
-                <tr><td colSpan={11}><p className="muted">Aucun calendrier ne correspond aux filtres.</p></td></tr>
+                <tr><td colSpan={11}><p className="muted">{t("admin.calendars.no_calendars_for_filters")}</p></td></tr>
               ) : (
                 filteredCalendars.map((row) => (
                   <tr key={row.id}>
@@ -820,7 +875,10 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                         name="calendar_ids"
                         value={row.id}
                         form="calendar-bulk-form"
-                        aria-label={`Selectionner ${row.name} ${locationById.get(row.location_id) || row.location_id}`}
+                        aria-label={t("admin.calendars.select_row_aria", {
+                          name: row.name,
+                          location: locationById.get(row.location_id) || row.location_id,
+                        })}
                       />
                     </td>
                     <td><strong>{row.name}</strong></td>
@@ -831,28 +889,32 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                     <td>{row.closure_dates.length}</td>
                     <td>
                       <span className={`status-pill ${deploymentStatusClass(row.deployment_status)}`}>
-                        {deploymentStatusLabel(row.deployment_status)}
+                        {deploymentStatusLabel(row.deployment_status, language)}
                       </span>
                     </td>
                     <td>{row.deployment_generated_active_count || 0}</td>
-                    <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span></td>
+                    <td>
+                      <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>
+                        {row.is_active ? t("common.active") : t("common.inactive")}
+                      </span>
+                    </td>
                     <td>
                       <details>
-                        <summary className="mode-link">Actions locales</summary>
+                        <summary className="mode-link">{t("admin.calendars.local_actions")}</summary>
                         <form action={updateAdminQuoteSchoolCalendarConfigAction} className="grid config-form-grid top-gap-sm">
                           <input type="hidden" name="calendar_id" value={row.id} />
                           <input type="hidden" name="return_to" value={returnPath} />
                           <label className="span-2">
-                            Nom
+                            {t("common.name")}
                             <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
                           </label>
                           <label>
-                            Annee scolaire
+                            {t("admin.calendars.school_year")}
                             <input type="text" name="school_year_label" defaultValue={row.school_year_label} required maxLength={40} />
                           </label>
                           <fieldset className="span-4 calendar-locations-fieldset">
-                            <legend>Locaux cibles</legend>
-                            <p className="muted">Selection multiple possible: le calendrier mis a jour sera duplique vers les locaux coches.</p>
+                            <legend>{t("admin.calendars.target_locations_title")}</legend>
+                            <p className="muted">{t("admin.calendars.target_locations_help_local")}</p>
                             <div className="calendar-location-grid">
                               {locations.map((location) => (
                                 <label key={`${row.id}-location-${location.id}`} className="checkline">
@@ -868,11 +930,14 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                             </div>
                           </fieldset>
                           <div className="span-4 calendar-inline-help">
-                            <strong>Saisie rapide</strong>
-                            <p className="muted">Vacances: une ligne = <code>YYYY-MM-DD | YYYY-MM-DD | Libelle</code>. Jours feries et fermetures: une date par ligne.</p>
+                            <strong>{t("admin.calendars.quick_entry_title")}</strong>
+                            <p className="muted">
+                              {t("admin.calendars.quick_entry_help")} <code>{t("admin.calendars.quick_entry_format")}</code>.{" "}
+                              {t("admin.calendars.quick_entry_single_date")}
+                            </p>
                           </div>
                           <label className="span-2 calendar-textarea-field">
-                            Vacances scolaires (periodes)
+                            {t("admin.calendars.vacation_periods")}
                             <textarea
                               name="vacation_periods_text"
                               rows={8}
@@ -880,7 +945,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                             />
                           </label>
                           <label className="calendar-textarea-field">
-                            Jours feries (une date par ligne)
+                            {t("admin.calendars.holidays")}
                             <textarea
                               name="holiday_dates_text"
                               rows={8}
@@ -888,7 +953,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                             />
                           </label>
                           <label className="calendar-textarea-field">
-                            Fermetures exceptionnelles (une date par ligne)
+                            {t("admin.calendars.closures")}
                             <textarea
                               name="closure_dates_text"
                               rows={8}
@@ -897,36 +962,36 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                           </label>
                           <label className="checkline">
                             <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                            Actif
+                            {t("common.active")}
                           </label>
                           <label className="checkline span-3">
                             <input type="checkbox" name="apply_to_management_planning" />
-                            Deployer immediatement en creneaux bloquants (journee entiere)
+                            {t("admin.calendars.apply_planning_create")}
                           </label>
                           <div className="row">
-                            <button type="submit">Enregistrer</button>
+                            <button type="submit">{t("common.save")}</button>
                           </div>
                         </form>
                         <div className="row wrap top-gap-sm gap-sm">
                           <form action={previewAdminQuoteSchoolCalendarDeploymentAction}>
                             <input type="hidden" name="calendar_id" value={row.id} />
                             <input type="hidden" name="return_to" value={returnPath} />
-                            <button type="submit" className="ghost">Previsualiser le deploiement</button>
+                            <button type="submit" className="ghost">{t("admin.calendars.preview_deployment")}</button>
                           </form>
                           <form action={deployAdminQuoteSchoolCalendarAction}>
                             <input type="hidden" name="calendar_id" value={row.id} />
                             <input type="hidden" name="return_to" value={returnPath} />
-                            <button type="submit">Deployer</button>
+                            <button type="submit">{t("admin.calendars.deploy")}</button>
                           </form>
                           <form action={syncAdminQuoteSchoolCalendarDeploymentAction}>
                             <input type="hidden" name="calendar_id" value={row.id} />
                             <input type="hidden" name="return_to" value={returnPath} />
-                            <button type="submit" className="ghost">Mettre a jour le deploiement</button>
+                            <button type="submit" className="ghost">{t("admin.calendars.update_deployment")}</button>
                           </form>
                           <form action={removeAdminQuoteSchoolCalendarDeploymentAction}>
                             <input type="hidden" name="calendar_id" value={row.id} />
                             <input type="hidden" name="return_to" value={returnPath} />
-                            <button type="submit" className="danger">Retirer les creneaux generes</button>
+                            <button type="submit" className="danger">{t("admin.calendars.remove_generated_slots")}</button>
                           </form>
                           <Link
                             className="ghost"
@@ -938,7 +1003,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                               previewGroup: previewGroupKey,
                             })}
                           >
-                            Voir creneaux generes
+                            {t("admin.calendars.view_generated_slots")}
                           </Link>
                         </div>
                         <form id={`calendar-delete-${row.id}`} action={deleteAdminQuoteSchoolCalendarConfigAction} className="row top-gap-sm">
@@ -946,10 +1011,14 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                           <input type="hidden" name="return_to" value={returnPath} />
                           <ConfirmSubmitButton
                             formId={`calendar-delete-${row.id}`}
-                            label="Supprimer"
-                            title="Supprimer ce calendrier local ?"
-                            description={`Le calendrier ${row.name} pour ${locationById.get(row.location_id) || row.location_id} sera supprime.`}
-                            confirmLabel="Supprimer"
+                            label={t("common.delete")}
+                            title={t("admin.calendars.delete_local_title")}
+                            description={t("admin.calendars.delete_local_description", {
+                              name: row.name,
+                              location: locationById.get(row.location_id) || row.location_id,
+                            })}
+                            confirmLabel={t("common.delete")}
+                            closeAriaLabel={t("common.close")}
                             className="danger"
                           />
                         </form>
@@ -966,22 +1035,20 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       {createModalOpen ? (
         <section className="modal-overlay">
           <article className="modal-panel client-create-modal calendar-editor-modal">
-            <Link className="modal-close-x" href={basePath} aria-label="Fermer">
+            <Link className="modal-close-x" href={basePath} aria-label={t("common.close")}>
               ×
             </Link>
             <header className="calendar-editor-header">
               <div>
-                <h3 className="modal-title">Ajouter un calendrier</h3>
-                <p className="muted">
-                  Creez un bloc calendrier commun, puis appliquez-le sur un ou plusieurs locaux.
-                </p>
+                <h3 className="modal-title">{t("admin.calendars.create_modal_title")}</h3>
+                <p className="muted">{t("admin.calendars.create_modal_subtitle")}</p>
               </div>
             </header>
             {renderCalendarBlockForm({
               action: createAdminQuoteSchoolCalendarConfigAction,
               returnTo: createModalPath,
               successReturnTo: basePath,
-              submitLabel: "Ajouter le calendrier",
+              submitLabel: t("admin.calendars.create_modal_submit"),
               cancelHref: basePath,
               defaults: {
                 name: "",
@@ -992,9 +1059,9 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                 closureDatesText: "",
                 isActive: true,
               },
-              applyPlanningLabel: "Deployer immediatement en creneaux bloquants (journee entiere)",
+              applyPlanningLabel: t("admin.calendars.apply_planning_create"),
               errorText: modalErrorMessage,
-              footerNote: "Apres validation, le bloc sera cree pour chaque local coche et vous reverrez une confirmation claire sur la page.",
+              footerNote: t("admin.calendars.create_modal_footer"),
             })}
           </article>
         </section>
@@ -1003,12 +1070,12 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       {editGroup ? (
         <section className="modal-overlay">
           <article className="modal-panel client-create-modal calendar-editor-modal">
-            <Link className="modal-close-x" href={basePath} aria-label="Fermer">
+            <Link className="modal-close-x" href={basePath} aria-label={t("common.close")}>
               ×
             </Link>
             <header className="calendar-editor-header">
               <div>
-                <h3 className="modal-title">Modifier le bloc</h3>
+                <h3 className="modal-title">{t("admin.calendars.edit_modal_title")}</h3>
                 <p className="muted">
                   {editGroup.name} · {editGroup.school_year_label} · {editGroup.location_names.join(", ")}
                 </p>
@@ -1027,7 +1094,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                 generatedGroup: generatedGroupKey,
               }),
               successReturnTo: basePath,
-              submitLabel: "Enregistrer le bloc",
+              submitLabel: t("admin.calendars.edit_modal_submit"),
               cancelHref: basePath,
               defaults: {
                 name: editGroup.representative.name,
@@ -1038,12 +1105,12 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                 closureDatesText: calendarDatesText(editGroup.representative.closure_dates),
                 isActive: editGroup.representative.is_active,
               },
-              applyPlanningLabel: "Redeployer immediatement les creneaux bloquants apres mise a jour",
+              applyPlanningLabel: t("admin.calendars.apply_planning_update"),
               existingEntries: editGroup.items.map((item) => ({ calendarId: item.id, locationId: item.location_id })),
               errorText: modalErrorMessage,
               footerNote: editGroup.is_fully_removed
-                ? "Ce bloc est retire du planning. Vous pouvez maintenant le supprimer definitivement si vous n en avez plus besoin."
-                : "Pour ajouter un creneau oublie, ajoutez simplement une ligne puis enregistrez le bloc.",
+                ? t("admin.calendars.edit_modal_footer_removed")
+                : t("admin.calendars.edit_modal_footer_default"),
               extraActions: editGroup.is_fully_removed ? (
                 <>
                   <form id={`calendar-group-delete-modal-${editGroup.key}`} action={bulkAdminQuoteSchoolCalendarsAction}>
@@ -1064,10 +1131,11 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                   </form>
                   <ConfirmSubmitButton
                     formId={`calendar-group-delete-modal-${editGroup.key}`}
-                    label="Supprimer ce bloc"
-                    title="Supprimer ce bloc retire ?"
-                    description={`Le bloc ${editGroup.name} sera supprime pour ${editGroup.items.length} local(aux). Cette action est irreversible.`}
-                    confirmLabel="Supprimer le bloc"
+                    label={t("admin.calendars.delete_block_cta")}
+                    title={t("admin.calendars.delete_block_title")}
+                    description={t("admin.calendars.delete_block_description", { name: editGroup.name, count: editGroup.items.length })}
+                    confirmLabel={t("admin.calendars.delete_block_confirm")}
+                    closeAriaLabel={t("common.close")}
                     className="danger"
                   />
                 </>
@@ -1080,7 +1148,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       {previewGroup ? (
         <section className="card">
           <div className="row spread wrap gap-sm">
-            <h3>Previsualisation detaillee du deploiement</h3>
+            <h3>{t("admin.calendars.preview_section_title")}</h3>
             <Link
               className="ghost"
               href={buildCalendarsPath({
@@ -1092,41 +1160,43 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                 generatedGroup: generatedGroupKey,
               })}
             >
-              Fermer
+              {t("common.close")}
             </Link>
           </div>
-          <p className="muted">
-            {previewGroup.name} · {previewGroup.school_year_label} · {previewGroup.items.length} locaux
-          </p>
+          <p className="muted">{t("admin.calendars.preview_section_subtitle", {
+            name: previewGroup.name,
+            school_year: previewGroup.school_year_label,
+            count: previewGroup.items.length,
+          })}</p>
           <div className="row wrap gap-sm top-gap-sm">
-            <span className="status-pill status-info">Dates cibles: {groupPreviewTotals.totalTargetDays}</span>
-            <span className="status-pill status-info">Vacances: {groupPreviewTotals.vacationDays}</span>
-            <span className="status-pill status-info">Feries: {groupPreviewTotals.holidayDays}</span>
-            <span className="status-pill status-info">Fermetures: {groupPreviewTotals.closureDays}</span>
-            <span className="status-pill status-ok">A creer: {groupPreviewTotals.wouldCreate}</span>
-            <span className="status-pill status-ok">A reactiver: {groupPreviewTotals.wouldReactivate}</span>
-            <span className="status-pill status-warn">A retirer: {groupPreviewTotals.wouldCancel}</span>
-            <span className="status-pill status-info">Actifs existants: {groupPreviewTotals.existingGenerated}</span>
+            <span className="status-pill status-info">{t("admin.calendars.target_dates_badge", { count: groupPreviewTotals.totalTargetDays })}</span>
+            <span className="status-pill status-info">{t("admin.calendars.vacations_badge", { count: groupPreviewTotals.vacationDays })}</span>
+            <span className="status-pill status-info">{t("admin.calendars.holidays_badge", { count: groupPreviewTotals.holidayDays })}</span>
+            <span className="status-pill status-info">{t("admin.calendars.closures_badge", { count: groupPreviewTotals.closureDays })}</span>
+            <span className="status-pill status-ok">{t("admin.calendars.create_badge", { count: groupPreviewTotals.wouldCreate })}</span>
+            <span className="status-pill status-ok">{t("admin.calendars.reactivate_badge", { count: groupPreviewTotals.wouldReactivate })}</span>
+            <span className="status-pill status-warn">{t("admin.calendars.remove_badge", { count: groupPreviewTotals.wouldCancel })}</span>
+            <span className="status-pill status-info">{t("admin.calendars.existing_active_badge", { count: groupPreviewTotals.existingGenerated })}</span>
           </div>
 
           <div className="table-wrap top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Local</th>
-                  <th>Dates cibles</th>
-                  <th>Vacances</th>
-                  <th>Feries</th>
-                  <th>Fermetures</th>
-                  <th>A creer</th>
-                  <th>A reactiver</th>
-                  <th>A retirer</th>
-                  <th>Actifs existants</th>
+                  <th>{t("common.location")}</th>
+                  <th>{t("admin.calendars.target_dates")}</th>
+                  <th>{t("admin.calendars.column_vacations")}</th>
+                  <th>{t("admin.calendars.column_holidays")}</th>
+                  <th>{t("admin.calendars.column_closures")}</th>
+                  <th>{t("admin.calendars.to_create")}</th>
+                  <th>{t("admin.calendars.to_reactivate")}</th>
+                  <th>{t("admin.calendars.to_remove")}</th>
+                  <th>{t("admin.calendars.existing_active")}</th>
                 </tr>
               </thead>
               <tbody>
                 {groupPreviewRows.length === 0 ? (
-                  <tr><td colSpan={9}><p className="muted">Aucune donnee de preview disponible.</p></td></tr>
+                  <tr><td colSpan={9}><p className="muted">{t("admin.calendars.no_preview_data")}</p></td></tr>
                 ) : (
                   groupPreviewRows.map(({ calendar, preview }) => (
                     <tr key={`preview-${calendar.id}`}>
@@ -1152,21 +1222,21 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                 <input key={`preview-deploy-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
               ))}
               <input type="hidden" name="return_to" value={returnPath} />
-              <button type="submit">Confirmer et deployer</button>
+              <button type="submit">{t("admin.calendars.confirm_and_deploy")}</button>
             </form>
             <form action={syncAdminQuoteSchoolCalendarGroupAction}>
               {previewGroup.items.map((item) => (
                 <input key={`preview-sync-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
               ))}
               <input type="hidden" name="return_to" value={returnPath} />
-              <button type="submit" className="ghost">Resynchroniser ce groupe</button>
+              <button type="submit" className="ghost">{t("admin.calendars.resync_group")}</button>
             </form>
             <form action={removeAdminQuoteSchoolCalendarGroupDeploymentAction}>
               {previewGroup.items.map((item) => (
                 <input key={`preview-remove-${item.id}`} type="hidden" name="calendar_ids" value={item.id} />
               ))}
               <input type="hidden" name="return_to" value={returnPath} />
-              <button type="submit" className="danger">Retirer les creneaux de ce groupe</button>
+              <button type="submit" className="danger">{t("admin.calendars.remove_group_slots")}</button>
             </form>
           </div>
         </section>
@@ -1176,10 +1246,12 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
         <section className="card">
           <div className="row spread wrap gap-sm">
             <div>
-              <h3>Tous les creneaux du bloc</h3>
-              <p className="muted">
-                {generatedGroup.name} · {generatedGroup.school_year_label} · {generatedGroup.location_names.join(", ")}
-              </p>
+              <h3>{t("admin.calendars.group_slots_title")}</h3>
+              <p className="muted">{t("admin.calendars.group_slots_subtitle", {
+                name: generatedGroup.name,
+                school_year: generatedGroup.school_year_label,
+                locations: generatedGroup.location_names.join(", "),
+              })}</p>
             </div>
             <Link
               className="ghost"
@@ -1192,21 +1264,21 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                 editGroup: editGroupKey,
               })}
             >
-              Fermer
+              {t("common.close")}
             </Link>
           </div>
           {generatedGroupSlots.length === 0 ? (
-            <p className="muted">Aucun creneau genere pour ce bloc.</p>
+            <p className="muted">{t("admin.calendars.no_group_slots")}</p>
           ) : (
             <div className="table-wrap top-gap-sm">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Local</th>
-                    <th>Date</th>
-                    <th>Raisons</th>
-                    <th>Statut</th>
-                    <th>Session</th>
+                    <th>{t("common.location")}</th>
+                    <th>{t("common.date")}</th>
+                    <th>{t("admin.calendars.column_reasons")}</th>
+                    <th>{t("common.status")}</th>
+                    <th>{t("admin.calendars.column_session")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1214,7 +1286,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                     <tr key={`${slot.session_id}-${slot.location_name}`}>
                       <td>{slot.location_name}</td>
                       <td>{slot.date}</td>
-                      <td>{slot.reason_types.join(", ") || "-"}</td>
+                      <td>{deploymentReasonListLabel(slot.reason_types, language)}</td>
                       <td>{slot.status}</td>
                       <td>{slot.title}</td>
                     </tr>
@@ -1229,7 +1301,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       {selectedCalendar ? (
         <section className="card">
           <div className="row spread wrap gap-sm">
-            <h3>Creneaux bloquants generes</h3>
+            <h3>{t("admin.calendars.generated_slots_title")}</h3>
             <Link
               className="ghost"
               href={buildCalendarsPath({
@@ -1241,30 +1313,31 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
                 generatedGroup: generatedGroupKey,
               })}
             >
-              Fermer
+              {t("common.close")}
             </Link>
           </div>
-          <p className="muted">
-            {selectedCalendar.name} · {locationById.get(selectedCalendar.location_id) || selectedCalendar.location_id}
-          </p>
+          <p className="muted">{t("admin.calendars.generated_slots_subtitle", {
+            name: selectedCalendar.name,
+            location: locationById.get(selectedCalendar.location_id) || selectedCalendar.location_id,
+          })}</p>
           {generatedSlots.length === 0 ? (
-            <p className="muted">Aucun creneau genere pour ce calendrier.</p>
+            <p className="muted">{t("admin.calendars.no_generated_slots")}</p>
           ) : (
             <div className="table-wrap top-gap-sm">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Raisons</th>
-                    <th>Statut</th>
-                    <th>Session</th>
+                    <th>{t("common.date")}</th>
+                    <th>{t("admin.calendars.column_reasons")}</th>
+                    <th>{t("common.status")}</th>
+                    <th>{t("admin.calendars.column_session")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {generatedSlots.map((slot) => (
                     <tr key={slot.session_id}>
                       <td>{slot.date}</td>
-                      <td>{slot.reason_types.join(", ") || "-"}</td>
+                      <td>{deploymentReasonListLabel(slot.reason_types, language)}</td>
                       <td>{slot.status}</td>
                       <td>{slot.title}</td>
                     </tr>
