@@ -432,15 +432,7 @@ function collectTypeformTemplatePricingRows(
   return rows;
 }
 
-const WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
-  { value: 0, label: "Lundi" },
-  { value: 1, label: "Mardi" },
-  { value: 2, label: "Mercredi" },
-  { value: 3, label: "Jeudi" },
-  { value: 4, label: "Vendredi" },
-  { value: 5, label: "Samedi" },
-  { value: 6, label: "Dimanche" },
-];
+const WEEKDAY_VALUES = [0, 1, 2, 3, 4, 5, 6] as const;
 
 const PAYMENT_PLAN_PRESET_OPTIONS: Array<{ value: string; payment_method: string; schedule_type: string }> = [
   { value: "Carte bancaire", payment_method: "CARD", schedule_type: "single" },
@@ -464,8 +456,19 @@ const PAYMENT_SCHEDULE_TYPE_OPTIONS: Array<{ value: string }> = [
 const PAYMENT_METHOD_OPTIONS = ["CARD", "CARD_MONTHLY", "CHECK", "BANK_TRANSFER", "CASH", "CARD_4X_FEES"] as const;
 const MONTH_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
-function weekdayLabel(day: number): string {
-  return WEEKDAY_OPTIONS.find((option) => option.value === day)?.label ?? String(day);
+function weekdayLabel(day: number, language: UiLanguage): string {
+  if (day < 0 || day > 6) {
+    return String(day);
+  }
+  const locale = language === "en" ? "en-US" : "fr-FR";
+  const label = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(
+    new Date(Date.UTC(2026, 0, 5 + day)),
+  );
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function solfegeLevelLabel(level: string, language: UiLanguage): string {
+  return uiText(language, "admin.quote_config.solfege_level_option", { level });
 }
 
 function paymentPlanPresetLabel(value: string, language: UiLanguage): string {
@@ -590,7 +593,7 @@ function quoteBindingContextLabel(value: string | null, language: UiLanguage): s
   return value || uiText(language, "admin.quote_config.all_contexts");
 }
 
-function solfegeSlotsCsv(slots: Array<Record<string, unknown>>): string {
+function solfegeSlotsCsv(slots: Array<Record<string, unknown>>, language: UiLanguage): string {
   if (!slots.length) {
     return "";
   }
@@ -598,7 +601,7 @@ function solfegeSlotsCsv(slots: Array<Record<string, unknown>>): string {
     .map((slot) => {
       const weekdayRaw = Number.parseInt(String(slot.weekday ?? ""), 10);
       const weekdayText = Number.isFinite(weekdayRaw) && weekdayRaw >= 0 && weekdayRaw <= 6
-        ? `${weekdayLabel(weekdayRaw)}`
+        ? `${weekdayLabel(weekdayRaw, language)}`
         : "";
       const start = typeof slot.start_time === "string" ? slot.start_time : typeof slot.start === "string" ? slot.start : "";
       const end = typeof slot.end_time === "string" ? slot.end_time : typeof slot.end === "string" ? slot.end : "";
@@ -2167,74 +2170,74 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "solfege" ? (
         <section className="card">
-          <h3>Creneaux de solfege par niveau</h3>
-          <p className="muted">Un creneau = un jour + une heure de debut + une duree de niveau. L heure de fin est calculee automatiquement.</p>
+          <h3>{t("admin.quote_config.solfege_title")}</h3>
+          <p className="muted">{t("admin.quote_config.solfege_subtitle")}</p>
           <form action={upsertAdminSolfegeLevelRuleConfigAction} className="solfege-config-form">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
             <div className="grid cols-4 config-form-grid">
               <label>
-                Niveau
+                {t("admin.quote_config.solfege_level")}
                 <select name="level_code" defaultValue="1">
-                  <option value="1">Niveau 1</option>
-                  <option value="2">Niveau 2</option>
-                  <option value="3">Niveau 3</option>
-                  <option value="4">Niveau 4</option>
-                  <option value="5">Niveau 5</option>
+                  <option value="1">{solfegeLevelLabel("1", language)}</option>
+                  <option value="2">{solfegeLevelLabel("2", language)}</option>
+                  <option value="3">{solfegeLevelLabel("3", language)}</option>
+                  <option value="4">{solfegeLevelLabel("4", language)}</option>
+                  <option value="5">{solfegeLevelLabel("5", language)}</option>
                 </select>
               </label>
               <label>
-                Duree (min)
+                {t("admin.quote_config.solfege_duration_minutes")}
                 <input type="number" name="duration_minutes" min={10} max={180} defaultValue={30} required />
               </label>
               <label>
-                Local (optionnel)
+                {t("admin.quote_config.solfege_location_optional")}
                 <select name="location_id" defaultValue="">
-                  <option value="">Tous</option>
+                  <option value="">{t("common.all")}</option>
                   {locations.map((row) => (
                     <option key={row.id} value={row.id}>{row.name}</option>
                   ))}
                 </select>
               </label>
               <label>
-                Modalite
+                {t("admin.quote_config.solfege_modality")}
                 <select name="modality" defaultValue="ANY">
-                  <option value="ANY">Tous</option>
-                  <option value="ONLINE">En ligne</option>
-                  <option value="ONSITE">Presentiel</option>
+                  <option value="ANY">{t("common.all")}</option>
+                  <option value="ONLINE">{modalityLabel("ONLINE", language)}</option>
+                  <option value="ONSITE">{modalityLabel("ONSITE", language)}</option>
                 </select>
               </label>
             </div>
             <div className="solfege-slot-editor">
-              <h4>Lignes de creneaux</h4>
-              <p className="muted">Desktop first: renseignez simplement les paires jour + heure de debut. Laissez vide les lignes inutiles.</p>
+              <h4>{t("admin.quote_config.solfege_slot_lines")}</h4>
+              <p className="muted">{t("admin.quote_config.solfege_slot_lines_help_create")}</p>
               <div className="solfege-slot-grid top-gap-sm">
                 {Array.from({ length: 6 }).map((_, index) => (
                   <article key={`create-solfege-slot-${index}`} className="solfege-slot-row">
-                    <p className="solfege-slot-row-index">Creneau {index + 1}</p>
+                    <p className="solfege-slot-row-index">{t("admin.quote_config.solfege_slot_index", { index: index + 1 })}</p>
                     <label>
-                      Jour
+                      {t("admin.quote_config.solfege_day")}
                       <select name="slot_weekday" defaultValue="">
-                        <option value="">Selection a faire</option>
-                        {WEEKDAY_OPTIONS.map((day) => (
-                          <option key={`create-solfege-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
+                        <option value="">{t("admin.quote_config.select_option")}</option>
+                        {WEEKDAY_VALUES.map((day) => (
+                          <option key={`create-solfege-slot-day-${index}-${day}`} value={day}>{weekdayLabel(day, language)}</option>
                         ))}
                       </select>
                     </label>
                     <label>
-                      Heure debut
+                      {t("admin.quote_config.solfege_start_time")}
                       <input type="time" name="slot_start_time" defaultValue="" />
                     </label>
-                    <p className="muted solfege-slot-row-end">Heure fin: calculee automatiquement</p>
+                    <p className="muted solfege-slot-row-end">{t("admin.quote_config.solfege_end_time_auto")}</p>
                   </article>
                 ))}
               </div>
             </div>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
-              Active
+              {t("common.active")}
             </label>
             <div className="row">
-              <button type="submit">Ajouter / mettre a jour</button>
+              <button type="submit">{t("admin.quote_config.solfege_add_or_update")}</button>
             </div>
           </form>
 
@@ -2242,92 +2245,96 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Niveau</th>
-                  <th>Duree</th>
-                  <th>Creneaux</th>
-                  <th>Local</th>
-                  <th>Mode</th>
-                  <th>Statut</th>
-                  <th>Actions</th>
+                  <th>{t("admin.quote_config.solfege_level")}</th>
+                  <th>{t("admin.quote_config.solfege_duration")}</th>
+                  <th>{t("admin.quote_config.solfege_slots")}</th>
+                  <th>{t("admin.quote_config.solfege_location")}</th>
+                  <th>{t("admin.quote_config.solfege_mode")}</th>
+                  <th>{t("common.status")}</th>
+                  <th>{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {solfegeRules.length === 0 ? (
-                  <tr><td colSpan={7}><p className="muted">Aucune regle solfege.</p></td></tr>
+                  <tr><td colSpan={7}><p className="muted">{t("admin.quote_config.solfege_no_rules")}</p></td></tr>
                 ) : (
                   solfegeRules.map((row) => {
                     const editSlots = solfegeSlotRows(row.allowed_time_slots);
                     const levelKnown = ["1", "2", "3", "4", "5"].includes(row.level_code);
                     return (
                       <tr key={row.id}>
-                        <td>Niveau {row.level_code}</td>
-                        <td>{row.duration_minutes} min</td>
-                        <td>{solfegeSlotsCsv(row.allowed_time_slots) || "-"}</td>
-                        <td>{row.location_id ? (locationById.get(row.location_id) || row.location_id) : "Tous"}</td>
+                        <td>{solfegeLevelLabel(row.level_code, language)}</td>
+                        <td>{t("admin.quote_config.solfege_duration_short", { minutes: row.duration_minutes })}</td>
+                        <td>{solfegeSlotsCsv(row.allowed_time_slots, language) || "-"}</td>
+                        <td>{row.location_id ? (locationById.get(row.location_id) || row.location_id) : t("common.all")}</td>
                         <td>{modalityLabel(row.modality, language)}</td>
-                        <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Active" : "Inactive"}</span></td>
+                        <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span></td>
                         <td>
                           <details>
-                            <summary className="mode-link">Modifier</summary>
+                            <summary className="mode-link">{t("common.edit")}</summary>
                             <form action={upsertAdminSolfegeLevelRuleConfigAction} className="solfege-config-form top-gap-sm">
                               <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
                               <div className="grid cols-4 config-form-grid">
                                 <label>
-                                  Niveau
+                                  {t("admin.quote_config.solfege_level")}
                                   <select name="level_code" defaultValue={row.level_code}>
-                                    {!levelKnown ? <option value={row.level_code}>Niveau {row.level_code}</option> : null}
-                                    <option value="1">Niveau 1</option>
-                                    <option value="2">Niveau 2</option>
-                                    <option value="3">Niveau 3</option>
-                                    <option value="4">Niveau 4</option>
-                                    <option value="5">Niveau 5</option>
+                                    {!levelKnown ? <option value={row.level_code}>{solfegeLevelLabel(row.level_code, language)}</option> : null}
+                                    <option value="1">{solfegeLevelLabel("1", language)}</option>
+                                    <option value="2">{solfegeLevelLabel("2", language)}</option>
+                                    <option value="3">{solfegeLevelLabel("3", language)}</option>
+                                    <option value="4">{solfegeLevelLabel("4", language)}</option>
+                                    <option value="5">{solfegeLevelLabel("5", language)}</option>
                                   </select>
                                 </label>
                                 <label>
-                                  Duree (min)
+                                  {t("admin.quote_config.solfege_duration_minutes")}
                                   <input type="number" name="duration_minutes" min={10} max={180} defaultValue={row.duration_minutes} required />
                                 </label>
                                 <label>
-                                  Local
+                                  {t("admin.quote_config.solfege_location")}
                                   <select name="location_id" defaultValue={row.location_id || ""}>
-                                    <option value="">Tous</option>
+                                    <option value="">{t("common.all")}</option>
                                     {locations.map((location) => (
                                       <option key={location.id} value={location.id}>{location.name}</option>
                                     ))}
                                   </select>
                                 </label>
                                 <label>
-                                  Modalite
+                                  {t("admin.quote_config.solfege_modality")}
                                   <select name="modality" defaultValue={(row.modality || "ANY").toUpperCase()}>
-                                    <option value="ANY">Tous</option>
-                                    <option value="ONLINE">En ligne</option>
-                                    <option value="ONSITE">Presentiel</option>
+                                    <option value="ANY">{t("common.all")}</option>
+                                    <option value="ONLINE">{modalityLabel("ONLINE", language)}</option>
+                                    <option value="ONSITE">{modalityLabel("ONSITE", language)}</option>
                                   </select>
                                 </label>
                               </div>
                               <div className="solfege-slot-editor">
-                                <h4>Lignes de creneaux</h4>
-                                <p className="muted">Meme logique: un creneau = jour + heure de debut. L heure de fin est recalculee selon la duree.</p>
+                                <h4>{t("admin.quote_config.solfege_slot_lines")}</h4>
+                                <p className="muted">{t("admin.quote_config.solfege_slot_lines_help_edit")}</p>
                                 <div className="solfege-slot-grid top-gap-sm">
                                   {Array.from({ length: Math.max(6, editSlots.length) }).map((_, index) => {
                                     const slot = editSlots[index];
                                     return (
                                       <article key={`${row.id}-slot-edit-${index}`} className="solfege-slot-row">
-                                        <p className="solfege-slot-row-index">Creneau {index + 1}</p>
+                                        <p className="solfege-slot-row-index">{t("admin.quote_config.solfege_slot_index", { index: index + 1 })}</p>
                                         <label>
-                                          Jour
+                                          {t("admin.quote_config.solfege_day")}
                                           <select name="slot_weekday" defaultValue={slot ? String(slot.weekday) : ""}>
-                                            <option value="">Selection a faire</option>
-                                            {WEEKDAY_OPTIONS.map((day) => (
-                                              <option key={`${row.id}-slot-day-${index}-${day.value}`} value={day.value}>{day.label}</option>
+                                            <option value="">{t("admin.quote_config.select_option")}</option>
+                                            {WEEKDAY_VALUES.map((day) => (
+                                              <option key={`${row.id}-slot-day-${index}-${day}`} value={day}>{weekdayLabel(day, language)}</option>
                                             ))}
                                           </select>
                                         </label>
                                         <label>
-                                          Heure debut
+                                          {t("admin.quote_config.solfege_start_time")}
                                           <input type="time" name="slot_start_time" defaultValue={slot?.start || ""} />
                                         </label>
-                                        <p className="muted solfege-slot-row-end">Heure fin: {slot?.end || "Calculee automatiquement"}</p>
+                                        <p className="muted solfege-slot-row-end">
+                                          {slot?.end
+                                            ? t("admin.quote_config.solfege_end_time_value", { time: slot.end })
+                                            : t("admin.quote_config.solfege_end_time_auto")}
+                                        </p>
                                       </article>
                                     );
                                   })}
@@ -2335,16 +2342,16 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                               </div>
                               <label className="checkline">
                                 <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                                Active
+                                {t("common.active")}
                               </label>
                               <div className="row">
-                                <button type="submit">Enregistrer</button>
+                                <button type="submit">{t("common.save")}</button>
                               </div>
                             </form>
                             <form action={deleteAdminSolfegeLevelRuleConfigAction} className="row top-gap-sm">
                               <input type="hidden" name="rule_id" value={row.id} />
                               <input type="hidden" name="return_to" value={buildQuotesConfigHref("solfege")} />
-                              <button type="submit" className="danger">Supprimer</button>
+                              <button type="submit" className="danger">{t("common.delete")}</button>
                             </form>
                           </details>
                         </td>
