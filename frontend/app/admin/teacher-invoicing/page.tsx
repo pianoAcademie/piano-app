@@ -3,27 +3,30 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import AdminTeacherInvoicingNav from "../../../components/admin-teacher-invoicing-nav";
+import { backendRequest } from "../../../lib/backend";
+import type { UserOut } from "../../../lib/types";
+import { normalizeUiLanguage, uiText } from "../../../lib/ui-i18n";
 
-const HUB_LINKS: Array<{ href: string; title: string; description: string }> = [
+const HUB_LINKS: Array<{ href: string; titleKey: string; descriptionKey: string }> = [
   {
     href: "/admin/teacher-invoicing/statements",
-    title: "Releves",
-    description: "Controle des releves, statuts, validation et suivi des litiges.",
+    titleKey: "admin.teacher_invoicing.statements",
+    descriptionKey: "admin.teacher_invoicing.hub_statements_description",
   },
   {
     href: "/admin/teacher-invoicing/invoices",
-    title: "Factures",
-    description: "Liste des factures professeurs, statuts et historique des paiements.",
+    titleKey: "common.invoices",
+    descriptionKey: "admin.teacher_invoicing.hub_invoices_description",
   },
   {
     href: "/admin/teacher-invoicing/template",
-    title: "Template de facture",
-    description: "Modele actif, variables et previsualisation PDF.",
+    titleKey: "admin.teacher_invoicing.invoice_template",
+    descriptionKey: "admin.teacher_invoicing.hub_template_description",
   },
   {
     href: "/admin/teacher-invoicing/salary-grid",
-    title: "Grille de salaire",
-    description: "Periodes, regles par activite et gestion des tranches de remuneration.",
+    titleKey: "admin.teacher_invoicing.salary_grid",
+    descriptionKey: "admin.teacher_invoicing.hub_salary_grid_description",
   },
 ];
 
@@ -32,19 +35,24 @@ export default async function AdminTeacherInvoicingHubPage(): Promise<JSX.Elemen
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
 
   return (
     <section className="admin-page-grid">
-      <AdminTeacherInvoicingNav activeTab="hub" />
+      <AdminTeacherInvoicingNav activeTab="hub" language={language} />
 
       <section className="grid cols-2 teacher-invoicing-hub-grid">
         {HUB_LINKS.map((entry) => (
           <article key={entry.href} className="card teacher-invoicing-hub-card">
-            <h3>{entry.title}</h3>
-            <p className="muted">{entry.description}</p>
+            <h3>{uiText(language, entry.titleKey)}</h3>
+            <p className="muted">{uiText(language, entry.descriptionKey)}</p>
             <div className="row top-gap-sm">
               <Link className="mode-link" href={entry.href}>
-                Ouvrir
+                {uiText(language, "common.open")}
               </Link>
             </div>
           </article>

@@ -15,7 +15,9 @@ import type {
   AdminConfigAccountOut,
   AdminProfessorPayGridPeriodDetailOut,
   AdminProfessorPayGridPeriodOut,
+  UserOut,
 } from "../../../../lib/types";
+import { normalizeUiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -36,6 +38,11 @@ export default async function AdminTeacherInvoicingSalaryGridPage({
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
 
   const params = searchParams ?? {};
   const selectedGridPeriodIdParam = readParam(params, "grid_period").trim();
@@ -97,13 +104,13 @@ export default async function AdminTeacherInvoicingSalaryGridPage({
 
   return (
     <section className="admin-page-grid">
-      <AdminTeacherInvoicingNav activeTab="salary-grid" />
+      <AdminTeacherInvoicingNav activeTab="salary-grid" language={language} />
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {loadErrors.length > 0 ? (
         <section className="card">
-          <h3>Erreurs de chargement</h3>
+          <h3>{uiText(language, "admin.teacher_invoicing.load_errors")}</h3>
           <ul className="config-error-list">
             {loadErrors.map((message) => (
               <li key={message} className="flash-err">

@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 
 import AdminTeacherInvoicingNav from "../../../../components/admin-teacher-invoicing-nav";
 import { backendRequest } from "../../../../lib/backend";
-import type { ProfessorStatementRow } from "../../../../lib/types";
+import type { ProfessorStatementRow, UserOut } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -16,28 +17,28 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
 }
 
-function payoutStatusLabel(value: ProfessorStatementRow["payout_status"]): string {
+function payoutStatusLabel(value: ProfessorStatementRow["payout_status"], language: UiLanguage): string {
   if (value === "PAID") {
-    return "Paye";
+    return uiText(language, "admin.teacher_invoicing.payout_paid");
   }
   if (value === "APPROVED") {
-    return "Valide";
+    return uiText(language, "admin.teacher_invoicing.payout_approved");
   }
   if (value === "PENDING") {
-    return "A verifier";
+    return uiText(language, "admin.teacher_invoicing.payout_pending");
   }
   return "-";
 }
 
-function statementAmountLabel(row: ProfessorStatementRow): string {
+function statementAmountLabel(row: ProfessorStatementRow, language: UiLanguage): string {
   if (!row.amount_snapshot) {
     return "-";
   }
@@ -45,7 +46,7 @@ function statementAmountLabel(row: ProfessorStatementRow): string {
   if (!Number.isFinite(amount)) {
     return `${row.amount_snapshot} ${row.currency_snapshot ?? ""}`.trim();
   }
-  return `${amount.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${row.currency_snapshot ?? "EUR"}`;
+  return `${amount.toLocaleString(localeForUiLanguage(language), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${row.currency_snapshot ?? "EUR"}`;
 }
 
 export default async function AdminTeacherInvoicingStatementsPage({
@@ -57,6 +58,12 @@ export default async function AdminTeacherInvoicingStatementsPage({
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const query = readParam(searchParams, "q").trim();
   const statusFilter = readParam(searchParams, "status").trim().toUpperCase();
@@ -87,68 +94,68 @@ export default async function AdminTeacherInvoicingStatementsPage({
 
   return (
     <section className="admin-page-grid">
-      <AdminTeacherInvoicingNav activeTab="statements" />
+      <AdminTeacherInvoicingNav activeTab="statements" language={language} />
 
-      {!statementsResult.ok ? <section className="flash-err">Erreur backend: {statementsResult.message}</section> : null}
+      {!statementsResult.ok ? <section className="flash-err">{t("admin.teacher_invoicing.backend_error")}: {statementsResult.message}</section> : null}
 
       <section className="card">
         <div className="row spread">
-          <h3>Releves</h3>
+          <h3>{t("admin.teacher_invoicing.statements")}</h3>
           <form method="get" className="row catalog-admin-filters">
             <label>
-              Recherche
-              <input type="search" name="q" defaultValue={query} placeholder="Professeur, activite, lieu..." />
+              {uiText(language, "common.search")}
+              <input type="search" name="q" defaultValue={query} placeholder={t("admin.teacher_invoicing.statements_search_placeholder")} />
             </label>
             <label>
-              Statut
+              {uiText(language, "common.status")}
               <select name="status" defaultValue={statusFilter}>
-                <option value="">Tous</option>
-                <option value="PENDING">A verifier</option>
-                <option value="APPROVED">Valides</option>
-                <option value="PAID">Payes</option>
+                <option value="">{uiText(language, "common.all")}</option>
+                <option value="PENDING">{t("admin.teacher_invoicing.payout_pending")}</option>
+                <option value="APPROVED">{t("admin.teacher_invoicing.payout_approved_plural")}</option>
+                <option value="PAID">{t("admin.teacher_invoicing.payout_paid_plural")}</option>
               </select>
             </label>
-            <button type="submit">Filtrer</button>
+            <button type="submit">{uiText(language, "common.apply")}</button>
             <Link className="ghost" href="/admin/teacher-invoicing/statements">
-              Reinitialiser
+              {uiText(language, "common.reset")}
             </Link>
           </form>
         </div>
-        <p className="muted">Controle des releves, validation et suivi des litiges avant generation de facture.</p>
+        <p className="muted">{t("admin.teacher_invoicing.statements_subtitle")}</p>
       </section>
 
       <section className="card table-wrap">
         <table className="data-table">
           <thead>
             <tr>
-              <th>Professeur</th>
-              <th>Date / Horaire</th>
-              <th>Activite</th>
-              <th>Lieu</th>
-              <th>Statut releve</th>
-              <th>Montant</th>
-              <th>Action</th>
+              <th>{t("admin.teacher_invoicing.teacher")}</th>
+              <th>{t("admin.teacher_invoicing.date_time")}</th>
+              <th>{t("admin.teacher_invoicing.activity")}</th>
+              <th>{uiText(language, "common.location")}</th>
+              <th>{t("admin.teacher_invoicing.statement_status")}</th>
+              <th>{uiText(language, "common.amount")}</th>
+              <th>{uiText(language, "client.action")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={7}>
-                  <p className="muted">Aucune ligne de releve pour ces filtres.</p>
+                  <p className="muted">{t("admin.teacher_invoicing.no_statements")}</p>
                 </td>
               </tr>
             ) : (
               rows.map((row) => (
                 <tr key={row.session_id}>
                   <td>{row.professor_name}</td>
-                  <td>{formatDate(row.start_at_utc)}</td>
+                  <td>{formatDate(row.start_at_utc, language)}</td>
                   <td>{row.course_type_name}</td>
                   <td>{row.location_name}</td>
-                  <td>{payoutStatusLabel(row.payout_status)}</td>
-                  <td>{statementAmountLabel(row)}</td>
+                  <td>{payoutStatusLabel(row.payout_status, language)}</td>
+                  <td>{statementAmountLabel(row, language)}</td>
                   <td>
                     <Link className="mode-link" href={`/admin/professors/${row.professor_id}?tab=solde`}>
-                      Ouvrir
+                      {uiText(language, "common.open")}
                     </Link>
                   </td>
                 </tr>

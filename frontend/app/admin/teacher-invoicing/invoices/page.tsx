@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 
 import AdminTeacherInvoicingNav from "../../../../components/admin-teacher-invoicing-nav";
 import { backendRequest } from "../../../../lib/backend";
-import type { AdminProfessorSalaryPaymentOut } from "../../../../lib/types";
+import type { AdminProfessorSalaryPaymentOut, UserOut } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -23,22 +24,30 @@ function firstDayOfCurrentMonthIsoDate(): string {
   return `${year}-${month}-01`;
 }
 
-function paymentMethodLabel(method: AdminProfessorSalaryPaymentOut["payment_method"]): string {
-  if (method === "BANK_TRANSFER") {
-    return "Virement";
+function formatDate(value: string, language: UiLanguage): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value || "-";
   }
-  if (method === "CHEQUE") {
-    return "Cheque";
-  }
-  return "Especes";
+  return parsed.toLocaleDateString(localeForUiLanguage(language), { dateStyle: "short" });
 }
 
-function formatMoney(value: string, currency: string): string {
+function paymentMethodUiLabel(method: AdminProfessorSalaryPaymentOut["payment_method"], language: UiLanguage): string {
+  if (method === "BANK_TRANSFER") {
+    return uiText(language, "admin.salary.bank_transfer");
+  }
+  if (method === "CHEQUE") {
+    return uiText(language, "admin.salary.cheque");
+  }
+  return uiText(language, "admin.salary.cash");
+}
+
+function formatMoney(value: string, currency: string, language: UiLanguage): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) {
     return `${value} ${currency}`;
   }
-  return `${amount.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+  return `${amount.toLocaleString(localeForUiLanguage(language), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
 }
 
 export default async function AdminTeacherInvoicingInvoicesPage({
@@ -50,6 +59,12 @@ export default async function AdminTeacherInvoicingInvoicesPage({
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const referenceDate = readParam(searchParams, "reference_date").trim() || firstDayOfCurrentMonthIsoDate();
   const query = readParam(searchParams, "q").trim().toLowerCase();
@@ -83,44 +98,44 @@ export default async function AdminTeacherInvoicingInvoicesPage({
 
   return (
     <section className="admin-page-grid">
-      <AdminTeacherInvoicingNav activeTab="invoices" />
+      <AdminTeacherInvoicingNav activeTab="invoices" language={language} />
 
-      {!paymentsResult.ok ? <section className="flash-err">Erreur backend: {paymentsResult.message}</section> : null}
+      {!paymentsResult.ok ? <section className="flash-err">{t("admin.teacher_invoicing.backend_error")}: {paymentsResult.message}</section> : null}
 
       <section className="card">
         <div className="row spread">
-          <h3>Factures</h3>
+          <h3>{uiText(language, "common.invoices")}</h3>
           <form method="get" className="row catalog-admin-filters">
             <label>
-              Date de reference
+              {uiText(language, "admin.salary.reference_date")}
               <input type="date" name="reference_date" defaultValue={referenceDate} />
             </label>
             <label>
-              Recherche
-              <input type="search" name="q" defaultValue={readParam(searchParams, "q")} placeholder="Professeur, email, facture..." />
+              {uiText(language, "common.search")}
+              <input type="search" name="q" defaultValue={readParam(searchParams, "q")} placeholder={t("admin.teacher_invoicing.invoices_search_placeholder")} />
             </label>
-            <button type="submit">Filtrer</button>
+            <button type="submit">{uiText(language, "common.apply")}</button>
             <Link className="ghost" href="/admin/teacher-invoicing/invoices">
-              Reinitialiser
+              {uiText(language, "common.reset")}
             </Link>
           </form>
         </div>
-        <p className="muted">Suivi des factures professeurs, statuts de paiement et historique.</p>
+        <p className="muted">{t("admin.teacher_invoicing.invoices_subtitle")}</p>
       </section>
 
       <section className="grid cols-3">
         <article className="card">
-          <h3>Lignes</h3>
+          <h3>{t("admin.teacher_invoicing.rows")}</h3>
           <p className="muted">{rows.length}</p>
         </article>
         <article className="card">
-          <h3>Total TTC</h3>
-          <p className="muted">{formatMoney(totalTtc.toFixed(2), currency)}</p>
+          <h3>{t("admin.teacher_invoicing.total_ttc")}</h3>
+          <p className="muted">{formatMoney(totalTtc.toFixed(2), currency, language)}</p>
         </article>
         <article className="card">
-          <h3>Action rapide</h3>
+          <h3>{t("admin.teacher_invoicing.quick_action")}</h3>
           <Link className="mode-link" href="/admin/salary-payments">
-            Ouvrir Paiement des salaires
+            {t("admin.teacher_invoicing.open_salary_payments")}
           </Link>
         </article>
       </section>
@@ -129,33 +144,33 @@ export default async function AdminTeacherInvoicingInvoicesPage({
         <table className="data-table">
           <thead>
             <tr>
-              <th>Date paiement</th>
-              <th>Professeur</th>
-              <th>Email</th>
-              <th>Facture</th>
-              <th>Mode</th>
-              <th>HT</th>
-              <th>TTC</th>
-              <th>Lignes reglees</th>
+              <th>{uiText(language, "admin.salary.payment_date")}</th>
+              <th>{t("admin.teacher_invoicing.teacher")}</th>
+              <th>{uiText(language, "common.email")}</th>
+              <th>{uiText(language, "common.invoices")}</th>
+              <th>{uiText(language, "admin.salary.payment_method")}</th>
+              <th>{uiText(language, "common.ht")}</th>
+              <th>{uiText(language, "common.ttc")}</th>
+              <th>{uiText(language, "admin.salary.settled_lines")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={8}>
-                  <p className="muted">Aucune facture professeur pour ces filtres.</p>
+                  <p className="muted">{t("admin.teacher_invoicing.no_invoices")}</p>
                 </td>
               </tr>
             ) : (
               rows.map((row) => (
                 <tr key={row.id}>
-                  <td>{row.payment_date}</td>
+                  <td>{formatDate(row.payment_date, language)}</td>
                   <td>{row.professor_first_name} {row.professor_last_name}</td>
                   <td>{row.professor_email}</td>
                   <td>{row.invoice_number}</td>
-                  <td>{paymentMethodLabel(row.payment_method)}</td>
-                  <td>{formatMoney(row.amount_excl_vat, row.currency_code)}</td>
-                  <td>{formatMoney(row.amount_incl_vat, row.currency_code)}</td>
+                  <td>{paymentMethodUiLabel(row.payment_method, language)}</td>
+                  <td>{formatMoney(row.amount_excl_vat, row.currency_code, language)}</td>
+                  <td>{formatMoney(row.amount_incl_vat, row.currency_code, language)}</td>
                   <td>{row.settled_payout_count}</td>
                 </tr>
               ))
