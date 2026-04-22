@@ -294,25 +294,28 @@ function moneyLabel(value: string | number | null | undefined, currency = "EUR")
   }
 }
 
-function pricingUnitLabel(value: string | null): string {
+function pricingUnitLabel(value: string | null, language: UiLanguage): string {
   const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "per_session") {
-    return "Par cours";
+    return uiText(language, "admin.quote_config.pricing_unit_per_session");
   }
   if (normalized === "hourly") {
-    return "Horaire";
+    return uiText(language, "admin.quote_config.pricing_unit_hourly");
   }
   if (normalized === "fixed") {
-    return "Forfait";
+    return uiText(language, "admin.quote_config.pricing_unit_fixed");
   }
   return value || "-";
 }
 
-function computedActivityFallbackPrice(activity: AdminActivityOut): { label: string; amountTtc: number | null; tone: "ok" | "warn" | "off" } {
+function computedActivityFallbackPrice(
+  activity: AdminActivityOut,
+  language: UiLanguage,
+): { label: string; amountTtc: number | null; tone: "ok" | "warn" | "off" } {
   const direct = Number(String(activity.default_course_rate_ttc ?? "").trim());
   if (Number.isFinite(direct) && direct > 0) {
     return {
-      label: "Tarif par cours par defaut activite",
+      label: uiText(language, "admin.quote_config.fallback_course_rate"),
       amountTtc: direct,
       tone: "warn",
     };
@@ -321,13 +324,13 @@ function computedActivityFallbackPrice(activity: AdminActivityOut): { label: str
   const duration = Number(activity.duration_minutes || 0);
   if (Number.isFinite(hourly) && hourly > 0 && Number.isFinite(duration) && duration > 0) {
     return {
-      label: "Tarif horaire par defaut activite",
+      label: uiText(language, "admin.quote_config.fallback_hourly_rate"),
       amountTtc: hourly * (duration / 60),
       tone: "warn",
     };
   }
   return {
-    label: "Aucune source tarifaire de secours",
+    label: uiText(language, "admin.quote_config.fallback_none"),
     amountTtc: null,
     tone: "off",
   };
@@ -362,9 +365,9 @@ function typeformTemplatePriceMode(template: Record<string, unknown>): "override
   return "fallback";
 }
 
-function typeformConditionsLabel(rawWhen: unknown): string {
+function typeformConditionsLabel(rawWhen: unknown, language: UiLanguage): string {
   if (!rawWhen || typeof rawWhen !== "object" || Array.isArray(rawWhen)) {
-    return "Toujours";
+    return uiText(language, "admin.quote_config.always");
   }
   const entries = Object.entries(rawWhen as Record<string, unknown>)
     .map(([key, rawValue]) => {
@@ -376,7 +379,7 @@ function typeformConditionsLabel(rawWhen: unknown): string {
       return `${key}: ${labels.join(" / ")}`;
     })
     .filter(Boolean);
-  return entries.length > 0 ? entries.join(" · ") : "Toujours";
+  return entries.length > 0 ? entries.join(" · ") : uiText(language, "admin.quote_config.always");
 }
 
 function collectTypeformTemplatePricingRows(
@@ -384,9 +387,10 @@ function collectTypeformTemplatePricingRows(
   options: {
     catalogId: string;
     activityByCode: ReadonlyMap<string, AdminActivityOut>;
+    language: UiLanguage;
   },
 ): TypeformTemplatePricingRow[] {
-  const { catalogId, activityByCode } = options;
+  const { catalogId, activityByCode, language } = options;
   const rows: TypeformTemplatePricingRow[] = [];
   for (const config of configs) {
     if (config.default_pricing_catalog_id !== catalogId) {
@@ -410,7 +414,7 @@ function collectTypeformTemplatePricingRows(
       const kitCode = String(template.kit_code ?? "").trim();
       const itemCode = activityCode || productCode || kitCode || null;
       const activity = activityCode ? activityByCode.get(activityCode) : undefined;
-      const itemLabel = activity?.name || String(template.title ?? "").trim() || itemCode || `Ligne ${index + 1}`;
+      const itemLabel = activity?.name || String(template.title ?? "").trim() || itemCode || uiText(language, "admin.quote_config.line_index", { index: index + 1 });
       rows.push({
         key: `${config.id}-${index}-${itemCode ?? "line"}`,
         formId: config.typeform_form_id,
@@ -421,7 +425,7 @@ function collectTypeformTemplatePricingRows(
         itemCode,
         mode,
         amountTtc,
-        conditionsLabel: typeformConditionsLabel(template.when),
+        conditionsLabel: typeformConditionsLabel(template.when, language),
       });
     });
   }
@@ -527,18 +531,46 @@ function paymentScheduleVisibilityFlag(rules: Record<string, unknown>, key: "pub
   return Boolean((raw as Record<string, unknown>)[key]);
 }
 
-function modalityLabel(value: string | null): string {
+function modalityLabel(value: string | null, language: UiLanguage): string {
   const normalized = (value || "").trim().toUpperCase();
   if (normalized === "ONLINE") {
-    return "En ligne";
+    return uiText(language, "admin.quote_config.modality_online");
   }
   if (normalized === "ONSITE") {
-    return "Presentiel";
+    return uiText(language, "admin.quote_config.modality_onsite");
   }
   if (normalized === "ANY") {
-    return "Tous";
+    return uiText(language, "common.all");
   }
   return "-";
+}
+
+function quoteBindingProspectTypeLabel(value: string | null, language: UiLanguage): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return uiText(language, "common.all");
+  }
+  if (normalized === "adult") {
+    return uiText(language, "admin.quote_config.prospect_type_adult");
+  }
+  if (normalized === "child") {
+    return uiText(language, "admin.quote_config.prospect_type_child");
+  }
+  return value || uiText(language, "common.all");
+}
+
+function quoteBindingContextLabel(value: string | null, language: UiLanguage): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return uiText(language, "admin.quote_config.all_contexts");
+  }
+  if (normalized === "acquisition") {
+    return uiText(language, "admin.quote_config.context_acquisition");
+  }
+  if (normalized === "active_client") {
+    return uiText(language, "admin.quote_config.context_active_client");
+  }
+  return value || uiText(language, "admin.quote_config.all_contexts");
 }
 
 function solfegeSlotsCsv(slots: Array<Record<string, unknown>>): string {
@@ -850,26 +882,26 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "types" ? (
         <section className="card">
-          <h3>Types de devis</h3>
-          <p className="muted">Le code technique est genere automatiquement a partir du nom.</p>
+          <h3>{t("admin.quote_config.types_title")}</h3>
+          <p className="muted">{t("admin.quote_config.types_subtitle")}</p>
           <form action={createAdminQuoteTypeConfigAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("types")} />
             <label className="span-2">
-              Nom
-              <input type="text" name="name" required maxLength={180} placeholder="Forfait standard" />
+              {t("common.name")}
+              <input type="text" name="name" required maxLength={180} placeholder={t("admin.quote_config.quote_type_name_placeholder")} />
             </label>
             <label>
-              Delai expiration (jours)
+              {t("admin.quote_config.expiry_days")}
               <input type="number" name="default_expiry_days" min={1} max={120} defaultValue={10} required />
             </label>
             <label>
-              Annee scolaire par defaut
-              <input type="text" name="school_year_label" maxLength={40} placeholder="2026-2027" />
+              {t("admin.quote_config.default_school_year")}
+              <input type="text" name="school_year_label" maxLength={40} placeholder={t("admin.quote_config.school_year_placeholder")} />
             </label>
             <label className="span-2">
-              Formule rattachee
+              {t("admin.quote_config.linked_formula")}
               <select name="formula_id" defaultValue="">
-                <option value="">Aucune</option>
+                <option value="">{t("admin.quote_config.none_option")}</option>
                 {formulas.map((formula) => (
                   <option key={formula.id} value={formula.id}>
                     {formula.name}
@@ -878,54 +910,57 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               </select>
             </label>
             <label className="span-3">
-              Description
+              {t("common.description")}
               <input type="text" name="description" maxLength={2000} />
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
-              Actif
+              {t("common.active")}
             </label>
             <div className="row span-4">
-              <button type="submit">Ajouter le type</button>
+              <button type="submit">{t("admin.quote_config.add_quote_type")}</button>
             </div>
           </form>
 
           <div className="list top-gap-sm">
-            {quoteTypes.length === 0 ? <p className="muted">Aucun type de devis.</p> : null}
+            {quoteTypes.length === 0 ? <p className="muted">{t("admin.quote_config.no_quote_types")}</p> : null}
             {quoteTypes.map((row) => (
               <article key={row.id} className="item">
                 <div className="row spread wrap gap-sm">
                   <div>
                     <strong>{row.name}</strong>
-                    <p className="muted">{row.code} · Expiration {row.default_expiry_days} jours</p>
+                    <p className="muted">{t("admin.quote_config.quote_type_meta", { code: row.code, days: row.default_expiry_days })}</p>
                     <p className="muted">
-                      Formule: {row.formula_name || "-"} · Annee scolaire: {row.school_year_label || "-"}
+                      {t("admin.quote_config.quote_type_formula_school_year", {
+                        formula: row.formula_name || "-",
+                        school_year: row.school_year_label || "-",
+                      })}
                     </p>
-                    <small className="muted">{row.description || "Sans description"}</small>
+                    <small className="muted">{row.description || t("admin.quote_config.no_description")}</small>
                   </div>
-                  <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span>
+                  <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span>
                 </div>
                 <details>
-                  <summary className="mode-link">Modifier</summary>
+                  <summary className="mode-link">{t("common.edit")}</summary>
                   <form action={updateAdminQuoteTypeConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
                     <input type="hidden" name="quote_type_id" value={row.id} />
                     <input type="hidden" name="return_to" value={buildQuotesConfigHref("types")} />
                     <label className="span-2">
-                      Nom
+                      {t("common.name")}
                       <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
                     </label>
                     <label>
-                      Delai expiration (jours)
+                      {t("admin.quote_config.expiry_days")}
                       <input type="number" name="default_expiry_days" min={1} max={120} defaultValue={row.default_expiry_days} required />
                     </label>
                     <label>
-                      Annee scolaire par defaut
+                      {t("admin.quote_config.default_school_year")}
                       <input type="text" name="school_year_label" defaultValue={row.school_year_label || ""} maxLength={40} />
                     </label>
                     <label className="span-2">
-                      Formule rattachee
+                      {t("admin.quote_config.linked_formula")}
                       <select name="formula_id" defaultValue={row.formula_id || ""}>
-                        <option value="">Aucune</option>
+                        <option value="">{t("admin.quote_config.none_option")}</option>
                         {formulas.map((formula) => (
                           <option key={formula.id} value={formula.id}>
                             {formula.name}
@@ -934,21 +969,21 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       </select>
                     </label>
                     <label className="span-3">
-                      Description
+                      {t("common.description")}
                       <input type="text" name="description" defaultValue={row.description || ""} maxLength={2000} />
                     </label>
                     <label className="checkline">
                       <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                      Actif
+                      {t("common.active")}
                     </label>
                     <div className="row span-4">
-                      <button type="submit">Enregistrer</button>
+                      <button type="submit">{t("common.save")}</button>
                     </div>
                   </form>
                   <form action={deleteAdminQuoteTypeConfigAction} className="row top-gap-sm">
                     <input type="hidden" name="quote_type_id" value={row.id} />
                     <input type="hidden" name="return_to" value={buildQuotesConfigHref("types")} />
-                    <button type="submit" className="danger">Supprimer</button>
+                    <button type="submit" className="danger">{t("common.delete")}</button>
                   </form>
                 </details>
               </article>
@@ -959,35 +994,35 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "catalogs" ? (
         <section className="card">
-          <h3>Catalogues de prix</h3>
+          <h3>{t("admin.quote_config.catalogs_title")}</h3>
           <form action={createAdminPricingCatalogConfigAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
             <label className="span-2">
-              Nom
-              <input type="text" name="name" required maxLength={180} placeholder="Catalogue 2026-2027" />
+              {t("common.name")}
+              <input type="text" name="name" required maxLength={180} placeholder={t("admin.quote_config.catalog_name_placeholder")} />
             </label>
             <label>
-              Annee scolaire
-              <input type="text" name="school_year_label" maxLength={40} placeholder="2026-2027" />
+              {t("admin.quote_config.school_year")}
+              <input type="text" name="school_year_label" maxLength={40} placeholder={t("admin.quote_config.school_year_placeholder")} />
             </label>
             <label>
-              Date debut
+              {t("admin.quote_config.start_date")}
               <input type="date" name="effective_from" required />
             </label>
             <label>
-              Date fin
+              {t("admin.quote_config.end_date")}
               <input type="date" name="effective_to" />
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_default" />
-              Catalogue par defaut
+              {t("admin.quote_config.default_catalog")}
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
-              Actif
+              {t("common.active")}
             </label>
             <div className="row span-4">
-              <button type="submit">Ajouter le catalogue</button>
+              <button type="submit">{t("admin.quote_config.add_catalog")}</button>
             </div>
           </form>
 
@@ -995,18 +1030,18 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Nom</th>
-                  <th>Annee</th>
-                  <th>Periode</th>
-                  <th>Sources tarifaires</th>
-                  <th>Statut</th>
-                  <th>Maj</th>
-                  <th>Actions</th>
+                  <th>{t("common.name")}</th>
+                  <th>{t("admin.quote_config.year_short")}</th>
+                  <th>{t("common.period")}</th>
+                  <th>{t("admin.quote_config.pricing_sources")}</th>
+                  <th>{t("common.status")}</th>
+                  <th>{t("admin.quote_config.updated_short")}</th>
+                  <th>{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {catalogs.length === 0 ? (
-                  <tr><td colSpan={7}><p className="muted">Aucun catalogue configure.</p></td></tr>
+                  <tr><td colSpan={7}><p className="muted">{t("admin.quote_config.no_catalogs")}</p></td></tr>
                 ) : (
                   catalogs.map((row) => {
                     const explicitActivityPrices = pricingActivityPrices
@@ -1014,24 +1049,25 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       .sort((left, right) => {
                         const leftActivity = activities.find((item) => item.id === left.activity_id)?.name ?? "";
                         const rightActivity = activities.find((item) => item.id === right.activity_id)?.name ?? "";
-                        const byActivity = leftActivity.localeCompare(rightActivity, "fr-FR");
+                        const byActivity = leftActivity.localeCompare(rightActivity, sortLocale);
                         if (byActivity !== 0) {
                           return byActivity;
                         }
                         const leftLocation = left.location_id ? (locationById.get(left.location_id) ?? "") : "";
                         const rightLocation = right.location_id ? (locationById.get(right.location_id) ?? "") : "";
-                        return leftLocation.localeCompare(rightLocation, "fr-FR");
+                        return leftLocation.localeCompare(rightLocation, sortLocale);
                       });
                     const explicitActivityIds = new Set(explicitActivityPrices.map((price) => price.activity_id));
                     const fallbackActivities = activeActivities
                       .filter((activity) => !explicitActivityIds.has(activity.id))
                       .map((activity) => ({
                         activity,
-                        fallback: computedActivityFallbackPrice(activity),
+                        fallback: computedActivityFallbackPrice(activity, language),
                       }));
                     const typeformTemplatePricingRows = collectTypeformTemplatePricingRows(typeformFormConfigs, {
                       catalogId: row.id,
                       activityByCode,
+                      language,
                     });
                     const fallbackAvailableCount = fallbackActivities.filter((item) => item.fallback.amountTtc !== null).length;
                     const fallbackMissingCount = fallbackActivities.length - fallbackAvailableCount;
@@ -1044,74 +1080,76 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         <td>{row.school_year_label || "-"}</td>
                         <td>{dateInputValue(row.effective_from)} → {dateInputValue(row.effective_to)}</td>
                         <td>
-                          <div><strong>{explicitActivityPrices.length}</strong> tarif(s) explicite(s)</div>
+                          <div><strong>{explicitActivityPrices.length}</strong> {t("admin.quote_config.explicit_price_count", { count: explicitActivityPrices.length })}</div>
                           <div className="muted">
-                            {fallbackAvailableCount} fallback(s) activite · {typeformOverrideCount} surcharge(s) Typeform · {typeformFallbackCount} secours Typeform · {fallbackMissingCount} sans source
+                            {t("admin.quote_config.catalog_source_summary", {
+                              fallback_available: fallbackAvailableCount,
+                              typeform_override: typeformOverrideCount,
+                              typeform_fallback: typeformFallbackCount,
+                              missing: fallbackMissingCount,
+                            })}
                           </div>
                         </td>
                         <td>
-                          <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Actif" : "Inactif"}</span>
-                          {row.is_default ? <span className="badge">Defaut</span> : null}
+                          <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span>
+                          {row.is_default ? <span className="badge">{t("admin.quote_config.default_badge")}</span> : null}
                         </td>
-                        <td>{dateTimeLabel(row.updated_at)}</td>
+                        <td>{dateTimeLabel(row.updated_at, language)}</td>
                         <td>
                           <details>
-                            <summary className="mode-link">Modifier</summary>
+                            <summary className="mode-link">{t("common.edit")}</summary>
                             <form action={updateAdminPricingCatalogConfigAction} className="grid config-form-grid top-gap-sm">
                               <input type="hidden" name="catalog_id" value={row.id} />
                               <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
                               <label>
-                                Nom
+                                {t("common.name")}
                                 <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
                               </label>
                               <label>
-                                Annee scolaire
+                                {t("admin.quote_config.school_year")}
                                 <input type="text" name="school_year_label" defaultValue={row.school_year_label || ""} maxLength={40} />
                               </label>
                               <label>
-                                Date debut
+                                {t("admin.quote_config.start_date")}
                                 <input type="date" name="effective_from" defaultValue={dateInputValue(row.effective_from)} required />
                               </label>
                               <label>
-                                Date fin
+                                {t("admin.quote_config.end_date")}
                                 <input type="date" name="effective_to" defaultValue={dateInputValue(row.effective_to)} />
                               </label>
                               <label className="checkline">
                                 <input type="checkbox" name="is_default" defaultChecked={row.is_default} />
-                                Defaut
+                                {t("admin.quote_config.default_badge")}
                               </label>
                               <label className="checkline">
                                 <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                                Actif
+                                {t("common.active")}
                               </label>
                               <div className="row">
-                                <button type="submit">Enregistrer</button>
+                                <button type="submit">{t("common.save")}</button>
                               </div>
                             </form>
 
                             <div className="top-gap-sm">
-                              <h4>Sources tarifaires activites</h4>
-                              <p className="muted">
-                                Ce diagnostic montre les tarifs explicites du catalogue, puis le fallback activite reellement applique par le moteur de devis.
-                                Les tarifs portes par Typeform sont affiches a part: par defaut ils ne servent plus qu en secours, et seules les surcharges explicitement marquees restent prioritaires sur le fallback activite.
-                              </p>
+                              <h4>{t("admin.quote_config.pricing_sources_diagnostics_title")}</h4>
+                              <p className="muted">{t("admin.quote_config.pricing_sources_diagnostics_help")}</p>
 
                               <div className="table-wrap top-gap-sm">
                                 <table className="data-table">
                                   <thead>
                                     <tr>
-                                      <th>Tarif Typeform configure</th>
-                                      <th>Formulaire</th>
-                                      <th>Mode</th>
-                                      <th>Montant TTC</th>
-                                      <th>Condition</th>
+                                      <th>{t("admin.quote_config.typeform_price_title")}</th>
+                                      <th>{t("admin.quote_config.form_label")}</th>
+                                      <th>{t("admin.quote_config.mode")}</th>
+                                      <th>{t("admin.quote_config.amount_ttc")}</th>
+                                      <th>{t("admin.quote_config.condition")}</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {typeformTemplatePricingRows.length === 0 ? (
                                       <tr>
                                         <td colSpan={5}>
-                                          <p className="muted">Aucun tarif Typeform explicite rattache a ce catalogue.</p>
+                                          <p className="muted">{t("admin.quote_config.no_typeform_prices")}</p>
                                         </td>
                                       </tr>
                                     ) : (
@@ -1127,7 +1165,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                           </td>
                                           <td>
                                             <span className={`status-pill ${item.mode === "override" ? "status-warn" : "status-off"}`}>
-                                              {item.mode === "override" ? "Surcharge explicite" : "Secours Typeform"}
+                                              {item.mode === "override" ? t("admin.quote_config.typeform_mode_override") : t("admin.quote_config.typeform_mode_fallback")}
                                             </span>
                                           </td>
                                           <td>{moneyLabel(item.amountTtc)}</td>
@@ -1143,25 +1181,25 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 <table className="data-table">
                                   <thead>
                                     <tr>
-                                      <th>Activite</th>
-                                      <th>Lieu</th>
-                                      <th>Unite</th>
-                                      <th>Source</th>
-                                      <th>Montant TTC</th>
+                                      <th>{t("admin.quote_config.activity")}</th>
+                                      <th>{t("common.location")}</th>
+                                      <th>{t("admin.quote_config.unit")}</th>
+                                      <th>{t("common.source")}</th>
+                                      <th>{t("admin.quote_config.amount_ttc")}</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {explicitActivityPrices.length === 0 ? (
                                       <tr>
                                         <td colSpan={5}>
-                                          <p className="muted">Aucun tarif explicite enregistre dans ce catalogue.</p>
+                                          <p className="muted">{t("admin.quote_config.no_explicit_prices")}</p>
                                         </td>
                                       </tr>
                                     ) : (
                                       explicitActivityPrices.map((price) => {
                                         const activity = activities.find((item) => item.id === price.activity_id);
-                                        const locationName = price.location_id ? (locationById.get(price.location_id) ?? price.location_id) : "Tous sites";
-                                        const sourceLabel = price.location_id ? "Catalogue · site specifique" : "Catalogue · general";
+                                        const locationName = price.location_id ? (locationById.get(price.location_id) ?? price.location_id) : t("admin.quote_config.all_sites");
+                                        const sourceLabel = price.location_id ? t("admin.quote_config.source_catalog_specific") : t("admin.quote_config.source_catalog_general");
                                         return (
                                           <tr key={price.id}>
                                             <td>
@@ -1169,7 +1207,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                               <div className="muted"><code>{activity?.code || price.activity_id}</code></div>
                                             </td>
                                             <td>{locationName}</td>
-                                            <td>{pricingUnitLabel(price.pricing_unit)}</td>
+                                            <td>{pricingUnitLabel(price.pricing_unit, language)}</td>
                                             <td>{sourceLabel}</td>
                                             <td>{moneyLabel(price.unit_price_ttc, price.currency)}</td>
                                           </tr>
@@ -1184,17 +1222,17 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 <table className="data-table">
                                   <thead>
                                     <tr>
-                                      <th>Activite sans tarif catalogue explicite</th>
-                                      <th>Mode</th>
-                                      <th>Fallback</th>
-                                      <th>Montant de secours</th>
+                                      <th>{t("admin.quote_config.activity_without_explicit_price")}</th>
+                                      <th>{t("admin.quote_config.mode")}</th>
+                                      <th>{t("admin.quote_config.fallback")}</th>
+                                      <th>{t("admin.quote_config.fallback_amount")}</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {fallbackActivities.length === 0 ? (
                                       <tr>
                                         <td colSpan={4}>
-                                          <p className="muted">Toutes les activites actives ont un tarif explicite dans ce catalogue.</p>
+                                          <p className="muted">{t("admin.quote_config.all_activities_priced")}</p>
                                         </td>
                                       </tr>
                                     ) : (
@@ -1204,7 +1242,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                             <strong>{activity.name}</strong>
                                             <div className="muted"><code>{activity.code}</code></div>
                                           </td>
-                                          <td>{modalityLabel(activity.mode)}</td>
+                                          <td>{modalityLabel(activity.mode, language)}</td>
                                           <td>
                                             <span className={`status-pill ${fallback.tone === "off" ? "status-off" : fallback.tone === "warn" ? "status-warn" : "status-ok"}`}>
                                               {fallback.label}
@@ -1222,7 +1260,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                             <form action={deleteAdminPricingCatalogConfigAction} className="row top-gap-sm">
                               <input type="hidden" name="catalog_id" value={row.id} />
                               <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-                              <button type="submit" className="danger">Supprimer</button>
+                              <button type="submit" className="danger">{t("common.delete")}</button>
                             </form>
                           </details>
                         </td>
@@ -1883,84 +1921,84 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "doc_bindings" ? (
         <section className="card">
-          <h3>Regles d association documentaire</h3>
-          <p className="muted">Associez un contexte metier a un couple Modele de devis + Modele de CGV.</p>
+          <h3>{t("admin.quote_config.doc_bindings_title")}</h3>
+          <p className="muted">{t("admin.quote_config.doc_bindings_subtitle")}</p>
           <form action={createAdminQuoteDocumentBindingConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_bindings")} />
             <label>
-              Type prospect
+              {t("admin.quote_config.prospect_type")}
               <select name="prospect_type" defaultValue="">
-                <option value="">Tous</option>
-                <option value="adult">Adulte</option>
-                <option value="child">Enfant</option>
+                <option value="">{t("common.all")}</option>
+                <option value="adult">{t("admin.quote_config.prospect_type_adult")}</option>
+                <option value="child">{t("admin.quote_config.prospect_type_child")}</option>
               </select>
             </label>
             <label>
-              Contexte
+              {t("admin.quote_config.context")}
               <select name="context_type" defaultValue="">
-                <option value="">Tous</option>
-                <option value="acquisition">Acquisition</option>
-                <option value="active_client">Client actif</option>
+                <option value="">{t("common.all")}</option>
+                <option value="acquisition">{t("admin.quote_config.context_acquisition")}</option>
+                <option value="active_client">{t("admin.quote_config.context_active_client")}</option>
               </select>
             </label>
             <label>
-              Famille activite
+              {t("admin.quote_config.activity_family")}
               <select name="activity_family" defaultValue="">
-                <option value="">Toutes</option>
+                <option value="">{t("common.all")}</option>
                 {activityFamilies.map((family) => (
                   <option key={`binding-family-create-${family}`} value={family}>{family}</option>
                 ))}
               </select>
             </label>
             <label>
-              Langue
-              <input type="text" name="language" maxLength={8} placeholder="fr" />
+              {t("common.language")}
+              <input type="text" name="language" maxLength={8} placeholder={t("admin.quote_config.language_placeholder")} />
             </label>
             <label>
-              Devise
-              <input type="text" name="currency" maxLength={3} placeholder="EUR" />
+              {t("admin.quote_config.currency")}
+              <input type="text" name="currency" maxLength={3} placeholder={t("admin.quote_config.currency_placeholder")} />
             </label>
             <label>
-              Type de devis
+              {t("admin.quote_config.quote_type")}
               <select name="quote_type_id" defaultValue="">
-                <option value="">Tous</option>
+                <option value="">{t("common.all")}</option>
                 {quoteTypes.map((row) => (
                   <option key={row.id} value={row.id}>{row.name}</option>
                 ))}
               </select>
             </label>
             <label className="span-2">
-              Template devis
+              {t("admin.quote_config.quote_template")}
               <select name="quote_template_id" defaultValue="">
-                <option value="">Aucun</option>
+                <option value="">{t("admin.quote_config.none_option")}</option>
                 {quoteTemplatesV2.map((row) => (
-                  <option key={row.id} value={row.id}>{row.name} ({row.language.toUpperCase()})</option>
+                  <option key={row.id} value={row.id}>{row.name} ({uiLanguageLabel(row.language, language)})</option>
                 ))}
               </select>
             </label>
             <label className="span-2">
-              Template CGV
+              {t("admin.quote_config.terms_template")}
               <select name="terms_template_id" defaultValue="">
-                <option value="">Aucun</option>
+                <option value="">{t("admin.quote_config.none_option")}</option>
                 {termsTemplates.map((row) => (
-                  <option key={row.id} value={row.id}>{row.name} ({row.language.toUpperCase()})</option>
+                  <option key={row.id} value={row.id}>{row.name} ({uiLanguageLabel(row.language, language)})</option>
                 ))}
               </select>
             </label>
             <label>
-              Priorite
+              {t("admin.quote_config.priority")}
               <input type="number" name="priority" min={0} max={9999} defaultValue={100} />
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
-              Active
+              {t("common.active")}
             </label>
             <label className="span-4">
-              Notes
+              {t("common.notes")}
               <input type="text" name="notes" maxLength={2000} />
             </label>
             <div className="row span-4">
-              <button type="submit">Ajouter la regle</button>
+              <button type="submit">{t("admin.quote_config.add_binding")}</button>
             </div>
           </form>
 
@@ -1968,119 +2006,126 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             <table className="table compact">
               <thead>
                 <tr>
-                  <th>Scope</th>
-                  <th>Template devis</th>
-                  <th>Template CGV</th>
-                  <th>Priorite</th>
-                  <th>Statut</th>
-                  <th>Actions</th>
+                  <th>{t("admin.quote_config.scope")}</th>
+                  <th>{t("admin.quote_config.quote_template")}</th>
+                  <th>{t("admin.quote_config.terms_template")}</th>
+                  <th>{t("admin.quote_config.priority")}</th>
+                  <th>{t("common.status")}</th>
+                  <th>{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {quoteDocumentBindings.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="muted">Aucune regle.</td>
+                    <td colSpan={6} className="muted">{t("admin.quote_config.no_bindings")}</td>
                   </tr>
                 ) : (
                   quoteDocumentBindings.map((row) => (
                     <tr key={row.id}>
                       <td>
-                        <strong>{row.prospect_type || "Tous"}</strong>
-                        <div className="muted">{row.context_type || "Tous contextes"} · {row.language || "toutes langues"} · {row.currency || "toutes devises"}</div>
-                        <div className="muted">Activite: {row.activity_family || "toutes"} · Type devis: {row.quote_type_id ? quoteTypes.find((item) => item.id === row.quote_type_id)?.name || row.quote_type_id : "tous"}</div>
+                        <strong>{quoteBindingProspectTypeLabel(row.prospect_type, language)}</strong>
+                        <div className="muted">
+                          {quoteBindingContextLabel(row.context_type, language)} · {row.language || t("admin.quote_config.all_languages")} · {row.currency || t("admin.quote_config.all_currencies")}
+                        </div>
+                        <div className="muted">
+                          {t("admin.quote_config.binding_scope_activity_quote_type", {
+                            activity: row.activity_family || t("common.all"),
+                            quote_type: row.quote_type_id ? quoteTypes.find((item) => item.id === row.quote_type_id)?.name || row.quote_type_id : t("common.all"),
+                          })}
+                        </div>
                       </td>
                       <td>{quoteTemplatesV2.find((item) => item.id === row.quote_template_id)?.name || "-"}</td>
                       <td>{termsTemplates.find((item) => item.id === row.terms_template_id)?.name || "-"}</td>
                       <td>{row.priority}</td>
                       <td>
-                        <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Active" : "Inactive"}</span>
+                        <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span>
                       </td>
                       <td>
                         <details>
-                          <summary className="mode-link">Modifier</summary>
+                          <summary className="mode-link">{t("common.edit")}</summary>
                           <form action={updateAdminQuoteDocumentBindingConfigAction} className="grid config-form-grid top-gap-sm">
                             <input type="hidden" name="binding_id" value={row.id} />
                             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_bindings")} />
                             <label>
-                              Type prospect
+                              {t("admin.quote_config.prospect_type")}
                               <select name="prospect_type" defaultValue={row.prospect_type || ""}>
-                                <option value="">Tous</option>
-                                <option value="adult">Adulte</option>
-                                <option value="child">Enfant</option>
+                                <option value="">{t("common.all")}</option>
+                                <option value="adult">{t("admin.quote_config.prospect_type_adult")}</option>
+                                <option value="child">{t("admin.quote_config.prospect_type_child")}</option>
                               </select>
                             </label>
                             <label>
-                              Contexte
+                              {t("admin.quote_config.context")}
                               <select name="context_type" defaultValue={row.context_type || ""}>
-                                <option value="">Tous</option>
-                                <option value="acquisition">Acquisition</option>
-                                <option value="active_client">Client actif</option>
+                                <option value="">{t("common.all")}</option>
+                                <option value="acquisition">{t("admin.quote_config.context_acquisition")}</option>
+                                <option value="active_client">{t("admin.quote_config.context_active_client")}</option>
                               </select>
                             </label>
                             <label>
-                              Famille activite
+                              {t("admin.quote_config.activity_family")}
                               <select name="activity_family" defaultValue={row.activity_family || ""}>
-                                <option value="">Toutes</option>
+                                <option value="">{t("common.all")}</option>
                                 {activityFamilies.map((family) => (
                                   <option key={`binding-family-edit-${row.id}-${family}`} value={family}>{family}</option>
                                 ))}
                               </select>
                             </label>
                             <label>
-                              Langue
+                              {t("common.language")}
                               <input type="text" name="language" defaultValue={row.language || ""} maxLength={8} />
                             </label>
                             <label>
-                              Devise
+                              {t("admin.quote_config.currency")}
                               <input type="text" name="currency" defaultValue={row.currency || ""} maxLength={3} />
                             </label>
                             <label>
-                              Type de devis
+                              {t("admin.quote_config.quote_type")}
                               <select name="quote_type_id" defaultValue={row.quote_type_id || ""}>
-                                <option value="">Tous</option>
+                                <option value="">{t("common.all")}</option>
                                 {quoteTypes.map((qt) => (
                                   <option key={qt.id} value={qt.id}>{qt.name}</option>
                                 ))}
                               </select>
                             </label>
                             <label>
-                              Template devis
+                              {t("admin.quote_config.quote_template")}
                               <select name="quote_template_id" defaultValue={row.quote_template_id || ""}>
-                                <option value="">Aucun</option>
+                                <option value="">{t("admin.quote_config.none_option")}</option>
                                 {quoteTemplatesV2.map((tpl) => (
                                   <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
                                 ))}
                               </select>
                             </label>
                             <label>
-                              Template CGV
+                              {t("admin.quote_config.terms_template")}
                               <select name="terms_template_id" defaultValue={row.terms_template_id || ""}>
-                                <option value="">Aucun</option>
+                                <option value="">{t("admin.quote_config.none_option")}</option>
                                 {termsTemplates.map((tpl) => (
                                   <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
                                 ))}
                               </select>
                             </label>
                             <label>
-                              Priorite
+                              {t("admin.quote_config.priority")}
                               <input type="number" name="priority" min={0} max={9999} defaultValue={row.priority} />
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                              Active
+                              {t("common.active")}
                             </label>
                             <label>
-                              Notes
+                              {t("common.notes")}
                               <input type="text" name="notes" defaultValue={row.notes || ""} maxLength={2000} />
                             </label>
                             <div className="row">
-                              <button type="submit">Enregistrer</button>
+                              <button type="submit">{t("common.save")}</button>
                             </div>
                           </form>
                           <form action={deleteAdminQuoteDocumentBindingConfigAction} className="row top-gap-sm">
                             <input type="hidden" name="binding_id" value={row.id} />
                             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_bindings")} />
-                            <button type="submit" className="danger">Supprimer</button>
+                            <button type="submit" className="danger">{t("common.delete")}</button>
                           </form>
                         </details>
                       </td>
@@ -2192,7 +2237,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         <td>{row.duration_minutes} min</td>
                         <td>{solfegeSlotsCsv(row.allowed_time_slots) || "-"}</td>
                         <td>{row.location_id ? (locationById.get(row.location_id) || row.location_id) : "Tous"}</td>
-                        <td>{modalityLabel(row.modality)}</td>
+                        <td>{modalityLabel(row.modality, language)}</td>
                         <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? "Active" : "Inactive"}</span></td>
                         <td>
                           <details>
