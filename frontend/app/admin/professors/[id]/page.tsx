@@ -26,22 +26,24 @@ import type {
   AdminSessionOut,
   CourseTypeOut,
   LocationOut,
+  UserOut,
 } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type Tab = "profil" | "droits" | "tarifs" | "solde" | "planning";
 type AgendaView = "month" | "week" | "day";
 
-const COLLABORATOR_LANGUAGE_OPTIONS: string[] = [
-  "Francais",
-  "Anglais",
-  "Espagnol",
-  "Italien",
-  "Allemand",
-  "Portugais",
-  "Russe",
-  "Chinois",
-  "Japonais",
+const COLLABORATOR_LANGUAGE_OPTIONS: Array<{ value: string; labelKey: string }> = [
+  { value: "Francais", labelKey: "common.french" },
+  { value: "Anglais", labelKey: "common.english" },
+  { value: "Espagnol", labelKey: "common.spanish" },
+  { value: "Italien", labelKey: "common.italian" },
+  { value: "Allemand", labelKey: "common.german" },
+  { value: "Portugais", labelKey: "common.portuguese" },
+  { value: "Russe", labelKey: "common.russian" },
+  { value: "Chinois", labelKey: "common.chinese" },
+  { value: "Japonais", labelKey: "common.japanese" },
 ];
 
 type PageProps = {
@@ -110,8 +112,9 @@ function todayKeyUtc(): string {
   return utcDateToKey(new Date());
 }
 
-function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
+function buildAgendaRange(view: AgendaView, focusDayKey: string, language: UiLanguage): AgendaRange {
   const focusDate = keyToUtcDate(focusDayKey);
+  const locale = localeForUiLanguage(language);
 
   if (view === "day") {
     const from = focusDate;
@@ -122,7 +125,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
       from,
       to,
       dayKeys: [focusDayKey],
-      title: new Intl.DateTimeFormat("fr-FR", {
+      title: new Intl.DateTimeFormat(locale, {
         weekday: "long",
         day: "2-digit",
         month: "long",
@@ -148,12 +151,12 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
       from,
       to,
       dayKeys,
-      title: `${new Intl.DateTimeFormat("fr-FR", {
+      title: `${new Intl.DateTimeFormat(locale, {
         day: "2-digit",
         month: "short",
         year: "numeric",
         timeZone: "UTC",
-      }).format(from)} - ${new Intl.DateTimeFormat("fr-FR", {
+      }).format(from)} - ${new Intl.DateTimeFormat(locale, {
         day: "2-digit",
         month: "short",
         year: "numeric",
@@ -177,7 +180,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
     from,
     to,
     dayKeys,
-    title: new Intl.DateTimeFormat("fr-FR", {
+    title: new Intl.DateTimeFormat(locale, {
       month: "long",
       year: "numeric",
       timeZone: "UTC",
@@ -185,24 +188,33 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
   };
 }
 
-function formatDate(value: string): string {
-  return new Date(value).toLocaleString("fr-FR", {
+function formatDate(value: string, language: UiLanguage): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+  return parsed.toLocaleString(localeForUiLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
   });
 }
 
-function formatTime(value: string): string {
-  return new Date(value).toLocaleTimeString("fr-FR", {
+function formatTime(value: string, language: UiLanguage): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+  return parsed.toLocaleTimeString(localeForUiLanguage(language), {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function dayLabel(dayKey: string, view: AgendaView): string {
+function dayLabel(dayKey: string, view: AgendaView, language: UiLanguage): string {
   const date = keyToUtcDate(dayKey);
+  const locale = localeForUiLanguage(language);
   if (view === "day") {
-    return new Intl.DateTimeFormat("fr-FR", {
+    return new Intl.DateTimeFormat(locale, {
       weekday: "long",
       day: "2-digit",
       month: "long",
@@ -211,7 +223,7 @@ function dayLabel(dayKey: string, view: AgendaView): string {
     }).format(date);
   }
 
-  return new Intl.DateTimeFormat("fr-FR", {
+  return new Intl.DateTimeFormat(locale, {
     weekday: "short",
     day: "2-digit",
     month: "short",
@@ -223,26 +235,26 @@ function tabHref(professorId: string, tab: Tab): string {
   return `/admin/professors/${professorId}?tab=${tab}`;
 }
 
-function contractModeLabel(mode: string): string {
+function contractModeLabel(mode: string, language: UiLanguage): string {
   const normalized = mode.trim().toUpperCase();
   if (normalized === "PRESENTIEL") {
-    return "Presentiel";
+    return uiText(language, "admin.professor_detail.mode_onsite");
   }
   if (normalized === "EN_LIGNE") {
-    return "En ligne";
+    return uiText(language, "admin.professor_detail.mode_online");
   }
-  return "Autre";
+  return uiText(language, "admin.professor_detail.mode_other");
 }
 
-function activityModeLabel(mode: string): string {
+function activityModeLabel(mode: string, language: UiLanguage): string {
   const normalized = mode.trim().toUpperCase();
   if (normalized === "ONSITE") {
-    return "Presentiel";
+    return uiText(language, "admin.professor_detail.mode_onsite");
   }
   if (normalized === "ONLINE") {
-    return "En ligne";
+    return uiText(language, "admin.professor_detail.mode_online");
   }
-  return "Tous";
+  return uiText(language, "admin.professor_detail.mode_all");
 }
 
 function normalizeLookupKey(value: string): string {
@@ -259,17 +271,17 @@ function isRateActiveOn(rate: AdminProfessorRateOut, onDate: string): boolean {
   return true;
 }
 
-function payoutStatusLabel(status: "PENDING" | "APPROVED" | "PAID" | null): string {
+function payoutStatusLabel(status: "PENDING" | "APPROVED" | "PAID" | null, language: UiLanguage): string {
   if (status === "PENDING") {
-    return "En attente";
+    return uiText(language, "admin.professor_detail.payout_pending");
   }
   if (status === "APPROVED") {
-    return "Valide";
+    return uiText(language, "admin.professor_detail.payout_approved");
   }
   if (status === "PAID") {
-    return "Paye";
+    return uiText(language, "admin.professor_detail.payout_paid");
   }
-  return "Calcule";
+  return uiText(language, "admin.professor_detail.payout_calculated");
 }
 
 function payoutStatusToneClass(status: "PENDING" | "APPROVED" | "PAID" | null): string {
@@ -293,42 +305,65 @@ function encodeHeadcountRules(
     .join("; ");
 }
 
-const PERMISSION_SECTIONS: Array<{ title: string; keys: Array<{ key: string; label: string }> }> = [
+function collaboratorRoleLabel(role: string, language: UiLanguage): string {
+  const normalized = role.trim().toLowerCase();
+  if (normalized === "admin") {
+    return uiText(language, "admin.professor_detail.role_admin");
+  }
+  if (normalized === "prof") {
+    return uiText(language, "admin.professor_detail.role_teacher");
+  }
+  return role;
+}
+
+function spokenLanguageLabel(value: string, language: UiLanguage): string {
+  const option = COLLABORATOR_LANGUAGE_OPTIONS.find((candidate) => candidate.value === value);
+  return option ? uiText(language, option.labelKey) : value;
+}
+
+function spokenLanguagesLabel(values: string[], language: UiLanguage): string {
+  if (values.length === 0) {
+    return uiText(language, "admin.professor_detail.not_provided");
+  }
+  return values.map((value) => spokenLanguageLabel(value, language)).join(", ");
+}
+
+const PERMISSION_SECTIONS: Array<{ titleKey: string; keys: Array<{ key: string; labelKey: string }> }> = [
   {
-    title: "Gerer soi-meme",
+    titleKey: "admin.professor_detail.permissions.self_title",
     keys: [
-      { key: "can_take_attendance", label: "Prendre les presences" },
-      { key: "can_record_payments_with_attendance", label: "Enregistrer les paiements avec presence" },
-      { key: "can_edit_own_sessions", label: "Modifier ses propres lecons/evenements" },
-      { key: "can_view_pay_details", label: "Voir les details de la paie" },
-      { key: "can_manage_mileage_log", label: "Ajouter/modifier le journal de kilometrage" },
+      { key: "can_take_attendance", labelKey: "admin.professor_detail.permissions.take_attendance" },
+      { key: "can_record_payments_with_attendance", labelKey: "admin.professor_detail.permissions.record_payments_with_attendance" },
+      { key: "can_edit_own_sessions", labelKey: "admin.professor_detail.permissions.edit_own_sessions" },
+      { key: "can_view_pay_details", labelKey: "admin.professor_detail.permissions.view_pay_details" },
+      { key: "can_manage_mileage_log", labelKey: "admin.professor_detail.permissions.manage_mileage_log" },
     ],
   },
   {
-    title: "Gerer d'autres enseignants",
+    titleKey: "admin.professor_detail.permissions.other_teachers_title",
     keys: [
-      { key: "can_view_other_teachers_contacts", label: "Afficher les coordonnees des autres enseignants et utilisateurs" },
-      { key: "can_manage_other_teachers_students_and_sessions", label: "Gerer les etudiants et les lecons/evenements des autres enseignants" },
-      { key: "can_view_other_teachers_sessions", label: "Voir les lecons/evenements des autres enseignants" },
+      { key: "can_view_other_teachers_contacts", labelKey: "admin.professor_detail.permissions.view_other_teachers_contacts" },
+      { key: "can_manage_other_teachers_students_and_sessions", labelKey: "admin.professor_detail.permissions.manage_other_teachers_students_and_sessions" },
+      { key: "can_view_other_teachers_sessions", labelKey: "admin.professor_detail.permissions.view_other_teachers_sessions" },
     ],
   },
   {
-    title: "Gerer les etudiants et les parents",
+    titleKey: "admin.professor_detail.permissions.students_title",
     keys: [
-      { key: "can_message_clients", label: "Envoyer des messages aux eleves (groupe et individuel)" },
-      { key: "can_view_student_parent_addresses_phones", label: "Afficher les adresses et numeros de telephone d'etudiant/parent" },
-      { key: "can_view_student_parent_emails", label: "Afficher les courriels d'etudiant/parent" },
-      { key: "can_view_student_attachments", label: "Afficher/telecharger les pieces jointes du profil d'etudiant" },
+      { key: "can_message_clients", labelKey: "admin.professor_detail.permissions.message_clients" },
+      { key: "can_view_student_parent_addresses_phones", labelKey: "admin.professor_detail.permissions.view_student_parent_addresses_phones" },
+      { key: "can_view_student_parent_emails", labelKey: "admin.professor_detail.permissions.view_student_parent_emails" },
+      { key: "can_view_student_attachments", labelKey: "admin.professor_detail.permissions.view_student_attachments" },
     ],
   },
   {
-    title: "Gerer d'autres fonctionnalites",
+    titleKey: "admin.professor_detail.permissions.other_features_title",
     keys: [
-      { key: "can_manage_invoices_and_accounts", label: "Ajouter/voir les factures et les comptes" },
-      { key: "can_manage_expenses_and_other_income", label: "Ajouter/modifier des depenses et autres revenus" },
-      { key: "can_manage_shared_online_resources", label: "Ajouter/modifier/supprimer des ressources en ligne (espace partage)" },
-      { key: "can_manage_website_and_news", label: "Modifier le site web et publier des nouvelles" },
-      { key: "can_create_and_view_reports", label: "Creer/afficher des rapports" },
+      { key: "can_manage_invoices_and_accounts", labelKey: "admin.professor_detail.permissions.manage_invoices_and_accounts" },
+      { key: "can_manage_expenses_and_other_income", labelKey: "admin.professor_detail.permissions.manage_expenses_and_other_income" },
+      { key: "can_manage_shared_online_resources", labelKey: "admin.professor_detail.permissions.manage_shared_online_resources" },
+      { key: "can_manage_website_and_news", labelKey: "admin.professor_detail.permissions.manage_website_and_news" },
+      { key: "can_create_and_view_reports", labelKey: "admin.professor_detail.permissions.create_and_view_reports" },
     ],
   },
 ];
@@ -338,6 +373,13 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const sortLocale = localeForUiLanguage(language);
 
   const currentTab = parseTab(readParam(searchParams, "tab"));
   const isEditProfileOpen = readParam(searchParams, "edit_profile") === "1";
@@ -348,7 +390,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const agendaDate = isDateKey(agendaDateInput) ? agendaDateInput : todayKeyUtc();
   const payoutAsOfInput = readParam(searchParams, "payout_as_of");
   const payoutAsOf = isDateKey(payoutAsOfInput) ? payoutAsOfInput : todayKeyUtc();
-  const agendaRange = buildAgendaRange(agendaView, agendaDate);
+  const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
 
   const sessionsQuery = new URLSearchParams();
   sessionsQuery.set("professor_id", params.id);
@@ -395,9 +437,9 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
   if (!profResult.ok) {
     if (profResult.status === 404) {
-      redirect("/admin/professors?error=Collaborateur%20introuvable");
+      redirect(`/admin/professors?error=${encodeURIComponent(t("admin.professor_detail.not_found"))}`);
     }
-    return <section className="flash-err">Erreur backend: {profResult.message}</section>;
+    return <section className="flash-err">{t("admin.professor_detail.backend_error")}: {profResult.message}</section>;
   }
 
   const professor = profResult.data;
@@ -435,7 +477,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const activeBaseRate = activeRatesByKey.get("__GLOBAL__") ?? null;
   const editableCourseTypes = [...courseTypes]
     .filter((courseType) => courseType.active)
-    .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+    .sort((a, b) => a.name.localeCompare(b.name, sortLocale));
   const defaultGridByCourseTypeId = new Map(defaultProfessorGrid.lines.map((line) => [line.course_type_id, line]));
   const activeGeneralPeriodLabel =
     defaultProfessorGrid.active_period_start_date
@@ -473,7 +515,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     return {
       course_type_id: courseType.id,
       course_type_name: courseType.name,
-      mode_label: activityModeLabel(courseType.mode),
+      mode_label: activityModeLabel(courseType.mode, language),
       reference_duration_minutes: courseType.duration_minutes,
       initial_mode: initialMode,
       general_grid: generalGrid,
@@ -507,7 +549,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
   const agendaDays = agendaRange.dayKeys.map((dayKey) => ({
     key: dayKey,
-    label: dayLabel(dayKey, agendaView),
+    label: dayLabel(dayKey, agendaView, language),
     sessions: sessionsByDay.get(dayKey) ?? [],
   }));
 
@@ -516,11 +558,11 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const errorMessage = readParam(searchParams, "error");
 
   const tabs: Array<{ id: Tab; label: string }> = [
-    { id: "profil", label: "Fiche" },
-    { id: "droits", label: "Droits" },
-    { id: "tarifs", label: "Configuration de la paie" },
-    { id: "solde", label: "Solde du professeur" },
-    { id: "planning", label: "Planning" },
+    { id: "profil", label: t("admin.professor_detail.tab_profile") },
+    { id: "droits", label: t("admin.professor_detail.tab_permissions") },
+    { id: "tarifs", label: t("admin.professor_detail.tab_payroll") },
+    { id: "solde", label: t("admin.professor_detail.tab_balance") },
+    { id: "planning", label: t("admin.professor_detail.tab_schedule") },
   ];
 
   return (
@@ -529,23 +571,30 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
       <section className="client-hero card">
         <div className="row spread">
           <Link className="reset-link" href="/admin/professors">
-            Retour collaborateurs
+            {t("admin.professor_detail.back_list")}
           </Link>
           <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
             <input type="hidden" name="teacher_id" value={professor.id} />
             <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
             <button type="submit" className="mode-link">
-              Vue professeur
+              {t("admin.professor_detail.view_teacher_portal")}
             </button>
           </form>
-          <span className={`status-pill ${professor.active ? "status-ok" : "status-off"}`}>{professor.active ? "Actif" : "Inactif"}</span>
+          <span className={`status-pill ${professor.active ? "status-ok" : "status-off"}`}>
+            {professor.active ? t("common.active") : t("common.inactive")}
+          </span>
         </div>
         <div className="client-hero-main">
           <div className="client-avatar">{(professor.first_name ?? "").slice(0, 1)}{(professor.last_name ?? "").slice(0, 1)}</div>
           <div>
             <h2>{fullName || professor.email}</h2>
             <p className="muted">
-              {professor.email} | Tel: {professor.phone ?? "-"} | Role: {professor.role} | Coach: {professor.is_coach ? "Oui" : "Non"}
+              {t("admin.professor_detail.hero_summary", {
+                email: professor.email,
+                phone: professor.phone ?? "-",
+                role: collaboratorRoleLabel(professor.role, language),
+                coach: professor.is_coach ? t("common.yes") : t("common.no"),
+              })}
             </p>
           </div>
         </div>
@@ -560,140 +609,148 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
-      {!ratesResult.ok ? <section className="flash-err">Erreur rates: {ratesResult.message}</section> : null}
-      {!sessionsResult.ok ? <section className="flash-err">Erreur planning: {sessionsResult.message}</section> : null}
-      {!accountResult.ok ? <section className="flash-err">Erreur devises: {accountResult.message}</section> : null}
-      {!defaultProfessorGridResult.ok ? <section className="flash-err">Erreur grille generale: {defaultProfessorGridResult.message}</section> : null}
-      {showLegacyContractGrid && !contractGridsResult.ok ? <section className="flash-err">Erreur grilles contractuelles: {contractGridsResult.message}</section> : null}
-      {showLegacyContractGrid && !contractLocationsResult.ok ? <section className="flash-err">Erreur lieux contractuels: {contractLocationsResult.message}</section> : null}
-      {currentTab === "solde" && !payoutLedgerResult.ok ? <section className="flash-err">Erreur solde paie: {payoutLedgerResult.message}</section> : null}
+      {!ratesResult.ok ? <section className="flash-err">{t("admin.professor_detail.error_rates")}: {ratesResult.message}</section> : null}
+      {!sessionsResult.ok ? <section className="flash-err">{t("admin.professor_detail.error_schedule")}: {sessionsResult.message}</section> : null}
+      {!accountResult.ok ? <section className="flash-err">{t("admin.professor_detail.error_currencies")}: {accountResult.message}</section> : null}
+      {!defaultProfessorGridResult.ok ? (
+        <section className="flash-err">{t("admin.professor_detail.error_general_grid")}: {defaultProfessorGridResult.message}</section>
+      ) : null}
+      {showLegacyContractGrid && !contractGridsResult.ok ? (
+        <section className="flash-err">{t("admin.professor_detail.error_contract_grids")}: {contractGridsResult.message}</section>
+      ) : null}
+      {showLegacyContractGrid && !contractLocationsResult.ok ? (
+        <section className="flash-err">{t("admin.professor_detail.error_contract_locations")}: {contractLocationsResult.message}</section>
+      ) : null}
+      {currentTab === "solde" && !payoutLedgerResult.ok ? (
+        <section className="flash-err">{t("admin.professor_detail.error_payout_balance")}: {payoutLedgerResult.message}</section>
+      ) : null}
 
       {currentTab === "profil" ? (
         <section className="grid cols-2">
           <article className="card">
-            <h3>Informations collaborateur</h3>
+            <h3>{t("admin.professor_detail.section_information")}</h3>
             <div className="list">
               <article className="item row spread">
-                <span className="muted">Email</span>
+                <span className="muted">{t("common.email")}</span>
                 <strong>{professor.email}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Telephone</span>
-                <strong>{professor.phone ?? "Non renseigne"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_phone")}</span>
+                <strong>{professor.phone ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
                 <span className="muted">SIRET</span>
-                <strong>{professor.siret ?? "Non renseigne"}</strong>
+                <strong>{professor.siret ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
                 <span className="muted">IBAN</span>
-                <strong>{professor.iban ?? "Non renseigne"}</strong>
+                <strong>{professor.iban ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Adresse</span>
-                <strong>{professor.address_line ?? "Non renseignee"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_address")}</span>
+                <strong>{professor.address_line ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Compteur facture prof</span>
+                <span className="muted">{t("admin.professor_detail.field_teacher_invoice_counter")}</span>
                 <strong>{professor.teacher_invoice_counter}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">TVA applicable</span>
-                <strong>{professor.teacher_is_vat_applicable ? "Oui" : "Non"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_teacher_vat_applicable")}</span>
+                <strong>{professor.teacher_is_vat_applicable ? t("common.yes") : t("common.no")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Taux TVA prof</span>
+                <span className="muted">{t("admin.professor_detail.field_teacher_vat_rate")}</span>
                 <strong>{professor.teacher_vat_rate ?? "-"}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">SIRET facturation prof</span>
-                <strong>{professor.teacher_siret ?? "Non renseigne"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_teacher_siret")}</span>
+                <strong>{professor.teacher_siret ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">IBAN facturation prof</span>
-                <strong>{professor.teacher_iban ?? "Non renseigne"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_teacher_iban")}</span>
+                <strong>{professor.teacher_iban ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Societe prof</span>
-                <strong>{professor.teacher_company_name ?? "Non renseignee"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_teacher_company_name")}</span>
+                <strong>{professor.teacher_company_name ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Adresse societe prof</span>
-                <strong>{professor.teacher_company_address ?? "Non renseignee"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_teacher_company_address")}</span>
+                <strong>{professor.teacher_company_address ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Lien Zoom</span>
-                <strong>{professor.zoom_link ?? "Non renseigne"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_zoom_link")}</span>
+                <strong>{professor.zoom_link ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Langues</span>
-                <strong>{professor.spoken_languages.length > 0 ? professor.spoken_languages.join(", ") : "Non renseigne"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_languages")}</span>
+                <strong>{spokenLanguagesLabel(professor.spoken_languages, language)}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Email quotidien planning</span>
-                <strong>{professor.daily_schedule_email_enabled ? "Actif" : "Inactif"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_daily_schedule_email")}</span>
+                <strong>{professor.daily_schedule_email_enabled ? t("common.active") : t("common.inactive")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Heure d envoi (UTC)</span>
+                <span className="muted">{t("admin.professor_detail.field_daily_schedule_time")}</span>
                 <strong>{professor.daily_schedule_email_time}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Ignorer jours sans cours</span>
-                <strong>{professor.daily_schedule_skip_if_no_course ? "Oui" : "Non"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_skip_if_no_course")}</span>
+                <strong>{professor.daily_schedule_skip_if_no_course ? t("common.yes") : t("common.no")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">Derniere activation</span>
-                <strong>{professor.last_activation_email_sent_at ? formatDate(professor.last_activation_email_sent_at) : "Jamais"}</strong>
+                <span className="muted">{t("admin.professor_detail.field_last_activation")}</span>
+                <strong>{professor.last_activation_email_sent_at ? formatDate(professor.last_activation_email_sent_at, language) : t("admin.professor_detail.never")}</strong>
               </article>
             </div>
             <div className="row top-gap-sm">
               <Link className="mode-link" href={`/admin/professors/${professor.id}?tab=profil&edit_profile=1`}>
-                Modifier la fiche
+                {t("common.edit")}
               </Link>
               <form action={sendAdminCollaboratorPasswordLinkAction}>
                 <input type="hidden" name="professor_id" value={professor.id} />
                 <input type="hidden" name="return_tab" value="profil" />
-                <button type="submit">Generer acces et envoyer email</button>
+                <button type="submit">{t("admin.professor_detail.send_access_link")}</button>
               </form>
             </div>
           </article>
 
           {isEditProfileOpen ? (
-            <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Modifier collaborateur">
+            <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.professor_detail.edit_dialog_aria")}>
               <section className="modal-panel professor-profile-modal">
-                <Link className="modal-close-x" href={`/admin/professors/${professor.id}?tab=profil`} aria-label="Fermer">
+                <Link className="modal-close-x" href={`/admin/professors/${professor.id}?tab=profil`} aria-label={t("common.close")}>
                   ×
                 </Link>
-                <h3 className="modal-title">Modifier la fiche</h3>
+                <h3 className="modal-title">{t("admin.professor_detail.edit_title")}</h3>
                 <form action={updateAdminCollaboratorProfileAction} className="grid cols-2 professor-profile-modal-form">
               <input type="hidden" name="professor_id" value={professor.id} />
               <input type="hidden" name="return_tab" value="profil" />
 
               <label>
-                Email
+                {t("common.email")}
                 <input type="email" name="email" defaultValue={professor.email} required />
               </label>
 
               <label>
-                Statut
+                {t("admin.professor_detail.field_status")}
                 <select name="active" defaultValue={professor.active ? "true" : "false"}>
-                  <option value="true">Actif</option>
-                  <option value="false">Inactif</option>
+                  <option value="true">{t("common.active")}</option>
+                  <option value="false">{t("common.inactive")}</option>
                 </select>
               </label>
 
               <label>
-                Prenom
+                {t("admin.professor_detail.field_first_name")}
                 <input type="text" name="first_name" defaultValue={professor.first_name} required maxLength={100} />
               </label>
 
               <label>
-                Nom
+                {t("admin.professor_detail.field_last_name")}
                 <input type="text" name="last_name" defaultValue={professor.last_name} required maxLength={100} />
               </label>
 
               <label>
-                Telephone
+                {t("admin.professor_detail.field_phone")}
                 <input type="text" name="phone" defaultValue={professor.phone ?? ""} maxLength={30} />
               </label>
 
@@ -708,7 +765,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               </label>
 
               <label>
-                Devise de paiement
+                {t("admin.professor_detail.field_payout_currency")}
                 <select name="payout_currency" defaultValue={defaultRateCurrency}>
                   {availableCurrencies.map((code) => (
                     <option key={code} value={code}>
@@ -719,56 +776,56 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               </label>
 
               <label className="span-2">
-                Lien Zoom
+                {t("admin.professor_detail.field_zoom_link")}
                 <input type="url" name="zoom_link" defaultValue={professor.zoom_link ?? ""} />
               </label>
 
               <label className="span-2">
-                Adresse
+                {t("admin.professor_detail.field_address")}
                 <input type="text" name="address_line" defaultValue={professor.address_line ?? ""} maxLength={255} />
               </label>
 
               <label>
-                Compteur facture prof
+                {t("admin.professor_detail.field_teacher_invoice_counter")}
                 <input type="number" name="teacher_invoice_counter" min={1} step={1} defaultValue={professor.teacher_invoice_counter} required />
               </label>
 
               <label className="checkline">
                 <input type="checkbox" name="teacher_is_vat_applicable" defaultChecked={professor.teacher_is_vat_applicable} />
-                TVA applicable
+                {t("admin.professor_detail.field_teacher_vat_applicable")}
               </label>
 
               <label>
-                Taux TVA (%)
+                {t("admin.professor_detail.field_teacher_vat_rate_percent")}
                 <input type="number" name="teacher_vat_rate" min="0" max="99.99" step="0.01" defaultValue={professor.teacher_vat_rate ?? ""} />
               </label>
 
               <label>
-                SIRET facturation prof
+                {t("admin.professor_detail.field_teacher_siret")}
                 <input type="text" name="teacher_siret" defaultValue={professor.teacher_siret ?? ""} maxLength={64} />
               </label>
 
               <label>
-                IBAN facturation prof
+                {t("admin.professor_detail.field_teacher_iban")}
                 <input type="text" name="teacher_iban" defaultValue={professor.teacher_iban ?? ""} maxLength={64} />
               </label>
 
               <label className="span-2">
-                Societe prof
+                {t("admin.professor_detail.field_teacher_company_name")}
                 <input type="text" name="teacher_company_name" defaultValue={professor.teacher_company_name ?? ""} maxLength={255} />
               </label>
 
               <label className="span-2">
-                Adresse societe prof
+                {t("admin.professor_detail.field_teacher_company_address")}
                 <textarea name="teacher_company_address" rows={3} defaultValue={professor.teacher_company_address ?? ""} maxLength={2000} />
               </label>
 
               <label className="span-2">
-                Langues (selection multiple)
+                {t("admin.professor_detail.field_spoken_languages")}
                 <select name="spoken_languages" multiple size={6} defaultValue={professor.spoken_languages}>
                   {COLLABORATOR_LANGUAGE_OPTIONS.map((language) => (
-                    <option key={language} value={language}>
-                      {language}
+                    <option key={language.value} value={language.value}>
+                      {t(language.labelKey)}
                     </option>
                   ))}
                 </select>
@@ -776,33 +833,33 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
               <label className="checkline">
                 <input type="checkbox" name="is_coach" defaultChecked={professor.is_coach} />
-                Mode coach
+                {t("admin.professor_detail.field_coach_mode")}
               </label>
 
               <label className="checkline">
                 <input type="checkbox" name="is_admin" defaultChecked={professor.role === "admin"} />
-                Droit administrateur
+                {t("admin.professor_detail.field_administrator_right")}
               </label>
 
               <label className="checkline">
                 <input type="checkbox" name="daily_schedule_email_enabled" defaultChecked={professor.daily_schedule_email_enabled} />
-                Activer email quotidien planning
+                {t("admin.professor_detail.field_daily_schedule_email")}
               </label>
 
               <label>
-                Heure email quotidien (UTC)
+                {t("admin.professor_detail.field_daily_schedule_time")}
                 <input type="time" name="daily_schedule_email_time" defaultValue={professor.daily_schedule_email_time || "07:00"} />
               </label>
 
               <label className="checkline">
                 <input type="checkbox" name="daily_schedule_skip_if_no_course" defaultChecked={professor.daily_schedule_skip_if_no_course} />
-                Ne pas envoyer si aucun cours
+                {t("admin.professor_detail.field_skip_if_no_course")}
               </label>
 
               <div className="row span-2 modal-actions-end professor-profile-modal-actions">
-                <button type="submit">Enregistrer</button>
+                <button type="submit">{t("common.save")}</button>
                 <Link className="reset-link" href={`/admin/professors/${professor.id}?tab=profil`}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
               </div>
                 </form>
@@ -812,33 +869,33 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
           <article className="card span-2">
             <div className="row spread">
-              <h3>Contrat de collaboration (PDF)</h3>
-              <span className="badge">{professor.contract ? "Contrat charge" : "Aucun contrat"}</span>
+              <h3>{t("admin.professor_detail.contract_title")}</h3>
+              <span className="badge">{professor.contract ? t("admin.professor_detail.contract_uploaded") : t("admin.professor_detail.contract_none")}</span>
             </div>
 
             {professor.contract ? (
               <div className="list">
                 <article className="item row spread">
-                  <span className="muted">Nom du fichier</span>
+                  <span className="muted">{t("admin.professor_detail.contract_file_name")}</span>
                   <strong>{professor.contract.file_name}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Taille</span>
+                  <span className="muted">{t("admin.professor_detail.contract_size")}</span>
                   <strong>{Math.max(1, Math.round(professor.contract.size_bytes / 1024))} KB</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Importe le</span>
-                  <strong>{formatDate(professor.contract.uploaded_at)}</strong>
+                  <span className="muted">{t("admin.professor_detail.contract_uploaded_at")}</span>
+                  <strong>{formatDate(professor.contract.uploaded_at, language)}</strong>
                 </article>
               </div>
             ) : (
-              <p className="muted">Aucun contrat rattache a ce collaborateur.</p>
+              <p className="muted">{t("admin.professor_detail.contract_no_file")}</p>
             )}
 
             <div className="row">
               {professor.contract ? (
                 <a className="reset-link" href={`/admin/professors/${professor.id}/contract`}>
-                  Telecharger le contrat
+                  {t("admin.professor_detail.contract_download")}
                 </a>
               ) : null}
             </div>
@@ -847,11 +904,11 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               <input type="hidden" name="professor_id" value={professor.id} />
               <input type="hidden" name="return_tab" value="profil" />
               <label className="span-2">
-                Fichier PDF
+                {t("admin.professor_detail.contract_pdf_file")}
                 <input type="file" name="contract_file" accept="application/pdf" required />
               </label>
               <div className="row">
-                <button type="submit">Importer / remplacer le contrat</button>
+                <button type="submit">{t("admin.professor_detail.contract_upload_replace")}</button>
               </div>
             </form>
 
@@ -860,7 +917,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 <input type="hidden" name="professor_id" value={professor.id} />
                 <input type="hidden" name="return_tab" value="profil" />
                 <button type="submit" className="danger">
-                  Supprimer le contrat
+                  {t("admin.professor_detail.contract_delete")}
                 </button>
               </form>
             ) : null}
@@ -870,26 +927,26 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
       {currentTab === "droits" ? (
         <section className="card">
-          <h3>Privileges utilisateur</h3>
-          <p className="muted">Configuration des droits du professeur depuis le BackOffice administrateur.</p>
+          <h3>{t("admin.professor_detail.permissions_title")}</h3>
+          <p className="muted">{t("admin.professor_detail.permissions_subtitle")}</p>
           <form action={updateAdminCollaboratorPermissionsAction} className="grid cols-2">
             <input type="hidden" name="professor_id" value={professor.id} />
             <article className="item span-2">
               <label className="checkline">
                 <input type="checkbox" name="is_admin" defaultChecked={professor.role === "admin"} />
-                Administrateur (tous privileges)
+                {t("admin.professor_detail.permissions_admin_all")}
               </label>
-              <p className="muted">Les administrateurs peuvent acceder a toutes les parties du BackOffice.</p>
+              <p className="muted">{t("admin.professor_detail.permissions_admin_all_help")}</p>
             </article>
 
             {PERMISSION_SECTIONS.map((section) => (
-              <article key={section.title} className="item">
-                <strong>{section.title}</strong>
+              <article key={section.titleKey} className="item">
+                <strong>{t(section.titleKey)}</strong>
                 <div className="grid">
-                  {section.keys.map(({ key, label }) => (
+                  {section.keys.map(({ key, labelKey }) => (
                     <label key={key} className="checkline">
                       <input type="checkbox" name={key} defaultChecked={Boolean((professor.permissions as Record<string, boolean>)[key])} />
-                      {label}
+                      {t(labelKey)}
                     </label>
                   ))}
                 </div>
@@ -897,7 +954,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             ))}
 
             <div className="row span-2">
-              <button type="submit">Valider les droits</button>
+              <button type="submit">{t("admin.professor_detail.permissions_save")}</button>
             </div>
           </form>
         </section>
@@ -1038,8 +1095,11 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                               line?.course_type_id ?? (line ? (courseTypeIdByNormalizedName.get(normalizeLookupKey(line.service_type)) ?? "") : "");
                             const derivedCourseType = defaultCourseTypeId ? courseTypeById.get(defaultCourseTypeId) : undefined;
                             const derivedMode = derivedCourseType
-                              ? contractModeLabel(derivedCourseType.mode === "ONLINE" ? "EN_LIGNE" : derivedCourseType.mode === "ONSITE" ? "PRESENTIEL" : "AUTRE")
-                              : (line ? contractModeLabel(line.mode) : "-");
+                              ? contractModeLabel(
+                                  derivedCourseType.mode === "ONLINE" ? "EN_LIGNE" : derivedCourseType.mode === "ONSITE" ? "PRESENTIEL" : "AUTRE",
+                                  language,
+                                )
+                              : (line ? contractModeLabel(line.mode, language) : "-");
                             const derivedDuration = derivedCourseType?.duration_minutes ?? line?.reference_duration_minutes ?? null;
                             return (
                               <tr key={`grid-line-${index}`}>
@@ -1120,7 +1180,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                                 {grid.lines.map((line) => (
                                   <tr key={`preview-line-${line.id}`}>
                                     <td>{line.course_type_name || line.service_type}</td>
-                                    <td>{contractModeLabel(line.mode)}</td>
+                                    <td>{contractModeLabel(line.mode, language)}</td>
                                     <td>{line.reference_duration_minutes ?? "-"}</td>
                                     <td>{line.default_hourly_rate ?? "-"}</td>
                                     <td>{line.rules.length > 0 ? encodeHeadcountRules(line.rules) : "-"}</td>
@@ -1152,7 +1212,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
       {currentTab === "solde" ? (
         <section className="card">
           <div className="row spread">
-            <h3>Solde du professeur</h3>
+            <h3>{t("admin.professor_detail.balance_title")}</h3>
             <span className="badge">
               {payoutLedger?.total_due ?? "0.00"} {payoutLedger?.currency ?? professor.payout_currency}
             </span>
@@ -1160,28 +1220,28 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
           <form method="get" className="row top-gap-sm">
             <input type="hidden" name="tab" value="solde" />
             <label style={{ minWidth: "220px" }}>
-              Date d arrete
+              {t("admin.professor_detail.as_of_date")}
               <input type="date" name="payout_as_of" defaultValue={payoutAsOf} />
             </label>
-            <button type="submit">Actualiser</button>
+            <button type="submit">{t("admin.professor_detail.refresh")}</button>
           </form>
           {payoutLedger && payoutLedger.rows.length > 0 ? (
             <div className="table-wrap top-gap-sm">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Date & heure</th>
-                    <th>Description</th>
-                    <th>Revenu</th>
-                    <th>Paiement</th>
-                    <th>Solde cumule</th>
+                    <th>{t("admin.professor_detail.column_date_time")}</th>
+                    <th>{t("admin.professor_detail.column_description")}</th>
+                    <th>{t("admin.professor_detail.column_income")}</th>
+                    <th>{t("admin.professor_detail.column_payment")}</th>
+                    <th>{t("admin.professor_detail.column_cumulative_balance")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {payoutLedger.rows.map((row) => (
                     <tr key={`payout-ledger-${row.session_id}`}>
                       <td>
-                        {formatDate(row.start_at_utc)}
+                        {formatDate(row.start_at_utc, language)}
                         <br />
                         <small className="muted">{row.duration_hours} h</small>
                       </td>
@@ -1193,11 +1253,13 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                       <td>
                         {row.amount !== null ? `${row.amount} ${row.currency ?? payoutLedger.currency}` : "-"}
                         <br />
-                        <small className="muted">{row.hourly_rate !== null ? `${row.hourly_rate} / h` : "taux non defini"}</small>
+                        <small className="muted">
+                          {row.hourly_rate !== null ? `${row.hourly_rate} / h` : t("admin.professor_detail.rate_undefined")}
+                        </small>
                       </td>
                       <td>
                         <span className={`status-pill ${payoutStatusToneClass(row.payout_status)}`}>
-                          {payoutStatusLabel(row.payout_status)}
+                          {payoutStatusLabel(row.payout_status, language)}
                         </span>
                       </td>
                       <td>
@@ -1209,7 +1271,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               </table>
             </div>
           ) : (
-            <p className="muted top-gap-sm">Aucun cours comptabilise jusqu a cette date.</p>
+            <p className="muted top-gap-sm">{t("admin.professor_detail.no_recorded_course")}</p>
           )}
         </section>
       ) : null}
@@ -1217,7 +1279,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
       {currentTab === "planning" ? (
         <section className="card">
           <div className="row spread">
-            <h3>Planning du professeur</h3>
+            <h3>{t("admin.professor_detail.schedule_title")}</h3>
             <span className="badge">{agendaRange.title}</span>
           </div>
 
@@ -1225,23 +1287,23 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             <input type="hidden" name="tab" value="planning" />
 
             <label>
-              Vue
+              {t("admin.professor_detail.schedule_view")}
               <select name="agenda_view" defaultValue={agendaView}>
-                <option value="month">Mois</option>
-                <option value="week">Semaine</option>
-                <option value="day">Jour</option>
+                <option value="month">{t("admin.professor_detail.schedule_month")}</option>
+                <option value="week">{t("admin.professor_detail.schedule_week")}</option>
+                <option value="day">{t("admin.professor_detail.schedule_day")}</option>
               </select>
             </label>
 
             <label>
-              Date de reference (UTC)
+              {t("admin.professor_detail.schedule_reference_date")}
               <input type="date" name="agenda_date" defaultValue={agendaDate} />
             </label>
 
             <div className="row">
-              <button type="submit">Appliquer</button>
+              <button type="submit">{t("common.apply")}</button>
               <a className="reset-link" href={tabHref(professor.id, "planning")}>
-                Reinitialiser
+                {t("common.reset")}
               </a>
             </div>
           </form>
@@ -1251,13 +1313,13 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               <article key={day.key} className="agenda-day-card">
                 <h4>{day.label}</h4>
                 {day.sessions.length === 0 ? (
-                  <p className="muted">Aucun cours.</p>
+                  <p className="muted">{t("admin.professor_detail.no_course")}</p>
                 ) : (
                   <div className="list">
                     {day.sessions.map((session) => (
                       <article key={session.id} className="item">
                         <div className="row spread">
-                          <strong>{formatTime(session.start_at_utc)} - {formatTime(session.end_at_utc)}</strong>
+                          <strong>{formatTime(session.start_at_utc, language)} - {formatTime(session.end_at_utc, language)}</strong>
                           <span className="badge">
                             {session.booked_count}/{session.capacity_max}
                           </span>
@@ -1269,7 +1331,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                             {courseTypeNameById.get(session.course_type_id) ?? session.course_type_id} / {locationNameById.get(session.location_id) ?? session.location_id}
                           </small>
                         </p>
-                        <p className="muted">Statut: {session.status}</p>
+                        <p className="muted">{t("admin.professor_detail.status_prefix", { status: session.status })}</p>
                       </article>
                     ))}
                   </div>
