@@ -8,8 +8,10 @@ import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type WysiwygFieldProps = {
+  language: UiLanguage;
   name: string;
   label: string;
   defaultValue: string;
@@ -68,34 +70,40 @@ function normalizeInitialEditorValue(value: string): string {
   return plainTextToHtml(decoded);
 }
 
-const FONT_FAMILY_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "Police par defaut" },
-  { value: "Arial", label: "Arial" },
-  { value: "Verdana", label: "Verdana" },
-  { value: "Georgia", label: "Georgia" },
-  { value: "Times New Roman", label: "Times New Roman" },
-  { value: "Trebuchet MS", label: "Trebuchet MS" },
-];
-
-const FONT_SIZE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "Taille par defaut" },
-  { value: "11px", label: "11 px" },
-  { value: "12px", label: "12 px" },
-  { value: "13px", label: "13 px" },
-  { value: "14px", label: "14 px" },
-  { value: "16px", label: "16 px" },
-  { value: "18px", label: "18 px" },
-  { value: "20px", label: "20 px" },
-];
-
 export default function WysiwygField({
+  language,
   name,
   label,
   defaultValue,
   minHeightPx = 220,
   helpText,
 }: WysiwygFieldProps): JSX.Element {
+  const t = (key: string) => uiText(language, key);
   const initialValue = normalizeInitialEditorValue(defaultValue);
+  const fontFamilyOptions = useMemo(
+    () => [
+      { value: "", label: t("admin.richtext.font_default") },
+      { value: "Arial", label: "Arial" },
+      { value: "Verdana", label: "Verdana" },
+      { value: "Georgia", label: "Georgia" },
+      { value: "Times New Roman", label: "Times New Roman" },
+      { value: "Trebuchet MS", label: "Trebuchet MS" },
+    ],
+    [language],
+  );
+  const fontSizeOptions = useMemo(
+    () => [
+      { value: "", label: t("admin.richtext.font_size_default") },
+      { value: "11px", label: "11 px" },
+      { value: "12px", label: "12 px" },
+      { value: "13px", label: "13 px" },
+      { value: "14px", label: "14 px" },
+      { value: "16px", label: "16 px" },
+      { value: "18px", label: "18 px" },
+      { value: "20px", label: "20 px" },
+    ],
+    [language],
+  );
   const [mode, setMode] = useState<"wysiwyg" | "html">("wysiwyg");
   const [value, setValue] = useState<string>(initialValue);
   const [fontFamily, setFontFamily] = useState<string>("");
@@ -135,15 +143,15 @@ export default function WysiwygField({
       { label: "H2", action: "heading2" },
       { label: "H3", action: "heading3" },
       { label: "P", action: "paragraph" },
-      { label: "Liste", action: "bulletList" },
-      { label: "1.2.3", action: "orderedList" },
-      { label: "Gauche", action: "alignLeft" },
-      { label: "Centre", action: "alignCenter" },
-      { label: "Droite", action: "alignRight" },
+      { label: t("admin.richtext.bullet_list"), action: "bulletList" },
+      { label: t("admin.richtext.numbered_list"), action: "orderedList" },
+      { label: t("admin.richtext.align_left"), action: "alignLeft" },
+      { label: t("admin.richtext.align_center"), action: "alignCenter" },
+      { label: t("admin.richtext.align_right"), action: "alignRight" },
       { label: "↶", action: "undo" },
       { label: "↷", action: "redo" },
     ],
-    [],
+    [language],
   );
 
   function applyCommand(
@@ -271,7 +279,7 @@ export default function WysiwygField({
     if (!editor || mode !== "wysiwyg") {
       return;
     }
-    const href = window.prompt("URL du lien (https://...)");
+    const href = window.prompt(t("admin.richtext.prompt_link"));
     if (!href) {
       return;
     }
@@ -281,7 +289,7 @@ export default function WysiwygField({
 
   function renderToolbar(showPopupButton = true): JSX.Element {
     return (
-      <div className="quote-template-toolbar" aria-label="Outils de mise en forme">
+      <div className="quote-template-toolbar" aria-label={t("admin.richtext.toolbar")}>
         <div className="toolbar-group">
           {toolbar.map((item) => (
             <button
@@ -301,9 +309,9 @@ export default function WysiwygField({
             className="ghost small-btn"
             value={fontFamily}
             onChange={(event) => applyFontFamily(event.target.value)}
-            aria-label="Famille de police"
+            aria-label={t("admin.richtext.font_family")}
           >
-            {FONT_FAMILY_OPTIONS.map((option) => (
+            {fontFamilyOptions.map((option) => (
               <option key={option.label} value={option.value}>
                 {option.label}
               </option>
@@ -313,16 +321,16 @@ export default function WysiwygField({
             className="ghost small-btn"
             value={fontSize}
             onChange={(event) => applyFontSize(event.target.value)}
-            aria-label="Taille de police"
+            aria-label={t("admin.richtext.font_size")}
           >
-            {FONT_SIZE_OPTIONS.map((option) => (
+            {fontSizeOptions.map((option) => (
               <option key={option.label} value={option.value}>
                 {option.label}
               </option>
             ))}
           </select>
           <button type="button" className="ghost small-btn" onClick={insertLink}>
-            Lien
+            {t("admin.richtext.link")}
           </button>
           {showPopupButton ? (
             <button
@@ -330,7 +338,7 @@ export default function WysiwygField({
               className="ghost small-btn"
               onClick={() => setEditorPopupOpen(true)}
             >
-              Ouvrir en popup
+              {t("admin.richtext.open_popup")}
             </button>
           ) : null}
         </div>
@@ -347,7 +355,7 @@ export default function WysiwygField({
           className={mode === "wysiwyg" ? "" : "ghost"}
           onClick={switchToWysiwyg}
         >
-          WYSIWYG
+          {t("admin.richtext.wysiwyg")}
         </button>
         <button
           type="button"
@@ -364,7 +372,7 @@ export default function WysiwygField({
             {renderToolbar()}
             {editorPopupOpen ? (
               <div className="quote-template-inline-placeholder muted">
-                Edition en popup ouverte.
+                {t("admin.richtext.popup_open")}
               </div>
             ) : (
               <div className="quote-template-editor-scroll">
@@ -395,11 +403,11 @@ export default function WysiwygField({
               className="modal-close-x"
               type="button"
               onClick={() => setEditorPopupOpen(false)}
-              aria-label="Fermer"
+              aria-label={t("common.close")}
             >
               ×
             </button>
-            <h3 className="modal-title">Editeur WYSIWYG</h3>
+            <h3 className="modal-title">{t("admin.richtext.popup_title")}</h3>
             <div className="quote-template-editor-shell">
               {renderToolbar(false)}
               <div className="quote-template-editor-scroll">

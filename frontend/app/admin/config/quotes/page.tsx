@@ -29,7 +29,8 @@ import {
 import { backendRequest } from "../../../../lib/backend";
 import QuoteTemplateEditor from "../../../../components/quote-template-editor";
 import WysiwygField from "../../../../components/wysiwyg-field";
-import type { AdminActivityOut, AdminFormulaOut, LocationOut } from "../../../../lib/types";
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import type { AdminActivityOut, AdminFormulaOut, LocationOut, UserOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -243,7 +244,7 @@ function dateInputValue(value: string | null): string {
   return value.slice(0, 10);
 }
 
-function dateTimeLabel(value: string | null): string {
+function dateTimeLabel(value: string | null, language: UiLanguage = "fr"): string {
   if (!value) {
     return "-";
   }
@@ -251,7 +252,29 @@ function dateTimeLabel(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(language === "en" ? "en-US" : "fr-FR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function templateStatusLabel(value: string | null, language: UiLanguage): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "published") {
+    return uiText(language, "admin.quote_config.status_published");
+  }
+  if (normalized === "archived") {
+    return uiText(language, "admin.quote_config.status_archived");
+  }
+  return uiText(language, "admin.quote_config.status_draft");
+}
+
+function uiLanguageLabel(value: string | null, language: UiLanguage): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "en") {
+    return uiText(language, "common.english");
+  }
+  if (normalized === "fr") {
+    return uiText(language, "common.french");
+  }
+  return normalized ? normalized.toUpperCase() : "-";
 }
 
 function moneyLabel(value: string | number | null | undefined, currency = "EUR"): string {
@@ -563,6 +586,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     redirect("/login?error=Session%20expiree");
   }
 
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const sortLocale = language === "en" ? "en-US" : "fr-FR";
+
   const params = searchParams ?? {};
   const rawTab = readParam(params, "tab").trim().toLowerCase();
   if (rawTab === "cgv" || rawTab === "templates") {
@@ -620,79 +651,79 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   const quoteTypes = quoteTypesResult.ok
     ? quoteTypesResult.data
     : (() => {
-        loadErrors.push(`Types de devis: ${quoteTypesResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_quote_types")}: ${quoteTypesResult.message}`);
         return [] as QuoteTypeOut[];
       })();
   const formulas = formulasResult.ok
     ? formulasResult.data
     : (() => {
-        loadErrors.push(`Formules: ${formulasResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_formulas")}: ${formulasResult.message}`);
         return [] as AdminFormulaOut[];
       })();
   const catalogs = catalogsResult.ok
     ? catalogsResult.data
     : (() => {
-        loadErrors.push(`Catalogues de prix: ${catalogsResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_catalogs")}: ${catalogsResult.message}`);
         return [] as PricingCatalogOut[];
       })();
   const typeformFormConfigs = typeformFormConfigsResult.ok
     ? typeformFormConfigsResult.data
     : (() => {
-        loadErrors.push(`Configurations Typeform: ${typeformFormConfigsResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_typeform_configs")}: ${typeformFormConfigsResult.message}`);
         return [] as TypeformFormConfigOut[];
       })();
   const paymentPlans = paymentPlansResult.ok
     ? paymentPlansResult.data
     : (() => {
-        loadErrors.push(`Plans de paiement: ${paymentPlansResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_payment_plans")}: ${paymentPlansResult.message}`);
         return [] as PaymentPlanOut[];
       })();
   const pricingActivityPrices = pricingActivityPricesResult.ok
     ? pricingActivityPricesResult.data
     : (() => {
-        loadErrors.push(`Tarifs activites: ${pricingActivityPricesResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_activity_prices")}: ${pricingActivityPricesResult.message}`);
         return [] as PricingActivityPriceOut[];
       })();
   const templateVariables = templateVariablesResult.ok
     ? templateVariablesResult.data
     : (() => {
-        loadErrors.push(`Variables de template: ${templateVariablesResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_template_variables")}: ${templateVariablesResult.message}`);
         return [] as QuoteTemplateVariableOut[];
       })();
   const solfegeRules = solfegeRulesResult.ok
     ? solfegeRulesResult.data
     : (() => {
-        loadErrors.push(`Regles solfege: ${solfegeRulesResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_solfege_rules")}: ${solfegeRulesResult.message}`);
         return [] as SolfegeLevelRuleOut[];
       })();
   const locations = locationsResult.ok
     ? locationsResult.data
     : (() => {
-        loadErrors.push(`Lieux: ${locationsResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_locations")}: ${locationsResult.message}`);
         return [] as LocationOut[];
       })();
   const activities = activitiesResult.ok
     ? activitiesResult.data
     : (() => {
-        loadErrors.push(`Activites: ${activitiesResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_activities")}: ${activitiesResult.message}`);
         return [] as AdminActivityOut[];
       })();
   const quoteTemplatesV2 = quoteTemplatesV2Result.ok
     ? quoteTemplatesV2Result.data
     : (() => {
-        loadErrors.push(`Templates documentaires: ${quoteTemplatesV2Result.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_doc_templates")}: ${quoteTemplatesV2Result.message}`);
         return [] as QuoteTemplateV2Out[];
       })();
   const termsTemplates = termsTemplatesResult.ok
     ? termsTemplatesResult.data
     : (() => {
-        loadErrors.push(`Templates CGV: ${termsTemplatesResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_terms_templates")}: ${termsTemplatesResult.message}`);
         return [] as TermsTemplateOut[];
       })();
   const quoteDocumentBindings = quoteDocumentBindingsResult.ok
     ? quoteDocumentBindingsResult.data
     : (() => {
-        loadErrors.push(`Regles d association documentaire: ${quoteDocumentBindingsResult.message}`);
+        loadErrors.push(`${t("admin.quote_config.load_document_bindings")}: ${quoteDocumentBindingsResult.message}`);
         return [] as QuoteDocumentBindingOut[];
       })();
 
@@ -701,14 +732,27 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   const activityByCode = new Map(activities.map((row) => [row.code, row]));
   const activeActivities = activities
     .filter((row) => row.active)
-    .sort((a, b) => a.name.localeCompare(b.name, "fr-FR"));
+    .sort((a, b) => a.name.localeCompare(b.name, sortLocale));
   const activityFamilies = Array.from(
     new Set(
       activities
         .map((row) => String(row.service_code || "").trim())
         .filter((value) => value.length > 0),
     ),
-  ).sort((a, b) => a.localeCompare(b, "fr-FR"));
+  ).sort((a, b) => a.localeCompare(b, sortLocale));
+  const defaultQuoteTemplateSubject = language === "en"
+    ? "Your Piano Academie quote {quote_number}"
+    : "Votre devis {quote_number} Piano Academie";
+  const defaultQuoteTemplateBody = language === "en"
+    ? "{document_style_html}{cover_page_standard_html}{header_standard_html}<h1>Quote {quote_number}</h1>{page_break_html}<h2>Student and parent details</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}{financial_recap_block_html}<h2>Payment and schedule</h2>{payment_method_block_html}<p>{payment_schedule_summary}</p>{payment_schedule_table_html}{options_section_html}<h2>Planned lesson schedule</h2><p><strong>Calendar overview:</strong> {calendar_summary}</p>{calendar_activity_semesters_html}<p><strong>Expiry:</strong> {expires_at}</p>{footer_standard_html}"
+    : "{document_style_html}{cover_page_standard_html}{header_standard_html}<h1>Devis {quote_number}</h1>{page_break_html}<h2>Informations de l’élève et du responsable</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}{financial_recap_block_html}<h2>Règlement et échéancier</h2>{payment_method_block_html}<p>{payment_schedule_summary}</p>{payment_schedule_table_html}{options_section_html}<h2>Calendrier prévisionnel des cours</h2><p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>{calendar_activity_semesters_html}<p><strong>Expiration:</strong> {expires_at}</p>{footer_standard_html}";
+  const defaultQuoteTemplateFallbackBody = language === "en"
+    ? "{document_style_html}{header_standard_html}<h1>Quote {quote_number}</h1>{page_break_html}<h2>Student and parent details</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}{financial_recap_block_html}<h2>Payment and schedule</h2>{payment_method_block_html}<p>{payment_schedule_summary}</p>{payment_schedule_table_html}{options_section_html}<h2>Planned lesson schedule</h2><p><strong>Calendar overview:</strong> {calendar_summary}</p>{calendar_activity_semesters_html}{footer_standard_html}"
+    : "{document_style_html}{header_standard_html}<h1>Devis {quote_number}</h1>{page_break_html}<h2>Informations de l’élève et du responsable</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}{financial_recap_block_html}<h2>Règlement et échéancier</h2>{payment_method_block_html}<p>{payment_schedule_summary}</p>{payment_schedule_table_html}{options_section_html}<h2>Calendrier prévisionnel des cours</h2><p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>{calendar_activity_semesters_html}{footer_standard_html}";
+  const defaultTermsVersionLabel = language === "en" ? "Terms 2026.1" : "CGV 2026.1";
+  const defaultTermsContent = language === "en"
+    ? "<h2>Terms and conditions</h2><p>...</p>"
+    : "<h2>Conditions generales de vente</h2><p>...</p>";
   const quoteTemplateVersionPrefill = new Map<string, { subject: string; body: string; versionNumber: number | null }>();
   const termsTemplateVersionPrefill = new Map<string, { versionLabel: string; content: string; versionNumber: number | null }>();
   await Promise.all(
@@ -754,12 +798,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Configuration Devis</h2>
-            <p className="muted">Administrez les referentiels metier et documentaires des devis: types, catalogues, modeles, CGV et creneaux solfege.</p>
+            <h2>{t("admin.quote_config.page_title")}</h2>
+            <p className="muted">{t("admin.quote_config.page_subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href="/admin/config">Retour Configuration</Link>
-            <Link className="ghost" href="/admin/quotes">Voir Devis</Link>
+            <Link className="ghost" href="/admin/config">{t("admin.quote_config.back_config")}</Link>
+            <Link className="ghost" href="/admin/quotes">{t("admin.quote_config.view_quotes")}</Link>
           </div>
         </div>
       </section>
@@ -767,21 +811,21 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       {okMessage || errorMessage ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel modal-compact">
-            <a className="modal-close-x" href={returnPath} aria-label="Fermer">
+            <a className="modal-close-x" href={returnPath} aria-label={t("common.close")}>
               ×
             </a>
-            <h3 className="modal-title">{errorMessage ? "Erreur" : "Confirmation"}</h3>
+            <h3 className="modal-title">{errorMessage ? t("admin.quote_config.feedback_error_title") : t("admin.quote_config.feedback_success_title")}</h3>
             {okMessage ? <section className="flash-ok top-gap-sm">{okMessage}</section> : null}
             {errorMessage ? <section className="flash-err top-gap-sm">{errorMessage}</section> : null}
             <div className="row modal-actions-end top-gap-sm">
-              <a className="ghost" href={returnPath}>Fermer</a>
+              <a className="ghost" href={returnPath}>{t("common.close")}</a>
             </div>
           </article>
         </section>
       ) : null}
       {loadErrors.length > 0 ? (
         <section className="card">
-          <h3>Erreurs de chargement</h3>
+          <h3>{t("admin.quote_config.loading_errors")}</h3>
           <ul className="config-error-list">
             {loadErrors.map((message) => (
               <li key={message} className="flash-err">{message}</li>
@@ -792,15 +836,15 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       <section className="card">
         <nav className="config-sub-nav">
-          <Link className={`config-sub-link ${tab === "types" ? "active" : ""}`} href={buildQuotesConfigHref("types")}>Types de devis</Link>
-          <Link className={`config-sub-link ${tab === "catalogs" ? "active" : ""}`} href={buildQuotesConfigHref("catalogs")}>Catalogues de prix</Link>
-          <Link className={`config-sub-link ${tab === "payment_plans" ? "active" : ""}`} href={buildQuotesConfigHref("payment_plans")}>Plans de paiement</Link>
-          <Link className={`config-sub-link ${tab === "doc_templates" ? "active" : ""}`} href={buildQuotesConfigHref("doc_templates")}>Modeles de devis</Link>
-          <Link className={`config-sub-link ${tab === "doc_terms" ? "active" : ""}`} href={buildQuotesConfigHref("doc_terms")}>Modeles de CGV</Link>
-          <Link className={`config-sub-link ${tab === "doc_bindings" ? "active" : ""}`} href={buildQuotesConfigHref("doc_bindings")}>Regles d association documentaire</Link>
-          <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>Variables documentaires</Link>
-          <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>Creneaux de solfege</Link>
-          <Link className="config-sub-link" href="/admin/config/calendars">Calendriers scolaires</Link>
+          <Link className={`config-sub-link ${tab === "types" ? "active" : ""}`} href={buildQuotesConfigHref("types")}>{t("admin.quote_config.nav_types")}</Link>
+          <Link className={`config-sub-link ${tab === "catalogs" ? "active" : ""}`} href={buildQuotesConfigHref("catalogs")}>{t("admin.quote_config.nav_catalogs")}</Link>
+          <Link className={`config-sub-link ${tab === "payment_plans" ? "active" : ""}`} href={buildQuotesConfigHref("payment_plans")}>{t("admin.quote_config.nav_payment_plans")}</Link>
+          <Link className={`config-sub-link ${tab === "doc_templates" ? "active" : ""}`} href={buildQuotesConfigHref("doc_templates")}>{t("admin.quote_config.nav_doc_templates")}</Link>
+          <Link className={`config-sub-link ${tab === "doc_terms" ? "active" : ""}`} href={buildQuotesConfigHref("doc_terms")}>{t("admin.quote_config.nav_doc_terms")}</Link>
+          <Link className={`config-sub-link ${tab === "doc_bindings" ? "active" : ""}`} href={buildQuotesConfigHref("doc_bindings")}>{t("admin.quote_config.nav_doc_bindings")}</Link>
+          <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>{t("admin.quote_config.nav_variables")}</Link>
+          <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>{t("admin.quote_config.nav_solfege")}</Link>
+          <Link className="config-sub-link" href="/admin/config/calendars">{t("admin.quote_config.nav_calendars")}</Link>
         </nav>
       </section>
 
@@ -1471,78 +1515,76 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "doc_templates" ? (
         <section className="card">
-          <h3>Modeles de devis (document principal)</h3>
-          <p className="muted">
-            Ce bloc gere le document devis (rendu admin, page publique et PDF). Les codes techniques sont geres automatiquement.
-          </p>
+          <h3>{t("admin.quote_config.doc_templates_title")}</h3>
+          <p className="muted">{t("admin.quote_config.doc_templates_subtitle")}</p>
           <form action={createAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
             <div className="span-2">
-              <h4>Etape 1 · Fiche du modele</h4>
+              <h4>{t("admin.quote_config.step_template_record")}</h4>
             </div>
             <label>
-              Nom
-              <input type="text" name="name" required maxLength={180} placeholder="Template enfant collectif" />
+              {t("common.name")}
+              <input type="text" name="name" required maxLength={180} placeholder={t("admin.quote_config.doc_template_name_placeholder")} />
             </label>
             <label>
-              Cible
-              <input type="text" name="target" maxLength={40} placeholder="adult | child_collective | eveil" />
+              {t("admin.quote_config.target")}
+              <input type="text" name="target" maxLength={40} placeholder={t("admin.quote_config.target_placeholder")} />
             </label>
             <label>
-              Langue
+              {t("common.language")}
               <select name="language" defaultValue="fr" required>
-                <option value="fr">Français</option>
+                <option value="fr">{t("common.french")}</option>
+                <option value="en">{t("common.english")}</option>
               </select>
             </label>
             <label>
-              Statut
+              {t("common.status")}
               <select name="status" defaultValue="draft">
-                <option value="draft">Brouillon</option>
-                <option value="published">Publie</option>
-                <option value="archived">Archive</option>
+                <option value="draft">{t("admin.quote_config.status_draft")}</option>
+                <option value="published">{t("admin.quote_config.status_published")}</option>
+                <option value="archived">{t("admin.quote_config.status_archived")}</option>
               </select>
             </label>
             <label className="span-2">
-              Description interne
+              {t("admin.quote_config.internal_description")}
               <input type="text" name="description" maxLength={2000} />
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_default" />
-              Defaut (langue)
+              {t("admin.quote_config.default_for_language")}
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
-              Actif
+              {t("common.active")}
             </label>
             <label className="checkline">
               <input type="checkbox" name="publish_now" defaultChecked />
-              Publier maintenant
+              {t("admin.quote_config.publish_now")}
             </label>
             <label className="span-2">
-              Changelog
-              <input type="text" name="changelog" maxLength={2000} placeholder="v1 initiale" />
+              {t("admin.quote_config.changelog")}
+              <input type="text" name="changelog" maxLength={2000} placeholder={t("admin.quote_config.changelog_initial_placeholder")} />
             </label>
             <div className="span-2">
-              <h4>Etape 2 · Contenu documentaire</h4>
+              <h4>{t("admin.quote_config.step_document_content")}</h4>
             </div>
             <div className="span-2">
               <QuoteTemplateEditor
+                language={language}
                 subjectName="subject_template"
                 bodyName="body_template"
-                defaultSubject="Votre devis {quote_number} Piano Academie"
-                defaultBody={
-                  "{document_style_html}{cover_page_standard_html}{header_standard_html}<h1>Devis {quote_number}</h1>{page_break_html}<h2>Informations de l’élève et du responsable</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}{financial_recap_block_html}<h2>Règlement et échéancier</h2>{payment_method_block_html}<p>{payment_schedule_summary}</p>{payment_schedule_table_html}{options_section_html}<h2>Calendrier prévisionnel des cours</h2><p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>{calendar_activity_semesters_html}<p><strong>Expiration:</strong> {expires_at}</p>{footer_standard_html}"
-                }
+                defaultSubject={defaultQuoteTemplateSubject}
+                defaultBody={defaultQuoteTemplateBody}
                 variables={templateVariables}
               />
             </div>
             <div className="row span-2">
-              <button type="submit">Enregistrer le modele de devis</button>
+              <button type="submit">{t("admin.quote_config.save_quote_template")}</button>
             </div>
           </form>
 
           <div className="list top-gap-sm">
-            {quoteTemplatesV2.length === 0 ? <p className="muted">Aucun template documentaire.</p> : null}
+            {quoteTemplatesV2.length === 0 ? <p className="muted">{t("admin.quote_config.no_quote_templates")}</p> : null}
             {quoteTemplatesV2.map((row) => {
               const prefill = quoteTemplateVersionPrefill.get(row.id);
               return (
@@ -1551,105 +1593,109 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     <div>
                       <strong>{row.name}</strong>
                       <p className="muted">
-                        cible {row.target || "-"} · langue {row.language.toUpperCase()} · v{row.current_version_number ?? "-"} · Maj: {dateTimeLabel(row.updated_at)}
+                        {t("admin.quote_config.template_meta", {
+                          target: row.target || "-",
+                          language: uiLanguageLabel(row.language, language),
+                          version: row.current_version_number ?? "-",
+                          updated_at: dateTimeLabel(row.updated_at, language),
+                        })}
                       </p>
                     </div>
                     <div className="row wrap gap-sm">
-                      {row.is_default ? <span className="badge">Defaut</span> : null}
-                      <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.status}</span>
+                      {row.is_default ? <span className="badge">{t("admin.quote_config.default_badge")}</span> : null}
+                      <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{templateStatusLabel(row.status, language)}</span>
                     </div>
                   </div>
                   <details>
-                    <summary className="mode-link">Modifier / publier nouvelle version</summary>
+                    <summary className="mode-link">{t("admin.quote_config.edit_publish_new_version")}</summary>
                     <form action={updateAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
                       <input type="hidden" name="code" value={row.code} />
                       <input type="hidden" name="template_type" value={row.template_type || "quote_body"} />
                       <div className="span-2">
-                        <h4>Etape 1 · Fiche du modele</h4>
+                        <h4>{t("admin.quote_config.step_template_record")}</h4>
                       </div>
                       <label>
-                        Nom
+                        {t("common.name")}
                         <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
                       </label>
                       <label>
-                        Cible
+                        {t("admin.quote_config.target")}
                         <input type="text" name="target" defaultValue={row.target ?? ""} maxLength={40} />
                       </label>
                       <label>
-                        Langue
+                        {t("common.language")}
                         <select name="language" defaultValue={row.language || "fr"} required>
-                          <option value="fr">Français</option>
+                          <option value="fr">{t("common.french")}</option>
+                          <option value="en">{t("common.english")}</option>
                         </select>
                       </label>
                       <label>
-                        Statut
+                        {t("common.status")}
                         <select name="status" defaultValue={row.status || "draft"}>
-                          <option value="draft">Brouillon</option>
-                          <option value="published">Publie</option>
-                          <option value="archived">Archive</option>
+                          <option value="draft">{t("admin.quote_config.status_draft")}</option>
+                          <option value="published">{t("admin.quote_config.status_published")}</option>
+                          <option value="archived">{t("admin.quote_config.status_archived")}</option>
                         </select>
                       </label>
                       <label className="span-2">
-                        Description interne
+                        {t("admin.quote_config.internal_description")}
                         <input type="text" name="description" defaultValue={row.description ?? ""} maxLength={2000} />
                       </label>
                       <label className="checkline">
                         <input type="checkbox" name="is_default" defaultChecked={row.is_default} />
-                        Defaut (langue)
+                        {t("admin.quote_config.default_for_language")}
                       </label>
                       <label className="checkline">
                         <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                        Actif
+                        {t("common.active")}
                       </label>
                       <label className="checkline">
                         <input type="checkbox" name="publish_now" defaultChecked />
-                        Publier maintenant
+                        {t("admin.quote_config.publish_now")}
                       </label>
                       <label className="span-2">
-                        Changelog
-                        <input type="text" name="changelog" maxLength={2000} placeholder="Nouvelle version" />
+                        {t("admin.quote_config.changelog")}
+                        <input type="text" name="changelog" maxLength={2000} placeholder={t("admin.quote_config.changelog_new_version_placeholder")} />
                       </label>
                       <div className="span-2">
-                        <h4>Etape 2 · Contenu documentaire</h4>
+                        <h4>{t("admin.quote_config.step_document_content")}</h4>
                       </div>
                       <div className="span-2">
                         <QuoteTemplateEditor
+                          language={language}
                           subjectName="subject_template"
                           bodyName="body_template"
-                          defaultSubject={prefill?.subject || `Devis {quote_number}`}
-                          defaultBody={
-                            prefill?.body ||
-                            "{document_style_html}{header_standard_html}<h1>Devis {quote_number}</h1>{page_break_html}<h2>Informations de l’élève et du responsable</h2><div class='quote-block'>{prospect_identity_block_html}</div>{activities_planning_section_html}{services_section_html}{adjustments_section_html}{products_section_html}{kits_section_html}{financial_recap_block_html}<h2>Règlement et échéancier</h2>{payment_method_block_html}<p>{payment_schedule_summary}</p>{payment_schedule_table_html}{options_section_html}<h2>Calendrier prévisionnel des cours</h2><p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>{calendar_activity_semesters_html}{footer_standard_html}"
-                          }
+                          defaultSubject={prefill?.subject || defaultQuoteTemplateSubject}
+                          defaultBody={prefill?.body || defaultQuoteTemplateFallbackBody}
                           variables={templateVariables}
                         />
                       </div>
                       <div className="row span-2">
-                        <button type="submit">Enregistrer</button>
+                        <button type="submit">{t("common.save")}</button>
                       </div>
                     </form>
                     <form action={deleteAdminQuoteTemplateV2ConfigAction} className="row top-gap-sm">
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
-                      <button type="submit" className="danger">Archiver</button>
+                      <button type="submit" className="danger">{t("common.archive")}</button>
                     </form>
                     <form action={hardDeleteAdminQuoteTemplateV2ConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_templates")} />
                       <label className="span-2">
-                        Confirmation suppression definitive
+                        {t("admin.quote_config.hard_delete_confirmation")}
                         <input
                           type="text"
                           name="confirm_delete"
                           required
-                          placeholder="Tapez SUPPRIMER pour confirmer"
+                          placeholder={t("admin.quote_config.hard_delete_placeholder")}
                           autoComplete="off"
                         />
                       </label>
                       <div className="row span-2">
-                        <button type="submit" className="danger">Supprimer definitivement</button>
+                        <button type="submit" className="danger">{t("admin.quote_config.hard_delete_button")}</button>
                       </div>
                     </form>
                   </details>
@@ -1662,67 +1708,69 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "doc_terms" ? (
         <section className="card">
-          <h3>Modeles de CGV (annexe juridique)</h3>
-          <p className="muted">Les CGV sont versionnees et snapshottees dans chaque devis envoye.</p>
+          <h3>{t("admin.quote_config.doc_terms_title")}</h3>
+          <p className="muted">{t("admin.quote_config.doc_terms_subtitle")}</p>
           <form action={createAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
             <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
             <label>
-              Nom
-              <input type="text" name="name" required maxLength={180} placeholder="CGV enfants collectifs" />
+              {t("common.name")}
+              <input type="text" name="name" required maxLength={180} placeholder={t("admin.quote_config.doc_terms_name_placeholder")} />
             </label>
             <label>
-              Cible
-              <input type="text" name="target" maxLength={40} placeholder="adult | child_collective | eveil" />
+              {t("admin.quote_config.target")}
+              <input type="text" name="target" maxLength={40} placeholder={t("admin.quote_config.target_placeholder")} />
             </label>
             <label>
-              Langue
+              {t("common.language")}
               <select name="language" defaultValue="fr" required>
-                <option value="fr">Français</option>
+                <option value="fr">{t("common.french")}</option>
+                <option value="en">{t("common.english")}</option>
               </select>
             </label>
             <label>
-              Statut
+              {t("common.status")}
               <select name="status" defaultValue="draft">
-                <option value="draft">Brouillon</option>
-                <option value="published">Publie</option>
-                <option value="archived">Archive</option>
+                <option value="draft">{t("admin.quote_config.status_draft")}</option>
+                <option value="published">{t("admin.quote_config.status_published")}</option>
+                <option value="archived">{t("admin.quote_config.status_archived")}</option>
               </select>
             </label>
             <label>
-              Label version
-              <input type="text" name="version_label" required maxLength={80} placeholder="CGV 2026.1" />
+              {t("admin.quote_config.version_label")}
+              <input type="text" name="version_label" required maxLength={80} placeholder={defaultTermsVersionLabel} />
             </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
-              Actif
+              {t("common.active")}
             </label>
             <label className="checkline">
               <input type="checkbox" name="publish_now" defaultChecked />
-              Publier maintenant
+              {t("admin.quote_config.publish_now")}
             </label>
             <label className="span-2">
-              Description interne
+              {t("admin.quote_config.internal_description")}
               <input type="text" name="description" maxLength={2000} />
             </label>
             <label className="span-2">
-              Changelog
+              {t("admin.quote_config.changelog")}
               <input type="text" name="changelog" maxLength={2000} />
             </label>
             <div className="span-2">
               <WysiwygField
+                language={language}
                 name="content"
-                label="Contenu CGV"
-                defaultValue="<h2>Conditions generales de vente</h2><p>...</p>"
-                helpText="Editez les CGV en mode WYSIWYG ou HTML."
+                label={t("admin.quote_config.terms_content")}
+                defaultValue={defaultTermsContent}
+                helpText={t("admin.quote_config.terms_content_help")}
               />
             </div>
             <div className="row span-2">
-              <button type="submit">Enregistrer le modele de CGV</button>
+              <button type="submit">{t("admin.quote_config.save_terms_template")}</button>
             </div>
           </form>
 
           <div className="list top-gap-sm">
-            {termsTemplates.length === 0 ? <p className="muted">Aucun template CGV.</p> : null}
+            {termsTemplates.length === 0 ? <p className="muted">{t("admin.quote_config.no_terms_templates")}</p> : null}
             {termsTemplates.map((row) => {
               const prefill = termsTemplateVersionPrefill.get(row.id);
               return (
@@ -1731,91 +1779,98 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     <div>
                       <strong>{row.name}</strong>
                       <p className="muted">
-                        cible {row.target || "-"} · langue {row.language.toUpperCase()} · v{row.current_version_number ?? "-"} · Maj: {dateTimeLabel(row.updated_at)}
+                        {t("admin.quote_config.template_meta", {
+                          target: row.target || "-",
+                          language: uiLanguageLabel(row.language, language),
+                          version: row.current_version_number ?? "-",
+                          updated_at: dateTimeLabel(row.updated_at, language),
+                        })}
                       </p>
                     </div>
-                    <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.status}</span>
+                    <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{templateStatusLabel(row.status, language)}</span>
                   </div>
                   <details>
-                    <summary className="mode-link">Modifier / publier nouvelle version</summary>
+                    <summary className="mode-link">{t("admin.quote_config.edit_publish_new_version")}</summary>
                     <form action={updateAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
                       <input type="hidden" name="current_code" value={row.code} />
                       <label>
-                        Nom
+                        {t("common.name")}
                         <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
                       </label>
                       <label>
-                        Cible
+                        {t("admin.quote_config.target")}
                         <input type="text" name="target" defaultValue={row.target ?? ""} maxLength={40} />
                       </label>
                       <label>
-                        Langue
+                        {t("common.language")}
                         <select name="language" defaultValue={row.language || "fr"} required>
-                          <option value="fr">Français</option>
+                          <option value="fr">{t("common.french")}</option>
+                          <option value="en">{t("common.english")}</option>
                         </select>
                       </label>
                       <label>
-                        Statut
+                        {t("common.status")}
                         <select name="status" defaultValue={row.status || "draft"}>
-                          <option value="draft">Brouillon</option>
-                          <option value="published">Publie</option>
-                          <option value="archived">Archive</option>
+                          <option value="draft">{t("admin.quote_config.status_draft")}</option>
+                          <option value="published">{t("admin.quote_config.status_published")}</option>
+                          <option value="archived">{t("admin.quote_config.status_archived")}</option>
                         </select>
                       </label>
                       <label>
-                        Label version
-                        <input type="text" name="version_label" defaultValue={prefill?.versionLabel || "CGV"} required maxLength={80} />
+                        {t("admin.quote_config.version_label")}
+                        <input type="text" name="version_label" defaultValue={prefill?.versionLabel || defaultTermsVersionLabel} required maxLength={80} />
                       </label>
                       <label className="checkline">
                         <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                        Actif
+                        {t("common.active")}
                       </label>
                       <label className="checkline">
                         <input type="checkbox" name="publish_now" defaultChecked />
-                        Publier maintenant
+                        {t("admin.quote_config.publish_now")}
                       </label>
                       <label className="span-2">
-                        Description interne
+                        {t("admin.quote_config.internal_description")}
                         <input type="text" name="description" defaultValue={row.description ?? ""} maxLength={2000} />
                       </label>
                       <label className="span-2">
-                        Changelog
+                        {t("admin.quote_config.changelog")}
                         <input type="text" name="changelog" maxLength={2000} />
                       </label>
                       <div className="span-2">
                         <WysiwygField
+                          language={language}
                           name="content"
-                          label="Contenu CGV"
+                          label={t("admin.quote_config.terms_content")}
                           defaultValue={prefill?.content || ""}
-                          helpText="Toute modification publie une nouvelle version CGV."
+                          helpText={t("admin.quote_config.terms_content_publish_help")}
                         />
                       </div>
                       <div className="row span-2">
-                        <button type="submit">Enregistrer</button>
+                        <button type="submit">{t("common.save")}</button>
                       </div>
                     </form>
                     <form action={deleteAdminTermsTemplateConfigAction} className="row top-gap-sm">
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
-                      <button type="submit" className="danger">Archiver</button>
+                      <button type="submit" className="danger">{t("common.archive")}</button>
                     </form>
                     <form action={hardDeleteAdminTermsTemplateConfigAction} className="grid cols-2 config-form-grid top-gap-sm">
                       <input type="hidden" name="template_id" value={row.id} />
                       <input type="hidden" name="return_to" value={buildQuotesConfigHref("doc_terms")} />
                       <label className="span-2">
-                        Confirmation suppression definitive
+                        {t("admin.quote_config.hard_delete_confirmation")}
                         <input
                           type="text"
                           name="confirm_delete"
                           required
-                          placeholder="Tapez SUPPRIMER pour confirmer"
+                          placeholder={t("admin.quote_config.hard_delete_placeholder")}
                           autoComplete="off"
                         />
                       </label>
                       <div className="row span-2">
-                        <button type="submit" className="danger">Supprimer definitivement</button>
+                        <button type="submit" className="danger">{t("admin.quote_config.hard_delete_button")}</button>
                       </div>
                     </form>
                   </details>
@@ -2233,19 +2288,19 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
 
       {tab === "variables" ? (
         <section className="card">
-          <h3>Variables de devis disponibles</h3>
-          <p className="muted">Variables supportees dans les templates de devis.</p>
+          <h3>{t("admin.quote_config.variables_title")}</h3>
+          <p className="muted">{t("admin.quote_config.variables_subtitle")}</p>
           <div className="list">
             {templateVariables.map((item) => (
               <article key={item.key} className="item">
                 <p><code>{`{${item.key}}`}</code></p>
                 <p className="muted">{item.label} - {item.description}</p>
-                <p className="muted">Exemple: {item.example}</p>
+                <p className="muted">{t("admin.quote_config.example_prefix", { example: item.example })}</p>
               </article>
             ))}
           </div>
           <div className="row top-gap-sm">
-            <Link className="ghost" href={returnPath}>Actualiser</Link>
+            <Link className="ghost" href={returnPath}>{t("admin.quote_config.refresh_variables")}</Link>
           </div>
         </section>
       ) : null}

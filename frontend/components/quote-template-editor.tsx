@@ -9,6 +9,7 @@ import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type QuoteTemplateVariable = {
   key: string;
@@ -24,6 +25,7 @@ type EditorSnippet = {
 };
 
 type QuoteTemplateEditorProps = {
+  language: UiLanguage;
   subjectName: string;
   bodyName: string;
   defaultSubject: string;
@@ -86,143 +88,176 @@ function normalizeInitialEditorValue(value: string): string {
   return plainTextToHtml(decoded);
 }
 
-const FONT_FAMILY_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "Police par defaut" },
-  { value: "Arial", label: "Arial" },
-  { value: "Verdana", label: "Verdana" },
-  { value: "Georgia", label: "Georgia" },
-  { value: "Times New Roman", label: "Times New Roman" },
-  { value: "Trebuchet MS", label: "Trebuchet MS" },
-];
-
-const FONT_SIZE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "Taille par defaut" },
-  { value: "11px", label: "11 px" },
-  { value: "12px", label: "12 px" },
-  { value: "13px", label: "13 px" },
-  { value: "14px", label: "14 px" },
-  { value: "16px", label: "16 px" },
-  { value: "18px", label: "18 px" },
-  { value: "20px", label: "20 px" },
-];
-
 export default function QuoteTemplateEditor({
+  language,
   subjectName,
   bodyName,
   defaultSubject,
   defaultBody,
   variables,
 }: QuoteTemplateEditorProps): JSX.Element {
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const fontFamilyOptions = useMemo(
+    () => [
+      { value: "", label: t("admin.richtext.font_default") },
+      { value: "Arial", label: "Arial" },
+      { value: "Verdana", label: "Verdana" },
+      { value: "Georgia", label: "Georgia" },
+      { value: "Times New Roman", label: "Times New Roman" },
+      { value: "Trebuchet MS", label: "Trebuchet MS" },
+    ],
+    [language],
+  );
+  const fontSizeOptions = useMemo(
+    () => [
+      { value: "", label: t("admin.richtext.font_size_default") },
+      { value: "11px", label: "11 px" },
+      { value: "12px", label: "12 px" },
+      { value: "13px", label: "13 px" },
+      { value: "14px", label: "14 px" },
+      { value: "16px", label: "16 px" },
+      { value: "18px", label: "18 px" },
+      { value: "20px", label: "20 px" },
+    ],
+    [language],
+  );
   const snippets: EditorSnippet[] = useMemo(
     () => [
       {
         key: "page_break",
-        label: "Saut de page",
+        label: t("admin.quote_editor.snippet_page_break"),
         value: "{page_break_html}",
       },
       {
         key: "footer",
-        label: "Pied de page standard",
+        label: t("admin.quote_editor.snippet_footer"),
         value: "{footer_standard_html}",
       },
       {
         key: "document_style",
-        label: "Style documentaire",
+        label: t("admin.quote_editor.snippet_document_style"),
         value: "{document_style_html}",
       },
       {
         key: "cover_page",
-        label: "Page de couverture standard",
+        label: t("admin.quote_editor.snippet_cover_page"),
         value: "{cover_page_standard_html}",
       },
       {
         key: "header_page",
-        label: "Entete standard",
+        label: t("admin.quote_editor.snippet_header"),
         value: "{header_standard_html}",
       },
       {
         key: "section",
-        label: "Bloc section simple",
-        value: "<h2>Titre section</h2><p>Contenu...</p>",
+        label: t("admin.quote_editor.snippet_section"),
+        value: language === "en" ? "<h2>Section title</h2><p>Content...</p>" : "<h2>Titre section</h2><p>Contenu...</p>",
       },
       {
         key: "block_recipient",
-        label: "Bloc destinataire",
-        value:
-          "<h2>Destinataire</h2>"
-          + "<p><strong>Nom :</strong> {recipient_name}</p>"
-          + "<p><strong>Type :</strong> {prospect_type_label}</p>"
-          + "{prospect_identity_block_html}",
+        label: t("admin.quote_editor.snippet_recipient"),
+        value: language === "en"
+          ? "<h2>Recipient</h2>"
+            + "<p><strong>Name:</strong> {recipient_name}</p>"
+            + "<p><strong>Type:</strong> {prospect_type_label}</p>"
+            + "{prospect_identity_block_html}"
+          : "<h2>Destinataire</h2>"
+            + "<p><strong>Nom :</strong> {recipient_name}</p>"
+            + "<p><strong>Type :</strong> {prospect_type_label}</p>"
+            + "{prospect_identity_block_html}",
       },
       {
         key: "block_family_page",
-        label: "Page informations famille",
-        value:
-          "{page_break_html}"
-          + "{header_standard_html}"
-          + "<h2>Informations de l’élève et du responsable</h2>"
-          + "<div class='quote-block'>{prospect_identity_block_html}</div>"
-          + "{footer_standard_html}",
+        label: t("admin.quote_editor.snippet_family_page"),
+        value: language === "en"
+          ? "{page_break_html}"
+            + "{header_standard_html}"
+            + "<h2>Student and parent information</h2>"
+            + "<div class='quote-block'>{prospect_identity_block_html}</div>"
+            + "{footer_standard_html}"
+          : "{page_break_html}"
+            + "{header_standard_html}"
+            + "<h2>Informations de l’élève et du responsable</h2>"
+            + "<div class='quote-block'>{prospect_identity_block_html}</div>"
+            + "{footer_standard_html}",
       },
       {
         key: "block_services",
-        label: "Bloc activites retenues",
-        value:
-          "<h2>Cours et options choisis</h2>{activities_planning_table_html}",
+        label: t("admin.quote_editor.snippet_services"),
+        value: language === "en"
+          ? "<h2>Selected lessons and options</h2>{activities_planning_table_html}"
+          : "<h2>Cours et options choisis</h2>{activities_planning_table_html}",
       },
       {
         key: "block_prestations",
-        label: "Bloc prestations",
-        value: "<h2>Cours inclus dans le devis</h2>{services_table_html}",
+        label: t("admin.quote_editor.snippet_services_table"),
+        value: language === "en"
+          ? "<h2>Lessons included in the quote</h2>{services_table_html}"
+          : "<h2>Cours inclus dans le devis</h2>{services_table_html}",
       },
       {
         key: "block_material",
-        label: "Bloc materiel",
-        value: "<h2>Matériel pédagogique</h2>{products_table_html}",
+        label: t("admin.quote_editor.snippet_material"),
+        value: language === "en"
+          ? "<h2>Teaching materials</h2>{products_table_html}"
+          : "<h2>Matériel pédagogique</h2>{products_table_html}",
       },
       {
         key: "block_adjustments_table",
-        label: "Bloc remises/supplements",
-        value: "<h2>Remises appliquées</h2>{adjustments_table_html}",
+        label: t("admin.quote_editor.snippet_adjustments_table"),
+        value: language === "en"
+          ? "<h2>Applied discounts</h2>{adjustments_table_html}"
+          : "<h2>Remises appliquées</h2>{adjustments_table_html}",
       },
       {
         key: "block_payment",
-        label: "Bloc paiement",
-        value:
-          "<h2>Règlement et échéancier</h2>"
-          + "{payment_method_block_html}"
-          + "<p>{payment_schedule_summary}</p>"
-          + "{payment_schedule_table_html}",
+        label: t("admin.quote_editor.snippet_payment"),
+        value: language === "en"
+          ? "<h2>Payment and schedule</h2>"
+            + "{payment_method_block_html}"
+            + "<p>{payment_schedule_summary}</p>"
+            + "{payment_schedule_table_html}"
+          : "<h2>Règlement et échéancier</h2>"
+            + "{payment_method_block_html}"
+            + "<p>{payment_schedule_summary}</p>"
+            + "{payment_schedule_table_html}",
       },
       {
         key: "block_adjustment",
-        label: "Bloc recapitulatif financier",
+        label: t("admin.quote_editor.snippet_financial_recap"),
         value: "{financial_recap_block_html}",
       },
       {
         key: "block_calendar",
-        label: "Bloc calendrier",
-        value:
-          "<h2>Calendrier prévisionnel des cours</h2>"
-          + "<p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>"
-          + "{calendar_activity_semesters_html}",
+        label: t("admin.quote_editor.snippet_calendar"),
+        value: language === "en"
+          ? "<h2>Planned lesson schedule</h2>"
+            + "<p><strong>Calendar overview:</strong> {calendar_summary}</p>"
+            + "{calendar_activity_semesters_html}"
+          : "<h2>Calendrier prévisionnel des cours</h2>"
+            + "<p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>"
+            + "{calendar_activity_semesters_html}",
       },
       {
         key: "page_full",
-        label: "Page complete (entete + bloc + footer)",
-        value:
-          "{header_standard_html}"
-          + "<div class='quote-block'><h2>Titre page</h2><p>Contenu...</p></div>"
-          + "{footer_standard_html}"
-          + "{page_break_html}",
+        label: t("admin.quote_editor.snippet_full_page"),
+        value: language === "en"
+          ? "{header_standard_html}"
+            + "<div class='quote-block'><h2>Page title</h2><p>Content...</p></div>"
+            + "{footer_standard_html}"
+            + "{page_break_html}"
+          : "{header_standard_html}"
+            + "<div class='quote-block'><h2>Titre page</h2><p>Contenu...</p></div>"
+            + "{footer_standard_html}"
+            + "{page_break_html}",
       },
       {
         key: "totals_table",
-        label: "Tableau totaux",
+        label: t("admin.quote_editor.snippet_totals"),
         value: "{financial_recap_block_html}",
       },
     ],
-    [],
+    [language],
   );
   const hasVariables = variables.length > 0;
   const initialBody = normalizeInitialEditorValue(defaultBody);
@@ -402,7 +437,7 @@ export default function QuoteTemplateEditor({
     if (!editor || editorMode !== "wysiwyg") {
       return;
     }
-    const href = window.prompt("URL du lien (https://...)");
+    const href = window.prompt(t("admin.richtext.prompt_link"));
     if (!href) {
       return;
     }
@@ -442,7 +477,7 @@ export default function QuoteTemplateEditor({
     if (!editor || editorMode !== "wysiwyg") {
       return;
     }
-    const src = window.prompt("URL de l image (https://...)");
+    const src = window.prompt(t("admin.quote_editor.prompt_image"));
     if (!src) {
       return;
     }
@@ -452,7 +487,7 @@ export default function QuoteTemplateEditor({
 
   function renderToolbar(showPopupButton = true): JSX.Element {
     return (
-      <div className="quote-template-toolbar" aria-label="Outils de mise en forme">
+      <div className="quote-template-toolbar" aria-label={t("admin.richtext.toolbar")}>
         <div className="toolbar-group">
           <button type="button" className="ghost small-btn" onClick={() => applyCommand("bold")}>B</button>
           <button type="button" className="ghost small-btn" onClick={() => applyCommand("italic")}>I</button>
@@ -465,26 +500,26 @@ export default function QuoteTemplateEditor({
           <button type="button" className="ghost small-btn" onClick={() => applyCommand("paragraph")}>P</button>
         </div>
         <div className="toolbar-group">
-          <button type="button" className="ghost small-btn" onClick={() => applyCommand("bulletList")}>• Liste</button>
-          <button type="button" className="ghost small-btn" onClick={() => applyCommand("orderedList")}>1. Liste</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("bulletList")}>{t("admin.richtext.bullet_list")}</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("orderedList")}>{t("admin.richtext.numbered_list")}</button>
         </div>
         <div className="toolbar-group">
-          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignLeft")}>Gauche</button>
-          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignCenter")}>Centre</button>
-          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignRight")}>Droite</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignLeft")}>{t("admin.richtext.align_left")}</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignCenter")}>{t("admin.richtext.align_center")}</button>
+          <button type="button" className="ghost small-btn" onClick={() => applyCommand("alignRight")}>{t("admin.richtext.align_right")}</button>
         </div>
         <div className="toolbar-group">
-          <button type="button" className="ghost small-btn" onClick={insertLink}>Lien</button>
-          <button type="button" className="ghost small-btn" onClick={insertImageUrl}>Image URL</button>
+          <button type="button" className="ghost small-btn" onClick={insertLink}>{t("admin.richtext.link")}</button>
+          <button type="button" className="ghost small-btn" onClick={insertImageUrl}>{t("admin.quote_editor.image_url")}</button>
         </div>
         <div className="toolbar-group">
           <select
             className="ghost small-btn"
             value={fontFamily}
             onChange={(event) => applyFontFamily(event.target.value)}
-            aria-label="Famille de police"
+            aria-label={t("admin.richtext.font_family")}
           >
-            {FONT_FAMILY_OPTIONS.map((option) => (
+            {fontFamilyOptions.map((option) => (
               <option key={option.label} value={option.value}>
                 {option.label}
               </option>
@@ -494,9 +529,9 @@ export default function QuoteTemplateEditor({
             className="ghost small-btn"
             value={fontSize}
             onChange={(event) => applyFontSize(event.target.value)}
-            aria-label="Taille de police"
+            aria-label={t("admin.richtext.font_size")}
           >
-            {FONT_SIZE_OPTIONS.map((option) => (
+            {fontSizeOptions.map((option) => (
               <option key={option.label} value={option.value}>
                 {option.label}
               </option>
@@ -512,7 +547,7 @@ export default function QuoteTemplateEditor({
               className="ghost small-btn"
               onClick={() => setEditorPopupOpen(true)}
             >
-              Ouvrir en popup
+              {t("admin.richtext.open_popup")}
             </button>
           ) : null}
         </div>
@@ -523,7 +558,7 @@ export default function QuoteTemplateEditor({
   return (
     <div className="grid config-form-grid">
       <label>
-        Objet du template
+        {t("admin.quote_editor.subject_field")}
         <input
           type="text"
           name={subjectName}
@@ -535,24 +570,24 @@ export default function QuoteTemplateEditor({
       </label>
 
       <label>
-        Corps du template
+        {t("admin.quote_editor.body_field")}
         <div className="row wrap gap-sm top-gap-sm">
           <button type="button" className={editorMode === "wysiwyg" ? "" : "ghost"} onClick={switchToWysiwyg}>
-            Editeur
+            {t("admin.quote_editor.editor_mode")}
           </button>
           <button type="button" className={editorMode === "html" ? "" : "ghost"} onClick={switchToHtml}>
-            HTML
+            {t("common.html")}
           </button>
         </div>
         <p className="muted top-gap-sm">
-          Pour une pagination PDF propre (couverture, entete, pied de page, sauts), utilisez les blocs predefinis, idealement en mode HTML.
+          {t("admin.quote_editor.pagination_help")}
         </p>
         {editorMode === "wysiwyg" ? (
           <div className="quote-template-editor-shell top-gap-sm">
             {renderToolbar()}
             {editorPopupOpen ? (
               <div className="quote-template-inline-placeholder muted">
-                Edition en popup ouverte.
+                {t("admin.richtext.popup_open")}
               </div>
             ) : (
               <div className="quote-template-editor-scroll">
@@ -574,7 +609,7 @@ export default function QuoteTemplateEditor({
       </label>
 
       <div className="card">
-        <h5>Picker variables</h5>
+        <h5>{t("admin.quote_editor.variable_picker")}</h5>
         <div className="row wrap gap-sm top-gap-sm">
           <select value={selectedVariable} onChange={(event) => setSelectedVariable(event.target.value)} disabled={!hasVariables}>
             {variables.map((item) => (
@@ -583,20 +618,20 @@ export default function QuoteTemplateEditor({
               </option>
             ))}
           </select>
-          <button type="button" className="ghost" onClick={insertToken} disabled={!hasVariables}>Inserer dans le corps</button>
+          <button type="button" className="ghost" onClick={insertToken} disabled={!hasVariables}>{t("admin.quote_editor.insert_into_body")}</button>
         </div>
-        {!hasVariables ? <p className="muted top-gap-sm">Aucune variable disponible.</p> : null}
+        {!hasVariables ? <p className="muted top-gap-sm">{t("admin.quote_editor.no_variables")}</p> : null}
         {selected ? (
           <div className="top-gap-sm">
             <p className="muted"><code>{tokenForVariable(selected.key)}</code></p>
             <p className="muted">{selected.description}</p>
-            <p className="muted">Exemple: {selected.example}</p>
+            <p className="muted">{t("admin.quote_editor.example_prefix", { example: selected.example })}</p>
           </div>
         ) : null}
       </div>
 
       <div className="card">
-        <h5>Bibliotheque de blocs</h5>
+        <h5>{t("admin.quote_editor.block_library")}</h5>
         <div className="row wrap gap-sm top-gap-sm">
           <select value={selectedSnippet} onChange={(event) => setSelectedSnippet(event.target.value)}>
             {snippets.map((item) => (
@@ -605,7 +640,7 @@ export default function QuoteTemplateEditor({
               </option>
             ))}
           </select>
-          <button type="button" className="ghost" onClick={insertSnippet}>Inserer le bloc</button>
+          <button type="button" className="ghost" onClick={insertSnippet}>{t("admin.quote_editor.insert_block")}</button>
         </div>
         {selectedSnippetDef ? (
           <p className="muted top-gap-sm"><code>{selectedSnippetDef.value}</code></p>
@@ -622,11 +657,11 @@ export default function QuoteTemplateEditor({
               className="modal-close-x"
               type="button"
               onClick={() => setEditorPopupOpen(false)}
-              aria-label="Fermer"
+              aria-label={t("common.close")}
             >
               ×
             </button>
-            <h3 className="modal-title">Editeur de modele de devis</h3>
+            <h3 className="modal-title">{t("admin.quote_editor.popup_title")}</h3>
             <div className="quote-template-editor-shell">
               {renderToolbar(false)}
               <div className="quote-template-editor-scroll">
