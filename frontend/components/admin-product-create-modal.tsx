@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 
 import type { AdminCatalogCategoryOut, LocationOut } from "../lib/types";
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
 import ModalA11yFrame from "./modal-a11y-frame";
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
   returnTo: string;
   errorMessage?: string;
   createAction: (formData: FormData) => void | Promise<void>;
+  language: UiLanguage;
 };
 
 type UploadState = {
@@ -31,12 +33,14 @@ export default function AdminProductCreateModal({
   returnTo,
   errorMessage,
   createAction,
+  language,
 }: Props): JSX.Element {
   const [isVirtual, setIsVirtual] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [uploadState, setUploadState] = useState<UploadState>({ status: "idle", message: "" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   useEffect(() => {
     return () => {
@@ -66,21 +70,21 @@ export default function AdminProductCreateModal({
     if (file.size > MAX_IMAGE_BYTES) {
       event.target.value = "";
       replacePreviewUrl("");
-      setUploadState({ status: "error", message: "Fichier trop lourd (max 5 MB)." });
+      setUploadState({ status: "error", message: t("admin.products.file_too_large") });
       return;
     }
 
     if (!ALLOWED_TYPES.has((file.type || "").toLowerCase())) {
       event.target.value = "";
       replacePreviewUrl("");
-      setUploadState({ status: "error", message: "Formats autorises: JPG, PNG, WEBP." });
+      setUploadState({ status: "error", message: t("admin.products.invalid_image_format") });
       return;
     }
 
     replacePreviewUrl(URL.createObjectURL(file));
     setUploadState({
       status: "ok",
-      message: "Image prete. Elle sera importee automatiquement a la creation du produit.",
+      message: t("admin.products.image_ready"),
     });
   };
 
@@ -97,11 +101,11 @@ export default function AdminProductCreateModal({
 
   return (
     <section className="modal-overlay">
-      <ModalA11yFrame className="modal-panel product-edit-modal product-create-modal" label="Ajouter produit" closeHref={closeHref}>
+      <ModalA11yFrame className="modal-panel product-edit-modal product-create-modal" label={t("admin.products.add_product_modal_title")} closeHref={closeHref}>
         <div className="row spread">
-          <h3 className="modal-title">Ajouter un produit</h3>
-          <Link href={closeHref} className="ghost" aria-label="Fermer">
-            Fermer
+          <h3 className="modal-title">{t("admin.products.add_product_modal_title")}</h3>
+          <Link href={closeHref} className="ghost" aria-label={t("common.close")}>
+            {t("common.close")}
           </Link>
         </div>
         <section className="modal-card product-create-modal-card">
@@ -111,14 +115,14 @@ export default function AdminProductCreateModal({
               {errorMessage ? <p className="flash-err">{errorMessage}</p> : null}
               <div className="grid cols-3 config-form-grid">
                 <label className="span-2">
-                  Titre *
-                  <input type="text" name="title" required maxLength={255} placeholder="Partition Niveau 1" />
+                  {t("common.name")} *
+                  <input type="text" name="title" required maxLength={255} placeholder={t("admin.products.product_title_placeholder")} />
                 </label>
 
                 <label>
-                  Categorie *
+                  {t("common.category")} *
                   <select name="category_id" defaultValue="" required>
-                    <option value="">Selectionner...</option>
+                    <option value="">{t("common.choose")}...</option>
                     {categories.map((categoryRow) => (
                       <option key={categoryRow.id} value={categoryRow.id}>
                         {categoryRow.name}
@@ -128,23 +132,23 @@ export default function AdminProductCreateModal({
                 </label>
 
                 <label>
-                  Tarif TTC *
+                  {t("admin.products.column_price_ttc")} *
                   <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
                 </label>
 
                 <label>
-                  Tarif HT (optionnel)
-                  <input type="number" name="price_excl_vat" min="0" step="0.01" placeholder="Calcule automatiquement si vide" />
+                  {t("admin.products.price_excl_optional")}
+                  <input type="number" name="price_excl_vat" min="0" step="0.01" placeholder={t("admin.products.price_excl_placeholder")} />
                 </label>
 
                 <label>
-                  TVA (%) (optionnel, defaut 20)
+                  {t("admin.products.vat_optional")}
                   <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" />
                 </label>
 
                 {!isVirtual ? (
                   <label>
-                    Local principal (optionnel)
+                    {t("admin.products.main_location_optional")}
                     <select name="primary_location_id" defaultValue="">
                       <option value="">-</option>
                       {locations.map((location) => (
@@ -159,27 +163,27 @@ export default function AdminProductCreateModal({
                 )}
 
                 <label>
-                  Code-barres (optionnel)
+                  {t("admin.products.barcode_optional")}
                   <input type="text" name="barcode" maxLength={120} />
                 </label>
 
                 <label>
-                  Stock de reserve (optionnel)
+                  {t("admin.products.reserve_stock_optional")}
                   <input type="number" name="reserve_stock" min="0" step="1" defaultValue="0" disabled={isVirtual} />
                 </label>
 
                 <label>
-                  Statut commande (optionnel)
+                  {t("admin.products.reorder_status_optional")}
                   <select name="reorder_status" defaultValue="NORMAL" disabled={isVirtual}>
-                    <option value="NORMAL">Normal</option>
-                    <option value="TO_ORDER">A commander</option>
-                    <option value="ORDERED">Commande passee</option>
-                    <option value="RECEIVED">Recu</option>
+                    <option value="NORMAL">{t("admin.products.reorder_status_normal")}</option>
+                    <option value="TO_ORDER">{t("admin.products.reorder_status_to_order")}</option>
+                    <option value="ORDERED">{t("admin.products.reorder_status_ordered")}</option>
+                    <option value="RECEIVED">{t("admin.products.reorder_status_received")}</option>
                   </select>
                 </label>
 
                 <fieldset className="span-3 product-edit-radio-group">
-                  <legend>Type de produit</legend>
+                  <legend>{t("admin.products.product_type")}</legend>
                   <div className="row">
                     <label className="checkline">
                       <input
@@ -189,7 +193,7 @@ export default function AdminProductCreateModal({
                         checked={!isVirtual}
                         onChange={() => setIsVirtual(false)}
                       />
-                      Produit physique (stock gere)
+                      {t("admin.products.product_physical")}
                     </label>
                     <label className="checkline">
                       <input
@@ -199,23 +203,23 @@ export default function AdminProductCreateModal({
                         checked={isVirtual}
                         onChange={() => setIsVirtual(true)}
                       />
-                      Produit virtuel (pas de stock)
+                      {t("admin.products.product_virtual")}
                     </label>
                   </div>
                 </fieldset>
 
                 <section className="span-3 product-image-uploader">
                   <div className="product-image-preview" aria-hidden="true">
-                    {displayedImage ? <img src={displayedImage} alt="Apercu produit" /> : <span>Apercu</span>}
+                    {displayedImage ? <img src={displayedImage} alt={t("admin.products.image_preview_alt")} /> : <span>{t("admin.products.image_preview_label")}</span>}
                   </div>
                   <div className="product-image-actions">
-                    <p className="muted">JPG, PNG, WEBP · 5 MB max.</p>
+                    <p className="muted">{t("admin.products.image_help")}</p>
                     <div className="row wrap gap-xs">
                       <button type="button" className="ghost" onClick={() => fileInputRef.current?.click()}>
-                        Importer une image
+                        {t("admin.products.import_image")}
                       </button>
                       <button type="button" className="ghost danger" onClick={clearVisual} disabled={!displayedImage}>
-                        Supprimer
+                        {t("common.delete")}
                       </button>
                     </div>
                     {uploadState.message ? (
@@ -223,7 +227,7 @@ export default function AdminProductCreateModal({
                         {uploadState.message}
                       </p>
                     ) : (
-                      <p className="muted">Le fichier sera envoye lors de la creation du produit.</p>
+                      <p className="muted">{t("admin.products.image_upload_note")}</p>
                     )}
                   </div>
                   <input
@@ -235,55 +239,55 @@ export default function AdminProductCreateModal({
                     hidden
                   />
                   <label className="span-3 product-image-url-field">
-                    Visuel URL (optionnel)
+                    {t("admin.products.image_url_optional")}
                     <input
                       type="text"
                       name="image_url"
                       value={imageUrl}
                       onChange={(event) => setImageUrl(event.target.value)}
-                      placeholder="https://... ou /admin/products/images/..."
+                      placeholder={t("admin.products.image_url_placeholder")}
                     />
-                    <small className="muted">Tu peux coller une URL, ou choisir un fichier. Si les deux sont renseignes, le fichier importe prendra le dessus.</small>
+                    <small className="muted">{t("admin.products.image_url_help")}</small>
                   </label>
                 </section>
 
                 <label>
-                  Lien web (optionnel)
+                  {t("admin.products.web_link_optional")}
                   <input type="url" name="web_link" />
                 </label>
 
                 <label className="span-2">
-                  Description courte (optionnel)
+                  {t("admin.products.short_description_optional")}
                   <input type="text" name="short_description" maxLength={500} />
                 </label>
 
                 <label className="span-3">
-                  Description longue (optionnel)
+                  {t("admin.products.long_description_optional")}
                   <textarea name="long_description" rows={3} maxLength={12000} />
                 </label>
 
                 <label className="checkline">
                   <input type="checkbox" name="purchasable_online" />
-                  Achetable en ligne
+                  {t("admin.products.purchasable_online")}
                 </label>
 
                 <label className="checkline">
                   <input type="checkbox" name="is_public" defaultChecked />
-                  Public (visible client)
+                  {t("admin.products.public_visible_client")}
                 </label>
 
                 <label className="checkline">
                   <input type="checkbox" name="active" defaultChecked />
-                  Actif
+                  {t("common.active")}
                 </label>
               </div>
             </section>
 
             <footer className="product-edit-modal-footer">
               <Link className="ghost" href={closeHref}>
-                Annuler
+                {t("common.cancel")}
               </Link>
-              <button type="submit">Ajouter</button>
+              <button type="submit">{t("admin.products.add_product")}</button>
             </footer>
           </form>
         </section>

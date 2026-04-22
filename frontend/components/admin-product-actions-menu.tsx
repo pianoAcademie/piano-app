@@ -4,11 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type Props = {
   editHref: string;
   productId: string;
   returnTo: string;
   deleteAction: (formData: FormData) => void | Promise<void>;
+  language: UiLanguage;
 };
 
 type MenuPosition = {
@@ -19,12 +22,19 @@ type MenuPosition = {
 const MENU_MIN_WIDTH = 192;
 const VIEWPORT_PADDING = 8;
 
-export default function AdminProductActionsMenu({ editHref, productId, returnTo, deleteAction }: Props): JSX.Element {
+export default function AdminProductActionsMenu({
+  editHref,
+  productId,
+  returnTo,
+  deleteAction,
+  language,
+}: Props): JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<MenuPosition>({ top: 0, left: 0 });
+  const t = (key: string) => uiText(language, key);
 
   useEffect(() => {
     setMounted(true);
@@ -91,22 +101,22 @@ export default function AdminProductActionsMenu({ editHref, productId, returnTo,
         className="catalog-actions-portal"
         style={{ top: `${position.top}px`, left: `${position.left}px` }}
         role="menu"
-        aria-label="Actions produit"
+        aria-label={t("admin.products.actions_menu_label")}
       >
         <Link href={editHref} className="catalog-actions-item" role="menuitem" onClick={() => setOpen(false)}>
-          Modifier
+          {t("common.edit")}
         </Link>
         <form action={deleteAction} onSubmit={() => setOpen(false)}>
           <input type="hidden" name="product_id" value={productId} />
           <input type="hidden" name="return_to" value={returnTo} />
           <button type="submit" className="catalog-actions-item danger" role="menuitem">
-            Supprimer
+            {t("common.delete")}
           </button>
         </form>
       </div>,
       document.body,
     );
-  }, [mounted, open, position.left, position.top, editHref, deleteAction, productId, returnTo]);
+  }, [mounted, open, position.left, position.top, editHref, deleteAction, productId, returnTo, language]);
 
   return (
     <>
@@ -124,4 +134,3 @@ export default function AdminProductActionsMenu({ editHref, productId, returnTo,
     </>
   );
 }
-

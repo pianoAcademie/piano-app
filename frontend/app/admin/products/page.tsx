@@ -30,8 +30,10 @@ import type {
   AdminCatalogStockTransferOut,
   AdminStockMovementListOut,
   AdminClientOut,
+  UserOut,
   LocationOut,
 } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -111,7 +113,7 @@ function parsePage(value: string): number {
   return parsed;
 }
 
-function formatMoney(amountRaw: string | null, currency: string | null): string {
+function formatMoney(amountRaw: string | null, currency: string | null, language: UiLanguage): string {
   if (!amountRaw) {
     return "-";
   }
@@ -121,7 +123,7 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
     return `${amountRaw} ${normalizedCurrency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency: normalizedCurrency,
       maximumFractionDigits: 2,
@@ -144,8 +146,8 @@ function ProductThumbnail({ product, size = "desktop" }: { product: AdminCatalog
   );
 }
 
-function yesNoLabel(value: boolean): string {
-  return value ? "Oui" : "Non";
+function yesNoLabel(value: boolean, language: UiLanguage): string {
+  return value ? uiText(language, "common.yes") : uiText(language, "common.no");
 }
 
 function dateInputValue(value: string | null): string {
@@ -155,85 +157,99 @@ function dateInputValue(value: string | null): string {
   return value.slice(0, 10);
 }
 
-function reorderStatusLabel(status: string): string {
+function formatDateTime(value: string | null, language: UiLanguage): string {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString(localeForUiLanguage(language), {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function reorderStatusLabel(status: string, language: UiLanguage): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "TO_ORDER") {
-    return "A commander";
+    return uiText(language, "admin.products.reorder_status_to_order");
   }
   if (normalized === "ORDERED") {
-    return "Commande passee";
+    return uiText(language, "admin.products.reorder_status_ordered");
   }
   if (normalized === "RECEIVED") {
-    return "Recu";
+    return uiText(language, "admin.products.reorder_status_received");
   }
-  return "Normal";
+  return uiText(language, "admin.products.reorder_status_normal");
 }
 
-function transferStatusLabel(status: string): string {
+function transferStatusLabel(status: string, language: UiLanguage): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "DONE") {
-    return "Fait";
+    return uiText(language, "admin.products.transfer_status_done");
   }
   if (normalized === "CANCELLED") {
-    return "Annule";
+    return uiText(language, "admin.products.transfer_status_cancelled");
   }
-  return "En attente";
+  return uiText(language, "admin.products.transfer_status_pending");
 }
 
-function catalogRequestStatusLabel(status: string): string {
+function catalogRequestStatusLabel(status: string, language: UiLanguage): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "PROCESSING") {
-    return "En cours";
+    return uiText(language, "admin.products.request_status_processing");
   }
   if (normalized === "REJECTED") {
-    return "Refusee";
+    return uiText(language, "admin.products.request_status_rejected");
   }
   if (normalized === "INVOICE_TO_SEND") {
-    return "Facture a envoyer";
+    return uiText(language, "admin.products.request_status_invoice_to_send");
   }
   if (normalized === "TO_DELIVER") {
-    return "A remettre";
+    return uiText(language, "admin.products.request_status_to_deliver");
   }
   if (normalized === "DELIVERED") {
-    return "Remis";
+    return uiText(language, "admin.products.request_status_delivered");
   }
   return normalized || "-";
 }
 
-function catalogRequestSourceLabel(source: string): string {
+function catalogRequestSourceLabel(source: string, language: UiLanguage): string {
   const normalized = source.trim().toUpperCase();
   if (normalized === "PROFESSOR") {
-    return "Professeur";
+    return uiText(language, "admin.products.request_source_professor");
   }
   if (normalized === "ADMIN") {
-    return "Administration";
+    return uiText(language, "admin.products.request_source_admin");
   }
   return normalized || "-";
 }
 
-function stockMovementTypeLabel(movementType: string): string {
+function stockMovementTypeLabel(movementType: string, language: UiLanguage): string {
   const normalized = movementType.trim().toUpperCase();
   if (normalized === "ADJUSTMENT") {
-    return "Correction";
+    return uiText(language, "admin.products.movement_type_adjustment");
   }
-  return "Entree";
+  return uiText(language, "admin.products.movement_type_entry");
 }
 
-function stockMovementSourceTypeLabel(sourceType: string): string {
+function stockMovementSourceTypeLabel(sourceType: string, language: UiLanguage): string {
   const normalized = sourceType.trim().toLowerCase();
   if (normalized === "purchase") {
-    return "Achat";
+    return uiText(language, "admin.products.movement_source_purchase");
   }
   if (normalized === "delivery") {
-    return "Livraison";
+    return uiText(language, "admin.products.movement_source_delivery");
   }
   if (normalized === "correction") {
-    return "Correction";
+    return uiText(language, "admin.products.movement_source_correction");
   }
   if (normalized === "return") {
-    return "Retour";
+    return uiText(language, "admin.products.movement_source_return");
   }
-  return "Autre";
+  return uiText(language, "admin.products.movement_source_other");
 }
 
 function buildProductsQuery(params: {
@@ -355,6 +371,12 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const params = searchParams ?? {};
   const okMessage = readParam(params, "ok");
@@ -451,55 +473,55 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const categories = categoriesResult.ok
     ? categoriesResult.data
     : (() => {
-        loadErrors.push(`Categories: ${categoriesResult.message}`);
+        loadErrors.push(`${t("admin.products.load_categories")}: ${categoriesResult.message}`);
         return [] as AdminCatalogCategoryOut[];
       })();
   const products = productsResult.ok
     ? productsResult.data
     : (() => {
-        loadErrors.push(`Produits: ${productsResult.message}`);
+        loadErrors.push(`${t("admin.products.load_products")}: ${productsResult.message}`);
         return [] as AdminCatalogProductOut[];
       })();
   const stocks = stocksResult.ok
     ? stocksResult.data
     : (() => {
-        loadErrors.push(`Stocks: ${stocksResult.message}`);
+        loadErrors.push(`${t("admin.products.load_stocks")}: ${stocksResult.message}`);
         return [] as AdminCatalogStockOut[];
       })();
   const requests = requestsResult.ok
     ? requestsResult.data
     : (() => {
-        loadErrors.push(`Demandes produits: ${requestsResult.message}`);
+        loadErrors.push(`${t("admin.products.load_requests")}: ${requestsResult.message}`);
         return [] as AdminCatalogRequestOut[];
       })();
   const locations = locationsResult.ok
     ? locationsResult.data
     : (() => {
-        loadErrors.push(`Lieux: ${locationsResult.message}`);
+        loadErrors.push(`${t("admin.products.load_locations")}: ${locationsResult.message}`);
         return [] as LocationOut[];
       })();
   const clients = clientsResult.ok
     ? clientsResult.data
     : (() => {
-        loadErrors.push(`Clients: ${clientsResult.message}`);
+        loadErrors.push(`${t("admin.products.load_clients")}: ${clientsResult.message}`);
         return [] as AdminClientOut[];
       })();
   const reorderProducts = reorderResult.ok
     ? reorderResult.data
     : (() => {
-        loadErrors.push(`Produits a commander: ${reorderResult.message}`);
+        loadErrors.push(`${t("admin.products.load_reorder")}: ${reorderResult.message}`);
         return [] as AdminCatalogReorderProductOut[];
       })();
   const transfers = transfersResult.ok
     ? transfersResult.data
     : (() => {
-        loadErrors.push(`Transferts: ${transfersResult.message}`);
+        loadErrors.push(`${t("admin.products.load_transfers")}: ${transfersResult.message}`);
         return [] as AdminCatalogStockTransferOut[];
       })();
   const entriesPage = entriesResult.ok
     ? entriesResult.data
     : (() => {
-        loadErrors.push(`Entrees stock: ${entriesResult.message}`);
+        loadErrors.push(`${t("admin.products.load_entries")}: ${entriesResult.message}`);
         return { items: [], total: 0, page: 1, page_size: 20 } as AdminStockMovementListOut;
       })();
 
@@ -617,7 +639,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     .filter((row) => row.role === "client" && row.client_status !== "ARCHIVED")
     .map((row) => ({
       id: row.id,
-      label: `${`${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || row.email} (${row.client_kind})`,
+      label: `${`${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() || row.email} (${row.client_kind === "CHILD" ? uiText(language, "client.child") : uiText(language, "client.adult")})`,
     }))
     .sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
@@ -664,26 +686,26 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   return (
     <section className="admin-page-grid">
       <section className="card">
-        <h2>Gestion des produits</h2>
-        <p className="muted">Catalogue, stock par local, transferts et demandes produits eleves.</p>
+        <h2>{t("admin.products.title")}</h2>
+        <p className="muted">{t("admin.products.subtitle")}</p>
       </section>
 
       <section className="card">
         <div className="row wrap gap-xs catalog-tabs-scroll">
           <Link className={currentView === "products" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "products" })}`}>
-            Produits
+            {t("admin.products.tab_products")}
           </Link>
           <Link className={currentView === "reorder" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "reorder" })}`}>
-            Produits a commander
+            {t("admin.products.tab_reorder")}
           </Link>
           <Link className={currentView === "entries" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "entries" })}`}>
-            Entrees stock
+            {t("admin.products.tab_entries")}
           </Link>
           <Link className={currentView === "transfers" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "transfers" })}`}>
-            Transferts stock
+            {t("admin.products.tab_transfers")}
           </Link>
           <Link className={currentView === "requests" ? "mode-link" : "ghost"} href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "requests" })}`}>
-            Demandes eleves
+            {t("admin.products.tab_requests")}
           </Link>
         </div>
       </section>
@@ -693,7 +715,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
 
       {loadErrors.length > 0 ? (
         <section className="card">
-          <h3>Erreurs de chargement</h3>
+          <h3>{t("admin.products.load_errors")}</h3>
           <ul className="config-error-list">
             {loadErrors.map((message) => (
               <li key={message} className="flash-err">
@@ -708,13 +730,13 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
         <>
           <section className="card">
             <div className="row spread">
-              <h3>Produits</h3>
+              <h3>{t("admin.products.section_products")}</h3>
               <div className="row">
                 <Link className="ghost" href={addLink}>
-                  Ajouter un produit
+                  {t("admin.products.add_product")}
                 </Link>
                 <Link className="mode-link" href="/admin/config/catalog">
-                  Configurer categories/kits
+                  {t("admin.products.configure_categories_kits")}
                 </Link>
               </div>
             </div>
@@ -726,13 +748,13 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               <input type="hidden" name="sort_dir" value={sortDir} />
               <input type="hidden" name="page" value="1" />
               <label className="span-2">
-                Recherche libre
-                <input type="search" name="q" defaultValue={query} placeholder="Titre, code-barres, categorie..." />
+                {t("admin.products.free_search")}
+                <input type="search" name="q" defaultValue={query} placeholder={t("admin.products.search_placeholder")} />
               </label>
               <label>
-                Categorie
+                {uiText(language, "common.category")}
                 <select name="category" defaultValue={category}>
-                  <option value="">Toutes</option>
+                  <option value="">{t("common.all")}</option>
                   {categories.map((categoryRow) => (
                     <option key={categoryRow.id} value={categoryRow.id}>
                       {categoryRow.name}
@@ -741,31 +763,31 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </select>
               </label>
               <label>
-                Statut
+                {uiText(language, "common.status")}
                 <select name="status" defaultValue={status}>
-                  <option value="all">Tous</option>
-                  <option value="active">Actifs</option>
-                  <option value="inactive">Inactifs</option>
+                  <option value="all">{t("common.all")}</option>
+                  <option value="active">{t("common.active")}</option>
+                  <option value="inactive">{t("common.inactive")}</option>
                 </select>
               </label>
               <label>
-                Visibilite
+                {uiText(language, "common.visibility")}
                 <select name="visibility" defaultValue={visibility}>
-                  <option value="all">Toutes</option>
-                  <option value="public">Public</option>
-                  <option value="private">Prive</option>
+                  <option value="all">{t("common.all")}</option>
+                  <option value="public">{t("common.public")}</option>
+                  <option value="private">{t("common.private")}</option>
                 </select>
               </label>
               <label>
-                Achat en ligne
+                {t("admin.products.online_purchase")}
                 <select name="online" defaultValue={online}>
-                  <option value="all">Tous</option>
-                  <option value="online">Oui</option>
-                  <option value="offline">Non</option>
+                  <option value="all">{t("common.all")}</option>
+                  <option value="online">{t("common.yes")}</option>
+                  <option value="offline">{t("common.no")}</option>
                 </select>
               </label>
               <label>
-                Produits par page
+                {t("admin.products.products_per_page")}
                 <select name="per_page" defaultValue={String(perPage)}>
                   <option value="25">25</option>
                   <option value="50">50</option>
@@ -773,7 +795,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </select>
               </label>
               <div className="row span-5">
-                <button type="submit">Filtrer</button>
+                <button type="submit">{t("common.apply")}</button>
                 <Link
                   className="ghost"
                   href={`/admin/products${buildProductsQuery({
@@ -791,11 +813,11 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                     page: 1,
                   })}`}
                 >
-                  Reinitialiser
+                  {t("common.reset")}
                 </Link>
-                <span className="badge">{filteredProducts.length} produit(s)</span>
+                <span className="badge">{t("admin.products.products_count", { count: filteredProducts.length })}</span>
                 <span className="badge">
-                  Page {productPage}/{totalProductPages}
+                  {t("admin.products.page_badge", { page: productPage, total: totalProductPages })}
                 </span>
               </div>
             </form>
@@ -806,52 +828,52 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   <tr>
                     <th>
                       <Link className="sort-link" href={productSortHref("title")}>
-                        Produit {productSortIndicator(sortBy, sortDir, "title")}
+                        {t("common.product")} {productSortIndicator(sortBy, sortDir, "title")}
                       </Link>
                     </th>
                     <th>
                       <Link className="sort-link" href={productSortHref("category")}>
-                        Categorie {productSortIndicator(sortBy, sortDir, "category")}
+                        {t("common.category")} {productSortIndicator(sortBy, sortDir, "category")}
                       </Link>
                     </th>
                     <th>
                       <Link className="sort-link" href={productSortHref("location")}>
-                        Local principal {productSortIndicator(sortBy, sortDir, "location")}
+                        {t("admin.products.main_location")} {productSortIndicator(sortBy, sortDir, "location")}
                       </Link>
                     </th>
                     <th>
                       <Link className="sort-link" href={productSortHref("price")}>
-                        TTC {productSortIndicator(sortBy, sortDir, "price")}
+                        {t("admin.products.column_price_ttc")} {productSortIndicator(sortBy, sortDir, "price")}
                       </Link>
                     </th>
                     <th>
                       <Link className="sort-link" href={productSortHref("stock_global")}>
-                        Stock global {productSortIndicator(sortBy, sortDir, "stock_global")}
+                        {t("admin.products.column_global_stock")} {productSortIndicator(sortBy, sortDir, "stock_global")}
                       </Link>
                     </th>
                     <th>
                       <Link className="sort-link" href={productSortHref("stock_reserve")}>
-                        Stock reserve {productSortIndicator(sortBy, sortDir, "stock_reserve")}
+                        {t("admin.products.column_reserve_stock")} {productSortIndicator(sortBy, sortDir, "stock_reserve")}
                       </Link>
                     </th>
                     <th>
                       <Link className="sort-link" href={productSortHref("reorder")}>
-                        A commander {productSortIndicator(sortBy, sortDir, "reorder")}
+                        {t("admin.products.column_reorder_needed")} {productSortIndicator(sortBy, sortDir, "reorder")}
                       </Link>
                     </th>
                     <th>
                       <Link className="sort-link" href={productSortHref("active")}>
-                        Actif {productSortIndicator(sortBy, sortDir, "active")}
+                        {t("common.active")} {productSortIndicator(sortBy, sortDir, "active")}
                       </Link>
                     </th>
-                    <th>Actions</th>
+                    <th>{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredProducts.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="muted">
-                        Aucun produit pour ces filtres.
+                        {t("admin.products.no_products")}
                       </td>
                     </tr>
                   ) : (
@@ -868,24 +890,25 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                                 <Link href={selectLink} className="mode-link">
                                   {product.title}
                                 </Link>
-                                {product.is_virtual ? <p className="muted">Produit virtuel</p> : null}
-                                {product.barcode ? <p className="muted">Code: {product.barcode}</p> : null}
+                                {product.is_virtual ? <p className="muted">{t("admin.products.virtual_product")}</p> : null}
+                                {product.barcode ? <p className="muted">{t("admin.products.barcode")}: {product.barcode}</p> : null}
                               </div>
                             </div>
                           </td>
                           <td>{product.category_name || "-"}</td>
                           <td>{product.primary_location_name || "-"}</td>
-                          <td>{formatMoney(product.price_incl_vat, "EUR")}</td>
+                          <td>{formatMoney(product.price_incl_vat, "EUR", language)}</td>
                           <td>{product.is_virtual ? "-" : product.stock_global_quantity}</td>
                           <td>{product.is_virtual ? "-" : product.reserve_stock}</td>
-                          <td>{product.is_virtual ? "n/a" : needsAlert ? "Oui" : "Non"}</td>
-                          <td>{yesNoLabel(product.active)}</td>
+                          <td>{product.is_virtual ? t("admin.products.not_applicable") : needsAlert ? t("common.yes") : t("common.no")}</td>
+                          <td>{yesNoLabel(product.active, language)}</td>
                           <td>
                             <AdminProductActionsMenu
                               editHref={editLink}
                               productId={product.id}
                               returnTo={returnTo}
                               deleteAction={deleteAdminCatalogProductAction}
+                              language={language}
                             />
                           </td>
                         </tr>
@@ -906,19 +929,24 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                       <div className="catalog-product-copy">
                         <p className="catalog-mobile-title">{product.title}</p>
                         <p className="muted">
-                          {product.category_name || "Sans categorie"} · {formatMoney(product.price_incl_vat, "EUR")}
+                          {product.category_name || t("admin.products.no_category")} · {formatMoney(product.price_incl_vat, "EUR", language)}
                         </p>
                         <p className="muted">
-                          {product.is_virtual ? "Virtuel" : `Stock ${product.stock_global_quantity} / reserve ${product.reserve_stock}`}
+                          {product.is_virtual
+                            ? t("admin.products.virtual_product")
+                            : t("admin.products.stock_summary", {
+                                stock: product.stock_global_quantity,
+                                reserve: product.reserve_stock,
+                              })}
                         </p>
                       </div>
                     </div>
                     <div className="row wrap gap-xs top-gap-sm">
                       <Link className="ghost" href={selectLink}>
-                        Voir stock
+                        {t("admin.products.view_stock")}
                       </Link>
                       <Link className="ghost" href={editLink}>
-                        Modifier
+                        {t("common.edit")}
                       </Link>
                     </div>
                   </article>
@@ -928,25 +956,29 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
             {filteredProducts.length > 0 ? (
               <div className="row spread clients-pagination top-gap-sm">
                 <small className="muted">
-                  Affichage {productPageStart + 1}-{Math.min(productPageStart + paginatedProducts.length, filteredProducts.length)} sur {filteredProducts.length} produit(s)
+                  {t("admin.products.pagination_summary", {
+                    start: productPageStart + 1,
+                    end: Math.min(productPageStart + paginatedProducts.length, filteredProducts.length),
+                    total: filteredProducts.length,
+                  })}
                 </small>
                 <div className="row">
                   {productPage > 1 ? (
                     <Link className="mode-link" href={productPrevLink}>
-                      ← Precedent
+                      ← {t("common.previous")}
                     </Link>
                   ) : (
-                    <span className="mode-link disabled-link">← Precedent</span>
+                    <span className="mode-link disabled-link">← {t("common.previous")}</span>
                   )}
                   <span className="badge">
-                    Page {productPage}/{totalProductPages}
+                    {t("admin.products.page_badge", { page: productPage, total: totalProductPages })}
                   </span>
                   {productPage < totalProductPages ? (
                     <Link className="mode-link" href={productNextLink}>
-                      Suivant →
+                      {t("common.next")} →
                     </Link>
                   ) : (
-                    <span className="mode-link disabled-link">Suivant →</span>
+                    <span className="mode-link disabled-link">{t("common.next")} →</span>
                   )}
                 </div>
               </div>
@@ -955,35 +987,38 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
 
           <section className="card">
             <details>
-              <summary>Stocks par local ({selectedProductStocks.length})</summary>
+              <summary>{t("admin.products.stocks_by_location", { count: selectedProductStocks.length })}</summary>
               {selectedProduct ? (
                 <p className="top-gap-sm">
                   <Link className="ghost" href={clearSelectedProductLink}>
-                    Retirer la selection produit
+                    {t("admin.products.clear_selected_product")}
                   </Link>
                 </p>
               ) : null}
               {!selectedProduct ? (
-                <p className="muted">Choisissez un produit dans la liste pour afficher ses stocks par local.</p>
+                <p className="muted">{t("admin.products.choose_product_stock")}</p>
               ) : selectedProduct.is_virtual ? (
-                <p className="muted">Produit virtuel: aucune gestion de stock par local.</p>
+                <p className="muted">{t("admin.products.virtual_no_location_stock")}</p>
               ) : selectedProductStocks.length === 0 ? (
-                <p className="muted">Aucun stock initialise pour ce produit.</p>
+                <p className="muted">{t("admin.products.no_initialized_stock")}</p>
               ) : (
                 <>
                   <p className="muted">
-                    Produit selectionne: <strong>{selectedProduct.title}</strong> ({selectedProduct.stock_global_quantity} en stock reel global)
+                    {t("admin.products.selected_product_summary", {
+                      title: selectedProduct.title,
+                      count: selectedProduct.stock_global_quantity,
+                    })}
                   </p>
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Lieu</th>
-                          <th>Inventaire</th>
-                          <th>Date inventaire</th>
-                          <th>Stock reel</th>
-                          <th>Stock estime</th>
-                          <th>Mise a jour inventaire</th>
+                          <th>{t("common.location")}</th>
+                          <th>{t("admin.products.column_inventory")}</th>
+                          <th>{t("admin.products.column_inventory_date")}</th>
+                          <th>{t("admin.products.column_real_stock")}</th>
+                          <th>{t("admin.products.column_estimated_stock")}</th>
+                          <th>{t("admin.products.column_inventory_update")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1004,7 +1039,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                                 <input type="hidden" name="return_to" value={returnTo} />
                                 <input type="number" name="inventory_quantity" min={0} step={1} defaultValue={stock.inventory_quantity} required />
                                 <input type="date" name="inventory_date" defaultValue={dateInputValue(stock.inventory_date)} />
-                                <button type="submit">Reset inventaire</button>
+                                <button type="submit">{t("admin.products.reset_inventory")}</button>
                               </form>
                             </td>
                           </tr>
@@ -1019,22 +1054,22 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
 
           <section className="card">
             <details>
-              <summary>Besoins par local ({requestsByLocation.length})</summary>
+              <summary>{t("admin.products.needs_by_location", { count: requestsByLocation.length })}</summary>
               {!selectedProduct ? (
-                <p className="muted">Choisissez un produit pour visualiser les besoins consolides par local.</p>
+                <p className="muted">{t("admin.products.choose_product_needs")}</p>
               ) : requestsByLocation.length === 0 ? (
-                <p className="muted">Aucun besoin en cours pour ce produit.</p>
+                <p className="muted">{t("admin.products.no_current_need")}</p>
               ) : (
                 <div className="table-wrap">
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Lieu</th>
-                        <th>Produit</th>
-                        <th>Statut</th>
-                        <th>Quantite demandee</th>
-                        <th>Stock estime local</th>
-                        <th>Alerte</th>
+                        <th>{t("common.location")}</th>
+                        <th>{t("common.product")}</th>
+                        <th>{t("common.status")}</th>
+                        <th>{t("admin.products.column_requested_quantity")}</th>
+                        <th>{t("admin.products.column_estimated_local_stock")}</th>
+                        <th>{t("common.warnings")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1044,10 +1079,10 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                           <tr key={row.key} className={shortage ? "catalog-stock-negative" : ""}>
                             <td>{row.locationName}</td>
                             <td>{row.productTitle}</td>
-                            <td>{catalogRequestStatusLabel(row.status)}</td>
+                            <td>{catalogRequestStatusLabel(row.status, language)}</td>
                             <td>{row.quantity}</td>
                             <td>{row.estimatedStock ?? "-"}</td>
-                            <td>{shortage ? "Stock estime insuffisant" : "-"}</td>
+                            <td>{shortage ? t("admin.products.estimated_stock_insufficient") : "-"}</td>
                           </tr>
                         );
                       })}
@@ -1063,40 +1098,40 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
       {currentView === "reorder" ? (
         <section className="card">
           <div className="row spread">
-            <h3>Produits a commander</h3>
+            <h3>{t("admin.products.tab_reorder")}</h3>
             <form method="get" className="row">
               <input type="hidden" name="view" value="reorder" />
               <label>
-                Statut
+                {t("common.status")}
                 <select name="reorder_status" defaultValue={reorderStatus}>
-                  <option value="all">Tous</option>
-                  <option value="TO_ORDER">A commander</option>
-                  <option value="ORDERED">Commande passee</option>
-                  <option value="RECEIVED">Recu</option>
-                  <option value="NORMAL">Normal</option>
+                  <option value="all">{t("common.all")}</option>
+                  <option value="TO_ORDER">{t("admin.products.reorder_status_to_order")}</option>
+                  <option value="ORDERED">{t("admin.products.reorder_status_ordered")}</option>
+                  <option value="RECEIVED">{t("admin.products.reorder_status_received")}</option>
+                  <option value="NORMAL">{t("admin.products.reorder_status_normal")}</option>
                 </select>
               </label>
-              <button type="submit">Filtrer</button>
+              <button type="submit">{t("common.apply")}</button>
             </form>
           </div>
           <div className="table-wrap catalog-desktop-table top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Produit</th>
-                  <th>Categorie</th>
-                  <th>Stock global</th>
-                  <th>Stock reserve</th>
-                  <th>Local principal</th>
-                  <th>Statut commande</th>
-                  <th>Maj statut</th>
+                  <th>{t("common.product")}</th>
+                  <th>{t("common.category")}</th>
+                  <th>{t("admin.products.column_global_stock")}</th>
+                  <th>{t("admin.products.column_reserve_stock")}</th>
+                  <th>{t("admin.products.main_location")}</th>
+                  <th>{t("admin.products.reorder_status_label")}</th>
+                  <th>{t("admin.products.update_status")}</th>
                 </tr>
               </thead>
               <tbody>
                 {reorderProducts.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="muted">
-                      Aucun produit a commander pour ce filtre.
+                      {t("admin.products.no_reorder")}
                     </td>
                   </tr>
                 ) : (
@@ -1107,18 +1142,18 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                       <td>{product.stock_global_quantity}</td>
                       <td>{product.reserve_stock}</td>
                       <td>{product.primary_location_name || "-"}</td>
-                      <td>{reorderStatusLabel(product.reorder_status)}</td>
+                      <td>{reorderStatusLabel(product.reorder_status, language)}</td>
                       <td>
                         <form action={updateAdminCatalogReorderStatusAction} className="row wrap gap-xs">
                           <input type="hidden" name="product_id" value={product.product_id} />
                           <input type="hidden" name="return_to" value={returnTo} />
                           <select name="reorder_status" defaultValue={product.reorder_status}>
-                            <option value="TO_ORDER">A commander</option>
-                            <option value="ORDERED">Commande passee</option>
-                            <option value="RECEIVED">Recu</option>
-                            <option value="NORMAL">Normal</option>
+                            <option value="TO_ORDER">{t("admin.products.reorder_status_to_order")}</option>
+                            <option value="ORDERED">{t("admin.products.reorder_status_ordered")}</option>
+                            <option value="RECEIVED">{t("admin.products.reorder_status_received")}</option>
+                            <option value="NORMAL">{t("admin.products.reorder_status_normal")}</option>
                           </select>
-                          <button type="submit">Enregistrer</button>
+                          <button type="submit">{t("common.save")}</button>
                         </form>
                       </td>
                     </tr>
@@ -1132,21 +1167,21 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               <article key={`reorder-mobile-${product.product_id}`} className="catalog-mobile-card">
                 <p className="catalog-mobile-title">{product.title}</p>
                 <p className="muted">
-                  {product.category_name || "Sans categorie"} · {product.primary_location_name || "Sans local"}
+                  {product.category_name || t("admin.products.no_category")} · {product.primary_location_name || t("admin.products.no_location")}
                 </p>
                 <p className="muted">
-                  Stock {product.stock_global_quantity} / Reserve {product.reserve_stock}
+                  {t("admin.products.stock_summary", { stock: product.stock_global_quantity, reserve: product.reserve_stock })}
                 </p>
                 <form action={updateAdminCatalogReorderStatusAction} className="row wrap gap-xs top-gap-sm">
                   <input type="hidden" name="product_id" value={product.product_id} />
                   <input type="hidden" name="return_to" value={returnTo} />
                   <select name="reorder_status" defaultValue={product.reorder_status}>
-                    <option value="TO_ORDER">A commander</option>
-                    <option value="ORDERED">Commande passee</option>
-                    <option value="RECEIVED">Recu</option>
-                    <option value="NORMAL">Normal</option>
+                    <option value="TO_ORDER">{t("admin.products.reorder_status_to_order")}</option>
+                    <option value="ORDERED">{t("admin.products.reorder_status_ordered")}</option>
+                    <option value="RECEIVED">{t("admin.products.reorder_status_received")}</option>
+                    <option value="NORMAL">{t("admin.products.reorder_status_normal")}</option>
                   </select>
-                  <button type="submit">Maj</button>
+                  <button type="submit">{t("admin.products.mobile_update_status")}</button>
                 </form>
               </article>
             ))}
@@ -1158,15 +1193,15 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
         <>
           <section className="card">
             <div className="row spread">
-              <h3>Nouvelle entree en stock</h3>
-              <span className="badge">{entriesPage.total} mouvement(s)</span>
+              <h3>{t("admin.products.new_stock_entry")}</h3>
+              <span className="badge">{t("admin.products.movements_count", { count: entriesPage.total })}</span>
             </div>
             <form action={createAdminStockEntryAction} className="grid cols-2 config-form-grid catalog-entry-form top-gap-sm">
               <input type="hidden" name="return_to" value={returnTo} />
               <label>
-                Produit
+                {t("common.product")}
                 <select name="product_id" required defaultValue={entryProduct || selectedProduct?.id || ""}>
-                  <option value="">Selectionner un produit</option>
+                  <option value="">{t("admin.products.select_product")}</option>
                   {stockableProducts.map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.title}
@@ -1175,9 +1210,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </select>
               </label>
               <label>
-                Local
+                {t("common.location")}
                 <select name="location_id" required defaultValue={entryLocation || selectedProduct?.primary_location_id || ""}>
-                  <option value="">Selectionner un local</option>
+                  <option value="">{t("admin.products.select_location")}</option>
                   {activeLocations.map((location) => (
                     <option key={location.id} value={location.id}>
                       {location.name}
@@ -1186,43 +1221,43 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </select>
               </label>
               <label>
-                Quantite
+                {t("common.quantity")}
                 <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
               </label>
               <label>
-                Date
+                {t("common.date")}
                 <input type="date" name="occurred_at" defaultValue={new Date().toISOString().slice(0, 10)} />
               </label>
               <label>
-                Source
+                {t("common.source")}
                 <select name="source_type" defaultValue="delivery">
-                  <option value="delivery">Livraison</option>
-                  <option value="purchase">Achat</option>
-                  <option value="return">Retour</option>
-                  <option value="correction">Correction</option>
-                  <option value="other">Autre</option>
+                  <option value="delivery">{t("admin.products.movement_source_delivery")}</option>
+                  <option value="purchase">{t("admin.products.movement_source_purchase")}</option>
+                  <option value="return">{t("admin.products.movement_source_return")}</option>
+                  <option value="correction">{t("admin.products.movement_source_correction")}</option>
+                  <option value="other">{t("admin.products.movement_source_other")}</option>
                 </select>
               </label>
               <label>
-                Reference (optionnel)
+                {t("admin.products.reference_optional")}
                 <input type="text" name="source_reference" maxLength={255} />
               </label>
               <label className="span-2">
-                Note (optionnel)
+                {t("admin.products.note_optional")}
                 <textarea name="note" rows={2} maxLength={2000} />
               </label>
               <div className="row span-2">
-                <button type="submit">Enregistrer l entree</button>
+                <button type="submit">{t("admin.products.save_stock_entry")}</button>
               </div>
             </form>
             <details className="top-gap-sm">
-              <summary className="mode-link">Correction inventaire</summary>
+              <summary className="mode-link">{t("admin.products.inventory_adjustment")}</summary>
               <form action={createAdminStockAdjustmentAction} className="grid cols-2 config-form-grid top-gap-sm">
                 <input type="hidden" name="return_to" value={returnTo} />
                 <label>
-                  Produit
+                  {t("common.product")}
                   <select name="adjust_product_id" required defaultValue={entryProduct || selectedProduct?.id || ""}>
-                    <option value="">Selectionner un produit</option>
+                    <option value="">{t("admin.products.select_product")}</option>
                     {stockableProducts.map((product) => (
                       <option key={product.id} value={product.id}>
                         {product.title}
@@ -1231,9 +1266,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   </select>
                 </label>
                 <label>
-                  Local
+                  {t("common.location")}
                   <select name="adjust_location_id" required defaultValue={entryLocation || selectedProduct?.primary_location_id || ""}>
-                    <option value="">Selectionner un local</option>
+                    <option value="">{t("admin.products.select_location")}</option>
                     {activeLocations.map((location) => (
                       <option key={location.id} value={location.id}>
                         {location.name}
@@ -1242,32 +1277,32 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   </select>
                 </label>
                 <label>
-                  Delta quantite (+/-)
+                  {t("admin.products.delta_quantity")}
                   <input type="number" name="adjust_quantity" step={1} defaultValue={0} required />
                 </label>
                 <label>
-                  Date
+                  {t("common.date")}
                   <input type="date" name="adjust_occurred_at" defaultValue={new Date().toISOString().slice(0, 10)} />
                 </label>
                 <label>
-                  Motif
+                  {t("admin.products.reason")}
                   <select name="adjust_source_type" defaultValue="correction">
-                    <option value="correction">Correction</option>
-                    <option value="return">Retour</option>
-                    <option value="other">Autre</option>
+                    <option value="correction">{t("admin.products.movement_source_correction")}</option>
+                    <option value="return">{t("admin.products.movement_source_return")}</option>
+                    <option value="other">{t("admin.products.movement_source_other")}</option>
                   </select>
                 </label>
                 <label>
-                  Reference (optionnel)
+                  {t("admin.products.reference_optional")}
                   <input type="text" name="adjust_source_reference" maxLength={255} />
                 </label>
                 <label className="span-2">
-                  Note (optionnel)
+                  {t("admin.products.note_optional")}
                   <textarea name="adjust_note" rows={2} maxLength={2000} />
                 </label>
                 <div className="row span-2">
                   <button type="submit" className="ghost">
-                    Enregistrer la correction
+                    {t("admin.products.save_adjustment")}
                   </button>
                 </div>
               </form>
@@ -1276,13 +1311,13 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
 
           <section className="card">
             <div className="row spread">
-              <h3>Historique des entrees</h3>
+              <h3>{t("admin.products.entries_history")}</h3>
               <form method="get" className="row wrap gap-xs">
                 <input type="hidden" name="view" value="entries" />
                 <label>
-                  Produit
+                  {t("common.product")}
                   <select name="entry_product" defaultValue={entryProduct}>
-                    <option value="">Tous</option>
+                    <option value="">{t("common.all")}</option>
                     {stockableProducts.map((product) => (
                       <option key={product.id} value={product.id}>
                         {product.title}
@@ -1291,9 +1326,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   </select>
                 </label>
                 <label>
-                  Local
+                  {t("common.location")}
                   <select name="entry_location" defaultValue={entryLocation}>
-                    <option value="">Tous</option>
+                    <option value="">{t("common.all")}</option>
                     {activeLocations.map((location) => (
                       <option key={location.id} value={location.id}>
                         {location.name}
@@ -1302,32 +1337,32 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   </select>
                 </label>
                 <label>
-                  Recherche
-                  <input type="search" name="entry_q" defaultValue={entryQuery} placeholder="Produit, local, reference..." />
+                  {t("common.search")}
+                  <input type="search" name="entry_q" defaultValue={entryQuery} placeholder={t("admin.products.entry_search_placeholder")} />
                 </label>
-                <button type="submit">Filtrer</button>
+                <button type="submit">{t("common.apply")}</button>
               </form>
             </div>
             <div className="table-wrap catalog-desktop-table top-gap-sm">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Produit</th>
-                    <th>Local</th>
-                    <th>Qt</th>
-                    <th>Type</th>
-                    <th>Source</th>
-                    <th>Reference</th>
-                    <th>Cree par</th>
-                    <th>Actions</th>
+                    <th>{t("common.date")}</th>
+                    <th>{t("common.product")}</th>
+                    <th>{t("common.location")}</th>
+                    <th>{t("admin.products.quantity_short_header")}</th>
+                    <th>{t("common.type")}</th>
+                    <th>{t("common.source")}</th>
+                    <th>{t("admin.products.reference")}</th>
+                    <th>{t("admin.products.created_by")}</th>
+                    <th>{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {entryItems.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="muted">
-                        Aucune entree pour ces filtres.
+                        {t("admin.products.no_entries")}
                       </td>
                     </tr>
                   ) : (
@@ -1341,17 +1376,17 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                       })}`;
                       return (
                         <tr key={entry.id}>
-                          <td>{new Date(entry.occurred_at).toLocaleString("fr-FR")}</td>
+                          <td>{formatDateTime(entry.occurred_at, language)}</td>
                           <td>{entry.product_title}</td>
                           <td>{entry.location_name}</td>
                           <td>{qty >= 0 ? `+${qty}` : qty}</td>
-                          <td>{stockMovementTypeLabel(entry.movement_type)}</td>
-                          <td>{stockMovementSourceTypeLabel(entry.source_type)}</td>
+                          <td>{stockMovementTypeLabel(entry.movement_type, language)}</td>
+                          <td>{stockMovementSourceTypeLabel(entry.source_type, language)}</td>
                           <td>{entry.source_reference || "-"}</td>
                           <td>{entry.created_by_name || "-"}</td>
                           <td>
                             <Link className="ghost" href={detailLink}>
-                              Details
+                              {t("common.details")}
                             </Link>
                           </td>
                         </tr>
@@ -1374,15 +1409,15 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   <article key={`mobile-${entry.id}`} className="catalog-mobile-card">
                     <p className="catalog-mobile-title">{entry.product_title}</p>
                     <p className="muted">
-                      {new Date(entry.occurred_at).toLocaleString("fr-FR")} · {entry.location_name}
+                      {formatDateTime(entry.occurred_at, language)} · {entry.location_name}
                     </p>
                     <p className="muted">
-                      {stockMovementTypeLabel(entry.movement_type)} · {stockMovementSourceTypeLabel(entry.source_type)}
+                      {stockMovementTypeLabel(entry.movement_type, language)} · {stockMovementSourceTypeLabel(entry.source_type, language)}
                     </p>
                     <div className="row spread">
                       <strong>{qty >= 0 ? `+${qty}` : qty}</strong>
                       <Link className="ghost" href={detailLink}>
-                        Details
+                        {t("common.details")}
                       </Link>
                     </div>
                   </article>
@@ -1391,17 +1426,17 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
             </div>
             <div className="row spread top-gap-sm">
               <span className="muted">
-                Page {entryPage} / {entryTotalPages}
+                {t("admin.products.page_fraction", { page: entryPage, total: entryTotalPages })}
               </span>
               <div className="row gap-xs">
                 {entryPage > 1 ? (
                   <Link className="ghost" href={entryPrevLink}>
-                    Precedent
+                    {t("common.previous")}
                   </Link>
                 ) : null}
                 {entryPage < entryTotalPages ? (
                   <Link className="ghost" href={entryNextLink}>
-                    Suivant
+                    {t("common.next")}
                   </Link>
                 ) : null}
               </div>
@@ -1413,13 +1448,13 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
       {currentView === "transfers" ? (
         <>
           <section className="card">
-            <h3>Nouveau transfert de stock</h3>
+            <h3>{t("admin.products.new_transfer")}</h3>
             <form action={createAdminCatalogTransferAction} className="grid cols-4 config-form-grid">
               <input type="hidden" name="return_to" value={returnTo} />
               <label>
-                Produit
+                {t("common.product")}
                 <select name="product_id" defaultValue={selectedProduct?.id ?? ""} required>
-                  <option value="">Selectionner un produit</option>
+                  <option value="">{t("admin.products.select_product")}</option>
                   {stockableProducts.map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.title}
@@ -1428,9 +1463,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </select>
               </label>
               <label>
-                Local source
+                {t("admin.products.source_location")}
                 <select name="source_location_id" defaultValue={selectedProduct?.primary_location_id ?? ""} required>
-                  <option value="">Selectionner un local source</option>
+                  <option value="">{t("admin.products.select_source_location")}</option>
                   {activeLocations.map((location) => (
                     <option key={location.id} value={location.id}>
                       {location.name}
@@ -1439,9 +1474,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </select>
               </label>
               <label>
-                Local destination
+                {t("admin.products.target_location")}
                 <select name="target_location_id" defaultValue="" required>
-                  <option value="">Selectionner un local destination</option>
+                  <option value="">{t("admin.products.select_target_location")}</option>
                   {activeLocations.map((location) => (
                     <option key={location.id} value={location.id}>
                       {location.name}
@@ -1450,17 +1485,17 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </select>
               </label>
               <label>
-                Quantite
+                {t("common.quantity")}
                 <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
               </label>
               <label>
-                Date previsionnelle
+                {t("admin.products.planned_date")}
                 <input type="date" name="planned_transfer_date" />
               </label>
               <label>
-                Personne designee
+                {t("admin.products.assignee")}
                 <select name="assigned_to_user_id" defaultValue="">
-                  <option value="">Aucune</option>
+                  <option value="">{t("admin.products.no_assignee")}</option>
                   {clients.map((client) => (
                     <option key={client.id} value={client.id}>
                       {`${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email}
@@ -1469,57 +1504,57 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 </select>
               </label>
               <label className="span-2">
-                Note
+                {t("admin.products.note")}
                 <input type="text" name="note" maxLength={2000} />
               </label>
               <div className="row span-4">
-                <button type="submit">Creer transfert</button>
+                <button type="submit">{t("admin.products.create_transfer")}</button>
               </div>
             </form>
           </section>
 
           <section className="card">
             <div className="row spread">
-              <h3>Suivi des transferts</h3>
+              <h3>{t("admin.products.transfer_tracking")}</h3>
               <form method="get" className="row">
                 <input type="hidden" name="view" value="transfers" />
                 <label>
-                  Statut
+                  {t("common.status")}
                   <select name="transfer_status" defaultValue={transferStatus}>
-                    <option value="all">Tous</option>
-                    <option value="PENDING">En attente</option>
-                    <option value="DONE">Fait</option>
-                    <option value="CANCELLED">Annule</option>
+                    <option value="all">{t("common.all")}</option>
+                    <option value="PENDING">{t("admin.products.transfer_status_pending")}</option>
+                    <option value="DONE">{t("admin.products.transfer_status_done")}</option>
+                    <option value="CANCELLED">{t("admin.products.transfer_status_cancelled")}</option>
                   </select>
                 </label>
-                <button type="submit">Filtrer</button>
+                <button type="submit">{t("common.apply")}</button>
               </form>
             </div>
             <div className="table-wrap catalog-desktop-table top-gap-sm">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Date creation</th>
-                    <th>Produit</th>
-                    <th>Source {"->"} Destination</th>
-                    <th>Qt</th>
-                    <th>Date prevue</th>
-                    <th>Personne designee</th>
-                    <th>Statut</th>
-                    <th>Action</th>
+                    <th>{t("admin.products.column_created_at")}</th>
+                    <th>{t("common.product")}</th>
+                    <th>{t("admin.products.column_route")}</th>
+                    <th>{t("admin.products.quantity_short_header")}</th>
+                    <th>{t("admin.products.column_planned_date")}</th>
+                    <th>{t("admin.products.column_assignee")}</th>
+                    <th>{t("common.status")}</th>
+                    <th>{t("admin.products.column_action")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {transfers.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="muted">
-                        Aucun transfert.
+                        {t("admin.products.no_transfers")}
                       </td>
                     </tr>
                   ) : (
                     transfers.map((transfer) => (
                       <tr key={transfer.id}>
-                        <td>{new Date(transfer.created_at).toLocaleString("fr-FR")}</td>
+                        <td>{formatDateTime(transfer.created_at, language)}</td>
                         <td>{transfer.product_title}</td>
                         <td>
                           {transfer.source_location_name} {"->"} {transfer.target_location_name}
@@ -1528,8 +1563,8 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                         <td>{transfer.planned_transfer_date || "-"}</td>
                         <td>{transfer.assigned_to_name || "-"}</td>
                         <td>
-                          {transferStatusLabel(transfer.status)}
-                          {transfer.completed_transfer_date ? <div className="muted">Transfert: {transfer.completed_transfer_date}</div> : null}
+                          {transferStatusLabel(transfer.status, language)}
+                          {transfer.completed_transfer_date ? <div className="muted">{t("admin.products.transfer_completed_on", { date: transfer.completed_transfer_date })}</div> : null}
                         </td>
                         <td>
                           {transfer.status === "PENDING" ? (
@@ -1538,20 +1573,20 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                                 <input type="hidden" name="transfer_id" value={transfer.id} />
                                 <input type="hidden" name="return_to" value={returnTo} />
                                 <input type="date" name="completed_transfer_date" defaultValue={dateInputValue(transfer.planned_transfer_date)} />
-                                <input type="text" name="note" maxLength={2000} placeholder="Note completion" />
-                                <button type="submit">Marquer fait</button>
+                                <input type="text" name="note" maxLength={2000} placeholder={t("admin.products.completion_note_placeholder")} />
+                                <button type="submit">{t("admin.products.mark_done")}</button>
                               </form>
                               <form action={cancelAdminCatalogTransferAction} className="row wrap gap-xs">
                                 <input type="hidden" name="transfer_id" value={transfer.id} />
                                 <input type="hidden" name="return_to" value={returnTo} />
-                                <input type="text" name="note" maxLength={2000} placeholder="Motif annulation" />
+                                <input type="text" name="note" maxLength={2000} placeholder={t("admin.products.cancel_reason_placeholder")} />
                                 <button type="submit" className="danger ghost">
-                                  Annuler
+                                  {t("common.cancel")}
                                 </button>
                               </form>
                             </div>
                           ) : (
-                            <span className="muted">Aucune action</span>
+                            <span className="muted">{t("admin.products.no_action")}</span>
                           )}
                         </td>
                       </tr>
@@ -1568,7 +1603,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                     {transfer.source_location_name} {"->"} {transfer.target_location_name}
                   </p>
                   <p className="muted">
-                    Qt {transfer.quantity} · {transferStatusLabel(transfer.status)}
+                    {t("admin.products.quantity_short", { quantity: transfer.quantity })} · {transferStatusLabel(transfer.status, language)}
                   </p>
                   {transfer.status === "PENDING" ? (
                     <div className="catalog-request-actions">
@@ -1576,14 +1611,14 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                         <input type="hidden" name="transfer_id" value={transfer.id} />
                         <input type="hidden" name="return_to" value={returnTo} />
                         <input type="date" name="completed_transfer_date" defaultValue={dateInputValue(transfer.planned_transfer_date)} />
-                        <button type="submit">Marquer fait</button>
+                        <button type="submit">{t("admin.products.mark_done")}</button>
                       </form>
                       <form action={cancelAdminCatalogTransferAction} className="row wrap gap-xs">
                         <input type="hidden" name="transfer_id" value={transfer.id} />
                         <input type="hidden" name="return_to" value={returnTo} />
-                        <input type="text" name="note" maxLength={2000} placeholder="Motif annulation" />
+                        <input type="text" name="note" maxLength={2000} placeholder={t("admin.products.cancel_reason_placeholder")} />
                         <button type="submit" className="danger ghost">
-                          Annuler
+                          {t("common.cancel")}
                         </button>
                       </form>
                     </div>
@@ -1597,14 +1632,14 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
 
       {currentView === "requests" ? (
         <section className="card">
-          <h3>Demandes produits eleves</h3>
-          <p className="muted">Creation admin: la demande est acceptee immediatement (facturee ou non), puis passe a remettre a l eleve.</p>
+          <h3>{t("admin.products.student_requests")}</h3>
+          <p className="muted">{t("admin.products.student_requests_subtitle")}</p>
           <form action={createAdminCatalogRequestAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={returnTo} />
             <label>
-              Eleve
+              {t("admin.products.student")}
               <select name="student_user_id" required defaultValue="">
-                <option value="">Selectionner un eleve</option>
+                <option value="">{t("admin.products.select_student")}</option>
                 {clientOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
@@ -1613,9 +1648,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </select>
             </label>
             <label>
-              Produit
+              {t("common.product")}
               <select name="product_id" required defaultValue={selectedProduct?.id ?? ""}>
-                <option value="">Selectionner un produit</option>
+                <option value="">{t("admin.products.select_product")}</option>
                 {activeProducts.map((product) => (
                   <option key={product.id} value={product.id}>
                     {product.title}
@@ -1624,9 +1659,9 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </select>
             </label>
             <label>
-              Lieu
+              {t("common.location")}
               <select name="location_id" required defaultValue={selectedProduct?.primary_location_id ?? ""}>
-                <option value="">Selectionner un lieu</option>
+                <option value="">{t("admin.products.select_location")}</option>
                 {activeLocations.map((location) => (
                   <option key={location.id} value={location.id}>
                     {location.name}
@@ -1635,19 +1670,19 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </select>
             </label>
             <label>
-              Quantite
+              {t("common.quantity")}
               <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
             </label>
             <label className="span-2">
-              Note
+              {t("admin.products.note")}
               <input type="text" name="note" maxLength={2000} />
             </label>
             <label className="checkline">
               <input type="checkbox" name="should_bill" />
-              A facturer
+              {t("admin.products.bill_item")}
             </label>
             <div className="row span-4">
-              <button type="submit">Ajouter demande admin</button>
+              <button type="submit">{t("admin.products.add_admin_request")}</button>
             </div>
           </form>
 
@@ -1655,29 +1690,29 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Source</th>
-                  <th>Eleve</th>
-                  <th>Produit / Lieu</th>
-                  <th>Qt</th>
-                  <th>Statut</th>
-                  <th>Facturation</th>
-                  <th>Stock</th>
-                  <th>Actions</th>
+                  <th>{t("common.date")}</th>
+                  <th>{t("common.source")}</th>
+                  <th>{t("admin.products.student")}</th>
+                  <th>{t("admin.products.product_location")}</th>
+                  <th>{t("admin.products.quantity_short_header")}</th>
+                  <th>{t("common.status")}</th>
+                  <th>{t("admin.products.column_billing")}</th>
+                  <th>{t("admin.products.column_stock")}</th>
+                  <th>{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {requests.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="muted">
-                      Aucune demande produit.
+                      {t("admin.products.no_requests")}
                     </td>
                   </tr>
                 ) : (
                   requests.map((request) => (
                     <tr key={request.id}>
-                      <td>{new Date(request.requested_at).toLocaleString("fr-FR")}</td>
-                      <td>{catalogRequestSourceLabel(request.request_source)}</td>
+                      <td>{formatDateTime(request.requested_at, language)}</td>
+                      <td>{catalogRequestSourceLabel(request.request_source, language)}</td>
                       <td>{request.student_name}</td>
                       <td>
                         {request.product_title}
@@ -1685,12 +1720,12 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                         <small className="muted">{request.location_name}</small>
                       </td>
                       <td>{request.quantity}</td>
-                      <td>{catalogRequestStatusLabel(request.status)}</td>
-                      <td>{request.should_bill === null ? "-" : request.should_bill ? "Oui" : "Non"}</td>
+                      <td>{catalogRequestStatusLabel(request.status, language)}</td>
+                      <td>{request.should_bill === null ? "-" : yesNoLabel(request.should_bill, language)}</td>
                       <td>
-                        Reel: {request.stock_real_quantity ?? "-"}
+                        {t("admin.products.real_stock_label")}: {request.stock_real_quantity ?? "-"}
                         <br />
-                        Estime: {request.stock_estimated_quantity ?? "-"}
+                        {t("admin.products.estimated_stock_label")}: {request.stock_estimated_quantity ?? "-"}
                       </td>
                       <td>
                         <div className="catalog-request-actions">
@@ -1702,18 +1737,18 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                                 <input type="hidden" name="return_to" value={returnTo} />
                                 <label className="checkline">
                                   <input type="checkbox" name="should_bill" />
-                                  Facturer
+                                  {t("admin.products.bill_item")}
                                 </label>
-                                <input type="text" name="note" maxLength={2000} placeholder="Note (optionnel)" />
-                                <button type="submit">Accepter</button>
+                                <input type="text" name="note" maxLength={2000} placeholder={t("admin.products.accept_note_placeholder")} />
+                                <button type="submit">{t("admin.products.accept")}</button>
                               </form>
                               <form action={reviewAdminCatalogRequestAction}>
                                 <input type="hidden" name="request_id" value={request.id} />
                                 <input type="hidden" name="decision" value="REJECT" />
                                 <input type="hidden" name="return_to" value={returnTo} />
-                                <input type="text" name="note" maxLength={2000} placeholder="Motif refus (optionnel)" />
+                                <input type="text" name="note" maxLength={2000} placeholder={t("admin.products.reject_note_placeholder")} />
                                 <button type="submit" className="danger ghost">
-                                  Refuser
+                                  {t("admin.products.reject")}
                                 </button>
                               </form>
                             </>
@@ -1723,15 +1758,15 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                               <input type="hidden" name="request_id" value={request.id} />
                               <input type="hidden" name="return_to" value={returnTo} />
                               <select name="delivered_by_user_id" defaultValue="">
-                                <option value="">Remis par (utilisateur courant)</option>
+                                <option value="">{t("admin.products.delivered_by_current_user")}</option>
                                 {clients.map((client) => (
                                   <option key={client.id} value={client.id}>
                                     {`${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email}
                                   </option>
                                 ))}
                               </select>
-                              <input type="text" name="note" maxLength={2000} placeholder="Note remise (optionnel)" />
-                              <button type="submit">Marquer remis</button>
+                              <input type="text" name="note" maxLength={2000} placeholder={t("admin.products.delivery_note_placeholder")} />
+                              <button type="submit">{t("admin.products.mark_delivered")}</button>
                             </form>
                           )}
                           {request.note ? <small className="muted">{request.note}</small> : null}
@@ -1751,7 +1786,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                   {request.student_name} · {request.location_name}
                 </p>
                 <p className="muted">
-                  {catalogRequestStatusLabel(request.status)} · Qt {request.quantity}
+                  {catalogRequestStatusLabel(request.status, language)} · {t("admin.products.quantity_short", { quantity: request.quantity })}
                 </p>
                 <div className="catalog-request-actions">
                   {request.status === "PROCESSING" ? (
@@ -1762,16 +1797,16 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                         <input type="hidden" name="return_to" value={returnTo} />
                         <label className="checkline">
                           <input type="checkbox" name="should_bill" />
-                          Facturer
+                          {t("admin.products.bill_item")}
                         </label>
-                        <button type="submit">Accepter</button>
+                        <button type="submit">{t("admin.products.accept")}</button>
                       </form>
                       <form action={reviewAdminCatalogRequestAction} className="row wrap gap-xs">
                         <input type="hidden" name="request_id" value={request.id} />
                         <input type="hidden" name="decision" value="REJECT" />
                         <input type="hidden" name="return_to" value={returnTo} />
                         <button type="submit" className="danger ghost">
-                          Refuser
+                          {t("admin.products.reject")}
                         </button>
                       </form>
                     </>
@@ -1780,7 +1815,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                     <form action={deliverAdminCatalogRequestAction} className="row wrap gap-xs">
                       <input type="hidden" name="request_id" value={request.id} />
                       <input type="hidden" name="return_to" value={returnTo} />
-                      <button type="submit">Marquer remis</button>
+                      <button type="submit">{t("admin.products.mark_delivered")}</button>
                     </form>
                   ) : null}
                 </div>
@@ -1791,47 +1826,47 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
       ) : null}
 
       {selectedEntry ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Details entree stock">
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.products.entry_details_aria")}>
           <section className="modal-panel modal-day-details">
             <div className="row spread">
-              <h3 className="modal-title">Details mouvement stock</h3>
+              <h3 className="modal-title">{t("admin.products.entry_details_title")}</h3>
               <Link
                 className="ghost"
                 href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", entryId: "" })}`}
-                aria-label="Fermer"
+                aria-label={t("common.close")}
               >
-                Fermer
+                {t("common.close")}
               </Link>
             </div>
             <section className="modal-card">
               <div className="grid cols-2 config-form-grid">
                 <p>
-                  <strong>Produit:</strong> {selectedEntry.product_title}
+                  <strong>{t("common.product")}:</strong> {selectedEntry.product_title}
                 </p>
                 <p>
-                  <strong>Local:</strong> {selectedEntry.location_name}
+                  <strong>{t("common.location")}:</strong> {selectedEntry.location_name}
                 </p>
                 <p>
-                  <strong>Date:</strong> {new Date(selectedEntry.occurred_at).toLocaleString("fr-FR")}
+                  <strong>{t("common.date")}:</strong> {formatDateTime(selectedEntry.occurred_at, language)}
                 </p>
                 <p>
-                  <strong>Quantite:</strong> {Number(selectedEntry.quantity) >= 0 ? "+" : ""}
+                  <strong>{t("common.quantity")}:</strong> {Number(selectedEntry.quantity) >= 0 ? "+" : ""}
                   {selectedEntry.quantity}
                 </p>
                 <p>
-                  <strong>Type:</strong> {stockMovementTypeLabel(selectedEntry.movement_type)}
+                  <strong>{t("common.type")}:</strong> {stockMovementTypeLabel(selectedEntry.movement_type, language)}
                 </p>
                 <p>
-                  <strong>Source:</strong> {stockMovementSourceTypeLabel(selectedEntry.source_type)}
+                  <strong>{t("common.source")}:</strong> {stockMovementSourceTypeLabel(selectedEntry.source_type, language)}
                 </p>
                 <p>
-                  <strong>Reference:</strong> {selectedEntry.source_reference || "-"}
+                  <strong>{t("admin.products.reference")}:</strong> {selectedEntry.source_reference || "-"}
                 </p>
                 <p>
-                  <strong>Cree par:</strong> {selectedEntry.created_by_name || "-"}
+                  <strong>{t("admin.products.created_by")}:</strong> {selectedEntry.created_by_name || "-"}
                 </p>
                 <p className="span-2">
-                  <strong>Note:</strong> {selectedEntry.note || "-"}
+                  <strong>{t("admin.products.note")}:</strong> {selectedEntry.note || "-"}
                 </p>
               </div>
             </section>
@@ -1847,6 +1882,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
           returnTo={addFormReturnTo}
           errorMessage={errorMessage}
           createAction={createAdminCatalogProductAction}
+          language={language}
         />
       ) : null}
 
@@ -1860,6 +1896,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
           entriesHref={entriesViewLink}
           transfersHref={transfersViewLink}
           updateAction={updateAdminCatalogProductAction}
+          language={language}
         />
       ) : null}
     </section>
