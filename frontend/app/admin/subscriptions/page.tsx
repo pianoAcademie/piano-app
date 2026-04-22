@@ -3,7 +3,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { backendRequest, backendUrl } from "../../../lib/backend";
-import type { AdminSubscriptionEngineDetailOut, AdminSubscriptionEngineListOut } from "../../../lib/types";
+import type { AdminSubscriptionEngineDetailOut, AdminSubscriptionEngineListOut, UserOut } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -15,7 +16,7 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, language: UiLanguage): string {
   if (!value) {
     return "-";
   }
@@ -23,10 +24,10 @@ function formatDate(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
 }
 
-function formatAmount(value: string | null, currency: string | null): string {
+function formatAmount(value: string | null, currency: string | null, language: UiLanguage): string {
   if (!value) {
     return "-";
   }
@@ -36,7 +37,7 @@ function formatAmount(value: string | null, currency: string | null): string {
   }
   const safeCurrency = (currency ?? "EUR").toUpperCase();
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency: safeCurrency,
       minimumFractionDigits: 2,
@@ -61,17 +62,36 @@ function statusClass(status: string): string {
   return "status-off";
 }
 
+function subscriptionStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "ACTIVE") return uiText(language, "admin.subscriptions.status_active");
+  if (normalized === "PAYMENT_ALERT") return uiText(language, "admin.subscriptions.status_payment_alert");
+  if (normalized === "PRE_TERMINATION") return uiText(language, "admin.subscriptions.status_pre_termination");
+  if (normalized === "TERMINATED") return uiText(language, "admin.subscriptions.status_terminated");
+  if (normalized === "PAUSED") return uiText(language, "admin.subscriptions.status_paused");
+  if (normalized === "CANCELLED") return uiText(language, "admin.subscriptions.status_cancelled");
+  if (normalized === "PAID") return uiText(language, "admin.subscriptions.status_paid");
+  if (normalized === "FAILED_FIRST_ATTEMPT") return uiText(language, "admin.subscriptions.status_failed_first_attempt");
+  if (normalized === "FAILED_FINAL") return uiText(language, "admin.subscriptions.status_failed_final");
+  return status;
+}
+
+function readLanguageFromFormData(formData: FormData): UiLanguage {
+  return normalizeUiLanguage(String(formData.get("ui_language") ?? ""));
+}
+
 async function retryNowAction(formData: FormData): Promise<void> {
   "use server";
 
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
+  const language = readLanguageFromFormData(formData);
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
 
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
   if (!subscriptionId) {
-    redirect("/admin/subscriptions?error=Abonnement%20introuvable");
+    redirect(`/admin/subscriptions?error=${encodeURIComponent(uiText(language, "admin.subscriptions.subscription_not_found"))}`);
   }
 
   const response = await fetch(`${backendUrl()}/api/v1/admin/subscriptions/${subscriptionId}/retry-now`, {
@@ -92,7 +112,11 @@ async function retryNowAction(formData: FormData): Promise<void> {
       `HTTP_${response.status}`;
     redirect(`/admin/subscriptions?error=${encodeURIComponent(detail)}`);
   }
-  redirect(`/admin/subscriptions?subscription_id=${encodeURIComponent(subscriptionId)}&ok=Retry%20lance`);
+  redirect(
+    `/admin/subscriptions?subscription_id=${encodeURIComponent(subscriptionId)}&ok=${encodeURIComponent(
+      uiText(language, "admin.subscriptions.retry_started"),
+    )}`,
+  );
 }
 
 export default async function AdminSubscriptionsPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
@@ -100,6 +124,12 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const status = readParam(searchParams, "status");
   const q = readParam(searchParams, "q");
@@ -131,7 +161,7 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
   }
   const detailData = detailResult && detailResult.ok ? detailResult.data : null;
   const detailPeriodLabel = detailData
-    ? `${formatDate(detailData.subscription.current_period_start)} -> ${formatDate(detailData.subscription.current_period_end)}`
+    ? `${formatDate(detailData.subscription.current_period_start, language)} -> ${formatDate(detailData.subscription.current_period_end, language)}`
     : "-";
 
   const baseParams = new URLSearchParams();
@@ -143,39 +173,39 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
   return (
     <section className="admin-page-grid">
       <section className="card">
-        <h2>Abonnements mensuels</h2>
-        <p className="muted">Suivi des renouvellements, impayes, retries et regularisations.</p>
+        <h2>{t("admin.subscriptions.title")}</h2>
+        <p className="muted">{t("admin.subscriptions.subtitle")}</p>
       </section>
 
       <section className="card">
-        {!listResult.ok ? <p className="flash-err">Erreur backend: {listResult.message}</p> : null}
+        {!listResult.ok ? <p className="flash-err">{t("admin.subscriptions.backend_error")}: {listResult.message}</p> : null}
         {ok ? <p className="flash-ok">{ok}</p> : null}
         {error ? <p className="flash-err">{error}</p> : null}
         <form method="get" className="grid cols-4 sticky-filters">
           <label>
-            Statut
+            {t("admin.subscriptions.filter_status")}
             <select name="status" defaultValue={status}>
-              <option value="">Tous</option>
-              <option value="ACTIVE">ACTIVE</option>
-              <option value="PAYMENT_ALERT">PAYMENT_ALERT</option>
-              <option value="PRE_TERMINATION">PRE_TERMINATION</option>
-              <option value="TERMINATED">TERMINATED</option>
-              <option value="PAUSED">PAUSED</option>
-              <option value="CANCELLED">CANCELLED</option>
+              <option value="">{uiText(language, "common.all")}</option>
+              <option value="ACTIVE">{subscriptionStatusLabel("ACTIVE", language)}</option>
+              <option value="PAYMENT_ALERT">{subscriptionStatusLabel("PAYMENT_ALERT", language)}</option>
+              <option value="PRE_TERMINATION">{subscriptionStatusLabel("PRE_TERMINATION", language)}</option>
+              <option value="TERMINATED">{subscriptionStatusLabel("TERMINATED", language)}</option>
+              <option value="PAUSED">{subscriptionStatusLabel("PAUSED", language)}</option>
+              <option value="CANCELLED">{subscriptionStatusLabel("CANCELLED", language)}</option>
             </select>
           </label>
           <label className="cols-span-2">
-            Recherche texte
-            <input type="text" name="q" defaultValue={q} placeholder="nom client, email, plan..." />
+            {t("admin.subscriptions.search_text")}
+            <input type="text" name="q" defaultValue={q} placeholder={t("admin.subscriptions.search_placeholder")} />
           </label>
           <label className="row align-end top-gap-sm">
             <input type="checkbox" name="only_retry_due" value="1" defaultChecked={onlyRetryDue === "1"} />
-            Retry prevu aujourd hui
+            {t("admin.subscriptions.retry_due_today")}
           </label>
           <div className="row end cols-span-4 top-gap-sm">
-            <button type="submit">Appliquer</button>
+            <button type="submit">{uiText(language, "common.apply")}</button>
             <a className="ghost" href="/admin/subscriptions">
-              Reset filtres
+              {t("admin.subscriptions.reset_filters")}
             </a>
           </div>
         </form>
@@ -186,22 +216,22 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
           <table className="data-table">
             <thead>
               <tr>
-                <th>Client</th>
-                <th>Abonnement</th>
-                <th>Statut</th>
-                <th>Montant</th>
-                <th>Prochaine echeance</th>
-                <th>Derniere tentative</th>
-                <th>Dernier paiement</th>
-                <th>Blocage reservations</th>
-                <th>Action</th>
+                <th>{t("admin.subscriptions.column_client")}</th>
+                <th>{t("admin.subscriptions.column_subscription")}</th>
+                <th>{uiText(language, "common.status")}</th>
+                <th>{uiText(language, "common.amount")}</th>
+                <th>{t("admin.subscriptions.column_next_due")}</th>
+                <th>{t("admin.subscriptions.column_last_attempt")}</th>
+                <th>{t("admin.subscriptions.column_last_payment")}</th>
+                <th>{t("admin.subscriptions.column_booking_block")}</th>
+                <th>{uiText(language, "client.action")}</th>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 ? (
                 <tr>
                   <td colSpan={9}>
-                    <p className="muted">Aucun abonnement sur ces filtres.</p>
+                    <p className="muted">{t("admin.subscriptions.no_results")}</p>
                   </td>
                 </tr>
               ) : (
@@ -217,16 +247,16 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                       </td>
                       <td>{row.plan_name}</td>
                       <td>
-                        <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
+                        <span className={`status-pill ${statusClass(row.status)}`}>{subscriptionStatusLabel(row.status, language)}</span>
                       </td>
-                      <td>{formatAmount(row.amount, row.currency)}</td>
-                      <td>{formatDate(row.next_billing_date)}</td>
-                      <td>{formatDate(row.last_attempt_at)}</td>
-                      <td>{formatDate(row.last_successful_charge_at)}</td>
-                      <td>{row.bookings_blocked ? "Oui" : "Non"}</td>
+                      <td>{formatAmount(row.amount, row.currency, language)}</td>
+                      <td>{formatDate(row.next_billing_date, language)}</td>
+                      <td>{formatDate(row.last_attempt_at, language)}</td>
+                      <td>{formatDate(row.last_successful_charge_at, language)}</td>
+                      <td>{row.bookings_blocked ? uiText(language, "common.yes") : uiText(language, "common.no")}</td>
                       <td>
                         <a className="ghost" href={`/admin/subscriptions?${hrefParams.toString()}`}>
-                          Voir detail
+                          {t("admin.subscriptions.view_detail")}
                         </a>
                       </td>
                     </tr>
@@ -241,57 +271,58 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
       {detailData ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-panel-wide">
-            <a className="modal-close-x" href={baseHref} aria-label="Fermer">
+            <a className="modal-close-x" href={baseHref} aria-label={uiText(language, "common.close")}>
               ×
             </a>
             <header className="activity-modal-header">
-              <h2 className="modal-title">Detail abonnement</h2>
+              <h2 className="modal-title">{t("admin.subscriptions.detail_title")}</h2>
               <p className="muted">
                 {detailData.subscription.customer_name} - {detailData.subscription.plan_name}
               </p>
             </header>
 
             <section className="card modal-card">
-              <h3>Resume</h3>
+              <h3>{uiText(language, "common.summary")}</h3>
               <div className="list">
-                <article className="item row spread"><span>Statut</span><strong>{detailData.subscription.status}</strong></article>
-                <article className="item row spread"><span>Periode courante</span><strong>{detailPeriodLabel}</strong></article>
-                <article className="item row spread"><span>Prochaine echeance</span><strong>{formatDate(detailData.subscription.next_billing_date)}</strong></article>
-                <article className="item row spread"><span>Reservations bloquees</span><strong>{detailData.subscription.bookings_blocked ? "Oui" : "Non"}</strong></article>
-                <article className="item row spread"><span>Lien regularisation</span><strong>{detailData.subscription.recovery_url ? "Disponible" : "Non"}</strong></article>
+                <article className="item row spread"><span>{uiText(language, "common.status")}</span><strong>{subscriptionStatusLabel(detailData.subscription.status, language)}</strong></article>
+                <article className="item row spread"><span>{t("admin.subscriptions.current_period")}</span><strong>{detailPeriodLabel}</strong></article>
+                <article className="item row spread"><span>{t("admin.subscriptions.column_next_due")}</span><strong>{formatDate(detailData.subscription.next_billing_date, language)}</strong></article>
+                <article className="item row spread"><span>{t("admin.subscriptions.bookings_blocked")}</span><strong>{detailData.subscription.bookings_blocked ? uiText(language, "common.yes") : uiText(language, "common.no")}</strong></article>
+                <article className="item row spread"><span>{t("admin.subscriptions.recovery_link")}</span><strong>{detailData.subscription.recovery_url ? t("admin.subscriptions.recovery_available") : uiText(language, "common.no")}</strong></article>
               </div>
               <form action={retryNowAction} className="top-gap-sm">
                 <input type="hidden" name="subscription_id" value={detailData.subscription.id} />
-                <button type="submit">Relancer maintenant</button>
+                <input type="hidden" name="ui_language" value={language} />
+                <button type="submit">{t("admin.subscriptions.retry_now")}</button>
               </form>
             </section>
 
             <section className="card modal-card">
-              <h3>Cycles de facturation</h3>
+              <h3>{t("admin.subscriptions.billing_cycles")}</h3>
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Periode</th>
-                      <th>Echeance</th>
-                      <th>Statut</th>
-                      <th>Tentatives</th>
-                      <th>Retry</th>
-                      <th>Montant</th>
+                      <th>{uiText(language, "common.period")}</th>
+                      <th>{t("admin.subscriptions.column_due_date")}</th>
+                      <th>{uiText(language, "common.status")}</th>
+                      <th>{t("admin.subscriptions.column_attempts")}</th>
+                      <th>{t("admin.subscriptions.column_retry")}</th>
+                      <th>{uiText(language, "common.amount")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detailData.cycles.length === 0 ? (
-                      <tr><td colSpan={6}>Aucun cycle</td></tr>
+                      <tr><td colSpan={6}>{t("admin.subscriptions.no_cycles")}</td></tr>
                     ) : (
                       detailData.cycles.map((row) => (
                         <tr key={row.id}>
-                          <td>{`${formatDate(row.period_start)} -> ${formatDate(row.period_end)}`}</td>
-                          <td>{formatDate(row.billing_date)}</td>
-                          <td><span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span></td>
+                          <td>{`${formatDate(row.period_start, language)} -> ${formatDate(row.period_end, language)}`}</td>
+                          <td>{formatDate(row.billing_date, language)}</td>
+                          <td><span className={`status-pill ${statusClass(row.status)}`}>{subscriptionStatusLabel(row.status, language)}</span></td>
                           <td>{row.attempt_count}</td>
-                          <td>{formatDate(row.next_retry_at)}</td>
-                          <td>{formatAmount(row.amount, row.currency)}</td>
+                          <td>{formatDate(row.next_retry_at, language)}</td>
+                          <td>{formatAmount(row.amount, row.currency, language)}</td>
                         </tr>
                       ))
                     )}
@@ -301,28 +332,28 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
             </section>
 
             <section className="card modal-card">
-              <h3>Tentatives de paiement</h3>
+              <h3>{t("admin.subscriptions.payment_attempts")}</h3>
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
+                      <th>{uiText(language, "common.date")}</th>
                       <th>#</th>
-                      <th>Statut</th>
-                      <th>Provider</th>
-                      <th>Code</th>
-                      <th>Raison</th>
+                      <th>{uiText(language, "common.status")}</th>
+                      <th>{t("admin.subscriptions.column_provider")}</th>
+                      <th>{t("admin.subscriptions.column_code")}</th>
+                      <th>{t("admin.subscriptions.column_reason")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detailData.attempts.length === 0 ? (
-                      <tr><td colSpan={6}>Aucune tentative</td></tr>
+                      <tr><td colSpan={6}>{t("admin.subscriptions.no_attempts")}</td></tr>
                     ) : (
                       detailData.attempts.map((row) => (
                         <tr key={row.id}>
-                          <td>{formatDate(row.attempted_at)}</td>
+                          <td>{formatDate(row.attempted_at, language)}</td>
                           <td>{row.attempt_number}</td>
-                          <td><span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span></td>
+                          <td><span className={`status-pill ${statusClass(row.status)}`}>{subscriptionStatusLabel(row.status, language)}</span></td>
                           <td>{row.provider_name ?? "-"}</td>
                           <td>{row.failure_code ?? row.provider_status ?? "-"}</td>
                           <td>{row.failure_reason ?? "-"}</td>

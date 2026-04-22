@@ -3,7 +3,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { backendRequest, backendUrl } from "../../../lib/backend";
-import type { AdminToProcessMessageOut, AdminToProcessStatus, AdminToProcessStatusUpdateOut } from "../../../lib/types";
+import type { AdminToProcessMessageOut, AdminToProcessStatus, AdminToProcessStatusUpdateOut, UserOut } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -28,18 +29,18 @@ function appendQueryMessage(path: string, key: string, value: string): string {
   return `${path}${separator}${key}=${encodeURIComponent(value)}`;
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
 }
 
-function statusLabel(status: AdminToProcessStatus): string {
-  if (status === "a_traiter") return "A traiter";
-  if (status === "en_cours") return "En cours";
-  return "Termine";
+function statusLabel(status: AdminToProcessStatus, language: UiLanguage): string {
+  if (status === "a_traiter") return uiText(language, "admin.todo.status_todo");
+  if (status === "en_cours") return uiText(language, "admin.todo.status_in_progress");
+  return uiText(language, "admin.todo.status_done");
 }
 
 function statusClass(status: AdminToProcessStatus): string {
@@ -48,17 +49,17 @@ function statusClass(status: AdminToProcessStatus): string {
   return "status-ok";
 }
 
-function sourceLabel(value: string): string {
-  if (value === "releves_professeur") return "Releves professeur";
-  if (value === "facturation_professeur") return "Facturation professeur";
-  if (value === "message_portail_professeur") return "Portail professeur";
+function sourceLabel(value: string, language: UiLanguage): string {
+  if (value === "releves_professeur") return uiText(language, "admin.todo.source_teacher_statements");
+  if (value === "facturation_professeur") return uiText(language, "admin.todo.source_teacher_invoicing");
+  if (value === "message_portail_professeur") return uiText(language, "admin.todo.source_teacher_portal");
   return value.replaceAll("_", " ");
 }
 
-function typeLabel(value: string): string {
-  if (value === "erreur_releve") return "Erreur releve";
-  if (value === "erreur_lignes_releve") return "Erreur lignes releve";
-  if (value === "prestation_manquante") return "Prestation manquante";
+function typeLabel(value: string, language: UiLanguage): string {
+  if (value === "erreur_releve") return uiText(language, "admin.todo.type_statement_error");
+  if (value === "erreur_lignes_releve") return uiText(language, "admin.todo.type_statement_lines_error");
+  if (value === "prestation_manquante") return uiText(language, "admin.todo.type_missing_service");
   return value.replaceAll("_", " ");
 }
 
@@ -102,7 +103,8 @@ function parseMessageBody(value: string): ParsedMessageBody {
       return;
     }
     const normalizedValue = currentValue.trim() || "-";
-    if (currentLabel.toLowerCase().includes("commentaire")) {
+    const normalizedLabel = currentLabel.toLowerCase();
+    if (normalizedLabel.includes("commentaire") || normalizedLabel.includes("comment")) {
       teacherComment = normalizedValue;
     } else {
       details.push({ label: currentLabel, value: normalizedValue });
@@ -140,10 +142,15 @@ function parseMessageBody(value: string): ParsedMessageBody {
   };
 }
 
+function readLanguageFromFormData(formData: FormData): UiLanguage {
+  return normalizeUiLanguage(String(formData.get("ui_language") ?? ""));
+}
+
 async function updateMessageStatusAction(formData: FormData): Promise<void> {
   "use server";
 
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
+  const language = readLanguageFromFormData(formData);
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
@@ -153,7 +160,7 @@ async function updateMessageStatusAction(formData: FormData): Promise<void> {
   const returnTo = safeAdminPath(String(formData.get("return_to") ?? ""), "/admin/a-traiter");
 
   if (!messageId || !["a_traiter", "en_cours", "termine"].includes(targetStatus)) {
-    redirect(appendQueryMessage(returnTo, "error", "Mise a jour invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.todo.invalid_status_update")));
   }
 
   const response = await fetch(`${backendUrl()}/api/v1/admin/to-process/messages/${encodeURIComponent(messageId)}/status`, {
@@ -170,12 +177,12 @@ async function updateMessageStatusAction(formData: FormData): Promise<void> {
   revalidatePath("/admin/a-traiter");
 
   if (!response.ok) {
-    const detail = (payload?.detail || "Erreur backend").toString();
+    const detail = (payload?.detail || uiText(language, "admin.todo.backend_error")).toString();
     redirect(appendQueryMessage(returnTo, "error", detail));
   }
 
   const _result = payload as AdminToProcessStatusUpdateOut | null;
-  redirect(appendQueryMessage(returnTo, "ok", "Statut mis a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.todo.status_updated")));
 }
 
 export default async function AdminToProcessPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
@@ -183,6 +190,12 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const q = readParam(searchParams, "q").trim();
   const status = readParam(searchParams, "status").trim() as AdminToProcessStatus | "";
@@ -229,56 +242,56 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
   return (
     <section className="admin-page-grid">
       <section className="card">
-        <h2>A traiter</h2>
-        <p className="muted">Boite centralisee des messages professeur vers administration.</p>
+        <h2>{t("admin.todo.title")}</h2>
+        <p className="muted">{t("admin.todo.subtitle")}</p>
       </section>
 
-      {!listResult.ok ? <section className="flash-err">Erreur backend: {listResult.message}</section> : null}
-      {detailResult && !detailResult.ok ? <section className="flash-err">Erreur detail: {detailResult.message}</section> : null}
+      {!listResult.ok ? <section className="flash-err">{t("admin.todo.backend_error")}: {listResult.message}</section> : null}
+      {detailResult && !detailResult.ok ? <section className="flash-err">{t("admin.todo.detail_error")}: {detailResult.message}</section> : null}
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
 
       <section className="card">
         <form method="get" className="grid cols-4 sticky-filters">
           <label className="cols-span-2">
-            Recherche
-            <input type="search" name="q" defaultValue={q} placeholder="Message, professeur, source..." />
+            {uiText(language, "common.search")}
+            <input type="search" name="q" defaultValue={q} placeholder={t("admin.todo.search_placeholder")} />
           </label>
           <label>
-            Statut
+            {uiText(language, "common.status")}
             <select name="status" defaultValue={status}>
-              <option value="">Tous</option>
-              <option value="a_traiter">A traiter</option>
-              <option value="en_cours">En cours</option>
-              <option value="termine">Termine</option>
+              <option value="">{uiText(language, "common.all")}</option>
+              <option value="a_traiter">{statusLabel("a_traiter", language)}</option>
+              <option value="en_cours">{statusLabel("en_cours", language)}</option>
+              <option value="termine">{statusLabel("termine", language)}</option>
             </select>
           </label>
           <label>
-            Source
+            {uiText(language, "common.source")}
             <select name="source" defaultValue={selectedSource}>
-              <option value="">Toutes</option>
+              <option value="">{uiText(language, "common.all")}</option>
               {sourceOptions.map((value) => (
                 <option key={value} value={value}>
-                  {sourceLabel(value)}
+                  {sourceLabel(value, language)}
                 </option>
               ))}
             </select>
           </label>
           <label>
-            Type de message
+            {t("admin.todo.message_type")}
             <select name="type" defaultValue={selectedType}>
-              <option value="">Tous</option>
+              <option value="">{uiText(language, "common.all")}</option>
               {typeOptions.map((value) => (
                 <option key={value} value={value}>
-                  {typeLabel(value)}
+                  {typeLabel(value, language)}
                 </option>
               ))}
             </select>
           </label>
           <div className="row end cols-span-3 top-gap-sm">
-            <button type="submit">Filtrer</button>
+            <button type="submit">{uiText(language, "common.apply")}</button>
             <a className="ghost" href="/admin/a-traiter">
-              Reset
+              {uiText(language, "common.reset")}
             </a>
           </div>
         </form>
@@ -288,20 +301,20 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
         <table className="data-table">
           <thead>
             <tr>
-              <th>Date creation</th>
-              <th>Source</th>
-              <th>Type message</th>
-              <th>Statut</th>
-              <th>Professeur</th>
-              <th>Extrait</th>
-              <th>Action</th>
+              <th>{t("admin.todo.column_created_at")}</th>
+              <th>{uiText(language, "common.source")}</th>
+              <th>{t("admin.todo.message_type")}</th>
+              <th>{uiText(language, "common.status")}</th>
+              <th>{t("admin.todo.column_teacher")}</th>
+              <th>{t("admin.todo.column_excerpt")}</th>
+              <th>{uiText(language, "client.action")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={7}>
-                  <p className="muted">Aucun message a traiter.</p>
+                  <p className="muted">{t("admin.todo.no_results")}</p>
                 </td>
               </tr>
             ) : (
@@ -311,17 +324,17 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
                 const detailHref = `/admin/a-traiter?${detailParams.toString()}`;
                 return (
                   <tr key={row.id}>
-                    <td>{formatDate(row.created_at)}</td>
-                    <td>{sourceLabel(row.source)}</td>
-                    <td>{typeLabel(row.message_type)}</td>
+                    <td>{formatDate(row.created_at, language)}</td>
+                    <td>{sourceLabel(row.source, language)}</td>
+                    <td>{typeLabel(row.message_type, language)}</td>
                     <td>
-                      <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                      <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status, language)}</span>
                     </td>
                     <td>{row.teacher_name || "-"}</td>
                     <td>{preview(row.message_body)}</td>
                     <td>
                       <a className="mode-link" href={detailHref}>
-                        Voir
+                        {uiText(language, "common.view")}
                       </a>
                     </td>
                   </tr>
@@ -335,40 +348,40 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
       {selected ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact message-detail-modal">
-            <a className="modal-close-x" href={baseHref} aria-label="Fermer">
+            <a className="modal-close-x" href={baseHref} aria-label={uiText(language, "common.close")}>
               ×
             </a>
             <div className="message-detail-shell">
               <header className="message-detail-header">
                 <div className="row spread message-detail-header-row">
-                  <h3 className="modal-title message-detail-title">Detail message</h3>
-                  <span className={`status-pill ${statusClass(selected.status)}`}>{statusLabel(selected.status)}</span>
+                  <h3 className="modal-title message-detail-title">{t("admin.todo.detail_title")}</h3>
+                  <span className={`status-pill ${statusClass(selected.status)}`}>{statusLabel(selected.status, language)}</span>
                 </div>
-                <p className="muted message-detail-date">{formatDate(selected.created_at)}</p>
+                <p className="muted message-detail-date">{formatDate(selected.created_at, language)}</p>
               </header>
 
               <section className="message-detail-meta-grid">
                 <article className="message-detail-meta-item">
-                  <span className="message-detail-meta-label">Source</span>
-                  <strong>{sourceLabel(selected.source)}</strong>
+                  <span className="message-detail-meta-label">{uiText(language, "common.source")}</span>
+                  <strong>{sourceLabel(selected.source, language)}</strong>
                 </article>
                 <article className="message-detail-meta-item">
-                  <span className="message-detail-meta-label">Type</span>
-                  <strong>{typeLabel(selected.message_type)}</strong>
+                  <span className="message-detail-meta-label">{uiText(language, "common.type")}</span>
+                  <strong>{typeLabel(selected.message_type, language)}</strong>
                 </article>
                 <article className="message-detail-meta-item">
-                  <span className="message-detail-meta-label">Professeur</span>
+                  <span className="message-detail-meta-label">{t("admin.todo.column_teacher")}</span>
                   <strong>{selected.teacher_name || "-"}</strong>
                 </article>
                 <article className="message-detail-meta-item">
-                  <span className="message-detail-meta-label">Message id</span>
+                  <span className="message-detail-meta-label">{t("admin.todo.message_id")}</span>
                   <strong className="message-detail-meta-mono">{selected.id}</strong>
                 </article>
               </section>
 
               {selected.related_entity_type || selected.related_entity_id ? (
                 <section className="message-detail-context">
-                  <p className="message-detail-context-title">Contexte</p>
+                  <p className="message-detail-context-title">{t("admin.todo.context")}</p>
                   <p className="message-detail-context-value">
                     {selected.related_entity_type || "-"}
                     {selected.related_entity_id ? ` · ${selected.related_entity_id}` : ""}
@@ -377,7 +390,7 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
               ) : null}
 
               <section className="message-detail-content">
-                <h4 className="message-detail-content-title">{parsedMessage?.heading || "Message"}</h4>
+                <h4 className="message-detail-content-title">{parsedMessage?.heading || t("admin.todo.message_heading")}</h4>
                 {parsedMessage && parsedMessage.details.length > 0 ? (
                   <dl className="message-detail-kv">
                     {parsedMessage.details.map((detail, detailIndex) => (
@@ -390,7 +403,7 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
                 ) : null}
                 {parsedMessage?.teacherComment ? (
                   <article className="message-detail-comment">
-                    <p className="message-detail-comment-title">Commentaire professeur</p>
+                    <p className="message-detail-comment-title">{t("admin.todo.teacher_comment")}</p>
                     <p>{parsedMessage.teacherComment}</p>
                   </article>
                 ) : null}
@@ -406,18 +419,19 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
             <form action={updateMessageStatusAction} className="message-detail-status-form">
               <input type="hidden" name="message_id" value={selected.id} />
               <input type="hidden" name="return_to" value={baseHref} />
+              <input type="hidden" name="ui_language" value={language} />
               <label className="message-detail-status-label">
-                Changer le statut
+                {t("admin.todo.change_status")}
                 <select name="status" defaultValue={selected.status}>
-                  <option value="a_traiter">A traiter</option>
-                  <option value="en_cours">En cours</option>
-                  <option value="termine">Termine</option>
+                  <option value="a_traiter">{statusLabel("a_traiter", language)}</option>
+                  <option value="en_cours">{statusLabel("en_cours", language)}</option>
+                  <option value="termine">{statusLabel("termine", language)}</option>
                 </select>
               </label>
               <div className="row modal-actions-end">
-                <button type="submit">Mettre a jour</button>
+                <button type="submit">{t("admin.todo.update_status")}</button>
                 <a className="reset-link" href={baseHref}>
-                  Fermer
+                  {uiText(language, "common.close")}
                 </a>
               </div>
             </form>
