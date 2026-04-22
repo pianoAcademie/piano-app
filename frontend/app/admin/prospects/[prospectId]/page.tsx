@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import AdminProspectForm from "../../../../components/admin-prospect-form";
 import { updateAdminProspectAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import type { UserOut } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -60,7 +62,7 @@ function displayName(firstName: string | null, lastName: string | null, fallback
   return value || fallback;
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, language: UiLanguage): string {
   if (!value) {
     return "-";
   }
@@ -68,16 +70,16 @@ function formatDate(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
 }
 
-function formatAmount(value: string, currency: string): string {
+function formatAmount(value: string, currency: string, language: UiLanguage): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) {
     return `${value} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currency || "EUR" }).format(amount);
+    return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: currency || "EUR" }).format(amount);
   } catch {
     return `${amount.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
@@ -91,15 +93,33 @@ function quoteStatusClass(status: string): string {
   return "status-off";
 }
 
+function quoteStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "created") return uiText(language, "admin.prospects.quote_created");
+  if (normalized === "sent") return uiText(language, "admin.prospects.quote_sent");
+  if (normalized === "approved") return uiText(language, "admin.prospects.quote_approved");
+  if (normalized === "rejected") return uiText(language, "admin.prospects.quote_rejected");
+  if (normalized === "change_requested") return uiText(language, "admin.prospects.quote_change_requested");
+  if (normalized === "cancelled") return uiText(language, "admin.prospects.quote_cancelled");
+  if (normalized === "expired") return uiText(language, "admin.prospects.quote_expired");
+  return status || "-";
+}
+
 export default async function AdminProspectDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const prospectId = String(params.prospectId || "").trim();
   if (!prospectId) {
-    redirect("/admin/prospects?error=Prospect%20introuvable");
+    redirect(`/admin/prospects?error=${encodeURIComponent(t("admin.prospects.not_found"))}`);
   }
 
   const ok = readParam(searchParams, "ok");
@@ -116,10 +136,10 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
     return (
       <section className="admin-page-grid">
         <section className="card">
-          <h2>Prospect introuvable</h2>
+          <h2>{t("admin.prospects.not_found")}</h2>
           <p className="flash-err">{prospectResult.message}</p>
           <div className="row top-gap-sm">
-            <Link className="ghost" href="/admin/prospects">Retour liste prospects</Link>
+            <Link className="ghost" href="/admin/prospects">{t("admin.prospects.back_list")}</Link>
           </div>
         </section>
       </section>
@@ -151,24 +171,25 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Prospect: {displayName(prospect.first_name, prospect.last_name, prospect.email)}</h2>
-            <p className="muted">Edition du profil prospect et preparation des devis.</p>
+            <h2>{t("admin.prospects.detail_title", { name: displayName(prospect.first_name, prospect.last_name, prospect.email) })}</h2>
+            <p className="muted">{t("admin.prospects.detail_subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href={returnTo}>Retour</Link>
-            <Link className="ghost" href={`/admin/quotes/new?prospect_id=${encodeURIComponent(prospect.id)}`}>Creer devis</Link>
+            <Link className="ghost" href={returnTo}>{t("admin.prospects.back")}</Link>
+            <Link className="ghost" href={`/admin/quotes/new?prospect_id=${encodeURIComponent(prospect.id)}`}>{t("admin.prospects.create_quote")}</Link>
           </div>
         </div>
       </section>
 
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
-      {!quotesResult.ok ? <section className="flash-err">Erreur devis: {quotesResult.message}</section> : null}
-      {!parentsResult.ok ? <section className="flash-err">Erreur recherche parents: {parentsResult.message}</section> : null}
+      {!quotesResult.ok ? <section className="flash-err">{t("admin.prospects.quotes_error")}: {quotesResult.message}</section> : null}
+      {!parentsResult.ok ? <section className="flash-err">{t("admin.prospects.parents_search_error")}: {parentsResult.message}</section> : null}
 
       <section className="card">
         <AdminProspectForm
           mode="edit"
+          language={language}
           returnTo={returnTo}
           submitAction={updateAdminProspectAction}
           initial={prospect}
@@ -178,36 +199,36 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
 
       <section className="card">
         <div className="row spread wrap gap-sm">
-          <h3>Devis lies a ce prospect</h3>
-          <Link className="ghost" href={`/admin/quotes/new?prospect_id=${encodeURIComponent(prospect.id)}`}>Creer un devis</Link>
+          <h3>{t("admin.prospects.linked_quotes")}</h3>
+          <Link className="ghost" href={`/admin/quotes/new?prospect_id=${encodeURIComponent(prospect.id)}`}>{t("admin.prospects.create_a_quote")}</Link>
         </div>
         <div className="table-wrap top-gap-sm">
           <table className="data-table">
             <thead>
               <tr>
-                <th>Numero</th>
-                <th>Statut</th>
-                <th>Total TTC</th>
-                <th>Cree le</th>
-                <th>Expire le</th>
-                <th>Action</th>
+                <th>{t("admin.prospects.quote_number")}</th>
+                <th>{uiText(language, "common.status")}</th>
+                <th>{t("admin.prospects.total_ttc")}</th>
+                <th>{t("admin.prospects.created_on")}</th>
+                <th>{t("admin.prospects.expires_on")}</th>
+                <th>{uiText(language, "client.action")}</th>
               </tr>
             </thead>
             <tbody>
               {linkedQuotes.length === 0 ? (
                 <tr>
-                  <td colSpan={6}><p className="muted">Aucun devis lie.</p></td>
+                  <td colSpan={6}><p className="muted">{t("admin.prospects.no_linked_quotes")}</p></td>
                 </tr>
               ) : (
                 linkedQuotes.map((row) => (
                   <tr key={row.id}>
                     <td><strong>{row.quote_number}</strong></td>
-                    <td><span className={`status-pill ${quoteStatusClass(row.status)}`}>{row.status}</span></td>
-                    <td>{formatAmount(row.total_ttc, row.currency)}</td>
-                    <td>{formatDate(row.created_at)}</td>
-                    <td>{formatDate(row.expires_at)}</td>
+                    <td><span className={`status-pill ${quoteStatusClass(row.status)}`}>{quoteStatusLabel(row.status, language)}</span></td>
+                    <td>{formatAmount(row.total_ttc, row.currency, language)}</td>
+                    <td>{formatDate(row.created_at, language)}</td>
+                    <td>{formatDate(row.expires_at, language)}</td>
                     <td>
-                      <Link className="ghost" href={`/admin/quotes/${row.id}?back=${encodeURIComponent(returnTo)}`}>Ouvrir</Link>
+                      <Link className="ghost" href={`/admin/quotes/${row.id}?back=${encodeURIComponent(returnTo)}`}>{uiText(language, "common.open")}</Link>
                     </td>
                   </tr>
                 ))

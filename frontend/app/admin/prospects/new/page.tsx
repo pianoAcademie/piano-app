@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import AdminProspectForm from "../../../../components/admin-prospect-form";
 import { createAdminProspectAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import type { UserOut } from "../../../../lib/types";
+import { normalizeUiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type ProspectOut = {
@@ -37,6 +39,12 @@ export default async function AdminProspectNewPage({ searchParams }: { searchPar
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
@@ -58,23 +66,24 @@ export default async function AdminProspectNewPage({ searchParams }: { searchPar
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Nouveau prospect</h2>
-            <p className="muted">Creez un prospect adulte ou enfant avec parent referent.</p>
+            <h2>{t("admin.prospects.new_title")}</h2>
+            <p className="muted">{t("admin.prospects.new_subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href={returnTo}>Retour</Link>
-            <Link className="ghost" href="/admin/prospects">Liste prospects</Link>
+            <Link className="ghost" href={returnTo}>{t("admin.prospects.back")}</Link>
+            <Link className="ghost" href="/admin/prospects">{t("admin.prospects.back_list")}</Link>
           </div>
         </div>
       </section>
 
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
-      {!parentsResult.ok ? <section className="flash-err">Erreur recherche parents: {parentsResult.message}</section> : null}
+      {!parentsResult.ok ? <section className="flash-err">{t("admin.prospects.parents_search_error")}: {parentsResult.message}</section> : null}
 
       <section className="card">
         <AdminProspectForm
           mode="create"
+          language={language}
           returnTo={returnTo}
           submitAction={createAdminProspectAction}
           parentCandidates={parentCandidates}

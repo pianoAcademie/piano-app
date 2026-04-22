@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../lib/backend";
+import type { UserOut } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type ProspectStatusFilter = "" | "active" | "archived" | "converted" | "lost" | "new";
@@ -97,12 +99,38 @@ function hasParent(meta: Record<string, unknown>): boolean {
   return parentLabel(meta) !== "-";
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
+}
+
+function prospectTypeLabel(type: "adult" | "child", language: UiLanguage): string {
+  return type === "child" ? uiText(language, "admin.prospects.type_child") : uiText(language, "admin.prospects.type_adult");
+}
+
+function prospectStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "active") return uiText(language, "admin.prospects.status_active");
+  if (normalized === "new") return uiText(language, "admin.prospects.status_new");
+  if (normalized === "lost") return uiText(language, "admin.prospects.status_lost");
+  if (normalized === "converted") return uiText(language, "admin.prospects.status_converted");
+  if (normalized === "archived") return uiText(language, "admin.prospects.status_archived");
+  return status || "-";
+}
+
+function quoteStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "created") return uiText(language, "admin.prospects.quote_created");
+  if (normalized === "sent") return uiText(language, "admin.prospects.quote_sent");
+  if (normalized === "approved") return uiText(language, "admin.prospects.quote_approved");
+  if (normalized === "rejected") return uiText(language, "admin.prospects.quote_rejected");
+  if (normalized === "change_requested") return uiText(language, "admin.prospects.quote_change_requested");
+  if (normalized === "cancelled") return uiText(language, "admin.prospects.quote_cancelled");
+  if (normalized === "expired") return uiText(language, "admin.prospects.quote_expired");
+  return status || "-";
 }
 
 function parseIsoDateOnly(raw: string): Date | null {
@@ -145,6 +173,12 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const q = readParam(searchParams, "q");
   const status = safeStatusFilter(readParam(searchParams, "status"));
@@ -240,78 +274,78 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Prospects</h2>
-            <p className="muted">Gestion separee des prospects avant ou en dehors de la creation d un devis.</p>
+            <h2>{t("admin.prospects.title")}</h2>
+            <p className="muted">{t("admin.prospects.subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href="/admin/quotes">Voir devis</Link>
-            <Link className="mode-link" href="/admin/prospects/new">Nouveau prospect</Link>
+            <Link className="ghost" href="/admin/quotes">{t("admin.prospects.view_quotes")}</Link>
+            <Link className="mode-link" href="/admin/prospects/new">{t("admin.prospects.new_prospect")}</Link>
           </div>
         </div>
       </section>
 
-      {!prospectsResult.ok ? <section className="flash-err">Erreur prospects: {prospectsResult.message}</section> : null}
-      {!quotesResult.ok ? <section className="flash-err">Erreur devis: {quotesResult.message}</section> : null}
+      {!prospectsResult.ok ? <section className="flash-err">{t("admin.prospects.prospects_error")}: {prospectsResult.message}</section> : null}
+      {!quotesResult.ok ? <section className="flash-err">{t("admin.prospects.quotes_error")}: {quotesResult.message}</section> : null}
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
 
       <section className="card">
-        <h3>Liste des prospects</h3>
+        <h3>{t("admin.prospects.list_title")}</h3>
         <form method="get" className="grid cols-4 sticky-filters top-gap-sm">
           <label className="cols-span-2">
-            Recherche
-            <input type="search" name="q" defaultValue={q} placeholder="Nom, prenom, email, telephone..." />
+            {uiText(language, "common.search")}
+            <input type="search" name="q" defaultValue={q} placeholder={t("admin.prospects.search_placeholder")} />
           </label>
           <label>
-            Statut
+            {uiText(language, "common.status")}
             <select name="status" defaultValue={status}>
-              <option value="">Tous</option>
-              <option value="active">Actif</option>
-              <option value="new">Nouveau</option>
-              <option value="lost">Perdu</option>
-              <option value="converted">Converti</option>
-              <option value="archived">Archive</option>
+              <option value="">{uiText(language, "common.all")}</option>
+              <option value="active">{t("admin.prospects.status_active")}</option>
+              <option value="new">{t("admin.prospects.status_new")}</option>
+              <option value="lost">{t("admin.prospects.status_lost")}</option>
+              <option value="converted">{t("admin.prospects.status_converted")}</option>
+              <option value="archived">{t("admin.prospects.status_archived")}</option>
             </select>
           </label>
           <label>
-            Type
+            {uiText(language, "common.type")}
             <select name="prospect_type" defaultValue={typeFilter}>
-              <option value="all">Tous</option>
-              <option value="adult">Adulte</option>
-              <option value="child">Enfant</option>
+              <option value="all">{uiText(language, "common.all")}</option>
+              <option value="adult">{t("admin.prospects.type_adult")}</option>
+              <option value="child">{t("admin.prospects.type_child")}</option>
             </select>
           </label>
           <label>
-            Parent referent
+            {t("admin.prospects.parent_referent")}
             <select name="has_parent" defaultValue={parentFilter}>
-              <option value="all">Tous</option>
-              <option value="yes">Avec parent</option>
-              <option value="no">Sans parent</option>
+              <option value="all">{uiText(language, "common.all")}</option>
+              <option value="yes">{t("admin.prospects.with_parent")}</option>
+              <option value="no">{t("admin.prospects.without_parent")}</option>
             </select>
           </label>
           <label>
-            A deja un devis
+            {t("admin.prospects.has_quote")}
             <select name="has_quote" defaultValue={hasQuoteFilter}>
-              <option value="all">Tous</option>
-              <option value="yes">Oui</option>
-              <option value="no">Non</option>
+              <option value="all">{uiText(language, "common.all")}</option>
+              <option value="yes">{uiText(language, "common.yes")}</option>
+              <option value="no">{uiText(language, "common.no")}</option>
             </select>
           </label>
           <label>
-            Source
-            <input type="text" name="source" defaultValue={sourceFilter} placeholder="site_web, telephone..." />
+            {uiText(language, "common.source")}
+            <input type="text" name="source" defaultValue={sourceFilter} placeholder={t("admin.prospects.source_placeholder")} />
           </label>
           <label>
-            Cree du
+            {t("admin.prospects.created_from")}
             <input type="date" name="created_from" defaultValue={createdFromRaw} />
           </label>
           <label>
-            Cree au
+            {t("admin.prospects.created_to")}
             <input type="date" name="created_to" defaultValue={createdToRaw} />
           </label>
           <div className="row end cols-span-4 top-gap-sm">
-            <button type="submit">Filtrer</button>
-            <a className="ghost" href="/admin/prospects">Reset</a>
+            <button type="submit">{uiText(language, "common.apply")}</button>
+            <a className="ghost" href="/admin/prospects">{uiText(language, "common.reset")}</a>
           </div>
         </form>
 
@@ -319,22 +353,22 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
           <table className="data-table">
             <thead>
               <tr>
-                <th>Type prospect</th>
-                <th>Nom principal</th>
-                <th>Email principal</th>
-                <th>Telephone principal</th>
-                <th>Parent referent</th>
-                <th>Nb devis</th>
-                <th>Dernier devis</th>
-                <th>Statut</th>
-                <th>Date creation</th>
-                <th>Actions</th>
+                <th>{t("admin.prospects.column_prospect_type")}</th>
+                <th>{t("admin.prospects.column_primary_name")}</th>
+                <th>{t("admin.prospects.column_primary_email")}</th>
+                <th>{t("admin.prospects.column_primary_phone")}</th>
+                <th>{t("admin.prospects.parent_referent")}</th>
+                <th>{t("admin.prospects.column_quote_count")}</th>
+                <th>{t("admin.prospects.column_last_quote")}</th>
+                <th>{uiText(language, "common.status")}</th>
+                <th>{t("admin.prospects.column_created_at")}</th>
+                <th>{uiText(language, "common.actions")}</th>
               </tr>
             </thead>
             <tbody>
               {filteredProspects.length === 0 ? (
                 <tr>
-                  <td colSpan={10}><p className="muted">Aucun prospect sur ces filtres.</p></td>
+                  <td colSpan={10}><p className="muted">{t("admin.prospects.no_results")}</p></td>
                 </tr>
               ) : (
                 filteredProspects.map((row) => {
@@ -348,7 +382,7 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
                     : "";
                   return (
                     <tr key={row.id}>
-                      <td>{type === "child" ? "Enfant" : "Adulte"}</td>
+                      <td>{prospectTypeLabel(type, language)}</td>
                       <td><strong>{displayName(row.first_name, row.last_name, row.email)}</strong></td>
                       <td>{row.email}</td>
                       <td>{row.phone || "-"}</td>
@@ -359,19 +393,19 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
                           <>
                             <strong>{lastQuote.quote_number}</strong>
                             <br />
-                            <small className="muted">{lastQuote.status} · {formatDate(lastQuote.created_at)}</small>
+                            <small className="muted">{quoteStatusLabel(lastQuote.status, language)} · {formatDate(lastQuote.created_at, language)}</small>
                           </>
                         ) : (
-                          <span className="muted">Aucun</span>
+                          <span className="muted">{t("admin.prospects.none")}</span>
                         )}
                       </td>
-                      <td><span className="status-pill status-off">{row.status}</span></td>
-                      <td>{formatDate(row.created_at)}</td>
+                      <td><span className="status-pill status-off">{prospectStatusLabel(row.status, language)}</span></td>
+                      <td>{formatDate(row.created_at, language)}</td>
                       <td>
                         <div className="row wrap gap-xs">
-                          <Link className="ghost" href={detailHref}>Voir / Editer</Link>
-                          <Link className="ghost" href={newQuoteHref}>Creer devis</Link>
-                          {lastQuoteHref ? <Link className="ghost" href={lastQuoteHref}>Dernier devis</Link> : null}
+                          <Link className="ghost" href={detailHref}>{t("admin.prospects.view_edit")}</Link>
+                          <Link className="ghost" href={newQuoteHref}>{t("admin.prospects.create_quote")}</Link>
+                          {lastQuoteHref ? <Link className="ghost" href={lastQuoteHref}>{t("admin.prospects.last_quote")}</Link> : null}
                         </div>
                       </td>
                     </tr>

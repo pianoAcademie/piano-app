@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import SearchMultiSelect from "./search-multi-select";
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type ProspectStatus = "active" | "converted" | "archived" | "lost" | "new";
 type ParentMode = "new_parent" | "existing_parent";
@@ -30,6 +31,7 @@ type ParentCandidate = {
 
 type AdminProspectFormProps = {
   mode: "create" | "edit";
+  language?: UiLanguage;
   returnTo: string;
   submitAction: (formData: FormData) => Promise<void>;
   initial?: ProspectInitial;
@@ -45,7 +47,14 @@ function displayName(firstName: string | null, lastName: string | null, fallback
   return value || fallback;
 }
 
-export default function AdminProspectForm({ mode, returnTo, submitAction, initial, parentCandidates }: AdminProspectFormProps): JSX.Element {
+export default function AdminProspectForm({
+  mode,
+  language = "fr",
+  returnTo,
+  submitAction,
+  initial,
+  parentCandidates,
+}: AdminProspectFormProps): JSX.Element {
   const initialMeta = (initial?.meta ?? {}) as Record<string, unknown>;
   const initialType = String(initialMeta.prospect_type || "").trim().toLowerCase() === "child" ? "child" : "adult";
   const [prospectType, setProspectType] = useState<"adult" | "child">(initialType);
@@ -86,6 +95,7 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
     }
     return "active";
   })();
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   return (
     <form action={submitAction} className="grid cols-2 config-form-grid">
@@ -93,22 +103,22 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
       {initial?.id ? <input type="hidden" name="prospect_id" value={initial.id} /> : null}
 
       <label>
-        Type de prospect
+        {t("admin.prospects.form_type")}
         <select name="prospect_type" value={prospectType} onChange={(event) => setProspectType(event.target.value === "child" ? "child" : "adult")}>
-          <option value="adult">Adulte</option>
-          <option value="child">Enfant</option>
+          <option value="adult">{t("admin.prospects.type_adult")}</option>
+          <option value="child">{t("admin.prospects.type_child")}</option>
         </select>
       </label>
 
       {mode === "edit" ? (
         <label>
-          Statut
+          {uiText(language, "common.status")}
           <select name="status" defaultValue={defaultStatus}>
-            <option value="active">Actif</option>
-            <option value="new">Nouveau</option>
-            <option value="lost">Perdu</option>
-            <option value="converted">Converti</option>
-            <option value="archived">Archive</option>
+            <option value="active">{t("admin.prospects.status_active")}</option>
+            <option value="new">{t("admin.prospects.status_new")}</option>
+            <option value="lost">{t("admin.prospects.status_lost")}</option>
+            <option value="converted">{t("admin.prospects.status_converted")}</option>
+            <option value="archived">{t("admin.prospects.status_archived")}</option>
           </select>
         </label>
       ) : (
@@ -118,50 +128,50 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
       {prospectType === "adult" ? (
         <>
           <label>
-            Prenom
+            {t("admin.prospects.form_first_name")}
             <input type="text" name="adult_first_name" required defaultValue={initial?.first_name ?? ""} />
           </label>
           <label>
-            Nom
+            {t("admin.prospects.form_last_name")}
             <input type="text" name="adult_last_name" required defaultValue={initial?.last_name ?? ""} />
           </label>
           <label>
-            Email
+            {uiText(language, "common.email")}
             <input type="email" name="adult_email" required defaultValue={initial?.email ?? ""} />
           </label>
           <label>
-            Telephone
+            {t("admin.prospects.form_phone")}
             <input type="text" name="adult_phone" defaultValue={initial?.phone ?? ""} />
           </label>
           <label className="span-2">
-            Adresse
+            {t("admin.prospects.form_address")}
             <input type="text" name="adult_address" defaultValue={defaultAdultAddress} />
           </label>
         </>
       ) : (
         <>
           <section className="card span-2">
-            <h4>Eleve (enfant)</h4>
+            <h4>{t("admin.prospects.child_section")}</h4>
             <div className="grid cols-3 top-gap-sm">
               <label>
-                Prenom enfant
+                {t("admin.prospects.child_first_name")}
                 <input type="text" name="child_first_name" required defaultValue={stringFromUnknown(childMeta.first_name) || (initial?.first_name ?? "")} />
               </label>
               <label>
-                Nom enfant
+                {t("admin.prospects.child_last_name")}
                 <input type="text" name="child_last_name" required defaultValue={stringFromUnknown(childMeta.last_name) || (initial?.last_name ?? "")} />
               </label>
               <label>
-                Date de naissance
+                {t("admin.prospects.child_birth_date")}
                 <input type="date" name="child_birth_date" defaultValue={stringFromUnknown(childMeta.birth_date)} />
               </label>
             </div>
           </section>
 
           <section className="card span-2">
-            <h4>Parent referent</h4>
+            <h4>{t("admin.prospects.parent_referent")}</h4>
             <fieldset className="top-gap-sm">
-              <legend>Mode parent referent</legend>
+              <legend>{t("admin.prospects.parent_mode")}</legend>
               <div className="row wrap gap-sm">
                 <label className="checkline">
                   <input
@@ -174,7 +184,7 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
                       setSelectedParentId("");
                     }}
                   />
-                  Nouveau parent referent
+                  {t("admin.prospects.new_parent_referent")}
                 </label>
                 <label className="checkline">
                   <input
@@ -184,7 +194,7 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
                     checked={parentMode === "existing_parent"}
                     onChange={() => setParentMode("existing_parent")}
                   />
-                  Rattacher a un parent existant
+                  {t("admin.prospects.link_existing_parent")}
                 </label>
               </div>
             </fieldset>
@@ -192,16 +202,23 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
             {parentMode === "existing_parent" ? (
               <div className="top-gap-sm">
                 <SearchMultiSelect
-                  label="Rechercher un parent"
+                  label={t("admin.prospects.search_parent")}
                   name="parent_existing_prospect_id"
                   options={parentOptions}
                   selectedIds={selectedParentId ? [selectedParentId] : []}
                   onSelectionChange={(ids) => setSelectedParentId(ids[0] ?? "")}
-                  placeholder="Prenom, nom, email, telephone..."
-                  emptySelectionLabel="Aucun parent selectionne."
+                  placeholder={t("admin.prospects.search_parent_placeholder")}
+                  emptySelectionLabel={t("admin.prospects.no_parent_selected")}
+                  emptySummaryLabel={t("admin.prospects.selection_empty")}
                   maxSelections={1}
                   requiredSelection
-                  requiredSelectionMessage="Veuillez selectionner un parent existant ou revenir au mode nouveau parent referent."
+                  requiredSelectionMessage={t("admin.prospects.select_existing_parent_required")}
+                  selectedCountLabel={t("admin.prospects.selection_count")}
+                  removeOptionLabel={t("admin.prospects.remove_option")}
+                  clearLabel={t("admin.prospects.clear_selection")}
+                  availableOptionsLabel={t("admin.prospects.available_options")}
+                  noResultsLabel={t("admin.prospects.no_results_short")}
+                  limitResultsLabel={t("admin.prospects.results_limit")}
                 />
                 {selectedParent ? (
                   <>
@@ -211,39 +228,39 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
                     <input type="hidden" name="parent_existing_phone" value={selectedParent.phone ?? ""} />
                     <input type="hidden" name="parent_existing_address" value={selectedParent.address ?? ""} />
                     <article className="item top-gap-sm">
-                      <strong>Parent selectionne</strong>
+                      <strong>{t("admin.prospects.selected_parent")}</strong>
                       <p className="muted">
                         {displayName(selectedParent.first_name, selectedParent.last_name, selectedParent.email)}
                         {" · "}
                         {selectedParent.email}
                       </p>
                       <p className="muted">
-                        Tel: {selectedParent.phone || "-"}
+                        {t("admin.prospects.phone_short")}: {selectedParent.phone || "-"}
                         {" · "}
-                        Adresse: {selectedParent.address || "-"}
+                        {t("admin.prospects.address_short")}: {selectedParent.address || "-"}
                       </p>
                     </article>
                   </>
                 ) : (
-                  <p className="muted top-gap-sm">Aucun parent trouve ? Passez en mode nouveau parent referent.</p>
+                  <p className="muted top-gap-sm">{t("admin.prospects.no_parent_found_hint")}</p>
                 )}
               </div>
             ) : (
               <div className="grid cols-3 top-gap-sm">
                 <label>
-                  Civilite
-                  <input type="text" name="parent_title" placeholder="Mme/M." defaultValue={stringFromUnknown(parentMeta.title)} />
+                  {t("admin.prospects.parent_title")}
+                  <input type="text" name="parent_title" placeholder={t("admin.prospects.parent_title_placeholder")} defaultValue={stringFromUnknown(parentMeta.title)} />
                 </label>
                 <label>
-                  Prenom parent
+                  {t("admin.prospects.parent_first_name")}
                   <input type="text" name="parent_first_name" required={parentMode === "new_parent"} defaultValue={stringFromUnknown(parentMeta.first_name)} />
                 </label>
                 <label>
-                  Nom parent
+                  {t("admin.prospects.parent_last_name")}
                   <input type="text" name="parent_last_name" required={parentMode === "new_parent"} defaultValue={stringFromUnknown(parentMeta.last_name)} />
                 </label>
                 <label>
-                  Email parent
+                  {t("admin.prospects.parent_email")}
                   <input
                     type="email"
                     name="parent_email"
@@ -252,11 +269,11 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
                   />
                 </label>
                 <label>
-                  Telephone parent
+                  {t("admin.prospects.parent_phone")}
                   <input type="text" name="parent_phone" defaultValue={stringFromUnknown(parentMeta.phone) || (initial?.phone ?? "")} />
                 </label>
                 <label>
-                  Adresse parent
+                  {t("admin.prospects.parent_address")}
                   <input type="text" name="parent_address" defaultValue={stringFromUnknown(parentMeta.address)} />
                 </label>
               </div>
@@ -266,17 +283,17 @@ export default function AdminProspectForm({ mode, returnTo, submitAction, initia
       )}
 
       <label>
-        Source
-        <input type="text" name="source" defaultValue={initial?.source ?? ""} placeholder="site_web, telephone, salon..." />
+        {uiText(language, "common.source")}
+        <input type="text" name="source" defaultValue={initial?.source ?? ""} placeholder={t("admin.prospects.source_form_placeholder")} />
       </label>
 
       <label>
-        Notes
-        <input type="text" name="notes" defaultValue={initial?.notes ?? ""} placeholder="Informations utiles" />
+        {uiText(language, "common.notes")}
+        <input type="text" name="notes" defaultValue={initial?.notes ?? ""} placeholder={t("admin.prospects.notes_placeholder")} />
       </label>
 
       <div className="row span-2 top-gap-sm">
-        <button type="submit">{mode === "create" ? "Creer prospect" : "Enregistrer prospect"}</button>
+        <button type="submit">{mode === "create" ? t("admin.prospects.create_prospect") : t("admin.prospects.save_prospect")}</button>
       </div>
     </form>
   );

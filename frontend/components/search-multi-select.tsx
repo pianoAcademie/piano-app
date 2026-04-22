@@ -15,11 +15,22 @@ type Props = {
   placeholder: string;
   className?: string;
   emptySelectionLabel?: string;
+  emptySummaryLabel?: string;
   maxSelections?: number;
   requiredSelection?: boolean;
   requiredSelectionMessage?: string;
+  selectedCountLabel?: string;
+  removeOptionLabel?: string;
+  clearLabel?: string;
+  availableOptionsLabel?: string;
+  noResultsLabel?: string;
+  limitResultsLabel?: string;
   onSelectionChange?: (ids: string[]) => void;
 };
+
+function interpolate(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
+}
 
 function normalize(value: string): string {
   return value
@@ -36,9 +47,16 @@ export default function SearchMultiSelect({
   placeholder,
   className,
   emptySelectionLabel = "Aucune selection.",
+  emptySummaryLabel = "Selection vide",
   maxSelections,
   requiredSelection = false,
   requiredSelectionMessage = "Selection obligatoire.",
+  selectedCountLabel = "{count} selection(s)",
+  removeOptionLabel = "Retirer {label}",
+  clearLabel = "Vider",
+  availableOptionsLabel = "{label} disponibles",
+  noResultsLabel = "Aucun resultat.",
+  limitResultsLabel = "Affichage limite a 120 resultats.",
   onSelectionChange,
 }: Props): JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -128,7 +146,9 @@ export default function SearchMultiSelect({
     <div ref={rootRef} className={`planning-multi-search ${className ?? ""}`.trim()}>
       <div className="planning-multi-search-head">
         <strong>{label}</strong>
-        <small className="muted">{selected.length > 0 ? `${selected.length} selection(s)` : "Selection vide"}</small>
+        <small className="muted">
+          {selected.length > 0 ? interpolate(selectedCountLabel, { count: selected.length }) : emptySummaryLabel}
+        </small>
       </div>
 
       <div className="planning-multi-search-selected" aria-live="polite">
@@ -138,7 +158,11 @@ export default function SearchMultiSelect({
           selectedOptions.map((option) => (
             <span key={option.id} className="badge planning-multi-search-chip">
               {option.label}
-              <button type="button" aria-label={`Retirer ${option.label}`} onClick={() => setSelected((prev) => prev.filter((id) => id !== option.id))}>
+              <button
+                type="button"
+                aria-label={interpolate(removeOptionLabel, { label: option.label })}
+                onClick={() => setSelected((prev) => prev.filter((id) => id !== option.id))}
+              >
                 ×
               </button>
             </span>
@@ -166,14 +190,14 @@ export default function SearchMultiSelect({
         />
         {selected.length > 0 ? (
           <button type="button" className="reset-link planning-multi-search-clear" onClick={() => setSelected([])}>
-            Vider
+            {clearLabel}
           </button>
         ) : null}
       </div>
 
-      <div className="planning-multi-search-options" role="listbox" aria-label={`${label} disponibles`}>
+      <div className="planning-multi-search-options" role="listbox" aria-label={interpolate(availableOptionsLabel, { label })}>
         {filteredOptions.length === 0 ? (
-          <small className="muted">Aucun resultat.</small>
+          <small className="muted">{noResultsLabel}</small>
         ) : (
           filteredOptions.map((option) => (
             <button
@@ -189,7 +213,7 @@ export default function SearchMultiSelect({
             </button>
           ))
         )}
-        {hasHiddenOptions ? <small className="muted">Affichage limite a 120 resultats.</small> : null}
+        {hasHiddenOptions ? <small className="muted">{limitResultsLabel}</small> : null}
       </div>
 
       {selectionError ? (
