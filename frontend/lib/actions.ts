@@ -1086,6 +1086,15 @@ async function ensureAdminAndGetLanguage(token: string): Promise<UiLanguage> {
   return normalizeUiLanguage(me.preferred_language);
 }
 
+function publicQuoteActionLanguage(formData: FormData): UiLanguage {
+  return normalizeUiLanguage(String(formData.get("language") ?? ""));
+}
+
+function isDeleteConfirmationValue(value: string): boolean {
+  const normalized = value.trim().toUpperCase();
+  return normalized === "SUPPRIMER" || normalized === "DELETE";
+}
+
 export async function loginAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
@@ -12320,7 +12329,7 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
@@ -12341,10 +12350,10 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
   const closureDates = parseCalendarDateList(formData.getAll("closure_date"), String(formData.get("closure_dates_text") ?? ""));
 
   if (!name || !schoolYearLabel || locationIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar")));
   }
   if (vacationPeriods === null || holidayDates === null || closureDates === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Dates invalides. Format attendu: vacances 'YYYY-MM-DD | YYYY-MM-DD | Libelle', jours feries/fermetures une date par ligne."));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar_dates")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -12378,8 +12387,8 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
       successReturnTo,
       "ok",
       applyToManagementPlanning
-        ? "Calendrier enregistre et applique au planning de gestion"
-        : "Calendrier enregistre",
+        ? uiText(language, "admin.quote_config_action.calendar_saved_applied")
+        : uiText(language, "admin.quote_config_action.calendar_saved"),
     ),
   );
 }
@@ -12389,7 +12398,7 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
@@ -12411,10 +12420,10 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
   const closureDates = parseCalendarDateList(formData.getAll("closure_date"), String(formData.get("closure_dates_text") ?? ""));
 
   if (!calendarId || !name || !schoolYearLabel || locationIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar")));
   }
   if (vacationPeriods === null || holidayDates === null || closureDates === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Dates invalides. Format attendu: vacances 'YYYY-MM-DD | YYYY-MM-DD | Libelle', jours feries/fermetures une date par ligne."));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar_dates")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -12448,8 +12457,8 @@ export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormD
       successReturnTo,
       "ok",
       applyToManagementPlanning
-        ? "Calendrier mis a jour et applique au planning de gestion"
-        : "Calendrier mis a jour",
+        ? uiText(language, "admin.quote_config_action.calendar_updated_applied")
+        : uiText(language, "admin.quote_config_action.calendar_updated"),
     ),
   );
 }
@@ -12483,7 +12492,7 @@ export async function updateAdminQuoteSchoolCalendarGroupAction(formData: FormDa
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
@@ -12502,10 +12511,10 @@ export async function updateAdminQuoteSchoolCalendarGroupAction(formData: FormDa
   const closureDates = parseCalendarDateList(formData.getAll("closure_date"), String(formData.get("closure_dates_text") ?? ""));
 
   if (!name || !schoolYearLabel || locationIds.length === 0 || existingEntries.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Bloc calendrier invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar_group")));
   }
   if (vacationPeriods === null || holidayDates === null || closureDates === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Dates invalides. Format attendu: vacances 'YYYY-MM-DD | YYYY-MM-DD | Libelle', jours feries/fermetures une date par ligne."));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar_dates")));
   }
 
   const nextLocationIds = new Set(locationIds);
@@ -12587,8 +12596,8 @@ export async function updateAdminQuoteSchoolCalendarGroupAction(formData: FormDa
       successReturnTo,
       "ok",
       applyToManagementPlanning
-        ? "Bloc calendrier mis a jour et reapplique au planning"
-        : "Bloc calendrier mis a jour",
+        ? uiText(language, "admin.quote_config_action.calendar_group_updated_reapplied")
+        : uiText(language, "admin.quote_config_action.calendar_group_updated"),
     ),
   );
 }
@@ -12598,13 +12607,13 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
-    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar")));
   }
 
   const removeDeploymentResult = await backendRequest<{ message?: string }>(
@@ -12627,7 +12636,7 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(successReturnTo, "ok", "Calendrier supprime"));
+  redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_deleted")));
 }
 
 export async function previewAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
@@ -12635,12 +12644,12 @@ export async function previewAdminQuoteSchoolCalendarDeploymentAction(formData: 
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
-    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar")));
   }
 
   const result = await backendRequest<{
@@ -12666,7 +12675,13 @@ export async function previewAdminQuoteSchoolCalendarDeploymentAction(formData: 
     appendQueryMessage(
       returnTo,
       "ok",
-      `Preview deploiement: ${total} dates cibles (${createCount} a creer, ${keepCount} deja actives, ${reactivateCount} a reactiver, ${cancelCount} a retirer).`,
+      uiText(language, "admin.quote_config_action.calendar_deployment_preview", {
+        total,
+        create_count: createCount,
+        keep_count: keepCount,
+        reactivate_count: reactivateCount,
+        cancel_count: cancelCount,
+      }),
     ),
   );
 }
@@ -12676,13 +12691,13 @@ export async function deployAdminQuoteSchoolCalendarAction(formData: FormData): 
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
-    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar")));
   }
   const result = await backendRequest<{ message?: string }>(
     `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment`,
@@ -12694,7 +12709,7 @@ export async function deployAdminQuoteSchoolCalendarAction(formData: FormData): 
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(successReturnTo, "ok", String(result.data.message || "Deploiement effectue")));
+  redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_deployment_done")));
 }
 
 export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
@@ -12702,13 +12717,13 @@ export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: For
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
-    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar")));
   }
   const result = await backendRequest<{ message?: string }>(
     `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment/sync`,
@@ -12720,7 +12735,7 @@ export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: For
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(successReturnTo, "ok", String(result.data.message || "Deploiement mis a jour")));
+  redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_deployment_updated")));
 }
 
 export async function removeAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
@@ -12728,13 +12743,13 @@ export async function removeAdminQuoteSchoolCalendarDeploymentAction(formData: F
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarId = parseUuid(String(formData.get("calendar_id") ?? ""));
   if (!calendarId) {
-    redirect(appendQueryMessage(returnTo, "error", "Calendrier invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar")));
   }
   const result = await backendRequest<{ message?: string }>(
     `/api/v1/quote-school-calendars/${encodeURIComponent(calendarId)}/deployment`,
@@ -12746,7 +12761,7 @@ export async function removeAdminQuoteSchoolCalendarDeploymentAction(formData: F
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(successReturnTo, "ok", String(result.data.message || "Deploiement retire")));
+  redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_deployment_removed")));
 }
 
 function parseCalendarIdsFromFormData(formData: FormData): string[] {
@@ -12775,17 +12790,17 @@ export async function bulkAdminQuoteSchoolCalendarsAction(formData: FormData): P
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarIds = parseCalendarIdsFromFormData(formData);
   const bulkAction = parseCalendarBulkAction(String(formData.get("bulk_action") ?? ""));
   if (calendarIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un calendrier"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.select_calendar_required")));
   }
   if (bulkAction === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Action de masse invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_calendar_bulk_action")));
   }
 
   let processedCount = 0;
@@ -12848,15 +12863,15 @@ export async function bulkAdminQuoteSchoolCalendarsAction(formData: FormData): P
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
   if (bulkAction === "DEPLOY") {
-    redirect(appendQueryMessage(successReturnTo, "ok", `Deploiement lance pour ${processedCount} calendrier(s)`));
+    redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_bulk_deploy", { count: processedCount })));
   }
   if (bulkAction === "SYNC") {
-    redirect(appendQueryMessage(successReturnTo, "ok", `Deploiement resynchronise pour ${processedCount} calendrier(s)`));
+    redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_bulk_sync", { count: processedCount })));
   }
   if (bulkAction === "REMOVE") {
-    redirect(appendQueryMessage(successReturnTo, "ok", `Creneaux retires pour ${processedCount} calendrier(s)`));
+    redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_bulk_remove", { count: processedCount })));
   }
-  redirect(appendQueryMessage(successReturnTo, "ok", `${processedCount} calendrier(s) supprime(s)`));
+  redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_bulk_delete", { count: processedCount })));
 }
 
 export async function previewAdminQuoteSchoolCalendarGroupDeploymentAction(formData: FormData): Promise<void> {
@@ -12864,12 +12879,12 @@ export async function previewAdminQuoteSchoolCalendarGroupDeploymentAction(formD
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const calendarIds = parseCalendarIdsFromFormData(formData);
   if (calendarIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Aucun calendrier local cible"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.no_target_local_calendar")));
   }
 
   let totalTargetDays = 0;
@@ -12903,7 +12918,14 @@ export async function previewAdminQuoteSchoolCalendarGroupDeploymentAction(formD
     appendQueryMessage(
       returnTo,
       "ok",
-      `Preview groupe (${calendarIds.length} locaux): ${totalTargetDays} dates cibles (${totalCreate} a creer, ${totalKeep} deja actives, ${totalReactivate} a reactiver, ${totalCancel} a retirer).`,
+      uiText(language, "admin.quote_config_action.calendar_group_preview", {
+        count: calendarIds.length,
+        total: totalTargetDays,
+        create_count: totalCreate,
+        keep_count: totalKeep,
+        reactivate_count: totalReactivate,
+        cancel_count: totalCancel,
+      }),
     ),
   );
 }
@@ -12913,13 +12935,13 @@ export async function deployAdminQuoteSchoolCalendarGroupAction(formData: FormDa
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarIds = parseCalendarIdsFromFormData(formData);
   if (calendarIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Aucun calendrier local cible"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.no_target_local_calendar")));
   }
   let deployedCount = 0;
   for (const calendarId of calendarIds) {
@@ -12935,7 +12957,7 @@ export async function deployAdminQuoteSchoolCalendarGroupAction(formData: FormDa
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(successReturnTo, "ok", `Deploiement groupe termine (${deployedCount} locaux)`));
+  redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_group_deploy", { count: deployedCount })));
 }
 
 export async function syncAdminQuoteSchoolCalendarGroupAction(formData: FormData): Promise<void> {
@@ -12943,13 +12965,13 @@ export async function syncAdminQuoteSchoolCalendarGroupAction(formData: FormData
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarIds = parseCalendarIdsFromFormData(formData);
   if (calendarIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Aucun calendrier local cible"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.no_target_local_calendar")));
   }
   let syncedCount = 0;
   for (const calendarId of calendarIds) {
@@ -12965,7 +12987,7 @@ export async function syncAdminQuoteSchoolCalendarGroupAction(formData: FormData
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(successReturnTo, "ok", `Deploiement groupe synchronise (${syncedCount} locaux)`));
+  redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_group_sync", { count: syncedCount })));
 }
 
 export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formData: FormData): Promise<void> {
@@ -12973,13 +12995,13 @@ export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formDa
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/calendars"), "/admin/config/calendars");
   const successReturnTo = safeAdminConfigQuotesPath(String(formData.get("success_return_to") ?? returnTo), returnTo);
   const calendarIds = parseCalendarIdsFromFormData(formData);
   if (calendarIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Aucun calendrier local cible"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.no_target_local_calendar")));
   }
   let removedCount = 0;
   for (const calendarId of calendarIds) {
@@ -12995,7 +13017,7 @@ export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formDa
   }
   revalidatePath("/admin/config/calendars");
   revalidatePath("/admin/config/quotes");
-  redirect(appendQueryMessage(successReturnTo, "ok", `Creneaux groupes retires (${removedCount} locaux)`));
+  redirect(appendQueryMessage(successReturnTo, "ok", uiText(language, "admin.quote_config_action.calendar_group_remove", { count: removedCount })));
 }
 
 export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
@@ -13003,14 +13025,14 @@ export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData)
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
   const name = String(formData.get("name") ?? "").trim();
   const code = quoteTemplateCodeFromName(name);
   const templateType = "quote_body";
   const target = optionalField(formData, "target");
-  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const templateLanguage = String(formData.get("language") ?? "fr").trim().toLowerCase();
   const description = optionalField(formData, "description");
   const subjectTemplate = String(formData.get("subject_template") ?? "").trim();
   const bodyTemplate = String(formData.get("body_template") ?? "").trim();
@@ -13022,7 +13044,7 @@ export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData)
   const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
 
   if (!name || !subjectTemplate || !bodyTemplate) {
-    redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_quote_doc_template")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13034,7 +13056,7 @@ export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData)
         name,
         template_type: templateType || "quote_body",
         target,
-        language,
+        language: templateLanguage,
         description,
         is_active: isActive,
         is_default: isDefault,
@@ -13052,7 +13074,7 @@ export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData)
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template documentaire cree"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.quote_doc_template_created")));
 }
 
 export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
@@ -13060,7 +13082,7 @@ export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData)
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
   const templateId = parseUuid(String(formData.get("template_id") ?? ""));
@@ -13069,7 +13091,7 @@ export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData)
   const code = currentCode || quoteTemplateCodeFromName(name);
   const templateType = "quote_body";
   const target = optionalField(formData, "target");
-  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const templateLanguage = String(formData.get("language") ?? "fr").trim().toLowerCase();
   const description = optionalField(formData, "description");
   const subjectTemplate = String(formData.get("subject_template") ?? "").trim();
   const bodyTemplate = String(formData.get("body_template") ?? "").trim();
@@ -13081,7 +13103,7 @@ export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData)
   const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
 
   if (!templateId || !name || !subjectTemplate || !bodyTemplate) {
-    redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_quote_doc_template")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13093,7 +13115,7 @@ export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData)
         name,
         template_type: templateType || "quote_body",
         target,
-        language,
+        language: templateLanguage,
         description,
         is_active: isActive,
         is_default: isDefault,
@@ -13111,7 +13133,7 @@ export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData)
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template documentaire mis a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.quote_doc_template_updated")));
 }
 
 export async function deleteAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
@@ -13119,12 +13141,12 @@ export async function deleteAdminQuoteTemplateV2ConfigAction(formData: FormData)
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
   const templateId = parseUuid(String(formData.get("template_id") ?? ""));
   if (!templateId) {
-    redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_quote_doc_template")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13137,7 +13159,7 @@ export async function deleteAdminQuoteTemplateV2ConfigAction(formData: FormData)
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template documentaire archive"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.quote_doc_template_archived")));
 }
 
 export async function hardDeleteAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
@@ -13145,16 +13167,16 @@ export async function hardDeleteAdminQuoteTemplateV2ConfigAction(formData: FormD
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_templates"));
   const templateId = parseUuid(String(formData.get("template_id") ?? ""));
   const confirmation = String(formData.get("confirm_delete") ?? "").trim().toUpperCase();
   if (!templateId) {
-    redirect(appendQueryMessage(returnTo, "error", "Template devis V2 invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_quote_doc_template")));
   }
-  if (confirmation !== "SUPPRIMER") {
-    redirect(appendQueryMessage(returnTo, "error", "Confirmation invalide: saisissez SUPPRIMER"));
+  if (!isDeleteConfirmationValue(confirmation)) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_delete_confirmation")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13167,7 +13189,7 @@ export async function hardDeleteAdminQuoteTemplateV2ConfigAction(formData: FormD
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template documentaire supprime definitivement"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.quote_doc_template_deleted_permanently")));
 }
 
 export async function createAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
@@ -13175,14 +13197,14 @@ export async function createAdminTermsTemplateConfigAction(formData: FormData): 
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
   const name = String(formData.get("name") ?? "").trim();
   const code = termsTemplateCodeFromName(name);
   const termsType = "cgv";
   const target = optionalField(formData, "target");
-  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const templateLanguage = String(formData.get("language") ?? "fr").trim().toLowerCase();
   const description = optionalField(formData, "description");
   const versionLabel = String(formData.get("version_label") ?? "").trim();
   const content = String(formData.get("content") ?? "").trim();
@@ -13192,7 +13214,7 @@ export async function createAdminTermsTemplateConfigAction(formData: FormData): 
   const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
   const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
   if (!name || !versionLabel || !content) {
-    redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_terms_template")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13204,7 +13226,7 @@ export async function createAdminTermsTemplateConfigAction(formData: FormData): 
         name,
         terms_type: termsType,
         target,
-        language,
+        language: templateLanguage,
         description,
         is_active: isActive,
         status: normalizedStatus,
@@ -13221,7 +13243,7 @@ export async function createAdminTermsTemplateConfigAction(formData: FormData): 
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template CGV cree"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.terms_template_created")));
 }
 
 export async function updateAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
@@ -13229,7 +13251,7 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
   const templateId = parseUuid(String(formData.get("template_id") ?? ""));
@@ -13238,7 +13260,7 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
   const code = currentCode || termsTemplateCodeFromName(name);
   const termsType = "cgv";
   const target = optionalField(formData, "target");
-  const language = String(formData.get("language") ?? "fr").trim().toLowerCase();
+  const templateLanguage = String(formData.get("language") ?? "fr").trim().toLowerCase();
   const description = optionalField(formData, "description");
   const versionLabel = String(formData.get("version_label") ?? "").trim();
   const content = String(formData.get("content") ?? "").trim();
@@ -13248,7 +13270,7 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
   const statusValue = String(formData.get("status") ?? "draft").trim().toLowerCase();
   const normalizedStatus = statusValue === "archived" || statusValue === "published" ? statusValue : "draft";
   if (!templateId || !name || !versionLabel || !content) {
-    redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_terms_template")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13260,7 +13282,7 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
         name,
         terms_type: termsType,
         target,
-        language,
+        language: templateLanguage,
         description,
         is_active: isActive,
         status: normalizedStatus,
@@ -13277,7 +13299,7 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template CGV mis a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.terms_template_updated")));
 }
 
 export async function deleteAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
@@ -13285,12 +13307,12 @@ export async function deleteAdminTermsTemplateConfigAction(formData: FormData): 
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
   const templateId = parseUuid(String(formData.get("template_id") ?? ""));
   if (!templateId) {
-    redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_terms_template")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13303,7 +13325,7 @@ export async function deleteAdminTermsTemplateConfigAction(formData: FormData): 
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template CGV archive"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.terms_template_archived")));
 }
 
 export async function hardDeleteAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
@@ -13311,16 +13333,16 @@ export async function hardDeleteAdminTermsTemplateConfigAction(formData: FormDat
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_terms"));
   const templateId = parseUuid(String(formData.get("template_id") ?? ""));
   const confirmation = String(formData.get("confirm_delete") ?? "").trim().toUpperCase();
   if (!templateId) {
-    redirect(appendQueryMessage(returnTo, "error", "Template CGV invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_terms_template")));
   }
-  if (confirmation !== "SUPPRIMER") {
-    redirect(appendQueryMessage(returnTo, "error", "Confirmation invalide: saisissez SUPPRIMER"));
+  if (!isDeleteConfirmationValue(confirmation)) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_delete_confirmation")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13333,7 +13355,7 @@ export async function hardDeleteAdminTermsTemplateConfigAction(formData: FormDat
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Template CGV supprime definitivement"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.terms_template_deleted_permanently")));
 }
 
 export async function createAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
@@ -13341,7 +13363,7 @@ export async function createAdminQuoteDocumentBindingConfigAction(formData: Form
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_bindings"));
   const prospectType = optionalField(formData, "prospect_type");
@@ -13349,7 +13371,7 @@ export async function createAdminQuoteDocumentBindingConfigAction(formData: Form
   const activityFamily = optionalField(formData, "activity_family");
   const activityId = parseUuid(String(formData.get("activity_id") ?? ""));
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
-  const language = optionalField(formData, "language");
+  const bindingLanguage = optionalField(formData, "language");
   const currency = optionalField(formData, "currency")?.toUpperCase() || null;
   const quoteTemplateId = parseUuid(String(formData.get("quote_template_id") ?? ""));
   const quoteTemplateVersionId = parseUuid(String(formData.get("quote_template_version_id") ?? ""));
@@ -13369,7 +13391,7 @@ export async function createAdminQuoteDocumentBindingConfigAction(formData: Form
         activity_family: activityFamily,
         activity_id: activityId,
         quote_type_id: quoteTypeId,
-        language,
+        language: bindingLanguage,
         currency,
         quote_template_id: quoteTemplateId,
         quote_template_version_id: quoteTemplateVersionId,
@@ -13387,7 +13409,7 @@ export async function createAdminQuoteDocumentBindingConfigAction(formData: Form
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Regle de selection ajoutee"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.selection_rule_created")));
 }
 
 export async function updateAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
@@ -13395,7 +13417,7 @@ export async function updateAdminQuoteDocumentBindingConfigAction(formData: Form
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_bindings"));
   const bindingId = parseUuid(String(formData.get("binding_id") ?? ""));
@@ -13404,7 +13426,7 @@ export async function updateAdminQuoteDocumentBindingConfigAction(formData: Form
   const activityFamily = optionalField(formData, "activity_family");
   const activityId = parseUuid(String(formData.get("activity_id") ?? ""));
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
-  const language = optionalField(formData, "language");
+  const bindingLanguage = optionalField(formData, "language");
   const currency = optionalField(formData, "currency")?.toUpperCase() || null;
   const quoteTemplateId = parseUuid(String(formData.get("quote_template_id") ?? ""));
   const quoteTemplateVersionId = parseUuid(String(formData.get("quote_template_version_id") ?? ""));
@@ -13414,7 +13436,7 @@ export async function updateAdminQuoteDocumentBindingConfigAction(formData: Form
   const isActive = parseCheckboxFlag(formData, "is_active", true);
   const notes = optionalField(formData, "notes");
   if (!bindingId) {
-    redirect(appendQueryMessage(returnTo, "error", "Regle de selection invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_selection_rule")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13427,7 +13449,7 @@ export async function updateAdminQuoteDocumentBindingConfigAction(formData: Form
         activity_family: activityFamily,
         activity_id: activityId,
         quote_type_id: quoteTypeId,
-        language,
+        language: bindingLanguage,
         currency,
         quote_template_id: quoteTemplateId,
         quote_template_version_id: quoteTemplateVersionId,
@@ -13445,7 +13467,7 @@ export async function updateAdminQuoteDocumentBindingConfigAction(formData: Form
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Regle de selection mise a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.selection_rule_updated")));
 }
 
 export async function deleteAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
@@ -13453,12 +13475,12 @@ export async function deleteAdminQuoteDocumentBindingConfigAction(formData: Form
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=doc_bindings"));
   const bindingId = parseUuid(String(formData.get("binding_id") ?? ""));
   if (!bindingId) {
-    redirect(appendQueryMessage(returnTo, "error", "Regle de selection invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(adminLanguage, "admin.quote_config_action.invalid_selection_rule")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -13471,7 +13493,7 @@ export async function deleteAdminQuoteDocumentBindingConfigAction(formData: Form
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Regle de selection supprimee"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(adminLanguage, "admin.quote_config_action.selection_rule_deleted")));
 }
 
 async function runPublicQuoteAction({
@@ -13507,11 +13529,12 @@ function safeQuotePublicPath(path: string, fallback: string): string {
 }
 
 export async function approvePublicQuoteAction(formData: FormData): Promise<void> {
+  const language = publicQuoteActionLanguage(formData);
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const token = String(formData.get("public_token") ?? "").trim();
   const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
   if (!quoteId || !token) {
-    redirect(appendQueryMessage(returnTo, "error", "Lien devis invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "quote_public.invalid_link")));
   }
   const result = await runPublicQuoteAction({
     action: "approve",
@@ -13522,15 +13545,16 @@ export async function approvePublicQuoteAction(formData: FormData): Promise<void
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
-  redirect(appendQueryMessage(returnTo, "ok", "Devis approuve"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "quote_public.approved_flash")));
 }
 
 export async function rejectPublicQuoteAction(formData: FormData): Promise<void> {
+  const language = publicQuoteActionLanguage(formData);
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const token = String(formData.get("public_token") ?? "").trim();
   const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
   if (!quoteId || !token) {
-    redirect(appendQueryMessage(returnTo, "error", "Lien devis invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "quote_public.invalid_link")));
   }
   const result = await runPublicQuoteAction({
     action: "reject",
@@ -13541,19 +13565,20 @@ export async function rejectPublicQuoteAction(formData: FormData): Promise<void>
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
-  redirect(appendQueryMessage(returnTo, "ok", "Devis rejete"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "quote_public.rejected_flash")));
 }
 
 export async function changeRequestPublicQuoteAction(formData: FormData): Promise<void> {
+  const language = publicQuoteActionLanguage(formData);
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const token = String(formData.get("public_token") ?? "").trim();
   const message = String(formData.get("change_message") ?? "").trim();
   const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
   if (!quoteId || !token) {
-    redirect(appendQueryMessage(returnTo, "error", "Lien devis invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "quote_public.invalid_link")));
   }
   if (!message) {
-    redirect(appendQueryMessage(returnTo, "error", "Message de modification obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "quote_public.change_request_required")));
   }
   const result = await runPublicQuoteAction({
     action: "change-request",
@@ -13564,7 +13589,7 @@ export async function changeRequestPublicQuoteAction(formData: FormData): Promis
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
-  redirect(appendQueryMessage(returnTo, "ok", "Demande de modification envoyee"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "quote_public.change_request_sent")));
 }
 
 export async function selectQuoteFollowupSlotAction(formData: FormData): Promise<void> {
@@ -13572,7 +13597,7 @@ export async function selectQuoteFollowupSlotAction(formData: FormData): Promise
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
   const followupId = String(formData.get("followup_id") ?? "").trim();
   const levelCode = String(formData.get("solfege_level_code") ?? "").trim();
   const slotJson = String(formData.get("slot_json") ?? "").trim();
@@ -13581,7 +13606,7 @@ export async function selectQuoteFollowupSlotAction(formData: FormData): Promise
   const slotEnd = String(formData.get("slot_end_time") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
   if (!followupId) {
-    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege incomplet"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.incomplete_solfege_slot")));
   }
 
   let slotPayload: Record<string, unknown> | null = null;
@@ -13610,7 +13635,7 @@ export async function selectQuoteFollowupSlotAction(formData: FormData): Promise
   }
 
   if (!slotPayload) {
-    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege incomplet"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.incomplete_solfege_slot")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -13627,7 +13652,7 @@ export async function selectQuoteFollowupSlotAction(formData: FormData): Promise
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", "Creneau solfege enregistre"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.solfege_slot_saved")));
 }
 
 export async function changeQuoteFollowupPaymentMethodAction(formData: FormData): Promise<void> {
@@ -13635,13 +13660,13 @@ export async function changeQuoteFollowupPaymentMethodAction(formData: FormData)
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
   const followupId = String(formData.get("followup_id") ?? "").trim();
   const paymentMethodCode = String(formData.get("payment_method_code") ?? "").trim();
   const paymentPlanId = parseUuid(String(formData.get("payment_plan_id") ?? ""));
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
   if (!followupId || !paymentMethodCode) {
-    redirect(appendQueryMessage(returnTo, "error", "Methode de paiement invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.invalid_payment_method")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -13659,7 +13684,7 @@ export async function changeQuoteFollowupPaymentMethodAction(formData: FormData)
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", "Methode de paiement mise a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.payment_method_updated")));
 }
 
 export async function finalizeQuoteFollowupAction(formData: FormData): Promise<void> {
@@ -13667,11 +13692,11 @@ export async function finalizeQuoteFollowupAction(formData: FormData): Promise<v
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
   const followupId = String(formData.get("followup_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
   if (!followupId) {
-    redirect(appendQueryMessage(returnTo, "error", "Follow-up introuvable"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.followup_not_found")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -13683,7 +13708,7 @@ export async function finalizeQuoteFollowupAction(formData: FormData): Promise<v
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/quotes");
-  redirect(appendQueryMessage(returnTo, "ok", "Follow-up finalise"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.followup_finalized")));
 }
 
 export async function rollbackQuoteTransformationAction(formData: FormData): Promise<void> {
@@ -13691,13 +13716,13 @@ export async function rollbackQuoteTransformationAction(formData: FormData): Pro
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const followupId = String(formData.get("followup_id") ?? "").trim();
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${quoteId}?section=integration`));
   if (!followupId) {
-    redirect(appendQueryMessage(returnTo, "error", "Follow-up introuvable"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.followup_not_found")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -13714,7 +13739,7 @@ export async function rollbackQuoteTransformationAction(formData: FormData): Pro
     revalidatePath(`/admin/quotes/${quoteId}`);
     revalidatePath(`/admin/quotes/${quoteId}/transform`);
   }
-  redirect(appendQueryMessage(returnTo, "ok", "Transformation annulee et etat precedent restaure"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.transformation_rolled_back")));
 }
 
 function ensureRecord(value: unknown): Record<string, unknown> {
@@ -14013,7 +14038,7 @@ export async function saveQuoteTransformationDraftAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const followupId = String(formData.get("followup_id") ?? "").trim();
@@ -14021,10 +14046,10 @@ export async function saveQuoteTransformationDraftAction(formData: FormData): Pr
   const transformationRaw = parseJsonObject(String(formData.get("transformation_json") ?? ""));
 
   if (!quoteId || !followupId) {
-    redirect(appendQueryMessage(returnTo, "error", "Follow-up requis pour sauvegarder le brouillon"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.followup_required_save_draft")));
   }
   if (!transformationRaw) {
-    redirect(appendQueryMessage(returnTo, "error", "Payload de transformation invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.invalid_transformation_payload")));
   }
 
   const followupResult = await backendRequest<QuoteFollowupForTransformation>(
@@ -14060,7 +14085,7 @@ export async function saveQuoteTransformationDraftAction(formData: FormData): Pr
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
   revalidatePath(`/admin/quotes/${quoteId}/transform`);
-  redirect(appendQueryMessage(returnTo, "ok", "Brouillon de transformation enregistre"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.transformation_draft_saved")));
 }
 
 export async function finalizeQuoteTransformationAction(formData: FormData): Promise<void> {
@@ -14068,7 +14093,7 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const followupId = String(formData.get("followup_id") ?? "").trim();
@@ -14077,13 +14102,13 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
   const transformationRaw = parseJsonObject(String(formData.get("transformation_json") ?? ""));
 
   if (!quoteId || !followupId) {
-    redirect(appendQueryMessage(returnTo, "error", "Follow-up requis pour finaliser la transformation"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.followup_required_finalize")));
   }
   if (!transformationRaw) {
-    redirect(appendQueryMessage(returnTo, "error", "Payload de transformation invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.invalid_transformation_payload")));
   }
   if (!allowForceFinalize) {
-    redirect(appendQueryMessage(returnTo, "error", "Des blocages critiques restent a resoudre"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.critical_blocks_remaining")));
   }
 
   const followupResult = await backendRequest<QuoteFollowupForTransformation>(
@@ -14109,7 +14134,7 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
     && incomingIdempotencyKey
     && incomingIdempotencyKey === existingIdempotencyKey
   ) {
-    redirect(appendQueryMessage(returnTo, "ok", "Transformation deja executee (idempotence)"));
+    redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.transformation_already_executed_idempotent")));
   }
 
   const finalizedAt = new Date().toISOString();
@@ -14149,7 +14174,7 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
   revalidatePath(`/admin/quotes/${quoteId}/transform`);
-  redirect(appendQueryMessage(returnTo, "ok", "Transformation executee et integree"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.transformation_executed")));
 }
 
 export async function quickTransformQuoteAction(formData: FormData): Promise<void> {
@@ -14157,28 +14182,28 @@ export async function quickTransformQuoteAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${quoteId}?section=integration`));
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.quote_not_found")));
   }
 
   let runtime: { analysis: QuoteQuickTransformAnalysis; followupId: string | null };
   try {
     runtime = await loadQuoteQuickTransformAnalysis(quoteId, token);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Analyse rapide impossible";
+    const message = error instanceof Error ? error.message : uiText(language, "admin.quote_transform_action.quick_analysis_impossible");
     redirect(appendQueryMessage(returnTo, "error", message));
   }
 
   const { analysis, followupId } = runtime;
   if (!analysis.canQuickTransform || !analysis.suggestedDraft) {
-    redirect(appendQueryMessage(returnTo, "error", "Ce devis n'est plus auto-validable. Ouvrez le wizard."));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.quick_transform_not_auto_validable")));
   }
   if (!followupId) {
-    redirect(appendQueryMessage(returnTo, "error", "Follow-up absent: verification manuelle requise via wizard."));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_transform_action.quick_transform_followup_missing")));
   }
 
   const followupResult = await backendRequest<QuoteFollowupForTransformation>(
@@ -14196,7 +14221,7 @@ export async function quickTransformQuoteAction(formData: FormData): Promise<voi
   const existingFinalizedAt = String(existingTransformation.finalizedAt ?? "").trim();
   const existingExecutionStatus = String(existingExecution.status ?? "").trim().toLowerCase();
   if (existingExecutionStatus === "executed" && existingFinalizedAt) {
-    redirect(appendQueryMessage(returnTo, "ok", "Transformation deja executee"));
+    redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_transform_action.transformation_already_executed")));
   }
 
   const quickDraft = {

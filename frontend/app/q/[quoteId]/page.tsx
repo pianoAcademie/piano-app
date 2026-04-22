@@ -6,6 +6,7 @@ import {
   rejectPublicQuoteAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -33,6 +34,7 @@ type QuoteOut = {
   cgv_snapshot: Record<string, unknown>;
   public_token: string | null;
   pdf_token: string | null;
+  language: string | null;
 };
 
 type QuoteLineOut = {
@@ -71,7 +73,7 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, language: UiLanguage): string {
   if (!value) {
     return "-";
   }
@@ -79,32 +81,41 @@ function formatDate(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "full", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "full", timeStyle: "short" });
 }
 
-function formatAmount(value: string, currency: string): string {
+function formatAmount(value: string, currency: string, language: UiLanguage): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) {
     return `${value} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currency || "EUR" }).format(amount);
+    return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: currency || "EUR" }).format(amount);
   } catch {
     return `${amount.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
 }
 
-function quoteStatusLabel(status: string): string {
+function quoteStatusLabel(status: string, language: UiLanguage): string {
+  if (status === "sent") {
+    return uiText(language, "quote_public.status_sent");
+  }
   if (status === "change_requested") {
-    return "Demande de modification envoyee";
+    return uiText(language, "quote_public.status_change_requested");
   }
   if (status === "approved") {
-    return "Devis approuve";
+    return uiText(language, "quote_public.status_approved");
   }
   if (status === "rejected") {
-    return "Devis rejete";
+    return uiText(language, "quote_public.status_rejected");
   }
-  return status;
+  if (status === "expired") {
+    return uiText(language, "quote_public.status_expired");
+  }
+  if (status === "cancelled") {
+    return uiText(language, "quote_public.status_cancelled");
+  }
+  return status.replace(/_/g, " ");
 }
 
 function quoteStatusClass(status: string): string {
@@ -143,6 +154,8 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
         );
   const payload = quoteResult && quoteResult.ok ? quoteResult.data : null;
   const documentPayload = documentResult && documentResult.ok ? documentResult.data : null;
+  const language = normalizeUiLanguage(payload?.quote.language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const canAct = payload ? ["sent", "change_requested"].includes(payload.quote.status) : false;
   const selfPath = buildSelfPath(quoteId, token);
@@ -152,21 +165,21 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
       <section className="quote-public-shell">
         <section className="quote-public-main">
           <article className="card quote-public-header">
-            <h1>Devis Piano Academie</h1>
-            <p className="muted">Consultez le detail, le planning et l echeancier, puis validez votre decision.</p>
+            <h1>{t("quote_public.page_title")}</h1>
+            <p className="muted">{t("quote_public.page_subtitle")}</p>
             {ok ? <p className="flash-ok top-gap-sm">{ok}</p> : null}
             {error ? <p className="flash-err top-gap-sm">{error}</p> : null}
           </article>
 
           {invalidLink ? (
             <article className="card quote-public-error">
-              <h2>Lien invalide</h2>
-              <p className="muted">Le lien de devis est incomplet. Verifiez le token ou contactez l administration.</p>
+              <h2>{t("quote_public.invalid_link_title")}</h2>
+              <p className="muted">{t("quote_public.invalid_link_body")}</p>
             </article>
           ) : !payload ? (
             <article className="card quote-public-error">
-              <h2>Devis inaccessible</h2>
-              <p className="muted">{quoteResult?.ok === false ? quoteResult.message : "Ce devis est introuvable."}</p>
+              <h2>{t("quote_public.inaccessible_title")}</h2>
+              <p className="muted">{quoteResult?.ok === false ? quoteResult.message : t("quote_public.inaccessible_not_found")}</p>
             </article>
           ) : (
             <>
@@ -174,28 +187,28 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                 <div className="row spread wrap gap-sm">
                   <div>
                     <h2>{payload.quote.quote_number}</h2>
-                    <p className="muted">{payload.quote.quote_type} · {payload.quote.school_year_label ?? "Sans annee scolaire"}</p>
+                    <p className="muted">{payload.quote.quote_type} · {payload.quote.school_year_label ?? t("quote_public.no_school_year")}</p>
                   </div>
-                  <span className={`status-pill ${quoteStatusClass(payload.quote.status)}`}>{quoteStatusLabel(payload.quote.status)}</span>
+                  <span className={`status-pill ${quoteStatusClass(payload.quote.status)}`}>{quoteStatusLabel(payload.quote.status, language)}</span>
                 </div>
                 <div className="quote-public-meta-grid top-gap-sm">
                   <article>
-                    <span>Total TTC</span>
-                    <strong>{formatAmount(payload.quote.total_ttc, payload.quote.currency)}</strong>
+                    <span>{t("quote_public.total_ttc")}</span>
+                    <strong>{formatAmount(payload.quote.total_ttc, payload.quote.currency, language)}</strong>
                   </article>
                   <article>
-                    <span>Expire le</span>
-                    <strong>{formatDate(payload.quote.expires_at)}</strong>
+                    <span>{t("quote_public.expires_on")}</span>
+                    <strong>{formatDate(payload.quote.expires_at, language)}</strong>
                   </article>
                 </div>
               </article>
 
               <article className="card quote-public-lines-card">
-                <h3>Document du devis</h3>
+                <h3>{t("quote_public.document_title")}</h3>
                 {documentPayload ? (
                   <div className="top-gap-sm" dangerouslySetInnerHTML={{ __html: documentPayload.combined_html }} />
                 ) : (
-                  <p className="muted top-gap-sm">Le rendu documentaire est indisponible pour le moment.</p>
+                  <p className="muted top-gap-sm">{t("quote_public.document_unavailable")}</p>
                 )}
               </article>
             </>
@@ -204,10 +217,10 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
 
         <aside className="quote-public-sticky">
           <article className="card quote-public-sticky-card">
-            <h3>Actions</h3>
+            <h3>{t("quote_public.actions_title")}</h3>
             {payload?.quote.pdf_token ? (
               <Link className="ghost quote-public-action" href={`/q/${payload.quote.id}/pdf?t=${encodeURIComponent(payload.quote.pdf_token)}`} target="_blank">
-                Telecharger le PDF
+                {t("quote_public.download_pdf")}
               </Link>
             ) : null}
 
@@ -217,34 +230,37 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                   <input type="hidden" name="quote_id" value={quoteId} />
                   <input type="hidden" name="public_token" value={token} />
                   <input type="hidden" name="return_to" value={selfPath} />
-                  <button type="submit" className="quote-cta-success">Approuver le devis</button>
+                  <input type="hidden" name="language" value={language} />
+                  <button type="submit" className="quote-cta-success">{t("quote_public.approve_cta")}</button>
                 </form>
 
                 <form action={rejectPublicQuoteAction} className="quote-public-form-action top-gap-sm">
                   <input type="hidden" name="quote_id" value={quoteId} />
                   <input type="hidden" name="public_token" value={token} />
                   <input type="hidden" name="return_to" value={selfPath} />
-                  <button type="submit" className="quote-cta-danger">Rejeter le devis</button>
+                  <input type="hidden" name="language" value={language} />
+                  <button type="submit" className="quote-cta-danger">{t("quote_public.reject_cta")}</button>
                 </form>
 
                 <form action={changeRequestPublicQuoteAction} className="quote-public-change-request top-gap-sm">
                   <input type="hidden" name="quote_id" value={quoteId} />
                   <input type="hidden" name="public_token" value={token} />
                   <input type="hidden" name="return_to" value={selfPath} />
+                  <input type="hidden" name="language" value={language} />
                   <label>
-                    Demander une modification
+                    {t("quote_public.change_request_label")}
                     <textarea
                       name="change_message"
                       required
                       rows={4}
-                      placeholder="Precisez les points a corriger (planning, mode de paiement, contenu...)."
+                      placeholder={t("quote_public.change_request_placeholder")}
                     />
                   </label>
-                  <button type="submit" className="ghost">Envoyer la demande</button>
+                  <button type="submit" className="ghost">{t("quote_public.change_request_submit")}</button>
                 </form>
               </>
             ) : (
-              <p className="muted top-gap-sm">Aucune action disponible sur ce devis dans son statut actuel.</p>
+              <p className="muted top-gap-sm">{t("quote_public.no_actions")}</p>
             )}
           </article>
         </aside>
@@ -256,13 +272,15 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
             <input type="hidden" name="quote_id" value={quoteId} />
             <input type="hidden" name="public_token" value={token} />
             <input type="hidden" name="return_to" value={selfPath} />
-            <button type="submit" className="quote-cta-success">Approuver</button>
+            <input type="hidden" name="language" value={language} />
+            <button type="submit" className="quote-cta-success">{t("quote_public.approve_short")}</button>
           </form>
           <form action={rejectPublicQuoteAction}>
             <input type="hidden" name="quote_id" value={quoteId} />
             <input type="hidden" name="public_token" value={token} />
             <input type="hidden" name="return_to" value={selfPath} />
-            <button type="submit" className="quote-cta-danger">Rejeter</button>
+            <input type="hidden" name="language" value={language} />
+            <button type="submit" className="quote-cta-danger">{t("quote_public.reject_short")}</button>
           </form>
         </section>
       ) : null}
