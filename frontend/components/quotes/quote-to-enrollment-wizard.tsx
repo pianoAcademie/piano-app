@@ -15,8 +15,11 @@ import {
   deriveScheduleHints,
   displayName,
   evaluateFinancialStatus,
+  quoteTransformConfidenceLabel,
+  quoteTransformStatusLabel,
   sumBillingRows,
   summarizeStatus,
+  translateQuoteTransformMessage,
   type BillingExtraRow,
   type QuoteToEnrollmentDraft,
   type QuoteTransformActivityCatalog,
@@ -32,6 +35,7 @@ import {
   type SessionMatchOption,
   type StepIssue,
 } from "../../lib/quote-transformation";
+import { localeForUiLanguage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type ScenarioLink = {
   scenario: QuoteTransformScenario;
@@ -60,16 +64,11 @@ type QuoteToEnrollmentWizardProps = {
   returnTo: string;
   saveDraftAction: (formData: FormData) => Promise<void>;
   finalizeAction: (formData: FormData) => Promise<void>;
+  language?: UiLanguage;
 };
 
-function statusLabel(status: QuoteTransformStatus): string {
-  if (status === "ok") {
-    return "ok";
-  }
-  if (status === "warning") {
-    return "warning";
-  }
-  return "blocked";
+function statusLabel(status: QuoteTransformStatus, language: UiLanguage): string {
+  return quoteTransformStatusLabel(status, language);
 }
 
 function statusClassName(status: QuoteTransformStatus): string {
@@ -82,12 +81,12 @@ function statusClassName(status: QuoteTransformStatus): string {
   return "quote-transform-status-blocked";
 }
 
-function currency(value: number, code: string): string {
+function currency(value: number, code: string, language: UiLanguage): string {
   if (!Number.isFinite(value)) {
     return `${value} ${code}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: code || "EUR" }).format(value);
+    return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: code || "EUR" }).format(value);
   } catch {
     return `${value.toFixed(2)} ${(code || "EUR").toUpperCase()}`;
   }
@@ -114,13 +113,13 @@ function canProceedFromStep(step: number, status: QuoteTransformStatus): boolean
   return status !== "blocked";
 }
 
-function selectedSessionLabel(options: SessionMatchOption[], selectedSessionId: string | null): string {
+function selectedSessionLabel(options: SessionMatchOption[], selectedSessionId: string | null, language: UiLanguage): string {
   if (!selectedSessionId) {
-    return "Aucun";
+    return uiText(language, "admin.quote_transform.none");
   }
   const selected = options.find((option) => option.sessionId === selectedSessionId);
   if (!selected) {
-    return "Aucun";
+    return uiText(language, "admin.quote_transform.none");
   }
   return `${selected.label} (${selected.dateLabel})`;
 }
@@ -145,7 +144,9 @@ export default function QuoteToEnrollmentWizard({
   returnTo,
   saveDraftAction,
   finalizeAction,
+  language = "fr",
 }: QuoteToEnrollmentWizardProps): JSX.Element {
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const restoredDraft = useMemo(() => (initialDraft ? coerceQuoteToEnrollmentDraft(initialDraft) : null), [initialDraft]);
   const activitiesById = useMemo(() => new Map(activities.map((activity) => [activity.id, activity])), [activities]);
   const clientsById = useMemo(() => new Map(clients.map((client) => [client.id, client])), [clients]);
@@ -161,7 +162,7 @@ export default function QuoteToEnrollmentWizard({
     for (const candidate of clientCandidates) {
       output.set(candidate.clientId, {
         id: candidate.clientId,
-        label: `${candidate.displayName} · ${candidate.email} · match ${candidate.confidence}`,
+        label: `${candidate.displayName} · ${candidate.email} · ${t("admin.quote_transform.match_short", { confidence: candidate.confidence })}`,
       });
     }
     for (const client of clients.slice(0, 300)) {
@@ -174,7 +175,7 @@ export default function QuoteToEnrollmentWizard({
       });
     }
     return Array.from(output.values());
-  }, [clientCandidates, clients]);
+  }, [clientCandidates, clients, language]);
 
   const initialClientMode =
     restoredDraft?.clientResolution.mode
@@ -256,11 +257,11 @@ export default function QuoteToEnrollmentWizard({
     const output = new Map<string, SessionMatchOption[]>();
     for (const row of activityRows) {
       const sessions = sessionsByActivityId[row.activityId] || [];
-      const options = buildSessionMatches(row, sessions, quote.locationId, scheduleHints, scenario);
+      const options = buildSessionMatches(row, sessions, quote.locationId, scheduleHints, scenario, localeForUiLanguage(language), language);
       output.set(row.activityId, options);
     }
     return output;
-  }, [activityRows, sessionsByActivityId, quote.locationId, scheduleHints, scenario]);
+  }, [activityRows, sessionsByActivityId, quote.locationId, scheduleHints, scenario, language]);
 
   const [assignedSessionByActivityId, setAssignedSessionByActivityId] = useState<Record<string, string>>(() => {
     const restored = restoredDraft?.scheduleResolution.assignedSessionByActivityId || {};
@@ -345,7 +346,7 @@ export default function QuoteToEnrollmentWizard({
         issueId: "step1-prospect-missing",
         step: 1,
         level: "blocked",
-        message: "Prospect introuvable pour ce devis.",
+        message: t("admin.quote_transform.issue_prospect_missing"),
         canOverride: false,
       });
     }
@@ -356,7 +357,7 @@ export default function QuoteToEnrollmentWizard({
           issueId: "step1-client-selection-required",
           step: 1,
           level: "blocked",
-          message: "Selectionnez une fiche client existante ou passez en creation.",
+          message: t("admin.quote_transform.issue_select_existing_or_create"),
           canOverride: false,
         });
       } else if (!clientsById.has(selectedClientId)) {
@@ -364,7 +365,7 @@ export default function QuoteToEnrollmentWizard({
           issueId: "step1-client-selection-invalid",
           step: 1,
           level: "blocked",
-          message: "La fiche client selectionnee est invalide. Selectionnez une fiche existante.",
+          message: t("admin.quote_transform.issue_selected_client_invalid"),
           canOverride: false,
         });
       }
@@ -375,7 +376,7 @@ export default function QuoteToEnrollmentWizard({
         issueId: "step1-ambiguous-matches",
         step: 1,
         level: "warning",
-        message: "Plusieurs correspondances client probables detectees.",
+        message: t("admin.quote_transform.issue_multiple_probable_matches"),
         canOverride: false,
       });
     }
@@ -385,13 +386,13 @@ export default function QuoteToEnrollmentWizard({
         issueId: "step1-parent-to-create",
         step: 1,
         level: "warning",
-        message: "Parent responsable non selectionne: creation parent + enfant prevue.",
+        message: t("admin.quote_transform.issue_parent_not_selected"),
         canOverride: false,
       });
     }
 
     return issues;
-  }, [prospect, clientMode, selectedClientId, selectedParentClientId, scenario, clientCandidates.length, clientsById]);
+  }, [prospect, clientMode, selectedClientId, selectedParentClientId, scenario, clientCandidates.length, clientsById, language]);
 
   const step1Status = useMemo(
     () => summarizeStatus(step1Issues.map((issue) => (issue.level === "blocked" ? "blocked" : "warning"))),
@@ -405,7 +406,7 @@ export default function QuoteToEnrollmentWizard({
         issueId: "step2-plan-required",
         step: 2,
         level: "blocked",
-        message: "Selectionnez une formule/plan pour l'inscription.",
+        message: t("admin.quote_transform.issue_select_plan"),
         canOverride: false,
       });
     }
@@ -418,12 +419,16 @@ export default function QuoteToEnrollmentWizard({
         issueId: `step2-pricing-${row.activityId}`,
         step: 2,
         level: row.status === "blocked" ? "blocked" : "warning",
-        message: `${row.activityName}: ${row.reason} (ecart ${currency(row.deltaTtc, quote.currency)}).`,
+        message: t("admin.quote_transform.issue_pricing_gap", {
+          activity: row.activityName,
+          reason: translateQuoteTransformMessage(row.reason, language),
+          delta: currency(row.deltaTtc, quote.currency, language),
+        }),
         canOverride: row.status === "warning",
       });
     }
     return issues;
-  }, [selectedPlanId, activityRows, quote.currency]);
+  }, [selectedPlanId, activityRows, quote.currency, language]);
 
   const step2Status = useMemo(
     () => summarizeStatus(step2Issues.map((issue) => (issue.level === "blocked" ? "blocked" : "warning"))),
@@ -438,7 +443,7 @@ export default function QuoteToEnrollmentWizard({
           issueId: `step3-off-planning-${row.activityId}`,
           step: 3,
           level: "warning",
-          message: `${row.activityName}: bascule hors planning (facturation dediee).`,
+          message: t("admin.quote_transform.issue_off_planning_switch", { activity: row.activityName }),
           canOverride: false,
         });
         continue;
@@ -450,7 +455,7 @@ export default function QuoteToEnrollmentWizard({
           issueId: `step3-no-session-${row.activityId}`,
           step: 3,
           level: "blocked",
-          message: `${row.activityName}: aucun creneau compatible trouve.`,
+          message: t("admin.quote_transform.issue_no_compatible_slot", { activity: row.activityName }),
           canOverride: false,
         });
         continue;
@@ -462,7 +467,7 @@ export default function QuoteToEnrollmentWizard({
           issueId: `step3-session-choice-required-${row.activityId}`,
           step: 3,
           level: "blocked",
-          message: `${row.activityName}: selection de creneau obligatoire.`,
+          message: t("admin.quote_transform.issue_session_required", { activity: row.activityName }),
           canOverride: false,
         });
         continue;
@@ -474,7 +479,7 @@ export default function QuoteToEnrollmentWizard({
           issueId: `step3-session-choice-invalid-${row.activityId}`,
           step: 3,
           level: "blocked",
-          message: `${row.activityName}: creneau selectionne invalide.`,
+          message: t("admin.quote_transform.issue_session_invalid", { activity: row.activityName }),
           canOverride: false,
         });
         continue;
@@ -485,7 +490,7 @@ export default function QuoteToEnrollmentWizard({
           issueId: `step3-session-full-${row.activityId}`,
           step: 3,
           level: "blocked",
-          message: `${row.activityName}: creneau complet, choisir une autre option.`,
+          message: t("admin.quote_transform.issue_session_full", { activity: row.activityName }),
           canOverride: false,
         });
       } else if (options.length > 1) {
@@ -493,13 +498,13 @@ export default function QuoteToEnrollmentWizard({
           issueId: `step3-session-multiple-${row.activityId}`,
           step: 3,
           level: "warning",
-          message: `${row.activityName}: plusieurs creneaux compatibles disponibles.`,
+          message: t("admin.quote_transform.issue_multiple_slots", { activity: row.activityName }),
           canOverride: false,
         });
       }
     }
     return issues;
-  }, [activityRows, offPlanningActivityIds, sessionOptionsByActivityId, assignedSessionByActivityId]);
+  }, [activityRows, offPlanningActivityIds, sessionOptionsByActivityId, assignedSessionByActivityId, language]);
 
   const step3Status = useMemo(
     () => summarizeStatus(step3Issues.map((issue) => (issue.level === "blocked" ? "blocked" : "warning"))),
@@ -516,12 +521,15 @@ export default function QuoteToEnrollmentWizard({
         issueId: `step4-billing-${row.rowId}`,
         step: 4,
         level: row.status === "blocked" ? "blocked" : "warning",
-        message: `${row.label}: ligne hors planning a corriger (${statusLabel(row.status)}).`,
+        message: t("admin.quote_transform.issue_billing_row_fix", {
+          label: row.label,
+          status: statusLabel(row.status, language),
+        }),
         canOverride: row.status === "warning",
       });
     }
     return issues;
-  }, [billingRows]);
+  }, [billingRows, language]);
 
   const step4Status = useMemo(
     () => summarizeStatus(step4Issues.map((issue) => (issue.level === "blocked" ? "blocked" : "warning"))),
@@ -556,7 +564,9 @@ export default function QuoteToEnrollmentWizard({
         issueId: "step5-financial-delta",
         step: 5,
         level: financialControl.status === "blocked" ? "blocked" : "warning",
-        message: `Controle financier: ecart total ${currency(financialControl.deltaTtc, quote.currency)} entre devis et systeme.`,
+        message: t("admin.quote_transform.issue_financial_delta", {
+          delta: currency(financialControl.deltaTtc, quote.currency, language),
+        }),
         canOverride: financialControl.status === "blocked" && absDelta <= 30,
       });
     }
@@ -566,13 +576,13 @@ export default function QuoteToEnrollmentWizard({
         issueId: "step5-followup-missing",
         step: 5,
         level: "warning",
-        message: "Aucun follow-up existant: sauvegarde brouillon indisponible tant que le devis n'est pas valide.",
+        message: t("admin.quote_transform.issue_followup_missing"),
         canOverride: false,
       });
     }
 
     return issues;
-  }, [financialControl, quote.currency, followupId]);
+  }, [financialControl, quote.currency, followupId, language]);
 
   const step5Status = useMemo(
     () => summarizeStatus(step5Issues.map((issue) => (issue.level === "blocked" ? "blocked" : "warning"))),
@@ -594,7 +604,9 @@ export default function QuoteToEnrollmentWizard({
 
   const selectedClientName = useMemo(() => {
     if (clientMode !== "existing") {
-      return clientMode === "new_parent_child" ? "Creation parent + enfant" : "Creation nouveau client";
+      return clientMode === "new_parent_child"
+        ? t("admin.quote_transform.selected_client_create_parent_child")
+        : t("admin.quote_transform.selected_client_create_new_client");
     }
     const candidate = clientCandidates.find((item) => item.clientId === selectedClientId);
     if (candidate) {
@@ -602,10 +614,10 @@ export default function QuoteToEnrollmentWizard({
     }
     const selectedClient = clientsById.get(selectedClientId);
     if (!selectedClient) {
-      return "Aucun client choisi";
+      return t("admin.quote_transform.selected_client_none");
     }
     return displayName(selectedClient.firstName, selectedClient.lastName, selectedClient.email);
-  }, [clientMode, clientCandidates, selectedClientId, clientsById]);
+  }, [clientMode, clientCandidates, selectedClientId, clientsById, language]);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || null;
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === quote.legalEntityId) || null;
@@ -702,11 +714,11 @@ export default function QuoteToEnrollmentWizard({
   ]);
 
   const stepper = [
-    { step: 1 as const, label: "Client", status: step1Status },
-    { step: 2 as const, label: "Formule et activites", status: step2Status },
-    { step: 3 as const, label: "Planning / creneaux", status: step3Status },
-    { step: 4 as const, label: "Facturation hors planning", status: step4Status },
-    { step: 5 as const, label: "Controle final", status: step5Status },
+    { step: 1 as const, label: t("admin.quote_transform.step1_label"), status: step1Status },
+    { step: 2 as const, label: t("admin.quote_transform.step2_label"), status: step2Status },
+    { step: 3 as const, label: t("admin.quote_transform.step3_label"), status: step3Status },
+    { step: 4 as const, label: t("admin.quote_transform.step4_label"), status: step4Status },
+    { step: 5 as const, label: t("admin.quote_transform.step5_label"), status: step5Status },
   ];
 
   function nextStep(): void {
@@ -786,37 +798,41 @@ export default function QuoteToEnrollmentWizard({
       <header className="card quote-transform-header">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Transformation devis vers inscription</h2>
+            <h2>{t("admin.quote_transform.title")}</h2>
             <p className="muted">
-              Devis <strong>{quote.quoteNumber}</strong> · {quote.quoteType} · {currency(quote.totalTtc, quote.currency)}
+              {t("admin.quote_transform.subtitle", {
+                number: quote.quoteNumber,
+                quote_type: quote.quoteType,
+                total: currency(quote.totalTtc, quote.currency, language),
+              })}
             </p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href={backPath}>Retour devis</Link>
+            <Link className="ghost" href={backPath}>{t("admin.quote_transform.back_to_quote")}</Link>
           </div>
         </div>
         <div className="quote-transform-header-kpis top-gap-sm">
-          <span className="badge">Prospect / client: {prospect ? displayName(prospect.firstName, prospect.lastName, prospect.email) : "-"}</span>
-          <span className="badge">Annee scolaire: {quote.schoolYearLabel || "-"}</span>
-          <span className="badge">Entite legale: {selectedLegalEntity?.name || quote.legalEntityName}</span>
-          <span className="badge">Statut follow-up: {followupStatus || "absent"}</span>
+          <span className="badge">{t("admin.quote_transform.badge_owner")}: {prospect ? displayName(prospect.firstName, prospect.lastName, prospect.email) : "-"}</span>
+          <span className="badge">{t("admin.quote_transform.badge_school_year")}: {quote.schoolYearLabel || "-"}</span>
+          <span className="badge">{t("admin.quote_transform.badge_legal_entity")}: {selectedLegalEntity?.name || quote.legalEntityName}</span>
+          <span className="badge">{t("admin.quote_transform.badge_followup_status")}: {followupStatus || t("admin.quote_transform.followup_absent")}</span>
         </div>
       </header>
 
       <div className="quote-transform-layout">
         <aside className="card quote-transform-sidebar">
-          <h3>Resume transformation</h3>
+          <h3>{t("admin.quote_transform.summary_title")}</h3>
           <div className="quote-transform-sidebar-grid top-gap-sm">
-            <p><strong>Client cible:</strong> {selectedClientName}</p>
-            <p><strong>Plan:</strong> {selectedPlan?.name || "Aucun"}</p>
-            <p><strong>Activites:</strong> {activityRows.length}</p>
-            <p><strong>Hors planning:</strong> {offPlanningActivityIds.size}</p>
-            <p><strong>Total devis:</strong> {currency(quote.totalTtc, quote.currency)}</p>
-            <p><strong>Total systeme:</strong> {currency(systemTotalTtc, quote.currency)}</p>
+            <p><strong>{t("admin.quote_transform.summary_target_client")}:</strong> {selectedClientName}</p>
+            <p><strong>{t("admin.quote_transform.summary_plan")}:</strong> {selectedPlan?.name || t("admin.quote_transform.none")}</p>
+            <p><strong>{t("admin.quote_transform.summary_activities")}:</strong> {activityRows.length}</p>
+            <p><strong>{t("admin.quote_transform.summary_off_planning")}:</strong> {offPlanningActivityIds.size}</p>
+            <p><strong>{t("admin.quote_transform.summary_quote_total")}:</strong> {currency(quote.totalTtc, quote.currency, language)}</p>
+            <p><strong>{t("admin.quote_transform.summary_system_total")}:</strong> {currency(systemTotalTtc, quote.currency, language)}</p>
           </div>
 
           <section className="top-gap-sm">
-            <h4>Scenarios localhost</h4>
+            <h4>{t("admin.quote_transform.scenarios_title")}</h4>
             <div className="quote-transform-scenario-list top-gap-sm">
               {scenarioLinks.map((item) => (
                 <Link key={item.scenario} href={item.href} className={`quote-transform-scenario-link ${item.active ? "active" : ""}`.trim()}>
@@ -824,11 +840,11 @@ export default function QuoteToEnrollmentWizard({
                 </Link>
               ))}
             </div>
-            <p className="muted top-gap-sm">A, B et C injectent des cas de test. Live utilise uniquement les donnees reelles.</p>
+            <p className="muted top-gap-sm">{t("admin.quote_transform.scenarios_help")}</p>
           </section>
 
           <section className="top-gap-sm">
-            <h4>Etapes</h4>
+            <h4>{t("admin.quote_transform.steps_title")}</h4>
             <div className="quote-transform-step-list top-gap-sm">
               {stepper.map((item) => (
                 <button
@@ -838,31 +854,31 @@ export default function QuoteToEnrollmentWizard({
                   onClick={() => setCurrentStep(item.step)}
                 >
                   <span>{item.step}. {item.label}</span>
-                  <span className={`status-pill ${statusClassName(item.status)}`}>{statusLabel(item.status)}</span>
+                  <span className={`status-pill ${statusClassName(item.status)}`}>{statusLabel(item.status, language)}</span>
                 </button>
               ))}
             </div>
           </section>
 
           <section className="top-gap-sm">
-            <h4>Issues</h4>
+            <h4>{t("admin.quote_transform.issues_title")}</h4>
             <div className="quote-transform-issue-kpis top-gap-sm">
-              <span className="status-pill status-ok">OK {okStepsCount}</span>
-              <span className="status-pill status-warn">Warnings {allIssues.filter((issue) => issue.level === "warning").length}</span>
-              <span className="status-pill quote-transform-status-blocked">Blocked {unresolvedBlockingIssues.length}</span>
+              <span className="status-pill status-ok">{t("admin.quote_transform.issues_ok", { count: okStepsCount })}</span>
+              <span className="status-pill status-warn">{t("admin.quote_transform.issues_warnings", { count: allIssues.filter((issue) => issue.level === "warning").length })}</span>
+              <span className="status-pill quote-transform-status-blocked">{t("admin.quote_transform.issues_blocked", { count: unresolvedBlockingIssues.length })}</span>
             </div>
           </section>
         </aside>
 
         <main className="quote-transform-main">
           <section className="card quote-transform-stepper-card">
-            <ol className="quote-transform-stepper" aria-label="Etapes transformation">
+            <ol className="quote-transform-stepper" aria-label={t("admin.quote_transform.stepper_aria")}>
               {stepper.map((item) => (
                 <li key={`stepper-${item.step}`} className={currentStep === item.step ? "active" : ""}>
                   <button type="button" onClick={() => setCurrentStep(item.step)}>
                     <strong>{item.step}</strong>
                     <span>{item.label}</span>
-                    <small className={`status-pill ${statusClassName(item.status)}`}>{statusLabel(item.status)}</small>
+                    <small className={`status-pill ${statusClassName(item.status)}`}>{statusLabel(item.status, language)}</small>
                   </button>
                 </li>
               ))}
@@ -871,19 +887,19 @@ export default function QuoteToEnrollmentWizard({
 
           {currentStep === 1 ? (
             <section className="card quote-transform-step-card">
-              <h3>Etape 1 · Client</h3>
-              <p className="muted">Identifier la fiche client existante ou preparer la creation sans doublon.</p>
+              <h3>{t("admin.quote_transform.step1_title")}</h3>
+              <p className="muted">{t("admin.quote_transform.step1_subtitle")}</p>
 
               <div className="grid cols-2 top-gap-sm">
                 <article className="item">
-                  <h4>Prospect devis</h4>
-                  <p><strong>Nom:</strong> {prospect ? displayName(prospect.firstName, prospect.lastName, prospect.email) : "-"}</p>
-                  <p><strong>Email:</strong> {prospect?.email || "-"}</p>
-                  <p><strong>Telephone:</strong> {prospect?.phone || "-"}</p>
-                  <p><strong>Type:</strong> {prospect?.prospectType === "child" ? "Enfant" : "Adulte"}</p>
+                  <h4>{t("admin.quote_transform.quote_prospect")}</h4>
+                  <p><strong>{t("admin.quote_transform.name")}:</strong> {prospect ? displayName(prospect.firstName, prospect.lastName, prospect.email) : "-"}</p>
+                  <p><strong>{t("admin.quote_transform.email")}:</strong> {prospect?.email || "-"}</p>
+                  <p><strong>{t("admin.quote_transform.phone")}:</strong> {prospect?.phone || "-"}</p>
+                  <p><strong>{t("admin.quote_transform.type")}:</strong> {prospect?.prospectType === "child" ? t("admin.quote_transform.type_child") : t("admin.quote_transform.type_adult")}</p>
                 </article>
                 <article className="item">
-                  <h4>Mode de resolution</h4>
+                  <h4>{t("admin.quote_transform.resolution_mode_title")}</h4>
                   <label className="quote-transform-radio">
                     <input
                       type="radio"
@@ -892,7 +908,7 @@ export default function QuoteToEnrollmentWizard({
                       checked={clientMode === "existing"}
                       onChange={() => setClientMode("existing")}
                     />
-                    Utiliser une fiche existante
+                    {t("admin.quote_transform.use_existing_record")}
                   </label>
                   <label className="quote-transform-radio">
                     <input
@@ -902,7 +918,7 @@ export default function QuoteToEnrollmentWizard({
                       checked={clientMode === "new_adult"}
                       onChange={() => setClientMode("new_adult")}
                     />
-                    Creer un nouveau client
+                    {t("admin.quote_transform.create_new_client")}
                   </label>
                   <label className="quote-transform-radio">
                     <input
@@ -912,25 +928,25 @@ export default function QuoteToEnrollmentWizard({
                       checked={clientMode === "new_parent_child"}
                       onChange={() => setClientMode("new_parent_child")}
                     />
-                    Creer parent + enfant
+                    {t("admin.quote_transform.create_parent_child")}
                   </label>
                 </article>
               </div>
 
               <section className="top-gap-sm">
-                <h4>Correspondances detectees</h4>
+                <h4>{t("admin.quote_transform.matches_title")}</h4>
                 {clientCandidates.length === 0 ? (
-                  <p className="flash-warn top-gap-sm">Aucune correspondance automatique au-dessus du seuil.</p>
+                  <p className="flash-warn top-gap-sm">{t("admin.quote_transform.no_auto_match")}</p>
                 ) : (
                   <div className="table-wrap top-gap-sm">
                     <table className="data-table quote-transform-compact-table">
                       <thead>
                         <tr>
-                          <th>Client</th>
-                          <th>Email</th>
-                          <th>Telephone</th>
-                          <th>Confiance</th>
-                          <th>Actions</th>
+                          <th>{t("admin.quote_transform.col_client")}</th>
+                          <th>{t("admin.quote_transform.col_email")}</th>
+                          <th>{t("admin.quote_transform.col_phone")}</th>
+                          <th>{t("admin.quote_transform.col_confidence")}</th>
+                          <th>{t("admin.quote_transform.col_actions")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -938,13 +954,13 @@ export default function QuoteToEnrollmentWizard({
                           <tr key={candidate.clientId}>
                             <td>
                               <strong>{candidate.displayName}</strong>
-                              <small className="muted block">{candidate.reasons.join(" · ")}</small>
+                              <small className="muted block">{candidate.reasons.map((reason) => translateQuoteTransformMessage(reason, language)).join(" · ")}</small>
                             </td>
                             <td>{candidate.email}</td>
                             <td>{candidate.phone || "-"}</td>
                             <td>
                               <span className={`status-pill ${candidate.confidence >= 80 ? "status-ok" : candidate.confidence >= 55 ? "status-warn" : "quote-transform-status-blocked"}`}>
-                                {candidate.confidenceLabel} ({candidate.confidence})
+                                {quoteTransformConfidenceLabel(candidate.confidenceLabel, language)} ({candidate.confidence})
                               </span>
                             </td>
                             <td>
@@ -957,14 +973,14 @@ export default function QuoteToEnrollmentWizard({
                                     setSelectedClientId(candidate.clientId);
                                   }}
                                 >
-                                  Utiliser cette fiche
+                                  {t("admin.quote_transform.use_record")}
                                 </button>
                                 {clientsById.has(candidate.clientId) ? (
                                   <Link className="ghost" href={`/admin/clients/${encodeURIComponent(candidate.clientId)}`} target="_blank">
-                                    Voir detail
+                                    {t("admin.quote_transform.view_detail")}
                                   </Link>
                                 ) : (
-                                  <span className="muted">Simulation locale</span>
+                                  <span className="muted">{t("admin.quote_transform.local_simulation")}</span>
                                 )}
                               </div>
                             </td>
@@ -978,9 +994,9 @@ export default function QuoteToEnrollmentWizard({
 
               {clientMode === "existing" ? (
                 <label className="top-gap-sm">
-                  Fiche client retenue
+                  {t("admin.quote_transform.selected_client_record")}
                   <select value={selectedClientId} onChange={(event) => setSelectedClientId(event.target.value)}>
-                    <option value="">Selectionner</option>
+                    <option value="">{t("admin.quote_transform.select")}</option>
                     {existingClientOptions.map((option) => (
                       <option key={`client-option-${option.id}`} value={option.id}>
                         {option.label}
@@ -992,9 +1008,9 @@ export default function QuoteToEnrollmentWizard({
 
               {clientMode === "new_parent_child" ? (
                 <label className="top-gap-sm">
-                  Parent existant a rattacher (optionnel)
+                  {t("admin.quote_transform.existing_parent_optional")}
                   <select value={selectedParentClientId} onChange={(event) => setSelectedParentClientId(event.target.value)}>
-                    <option value="">Creer un nouveau parent</option>
+                    <option value="">{t("admin.quote_transform.create_new_parent")}</option>
                     {clients
                       .filter((client) => String(client.clientKind || "").toUpperCase() === "ADULT")
                       .slice(0, 60)
@@ -1008,12 +1024,12 @@ export default function QuoteToEnrollmentWizard({
               ) : null}
 
               <label className="top-gap-sm">
-                Notes de transformation
+                {t("admin.quote_transform.notes")}
                 <textarea
                   rows={3}
                   value={clientNotes}
                   onChange={(event) => setClientNotes(event.target.value)}
-                  placeholder="Arbitrage, decisions, contraintes famille..."
+                  placeholder={t("admin.quote_transform.notes_placeholder")}
                 />
               </label>
             </section>
@@ -1021,25 +1037,25 @@ export default function QuoteToEnrollmentWizard({
 
           {currentStep === 2 ? (
             <section className="card quote-transform-step-card">
-              <h3>Etape 2 · Formule et activites</h3>
-              <p className="muted">Reprise automatique des objets metier et visualisation immediate des ecarts devis/systeme.</p>
+              <h3>{t("admin.quote_transform.step2_title")}</h3>
+              <p className="muted">{t("admin.quote_transform.step2_subtitle")}</p>
 
               <div className="grid cols-3 top-gap-sm">
                 <label>
-                  Formule / plan
+                  {t("admin.quote_transform.plan_formula")}
                   <select value={selectedPlanId} onChange={(event) => setSelectedPlanId(event.target.value)}>
-                    <option value="">Selectionner</option>
+                    <option value="">{t("admin.quote_transform.select")}</option>
                     {plans.map((plan) => (
                       <option key={plan.id} value={plan.id}>{plan.name} · {plan.kind}</option>
                     ))}
                   </select>
                 </label>
                 <label>
-                  Entite legale
+                  {t("admin.quote_transform.legal_entity")}
                   <input type="text" value={selectedLegalEntity?.name || quote.legalEntityName} readOnly />
                 </label>
                 <label>
-                  Plan paiement
+                  {t("admin.quote_transform.payment_plan")}
                   <input type="text" value={quote.paymentPlanName || "-"} readOnly />
                 </label>
               </div>
@@ -1048,15 +1064,15 @@ export default function QuoteToEnrollmentWizard({
                 <table className="data-table quote-transform-compact-table">
                   <thead>
                     <tr>
-                      <th>Activite</th>
-                      <th>Lieu</th>
-                      <th>Unite</th>
-                      <th>Quantite / duree</th>
-                      <th>Prix devis</th>
-                      <th>Prix systeme</th>
-                      <th>Ecart</th>
-                      <th>Statut</th>
-                      <th>Actions</th>
+                      <th>{t("admin.quote_transform.col_activity")}</th>
+                      <th>{t("admin.quote_transform.col_location")}</th>
+                      <th>{t("admin.quote_transform.col_unit")}</th>
+                      <th>{t("admin.quote_transform.col_quantity_duration")}</th>
+                      <th>{t("admin.quote_transform.col_quote_price")}</th>
+                      <th>{t("admin.quote_transform.col_system_price")}</th>
+                      <th>{t("admin.quote_transform.col_delta")}</th>
+                      <th>{t("admin.quote_transform.col_status")}</th>
+                      <th>{t("admin.quote_transform.col_actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1066,17 +1082,17 @@ export default function QuoteToEnrollmentWizard({
                         <td>{row.locationName}</td>
                         <td>{row.pricingUnit}</td>
                         <td>{row.quantity} · {row.durationMinutes || "-"} min</td>
-                        <td>{currency(row.expectedTtc, quote.currency)}</td>
-                        <td>{currency(row.currentSystemTtc, quote.currency)}</td>
-                        <td>{currency(row.deltaTtc, quote.currency)}</td>
-                        <td><span className={`status-pill ${statusClassName(row.status)}`}>{statusLabel(row.status)}</span></td>
+                        <td>{currency(row.expectedTtc, quote.currency, language)}</td>
+                        <td>{currency(row.currentSystemTtc, quote.currency, language)}</td>
+                        <td>{currency(row.deltaTtc, quote.currency, language)}</td>
+                        <td><span className={`status-pill ${statusClassName(row.status)}`}>{statusLabel(row.status, language)}</span></td>
                         <td>
                           <button
                             type="button"
                             className="ghost"
                             onClick={() => toggleAlignedActivity(row.activityId)}
                           >
-                            {alignedActivityIds.has(row.activityId) ? "Retirer alignement" : "Aligner sur devis"}
+                            {alignedActivityIds.has(row.activityId) ? t("admin.quote_transform.remove_alignment") : t("admin.quote_transform.align_to_quote")}
                           </button>
                         </td>
                       </tr>
@@ -1089,8 +1105,8 @@ export default function QuoteToEnrollmentWizard({
 
           {currentStep === 3 ? (
             <section className="card quote-transform-step-card">
-              <h3>Etape 3 · Planning / creneaux</h3>
-              <p className="muted">Matching cible sur la date de demarrage de l'activite du devis, puis meme horaire et capacite disponible.</p>
+              <h3>{t("admin.quote_transform.step3_title")}</h3>
+              <p className="muted">{t("admin.quote_transform.step3_subtitle")}</p>
 
               <div className="quote-transform-schedule-stack top-gap-sm">
                 {activityRows.map((row) => {
@@ -1101,30 +1117,34 @@ export default function QuoteToEnrollmentWizard({
                       <div className="row spread wrap gap-sm">
                         <div>
                           <h4>{row.activityName}</h4>
-                          <p className="muted">Selection actuelle: {selectedSessionLabel(options, selectedSessionId || null)}</p>
+                          <p className="muted">{t("admin.quote_transform.current_selection")}: {selectedSessionLabel(options, selectedSessionId || null, language)}</p>
                         </div>
                         <div className="row wrap gap-sm">
                           <span className={`status-pill ${offPlanningActivityIds.has(row.activityId) ? "status-warn" : options.length === 0 ? "quote-transform-status-blocked" : "status-ok"}`}>
-                            {offPlanningActivityIds.has(row.activityId) ? "hors planning" : options.length === 0 ? "no match" : `${options.length} options`}
+                            {offPlanningActivityIds.has(row.activityId)
+                              ? t("admin.quote_transform.off_planning_badge")
+                              : options.length === 0
+                              ? t("admin.quote_transform.no_match_badge")
+                              : t("admin.quote_transform.options_badge", { count: options.length })}
                           </span>
                           <button
                             type="button"
                             className="ghost"
                             onClick={() => toggleOffPlanningActivity(row.activityId)}
                           >
-                            {offPlanningActivityIds.has(row.activityId) ? "Repasser en planning" : "Bascule hors planning"}
+                            {offPlanningActivityIds.has(row.activityId) ? t("admin.quote_transform.move_back_to_schedule") : t("admin.quote_transform.move_off_planning")}
                           </button>
                         </div>
                       </div>
 
                       {offPlanningActivityIds.has(row.activityId) ? (
-                        <p className="flash-warn top-gap-sm">Activite traitee en facturation hors planning a l'etape 4.</p>
+                        <p className="flash-warn top-gap-sm">{t("admin.quote_transform.off_planning_message")}</p>
                       ) : null}
 
                       {!offPlanningActivityIds.has(row.activityId) ? (
                         <div className="quote-transform-session-grid top-gap-sm">
                           {options.length === 0 ? (
-                            <p className="flash-err">Aucun creneau compatible detecte.</p>
+                            <p className="flash-err">{t("admin.quote_transform.no_compatible_slot")}</p>
                           ) : (
                             options.map((option) => (
                               <label key={option.sessionId} className={`quote-transform-session-option ${selectedSessionId === option.sessionId ? "active" : ""}`.trim()}>
@@ -1138,8 +1158,8 @@ export default function QuoteToEnrollmentWizard({
                                 <div>
                                   <strong>{option.label}</strong>
                                   <p className="muted">{option.dateLabel} · {option.teacher}</p>
-                                  <p className="muted">Places restantes: {option.seatsRemaining} · Score {option.score}</p>
-                                  <p className="muted">{option.reasons.join(" · ")}</p>
+                                  <p className="muted">{t("admin.quote_transform.seats_remaining", { count: option.seatsRemaining })} · {t("admin.quote_transform.score", { score: option.score })}</p>
+                                  <p className="muted">{option.reasons.map((reason) => translateQuoteTransformMessage(reason, language)).join(" · ")}</p>
                                 </div>
                               </label>
                             ))
@@ -1155,19 +1175,19 @@ export default function QuoteToEnrollmentWizard({
 
           {currentStep === 4 ? (
             <section className="card quote-transform-step-card">
-              <h3>Etape 4 · Facturation hors planning</h3>
-              <p className="muted">Lignes financieres hors booking: kits, options, pass recup, acompte, annexes.</p>
+              <h3>{t("admin.quote_transform.step4_title")}</h3>
+              <p className="muted">{t("admin.quote_transform.step4_subtitle")}</p>
 
               <div className="table-wrap top-gap-sm">
                 <table className="data-table quote-transform-compact-table">
                   <thead>
                     <tr>
-                      <th>Type</th>
-                      <th>Libelle</th>
-                      <th>HT</th>
-                      <th>TVA</th>
-                      <th>TTC</th>
-                      <th>Statut</th>
+                      <th>{t("admin.quote_transform.col_type")}</th>
+                      <th>{t("admin.quote_transform.col_label")}</th>
+                      <th>{t("admin.quote_transform.col_ht")}</th>
+                      <th>{t("admin.quote_transform.col_vat")}</th>
+                      <th>{t("admin.quote_transform.col_ttc")}</th>
+                      <th>{t("admin.quote_transform.col_status")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1218,7 +1238,7 @@ export default function QuoteToEnrollmentWizard({
                             onChange={(event) => updateBillingRow(row.rowId, { amountTtc: Number(event.target.value || "0") })}
                           />
                         </td>
-                        <td><span className={`status-pill ${statusClassName(row.status)}`}>{statusLabel(row.status)}</span></td>
+                        <td><span className={`status-pill ${statusClassName(row.status)}`}>{statusLabel(row.status, language)}</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1226,58 +1246,64 @@ export default function QuoteToEnrollmentWizard({
               </div>
 
               <p className="muted top-gap-sm">
-                Total hors planning HT: <strong>{currency(billingTotals.totalHt, quote.currency)}</strong>
+                {t("admin.quote_transform.off_planning_total_ht")}: <strong>{currency(billingTotals.totalHt, quote.currency, language)}</strong>
                 {" · "}
-                TTC: <strong>{currency(billingTotals.totalTtc, quote.currency)}</strong>
+                {t("admin.quote_transform.off_planning_total_ttc")}: <strong>{currency(billingTotals.totalTtc, quote.currency, language)}</strong>
               </p>
             </section>
           ) : null}
 
           {currentStep === 5 ? (
             <section className="card quote-transform-step-card">
-              <h3>Etape 5 · Controle final</h3>
-              <p className="muted">Validation finale avec comparaison devis/systeme et blocage tant que les points critiques ne sont pas resolus.</p>
+              <h3>{t("admin.quote_transform.step5_title")}</h3>
+              <p className="muted">{t("admin.quote_transform.step5_subtitle")}</p>
 
               <div className="table-wrap top-gap-sm">
                 <table className="data-table quote-transform-compact-table">
                   <thead>
                     <tr>
-                      <th>Section</th>
-                      <th>Valeur devis</th>
-                      <th>Valeur systeme</th>
-                      <th>Statut</th>
+                      <th>{t("admin.quote_transform.col_section")}</th>
+                      <th>{t("admin.quote_transform.col_quote_value")}</th>
+                      <th>{t("admin.quote_transform.col_system_value")}</th>
+                      <th>{t("admin.quote_transform.col_status")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>Client</td>
+                      <td>{t("admin.quote_transform.section_client")}</td>
                       <td>{prospect ? displayName(prospect.firstName, prospect.lastName, prospect.email) : "-"}</td>
                       <td>{selectedClientName}</td>
-                      <td><span className={`status-pill ${statusClassName(step1Status)}`}>{statusLabel(step1Status)}</span></td>
+                      <td><span className={`status-pill ${statusClassName(step1Status)}`}>{statusLabel(step1Status, language)}</span></td>
                     </tr>
                     <tr>
-                      <td>Formule / activites</td>
-                      <td>{quote.quoteTypeFormulaName || "Formule devis"} · {activityRows.length} activites</td>
-                      <td>{selectedPlan?.name || "Aucune"} · {activityRows.length} activites</td>
-                      <td><span className={`status-pill ${statusClassName(step2Status)}`}>{statusLabel(step2Status)}</span></td>
+                      <td>{t("admin.quote_transform.section_formula_activities")}</td>
+                      <td>{t("admin.quote_transform.comparison_formula_quote", {
+                        formula: quote.quoteTypeFormulaName || t("admin.quote_transform.formula_fallback"),
+                        count: activityRows.length,
+                      })}</td>
+                      <td>{t("admin.quote_transform.comparison_formula_system", {
+                        plan: selectedPlan?.name || t("admin.quote_transform.none_feminine"),
+                        count: activityRows.length,
+                      })}</td>
+                      <td><span className={`status-pill ${statusClassName(step2Status)}`}>{statusLabel(step2Status, language)}</span></td>
                     </tr>
                     <tr>
-                      <td>Planning</td>
-                      <td>Sessions devis: {activityRows.length}</td>
-                      <td>Affectations: {Object.keys(assignedSessionByActivityId).length}</td>
-                      <td><span className={`status-pill ${statusClassName(step3Status)}`}>{statusLabel(step3Status)}</span></td>
+                      <td>{t("admin.quote_transform.section_schedule")}</td>
+                      <td>{t("admin.quote_transform.quote_sessions", { count: activityRows.length })}</td>
+                      <td>{t("admin.quote_transform.assignments", { count: Object.keys(assignedSessionByActivityId).length })}</td>
+                      <td><span className={`status-pill ${statusClassName(step3Status)}`}>{statusLabel(step3Status, language)}</span></td>
                     </tr>
                     <tr>
-                      <td>Hors planning</td>
-                      <td>{billingRows.length} lignes</td>
-                      <td>{currency(billingTotals.totalTtc, quote.currency)}</td>
-                      <td><span className={`status-pill ${statusClassName(step4Status)}`}>{statusLabel(step4Status)}</span></td>
+                      <td>{t("admin.quote_transform.section_off_planning")}</td>
+                      <td>{t("admin.quote_transform.lines_count", { count: billingRows.length })}</td>
+                      <td>{currency(billingTotals.totalTtc, quote.currency, language)}</td>
+                      <td><span className={`status-pill ${statusClassName(step4Status)}`}>{statusLabel(step4Status, language)}</span></td>
                     </tr>
                     <tr>
-                      <td>Totaux TTC</td>
-                      <td>{currency(quote.totalTtc, quote.currency)}</td>
-                      <td>{currency(systemTotalTtc, quote.currency)}</td>
-                      <td><span className={`status-pill ${statusClassName(financialControl.status)}`}>{statusLabel(financialControl.status)}</span></td>
+                      <td>{t("admin.quote_transform.section_totals_ttc")}</td>
+                      <td>{currency(quote.totalTtc, quote.currency, language)}</td>
+                      <td>{currency(systemTotalTtc, quote.currency, language)}</td>
+                      <td><span className={`status-pill ${statusClassName(financialControl.status)}`}>{statusLabel(financialControl.status, language)}</span></td>
                     </tr>
                   </tbody>
                 </table>
@@ -1285,12 +1311,12 @@ export default function QuoteToEnrollmentWizard({
 
               {allIssues.length > 0 ? (
                 <section className="top-gap-sm">
-                  <h4>Ecarts et decisions</h4>
+                  <h4>{t("admin.quote_transform.issues_decisions")}</h4>
                   <div className="quote-transform-issue-stack top-gap-sm">
                     {allIssues.map((issue) => (
                       <article key={issue.issueId} className={`quote-transform-issue-card ${issue.level === "blocked" ? "blocked" : "warning"}`}>
                         <div className="row spread wrap gap-sm">
-                          <strong>{issue.level === "blocked" ? "Blocage" : "Warning"}</strong>
+                          <strong>{issue.level === "blocked" ? t("admin.quote_transform.issue_blocked") : t("admin.quote_transform.issue_warning")}</strong>
                           {issue.canOverride ? (
                             <label className="quote-transform-inline-checkbox">
                               <input
@@ -1298,7 +1324,7 @@ export default function QuoteToEnrollmentWizard({
                                 checked={acceptedBlockingIssueIds.has(issue.issueId)}
                                 onChange={() => toggleBlockingAcceptance(issue.issueId)}
                               />
-                              Accepter cet ecart
+                              {t("admin.quote_transform.accept_difference")}
                             </label>
                           ) : null}
                         </div>
@@ -1308,7 +1334,7 @@ export default function QuoteToEnrollmentWizard({
                   </div>
                 </section>
               ) : (
-                <p className="flash-ok top-gap-sm">Aucun ecart detecte.</p>
+                <p className="flash-ok top-gap-sm">{t("admin.quote_transform.no_difference")}</p>
               )}
             </section>
           ) : null}
@@ -1316,13 +1342,13 @@ export default function QuoteToEnrollmentWizard({
           <section className="card quote-transform-actions">
             <div className="row spread wrap gap-sm">
               <div className="row wrap gap-sm">
-                <button type="button" className="ghost" onClick={previousStep} disabled={currentStep === 1}>Precedent</button>
+                <button type="button" className="ghost" onClick={previousStep} disabled={currentStep === 1}>{t("admin.quote_transform.previous")}</button>
                 <button
                   type="button"
                   onClick={nextStep}
                   disabled={currentStep === 5 || !canProceedFromStep(currentStep, stepStatuses[currentStep - 1])}
                 >
-                  Suivant
+                  {t("admin.quote_transform.next")}
                 </button>
               </div>
               <div className="row wrap gap-sm">
@@ -1331,7 +1357,7 @@ export default function QuoteToEnrollmentWizard({
                   <input type="hidden" name="followup_id" value={followupId || ""} />
                   <input type="hidden" name="return_to" value={`${returnTo}${returnTo.includes("?") ? "&" : "?"}scenario=${encodeURIComponent(scenario)}`} />
                   <input type="hidden" name="transformation_json" value={JSON.stringify(draftPayload)} />
-                  <button type="submit" className="ghost" disabled={saveDisabled}>Sauvegarder brouillon</button>
+                  <button type="submit" className="ghost" disabled={saveDisabled}>{t("admin.quote_transform.save_draft")}</button>
                 </form>
 
                 <form id={`quote-transform-finalize-${quote.id}`} action={finalizeAction}>
@@ -1342,10 +1368,10 @@ export default function QuoteToEnrollmentWizard({
                   <input type="hidden" name="transformation_json" value={JSON.stringify(draftPayload)} />
                   <ConfirmSubmitButton
                     formId={`quote-transform-finalize-${quote.id}`}
-                    label="Valider la transformation"
-                    title="Confirmer l'integration reelle du devis ?"
-                    description="Le systeme va reverifier en live la capacite des creneaux, creer les inscriptions et les charges hors planning, puis lier le client. Un rollback admin restera possible ensuite si une correction est necessaire."
-                    confirmLabel="Executer l'integration"
+                    label={t("admin.quote_transform.finalize")}
+                    title={t("admin.quote_transform.confirm_title")}
+                    description={t("admin.quote_transform.confirm_description")}
+                    confirmLabel={t("admin.quote_transform.confirm_execute")}
                     disabled={finalizeDisabled}
                   />
                 </form>
@@ -1354,12 +1380,12 @@ export default function QuoteToEnrollmentWizard({
 
             {followupId ? null : (
               <p className="flash-warn top-gap-sm">
-                Aucun follow-up disponible pour ce devis. Validation client requise avant persistance workflow.
+                {t("admin.quote_transform.no_followup_persistence")}
               </p>
             )}
             {unresolvedBlockingIssues.length > 0 ? (
               <p className="flash-err top-gap-sm">
-                {unresolvedBlockingIssues.length} blocage(s) critique(s) restent a resoudre avant validation.
+                {t("admin.quote_transform.critical_blocks_remaining", { count: unresolvedBlockingIssues.length })}
               </p>
             ) : null}
           </section>

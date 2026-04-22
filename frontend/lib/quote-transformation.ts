@@ -1,3 +1,5 @@
+import { type UiLanguage, uiText } from "./ui-i18n";
+
 export type QuoteTransformScenario = "live" | "A" | "B" | "C";
 
 export type QuoteTransformStatus = "ok" | "warning" | "blocked";
@@ -360,6 +362,137 @@ export function displayName(firstName: string | null | undefined, lastName: stri
   return value || fallback;
 }
 
+export function quoteTransformStatusLabel(status: QuoteTransformStatus, language: UiLanguage = "fr"): string {
+  const key =
+    status === "ok"
+      ? "admin.quote_transform.status_ok"
+      : status === "warning"
+      ? "admin.quote_transform.status_warning"
+      : "admin.quote_transform.status_blocked";
+  return uiText(language, key);
+}
+
+export function quoteTransformConfidenceLabel(
+  label: ClientMatchCandidate["confidenceLabel"] | QuoteQuickTransformProposedClient["confidenceLabel"],
+  language: UiLanguage = "fr",
+): string {
+  if (label === "fort") {
+    return uiText(language, "admin.quote_transform.confidence_strong");
+  }
+  if (label === "moyen") {
+    return uiText(language, "admin.quote_transform.confidence_medium");
+  }
+  return uiText(language, "admin.quote_transform.confidence_low");
+}
+
+export function translateQuoteTransformMessage(message: string, language: UiLanguage = "fr"): string {
+  const raw = String(message || "").trim();
+  if (!raw) {
+    return raw;
+  }
+
+  const exact: Record<string, string> = {
+    "email identique": "admin.quote_transform.reason_same_email",
+    "telephone identique": "admin.quote_transform.reason_same_phone",
+    "prenom proche": "admin.quote_transform.reason_first_name_close",
+    "nom proche": "admin.quote_transform.reason_last_name_close",
+    "famille probable": "admin.quote_transform.reason_family_probable",
+    "correspondance partielle": "admin.quote_transform.reason_partial_match",
+    "arbitrage manuel requis (scenario B)": "admin.quote_transform.reason_manual_arbitration_scenario_b",
+    "correspondance a verifier (scenario B)": "admin.quote_transform.reason_match_review_scenario_b",
+    "alignement devis/systeme": "admin.quote_transform.reason_quote_system_aligned",
+    "ecart mineur a verifier": "admin.quote_transform.reason_minor_gap_review",
+    "ecart critique": "admin.quote_transform.reason_critical_gap",
+    "ecart simule (scenario B)": "admin.quote_transform.reason_simulated_gap_scenario_b",
+    "ecart simule (scenario C)": "admin.quote_transform.reason_simulated_gap_scenario_c",
+    "lieu compatible": "admin.quote_transform.reason_location_compatible",
+    "creneau planifie": "admin.quote_transform.reason_slot_scheduled",
+    "statut non ideal": "admin.quote_transform.reason_status_not_ideal",
+    "place disponible": "admin.quote_transform.reason_seat_available",
+    "complet": "admin.quote_transform.reason_full",
+    "date demarrage coherente": "admin.quote_transform.reason_start_date_consistent",
+    "jour coherent": "admin.quote_transform.reason_weekday_consistent",
+    "horaire demarrage coherent": "admin.quote_transform.reason_start_time_consistent",
+    "proposition de demonstration": "admin.quote_transform.reason_demo_proposal",
+    "date la plus proche": "admin.quote_transform.reason_nearest_date",
+    "date la plus proche (horaire approche)": "admin.quote_transform.reason_nearest_date_time",
+    "Client cible deja lie au devis.": "admin.quote_transform.analysis_client_already_linked",
+    "Aucun client fiable identifie.": "admin.quote_transform.analysis_no_reliable_client",
+    "Plusieurs correspondances client probables necessitent un arbitrage.": "admin.quote_transform.analysis_multiple_client_matches",
+    "Correspondance client detectee mais confiance moyenne.": "admin.quote_transform.analysis_medium_confidence_match",
+    "Client cible identifie sans ambiguite.": "admin.quote_transform.analysis_client_identified",
+    "Aucune activite planifiable detectee sur le devis.": "admin.quote_transform.analysis_no_plannable_activity",
+    "Aucune ligne hors planning a reprendre.": "admin.quote_transform.analysis_no_off_planning",
+    "Totaux HT/TTC conformes.": "admin.quote_transform.analysis_totals_ok",
+    "Follow-up absent: verification manuelle recommandee.": "admin.quote_transform.analysis_followup_missing",
+    "Follow-up disponible pour journalisation.": "admin.quote_transform.analysis_followup_available",
+    "Validation client du devis requise avant transformation.": "admin.quote_transform.analysis_quote_approval_required",
+    "Scenario A: parcours simple auto-validable (demo localhost).": "admin.quote_transform.analysis_demo_simple",
+    "Scenario B: verification manuelle recommandee (demo localhost).": "admin.quote_transform.analysis_demo_review",
+    "Scenario C: blocage critique simule (demo localhost).": "admin.quote_transform.analysis_demo_blocked",
+    "Choix manuel requis": "admin.quote_transform.analysis_manual_choice_required",
+    "Aucun creneau": "admin.quote_transform.analysis_no_slot",
+  };
+  if (raw in exact) {
+    return uiText(language, exact[raw]!);
+  }
+
+  let match = raw.match(/^Formule detectee: (.+)\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_formula_detected", { plan: match[1] });
+  }
+  match = raw.match(/^(.+): activite non mappee dans le referentiel\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_activity_not_mapped", { activity: match[1] });
+  }
+  match = raw.match(/^(.+): ecart tarifaire critique \(([-0-9.,]+)\)\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_price_gap_critical", { activity: match[1], delta: match[2] });
+  }
+  match = raw.match(/^(.+): ecart tarifaire mineur \(([-0-9.,]+)\)\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_price_gap_minor", { activity: match[1], delta: match[2] });
+  }
+  match = raw.match(/^(.+): aucun creneau coherent trouve\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_no_coherent_slot", { activity: match[1] });
+  }
+  match = raw.match(/^(.+): creneau complet sans alternative\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_full_slot_no_alternative", { activity: match[1] });
+  }
+  match = raw.match(/^(.+): creneau unique auto-assignable\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_unique_slot", { activity: match[1] });
+  }
+  match = raw.match(/^(.+): plusieurs creneaux possibles, recommandation disponible\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_multiple_slots", { activity: match[1] });
+  }
+  match = raw.match(/^(.+): ligne hors planning invalide\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_off_planning_invalid", { label: match[1] });
+  }
+  match = raw.match(/^(.+): ligne hors planning a confirmer\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_off_planning_confirm", { label: match[1] });
+  }
+  match = raw.match(/^(.+): ligne hors planning coherente\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_off_planning_ok", { label: match[1] });
+  }
+  match = raw.match(/^Total devis\/systeme incoherent \(([-0-9.,]+)\)\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_totals_incoherent", { delta: match[1] });
+  }
+  match = raw.match(/^Ecart financier mineur a confirmer \(([-0-9.,]+)\)\.$/);
+  if (match) {
+    return uiText(language, "admin.quote_transform.analysis_financial_minor", { delta: match[1] });
+  }
+
+  return raw;
+}
+
 function confidenceLabel(value: number): "fort" | "moyen" | "faible" {
   if (value >= 80) {
     return "fort";
@@ -630,7 +763,7 @@ function isoPartsInTimezone(
 function toLocalDateLabel(iso: string, timezone: string, locale = "fr-FR"): string {
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) {
-    return "date inconnue";
+    return locale.startsWith("en") ? "date unavailable" : "date inconnue";
   }
   try {
     return parsed.toLocaleString(locale, {
@@ -700,15 +833,20 @@ function matchScore(
   return { score, reasons };
 }
 
-function mockSessionOption(activityName: string, activityId: string, variant: "single" | "multi" | "full" | "none"): SessionMatchOption[] {
+function mockSessionOption(
+  activityName: string,
+  activityId: string,
+  variant: "single" | "multi" | "full" | "none",
+  language: UiLanguage = "fr",
+): SessionMatchOption[] {
   if (variant === "none") {
     return [];
   }
   const base = {
     sessionId: `mock-${activityId}-1`,
     label: `${activityName} · Studio Opera`,
-    dateLabel: "lun. 18:00",
-    teacher: "Prof. Demo",
+    dateLabel: language === "en" ? "Mon 18:00" : "lun. 18:00",
+    teacher: language === "en" ? "Demo teacher" : "Prof. Demo",
     status: "SCHEDULED",
     reasons: ["proposition de demonstration"],
   };
@@ -732,8 +870,8 @@ function mockSessionOption(activityName: string, activityId: string, variant: "s
       {
         ...base,
         sessionId: `mock-${activityId}-2`,
-        dateLabel: "mer. 17:30",
-        teacher: "Prof. Atelier",
+        dateLabel: language === "en" ? "Wed 17:30" : "mer. 17:30",
+        teacher: language === "en" ? "Workshop teacher" : "Prof. Atelier",
         seatsRemaining: 2,
         score: 72,
       },
@@ -754,6 +892,8 @@ export function buildSessionMatches(
   expectedLocationId: string | null,
   hintsByActivityId: Map<string, QuoteScheduleHint>,
   scenario: QuoteTransformScenario,
+  locale = "fr-FR",
+  language: UiLanguage = "fr",
 ): SessionMatchOption[] {
   const hint = hintsByActivityId.get(activityRow.activityId) ?? null;
   const selectionModeRef: { value: "exact_date_time" | "exact_date" | "nearest_date_time" | "nearest_date" | "all" } = { value: "all" };
@@ -841,12 +981,12 @@ export function buildSessionMatches(
   const options = scopedSessions
     .map((session) => {
       const scoreData = matchScore(session, hint, expectedLocationId);
-      const dateLabel = toLocalDateLabel(session.startAtUtc, session.timezone);
+      const dateLabel = toLocalDateLabel(session.startAtUtc, session.timezone, locale);
       return {
         sessionId: session.id,
         label: session.title,
         dateLabel,
-        teacher: session.teacherDisplayName || "A definir",
+        teacher: session.teacherDisplayName || uiText(language, "admin.quote_transform.to_define"),
         seatsRemaining: session.seatsRemaining,
         status: session.statusLabel,
         score: scoreData.score,
@@ -867,7 +1007,7 @@ export function buildSessionMatches(
     if (options.length > 0) {
       return [options[0]];
     }
-    return mockSessionOption(activityRow.activityName, activityRow.activityId, "single");
+    return mockSessionOption(activityRow.activityName, activityRow.activityId, "single", language);
   }
 
   if (scenario === "B") {
@@ -875,21 +1015,21 @@ export function buildSessionMatches(
       return options.slice(0, 2);
     }
     if (options.length === 1) {
-      return [options[0], ...mockSessionOption(activityRow.activityName, activityRow.activityId, "single")];
+      return [options[0], ...mockSessionOption(activityRow.activityName, activityRow.activityId, "single", language)];
     }
-    return mockSessionOption(activityRow.activityName, activityRow.activityId, "multi");
+    return mockSessionOption(activityRow.activityName, activityRow.activityId, "multi", language);
   }
 
   if (scenario === "C") {
     const normalizedName = normalizeText(activityRow.activityName);
     if (normalizedName.includes("solfege") || normalizedName.includes("collectif")) {
-      return mockSessionOption(activityRow.activityName, activityRow.activityId, "none");
+      return mockSessionOption(activityRow.activityName, activityRow.activityId, "none", language);
     }
     if (options.length > 0) {
       const first = { ...options[0], seatsRemaining: 0, score: options[0].score - 25 };
       return [first, ...options.slice(1, 2)];
     }
-    return mockSessionOption(activityRow.activityName, activityRow.activityId, "full");
+    return mockSessionOption(activityRow.activityName, activityRow.activityId, "full", language);
   }
 
   return options;

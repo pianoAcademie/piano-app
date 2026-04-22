@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import ConfirmSubmitButton from "../confirm-submit-button";
-import type { QuoteQuickTransformAnalysis } from "../../lib/quote-transformation";
+import { translateQuoteTransformMessage, type QuoteQuickTransformAnalysis } from "../../lib/quote-transformation";
 import { localeForUiLanguage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type QuoteQuickTransformPanelProps = {
@@ -112,21 +112,21 @@ export default function QuoteQuickTransformPanel({
           <h4>{t("admin.quote_detail.quick_transform.ok")}</h4>
           {analysis.reasonsOk.length === 0 ? <p className="muted">-</p> : null}
           {analysis.reasonsOk.slice(0, 4).map((message, index) => (
-            <p key={`quick-ok-${index}`} className="muted">- {message}</p>
+            <p key={`quick-ok-${index}`} className="muted">- {translateQuoteTransformMessage(message, language)}</p>
           ))}
         </article>
         <article className="item">
           <h4>{t("admin.quote_detail.quick_transform.warnings")}</h4>
           {analysis.warnings.length === 0 ? <p className="muted">-</p> : null}
           {analysis.warnings.slice(0, 4).map((message, index) => (
-            <p key={`quick-warn-${index}`} className="flash-warn">- {message}</p>
+            <p key={`quick-warn-${index}`} className="flash-warn">- {translateQuoteTransformMessage(message, language)}</p>
           ))}
         </article>
         <article className="item">
           <h4>{t("admin.quote_detail.quick_transform.blocking_issues")}</h4>
           {analysis.blockingIssues.length === 0 ? <p className="muted">-</p> : null}
           {analysis.blockingIssues.slice(0, 4).map((message, index) => (
-            <p key={`quick-block-${index}`} className="flash-err">- {message}</p>
+            <p key={`quick-block-${index}`} className="flash-err">- {translateQuoteTransformMessage(message, language)}</p>
           ))}
         </article>
       </div>

@@ -28,7 +28,9 @@ import type {
   AdminSessionOut,
   LocationOut,
   PlanOut,
+  UserOut,
 } from "../../../../../lib/types";
+import { normalizeUiLanguage, uiText } from "../../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -156,19 +158,23 @@ function toNumber(raw: string, fallback = 0): number {
   return parsed;
 }
 
-function locationNameById(locations: LocationOut[], locationId: string | null): string {
+function locationNameById(locations: LocationOut[], locationId: string | null, language: "fr" | "en" = "fr"): string {
   if (!locationId) {
-    return "Lieu non defini";
+    return uiText(language, "admin.quote_transform.location_not_defined");
   }
-  return locations.find((location) => location.id === locationId)?.name || "Lieu non defini";
+  return locations.find((location) => location.id === locationId)?.name || uiText(language, "admin.quote_transform.location_not_defined");
 }
 
-function scheduleOptionLinks(basePath: string, scenario: QuoteTransformScenario): Array<{ scenario: QuoteTransformScenario; label: string; href: string; active: boolean }> {
+function scheduleOptionLinks(
+  basePath: string,
+  scenario: QuoteTransformScenario,
+  language: "fr" | "en" = "fr",
+): Array<{ scenario: QuoteTransformScenario; label: string; href: string; active: boolean }> {
   const items: Array<{ scenario: QuoteTransformScenario; label: string }> = [
-    { scenario: "live", label: "Live" },
-    { scenario: "A", label: "Scenario A (simple)" },
-    { scenario: "B", label: "Scenario B (ambigu)" },
-    { scenario: "C", label: "Scenario C (bloquant)" },
+    { scenario: "live", label: uiText(language, "admin.quote_transform.scenario_live") },
+    { scenario: "A", label: uiText(language, "admin.quote_transform.scenario_a") },
+    { scenario: "B", label: uiText(language, "admin.quote_transform.scenario_b") },
+    { scenario: "C", label: uiText(language, "admin.quote_transform.scenario_c") },
   ];
 
   return items.map((item) => {
@@ -199,6 +205,12 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const quoteId = String(params.quoteId || "").trim();
   if (!quoteId) {
@@ -227,10 +239,10 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
     return (
       <section className="admin-page-grid">
         <section className="card">
-          <h2>Transformation devis</h2>
+          <h2>{t("admin.quote_transform.page_title")}</h2>
           <p className="flash-err">{detailResult.message}</p>
           <div className="row top-gap-sm">
-            <Link className="ghost" href={backPath}>Retour devis</Link>
+            <Link className="ghost" href={backPath}>{t("admin.quote_transform.back_to_quote")}</Link>
           </div>
         </section>
       </section>
@@ -378,7 +390,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
 
   const quoteType = quoteTypes.find((row) => row.id === detail.quote.quote_type_id) || null;
   const paymentPlan = paymentPlans.find((row) => row.id === detail.quote.payment_plan_id) || null;
-  const legalEntityName = legalEntities.find((entity) => entity.id === detail.quote.legal_entity_id)?.name || "A definir";
+  const legalEntityName = legalEntities.find((entity) => entity.id === detail.quote.legal_entity_id)?.name || t("admin.quote_transform.to_define");
 
   const lines: QuoteTransformLine[] = detail.lines.map((line) => ({
     id: line.id,
@@ -410,20 +422,20 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
     quoteType: detail.quote.quote_type,
     quoteTypeFormulaName: quoteType?.formula_name || null,
     locationId: detail.quote.location_id,
-    locationName: locationNameById(locationsRaw, detail.quote.location_id),
+    locationName: locationNameById(locationsRaw, detail.quote.location_id, language),
   };
 
   const basePath = `/admin/quotes/${encodeURIComponent(quoteId)}/transform?back=${encodeURIComponent(backPath)}`;
-  const scenarioLinks = scheduleOptionLinks(basePath, scenario);
+  const scenarioLinks = scheduleOptionLinks(basePath, scenario, language);
   const dismissErrorHref = setDetailQueryParam(basePath, "error", null);
   const dismissOkHref = setDetailQueryParam(basePath, "ok", null);
 
   return (
     <section className="admin-page-grid">
       {ok ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Confirmation transformation devis">
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.quote_transform.confirm_dialog_aria")}>
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={dismissOkHref} aria-label="Fermer la confirmation">
+            <Link className="modal-close-x" href={dismissOkHref} aria-label={t("admin.quote_transform.close_confirmation")}>
               ×
             </Link>
             <section className="flash-ok modal-flash" role="status">
@@ -433,9 +445,9 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
         </section>
       ) : null}
       {error ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Erreur transformation devis">
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.quote_transform.error_dialog_aria")}>
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={dismissErrorHref} aria-label="Fermer l'erreur">
+            <Link className="modal-close-x" href={dismissErrorHref} aria-label={t("admin.quote_transform.close_error")}>
               ×
             </Link>
             <section className="flash-err modal-flash" role="alert">
@@ -465,6 +477,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
         returnTo={basePath}
         saveDraftAction={saveQuoteTransformationDraftAction}
         finalizeAction={finalizeQuoteTransformationAction}
+        language={language}
       />
     </section>
   );
