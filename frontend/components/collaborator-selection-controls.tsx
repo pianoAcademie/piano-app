@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 
 type Props = {
   formId: string;
+  selectAllLabel?: string;
+  summaryLabel?: string;
 };
 
 function getForm(formId: string): HTMLFormElement | null {
@@ -18,7 +20,15 @@ function allCollaboratorCheckboxes(form: HTMLFormElement): HTMLInputElement[] {
   return Array.from(form.querySelectorAll<HTMLInputElement>('input[name="collaborator_ids"]'));
 }
 
-export default function CollaboratorSelectionControls({ formId }: Props): JSX.Element {
+function formatSummary(template: string, selectedCount: number, totalCount: number): string {
+  return template.replace("{selected}", String(selectedCount)).replace("{total}", String(totalCount));
+}
+
+export default function CollaboratorSelectionControls({
+  formId,
+  selectAllLabel = "Selectionner toute la liste",
+  summaryLabel = "Selection: {selected}/{total}",
+}: Props): JSX.Element {
   const [selectedCount, setSelectedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
@@ -72,10 +82,10 @@ export default function CollaboratorSelectionControls({ formId }: Props): JSX.El
     <div className="row spread">
       <label className="checkline">
         <input type="checkbox" data-role="select-all-collaborators" />
-        Selectionner toute la liste
+        {selectAllLabel}
       </label>
       <small className="muted">
-        Selection: {selectedCount}/{totalCount}
+        {formatSummary(summaryLabel, selectedCount, totalCount)}
       </small>
     </div>
   );

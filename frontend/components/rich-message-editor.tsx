@@ -5,6 +5,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 type MessageBodyFormat = "TEXT" | "HTML";
 type EditorMode = "TEXT" | "WYSIWYG" | "HTML_SOURCE";
 
+type RichMessageEditorLabels = {
+  editorModeAria: string;
+  wysiwygMode: string;
+  htmlMode: string;
+  textMode: string;
+  formattingToolsAria: string;
+  unorderedList: string;
+  orderedList: string;
+  fontPlaceholder: string;
+  sizePlaceholder: string;
+  textColor: string;
+  highlightColor: string;
+  insertLink: string;
+  insertImageUrl: string;
+  insertImageFile: string;
+  addFile: string;
+  linkPrompt: string;
+  imagePrompt: string;
+  defaultFileName: string;
+  defaultImageName: string;
+};
+
 type RichMessageEditorProps = {
   name: string;
   formatName?: string;
@@ -13,6 +35,29 @@ type RichMessageEditorProps = {
   placeholder?: string;
   rows?: number;
   maxLength?: number;
+  labels?: Partial<RichMessageEditorLabels>;
+};
+
+const DEFAULT_LABELS: RichMessageEditorLabels = {
+  editorModeAria: "Mode de l editeur",
+  wysiwygMode: "Editeur",
+  htmlMode: "HTML",
+  textMode: "Texte",
+  formattingToolsAria: "Outils de mise en forme",
+  unorderedList: "• Liste",
+  orderedList: "1. Liste",
+  fontPlaceholder: "Police",
+  sizePlaceholder: "Taille",
+  textColor: "Texte",
+  highlightColor: "Surligner",
+  insertLink: "Lien",
+  insertImageUrl: "Image URL",
+  insertImageFile: "Image fichier",
+  addFile: "Ajouter fichier",
+  linkPrompt: "URL du lien (https://...)",
+  imagePrompt: "URL de l image (https://...)",
+  defaultFileName: "fichier",
+  defaultImageName: "image",
 };
 
 function normalizeFormat(value: string | undefined): MessageBodyFormat {
@@ -82,7 +127,9 @@ export default function RichMessageEditor({
   placeholder,
   rows = 12,
   maxLength,
+  labels,
 }: RichMessageEditorProps) {
+  const ui = { ...DEFAULT_LABELS, ...labels };
   const initialFormat = useMemo(() => normalizeFormat(defaultFormat), [defaultFormat]);
   const initialValue = defaultValue ?? "";
   const initialEditorValue = useMemo(() => {
@@ -168,7 +215,7 @@ export default function RichMessageEditor({
     if (mode !== "WYSIWYG" || !editorRef.current) {
       return;
     }
-    const href = window.prompt("URL du lien (https://...)");
+    const href = window.prompt(ui.linkPrompt);
     if (!href) {
       return;
     }
@@ -181,7 +228,7 @@ export default function RichMessageEditor({
     if (mode !== "WYSIWYG") {
       return;
     }
-    const src = window.prompt("URL de l image (https://...)");
+    const src = window.prompt(ui.imagePrompt);
     if (!src) {
       return;
     }
@@ -193,7 +240,7 @@ export default function RichMessageEditor({
       return;
     }
     const dataUrl = await readFileAsDataUrl(file);
-    const safeName = escapeHtml(file.name || "fichier");
+    const safeName = escapeHtml(file.name || ui.defaultFileName);
     insertHtmlAtCursor(`<a href="${dataUrl}" download="${safeName}" target="_blank" rel="noreferrer">📎 ${safeName}</a>`);
   };
 
@@ -202,7 +249,7 @@ export default function RichMessageEditor({
       return;
     }
     const dataUrl = await readFileAsDataUrl(file);
-    const safeName = escapeHtml(file.name || "image");
+    const safeName = escapeHtml(file.name || ui.defaultImageName);
     insertHtmlAtCursor(`<img src="${dataUrl}" alt="${safeName}" style="max-width:100%;height:auto;" />`);
   };
 
@@ -244,27 +291,27 @@ export default function RichMessageEditor({
   return (
     <div className="rich-message-editor">
       <div className="rich-message-editor-top">
-        <div className="segmented-inline" role="tablist" aria-label="Mode de l editeur">
+        <div className="segmented-inline" role="tablist" aria-label={ui.editorModeAria}>
           <button
             type="button"
             className={mode === "WYSIWYG" ? "active" : ""}
             onClick={switchToWysiwygMode}
           >
-            Editeur
+            {ui.wysiwygMode}
           </button>
           <button
             type="button"
             className={mode === "HTML_SOURCE" ? "active" : ""}
             onClick={switchToHtmlSourceMode}
           >
-            HTML
+            {ui.htmlMode}
           </button>
           <button
             type="button"
             className={mode === "TEXT" ? "active" : ""}
             onClick={switchToTextMode}
           >
-            Texte
+            {ui.textMode}
           </button>
         </div>
       </div>
@@ -292,7 +339,7 @@ export default function RichMessageEditor({
       ) : (
         <div className="rich-message-shell">
           {showWysiwygToolbar ? (
-            <div className="rich-message-toolbar" aria-label="Outils de mise en forme">
+            <div className="rich-message-toolbar" aria-label={ui.formattingToolsAria}>
               <div className="toolbar-group">
                 <button type="button" onClick={() => applyCommand("bold")}>B</button>
                 <button type="button" onClick={() => applyCommand("italic")}>I</button>
@@ -300,13 +347,13 @@ export default function RichMessageEditor({
               </div>
 
               <div className="toolbar-group">
-                <button type="button" onClick={() => applyCommand("insertUnorderedList")}>• Liste</button>
-                <button type="button" onClick={() => applyCommand("insertOrderedList")}>1. Liste</button>
+                <button type="button" onClick={() => applyCommand("insertUnorderedList")}>{ui.unorderedList}</button>
+                <button type="button" onClick={() => applyCommand("insertOrderedList")}>{ui.orderedList}</button>
               </div>
 
               <div className="toolbar-group">
                 <select defaultValue="" onChange={(event) => switchToFont(event.target.value)}>
-                  <option value="" disabled>Police</option>
+                  <option value="" disabled>{ui.fontPlaceholder}</option>
                   <option value="Arial">Arial</option>
                   <option value="'Avenir Next'">Avenir Next</option>
                   <option value="'Times New Roman'">Times New Roman</option>
@@ -314,7 +361,7 @@ export default function RichMessageEditor({
                   <option value="'Courier New'">Courier New</option>
                 </select>
                 <select defaultValue="" onChange={(event) => switchToSize(event.target.value)}>
-                  <option value="" disabled>Taille</option>
+                  <option value="" disabled>{ui.sizePlaceholder}</option>
                   <option value="1">10</option>
                   <option value="2">12</option>
                   <option value="3">14</option>
@@ -327,20 +374,20 @@ export default function RichMessageEditor({
 
               <div className="toolbar-group">
                 <label className="toolbar-color-field">
-                  Texte
+                  {ui.textColor}
                   <input type="color" defaultValue="#111111" onChange={(event) => applyForeColor(event.target.value)} />
                 </label>
                 <label className="toolbar-color-field">
-                  Surligner
+                  {ui.highlightColor}
                   <input type="color" defaultValue="#fff176" onChange={(event) => applyHighlightColor(event.target.value)} />
                 </label>
               </div>
 
               <div className="toolbar-group">
-                <button type="button" onClick={insertLink}>Lien</button>
-                <button type="button" onClick={insertImageUrl}>Image URL</button>
-                <button type="button" onClick={() => imageFileInputRef.current?.click()}>Image fichier</button>
-                <button type="button" onClick={() => attachmentFileInputRef.current?.click()}>Ajouter fichier</button>
+                <button type="button" onClick={insertLink}>{ui.insertLink}</button>
+                <button type="button" onClick={insertImageUrl}>{ui.insertImageUrl}</button>
+                <button type="button" onClick={() => imageFileInputRef.current?.click()}>{ui.insertImageFile}</button>
+                <button type="button" onClick={() => attachmentFileInputRef.current?.click()}>{ui.addFile}</button>
               </div>
 
               <div className="toolbar-group">
