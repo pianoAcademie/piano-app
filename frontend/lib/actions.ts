@@ -29,6 +29,7 @@ import {
   type QuoteTransformQuote,
   type QuoteTransformSession,
 } from "./quote-transformation";
+import { normalizeUiLanguage, type UiLanguage, uiText } from "./ui-i18n";
 import type {
   AdminActivityOut,
   AdminActivityContentMappingOut,
@@ -1075,6 +1076,14 @@ async function ensureAdmin(token: string): Promise<void> {
   if (!me || me.role !== "admin") {
     redirect("/login?error=Acces%20admin%20requis");
   }
+}
+
+async function ensureAdminAndGetLanguage(token: string): Promise<UiLanguage> {
+  const me = await fetchCurrentUser(token);
+  if (!me || me.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  return normalizeUiLanguage(me.preferred_language);
 }
 
 export async function loginAction(formData: FormData): Promise<void> {
@@ -11816,7 +11825,7 @@ export async function createAdminQuoteTypeConfigAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=types"));
   const code = optionalField(formData, "code");
@@ -11828,7 +11837,7 @@ export async function createAdminQuoteTypeConfigAction(formData: FormData): Prom
   const isActive = parseCheckboxFlag(formData, "is_active", true);
 
   if (!name || defaultExpiryDays === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Champs type de devis invalides"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_quote_type_fields")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -11853,7 +11862,7 @@ export async function createAdminQuoteTypeConfigAction(formData: FormData): Prom
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Type de devis cree"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.quote_type_created")));
 }
 
 export async function updateAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
@@ -11861,7 +11870,7 @@ export async function updateAdminQuoteTypeConfigAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=types"));
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
@@ -11873,7 +11882,7 @@ export async function updateAdminQuoteTypeConfigAction(formData: FormData): Prom
   const schoolYearLabel = optionalField(formData, "school_year_label");
   const isActive = parseCheckboxFlag(formData, "is_active", true);
   if (!quoteTypeId || !name || defaultExpiryDays === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Type de devis invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_quote_type")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -11898,7 +11907,7 @@ export async function updateAdminQuoteTypeConfigAction(formData: FormData): Prom
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Type de devis mis a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.quote_type_updated")));
 }
 
 export async function deleteAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
@@ -11906,12 +11915,12 @@ export async function deleteAdminQuoteTypeConfigAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=types"));
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
   if (!quoteTypeId) {
-    redirect(appendQueryMessage(returnTo, "error", "Type de devis invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_quote_type")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -11924,7 +11933,7 @@ export async function deleteAdminQuoteTypeConfigAction(formData: FormData): Prom
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Type de devis supprime"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.quote_type_deleted")));
 }
 
 export async function createAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
@@ -11932,7 +11941,7 @@ export async function createAdminPricingCatalogConfigAction(formData: FormData):
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
   const name = String(formData.get("name") ?? "").trim();
@@ -11943,12 +11952,12 @@ export async function createAdminPricingCatalogConfigAction(formData: FormData):
   const isActive = parseCheckboxFlag(formData, "is_active", true);
 
   if (!name || !effectiveFromRaw) {
-    redirect(appendQueryMessage(returnTo, "error", "Nom et date de debut obligatoires"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.catalog_name_start_required")));
   }
   const effectiveFrom = parseUtcStartOfDate(effectiveFromRaw);
   const effectiveTo = effectiveToRaw ? parseUtcEndOfDate(effectiveToRaw) : null;
   if (!effectiveFrom || (effectiveToRaw && !effectiveTo)) {
-    redirect(appendQueryMessage(returnTo, "error", "Dates de catalogue invalides"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_catalog_dates")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -11972,7 +11981,7 @@ export async function createAdminPricingCatalogConfigAction(formData: FormData):
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Catalogue de prix cree"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.catalog_created")));
 }
 
 export async function updateAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
@@ -11980,7 +11989,7 @@ export async function updateAdminPricingCatalogConfigAction(formData: FormData):
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
   const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
@@ -11992,12 +12001,12 @@ export async function updateAdminPricingCatalogConfigAction(formData: FormData):
   const isActive = parseCheckboxFlag(formData, "is_active", true);
 
   if (!catalogId || !name || !effectiveFromRaw) {
-    redirect(appendQueryMessage(returnTo, "error", "Catalogue de prix invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_catalog")));
   }
   const effectiveFrom = parseUtcStartOfDate(effectiveFromRaw);
   const effectiveTo = effectiveToRaw ? parseUtcEndOfDate(effectiveToRaw) : null;
   if (!effectiveFrom || (effectiveToRaw && !effectiveTo)) {
-    redirect(appendQueryMessage(returnTo, "error", "Dates de catalogue invalides"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_catalog_dates")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -12021,7 +12030,7 @@ export async function updateAdminPricingCatalogConfigAction(formData: FormData):
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Catalogue de prix mis a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.catalog_updated")));
 }
 
 export async function deleteAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
@@ -12029,12 +12038,12 @@ export async function deleteAdminPricingCatalogConfigAction(formData: FormData):
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
   const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
   if (!catalogId) {
-    redirect(appendQueryMessage(returnTo, "error", "Catalogue de prix invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_catalog")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -12047,7 +12056,7 @@ export async function deleteAdminPricingCatalogConfigAction(formData: FormData):
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Catalogue de prix supprime"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.catalog_deleted")));
 }
 
 export async function createAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
@@ -12055,7 +12064,7 @@ export async function createAdminPaymentPlanConfigAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=payment_plans"));
   const presetLabel = normalizePaymentPlanPresetLabel(String(formData.get("plan_label_preset") ?? ""));
@@ -12091,13 +12100,13 @@ export async function createAdminPaymentPlanConfigAction(formData: FormData): Pr
     : null;
 
   if (!name || !paymentMethod || !scheduleType || scheduleRules === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_payment_plan")));
   }
   if (feePercentRaw && (normalizedFeePercent === null || normalizedFeePercent < 0 || normalizedFeePercent > 100)) {
-    redirect(appendQueryMessage(returnTo, "error", "Frais invalides"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_fee")));
   }
   if ((dueMonth2Raw && dueMonth2 === null) || (dueMonth3Raw && dueMonth3 === null) || (dueMonth4Raw && dueMonth4 === null)) {
-    redirect(appendQueryMessage(returnTo, "error", "Mois d encaissement invalides"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_due_months")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -12121,7 +12130,7 @@ export async function createAdminPaymentPlanConfigAction(formData: FormData): Pr
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Plan de paiement cree"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.payment_plan_created")));
 }
 
 export async function updateAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
@@ -12129,7 +12138,7 @@ export async function updateAdminPaymentPlanConfigAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=payment_plans"));
   const planId = parseUuid(String(formData.get("plan_id") ?? ""));
@@ -12167,13 +12176,13 @@ export async function updateAdminPaymentPlanConfigAction(formData: FormData): Pr
     : null;
 
   if (!planId || !name || !paymentMethod || !scheduleType || scheduleRules === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_payment_plan")));
   }
   if (feePercentRaw && (normalizedFeePercent === null || normalizedFeePercent < 0 || normalizedFeePercent > 100)) {
-    redirect(appendQueryMessage(returnTo, "error", "Frais invalides"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_fee")));
   }
   if ((dueMonth2Raw && dueMonth2 === null) || (dueMonth3Raw && dueMonth3 === null) || (dueMonth4Raw && dueMonth4 === null)) {
-    redirect(appendQueryMessage(returnTo, "error", "Mois d encaissement invalides"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_due_months")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -12197,7 +12206,7 @@ export async function updateAdminPaymentPlanConfigAction(formData: FormData): Pr
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Plan de paiement mis a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.payment_plan_updated")));
 }
 
 export async function deleteAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
@@ -12205,12 +12214,12 @@ export async function deleteAdminPaymentPlanConfigAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=payment_plans"));
   const planId = parseUuid(String(formData.get("plan_id") ?? ""));
   if (!planId) {
-    redirect(appendQueryMessage(returnTo, "error", "Plan de paiement invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_payment_plan")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -12223,7 +12232,7 @@ export async function deleteAdminPaymentPlanConfigAction(formData: FormData): Pr
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Plan de paiement supprime"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.payment_plan_deleted")));
 }
 
 export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData): Promise<void> {
@@ -12231,7 +12240,7 @@ export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=solfege"));
   const levelCode = String(formData.get("level_code") ?? "").trim();
@@ -12240,15 +12249,15 @@ export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData
   const modalityRaw = String(formData.get("modality") ?? "").trim().toUpperCase();
   const isActive = parseCheckboxFlag(formData, "is_active", true);
   if (!levelCode || durationMinutes === null || durationMinutes < 10 || durationMinutes > 180) {
-    redirect(appendQueryMessage(returnTo, "error", "Niveau ou duree solfege invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_solfege_level_or_duration")));
   }
 
   const structuredSlots = parseStructuredSolfegeSlots(formData, durationMinutes);
   if (structuredSlots === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Creneaux invalides (jour + heure de debut)"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_solfege_slots")));
   }
   if (structuredSlots.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Ajoutez au moins un creneau (jour + heure de debut)"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.solfege_slot_required")));
   }
   const weekdays = Array.from(new Set(structuredSlots.map((slot) => slot.weekday))).sort((a, b) => a - b);
   const timeSlots = structuredSlots;
@@ -12277,7 +12286,7 @@ export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData
 
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Regle solfege enregistree"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.solfege_rule_saved")));
 }
 
 export async function deleteAdminSolfegeLevelRuleConfigAction(formData: FormData): Promise<void> {
@@ -12285,12 +12294,12 @@ export async function deleteAdminSolfegeLevelRuleConfigAction(formData: FormData
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=solfege"));
   const ruleId = parseUuid(String(formData.get("rule_id") ?? ""));
   if (!ruleId) {
-    redirect(appendQueryMessage(returnTo, "error", "Regle solfege invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_solfege_rule")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -12303,7 +12312,7 @@ export async function deleteAdminSolfegeLevelRuleConfigAction(formData: FormData
   }
   revalidatePath("/admin/config/quotes");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Regle solfege supprimee"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.solfege_rule_deleted")));
 }
 
 export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
