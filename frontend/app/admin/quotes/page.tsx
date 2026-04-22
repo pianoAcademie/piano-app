@@ -9,7 +9,8 @@ import QuoteRowNextAction, { type QuoteNextAction } from "../../../components/qu
 import QuoteRowValidationState, { type QuoteValidationUiState } from "../../../components/quotes/quote-row-validation-state";
 import { duplicateQuoteAction, sendQuoteAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
-import type { AdminActivityOut, AdminClientOut } from "../../../lib/types";
+import type { AdminActivityOut, AdminClientOut, UserOut } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -53,7 +54,7 @@ function readParam(params: SearchParams, key: string): string {
   return raw ?? "";
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, language: UiLanguage): string {
   if (!value) {
     return "-";
   }
@@ -61,23 +62,25 @@ function formatDate(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
 }
 
-function formatAmount(value: string, currency: string): string {
+function formatAmount(value: string, currency: string, language: UiLanguage): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) {
     return `${value} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currency || "EUR" }).format(amount);
+    return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: currency || "EUR" }).format(amount);
   } catch {
     return `${amount.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
 }
 
-function labelForContext(contextType: string): string {
-  return contextType === "active_client" ? "Client actif" : "Acquisition";
+function labelForContext(contextType: string, language: UiLanguage): string {
+  return contextType === "active_client"
+    ? uiText(language, "admin.quotes.context_active_client")
+    : uiText(language, "admin.quotes.context_acquisition");
 }
 
 function displayName(firstName: string | null, lastName: string | null, fallback: string): string {
@@ -329,6 +332,12 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const statusFilter = readParam(searchParams, "status");
   const contextFilter = readParam(searchParams, "context_type");
@@ -522,172 +531,178 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
 
   const currencyValues = Array.from(new Set(quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean))).sort();
   const quoteTypeValues = Array.from(new Set(quotes.map((row) => (row.quote_type || "").trim()).filter(Boolean))).sort();
+  const quoteStatusOptions = [
+    { value: "created", label: t("admin.quotes.status_created") },
+    { value: "sent", label: t("admin.quotes.status_sent") },
+    { value: "change_requested", label: t("admin.quotes.status_change_requested") },
+    { value: "approved", label: t("admin.quotes.status_approved") },
+    { value: "rejected", label: t("admin.quotes.status_rejected") },
+    { value: "expired", label: t("admin.quotes.status_expired") },
+    { value: "cancelled", label: t("admin.quotes.status_cancelled") },
+  ];
   return (
     <section className="admin-page-grid">
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Devis</h2>
-            <p className="muted">Retrouvez, filtrez et ouvrez les devis sans melanger la creation ni les prospects.</p>
+            <h2>{t("admin.quotes.title")}</h2>
+            <p className="muted">{t("admin.quotes.subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
             <Link className="ghost" href="/admin/prospects">
-              Voir prospects
+              {t("admin.quotes.view_prospects")}
             </Link>
             <Link className="ghost" href="/admin/config/quotes">
-              Configurer devis
+              {t("admin.quotes.configure_quotes")}
             </Link>
             <Link className="mode-link" href="/admin/quotes/new">
-              Nouveau devis
+              {t("admin.quotes.new_quote")}
             </Link>
           </div>
         </div>
       </section>
 
-      {!quotesResult.ok ? <section className="flash-err">Erreur devis: {quotesResult.message}</section> : null}
-      {!activitiesResult.ok ? <section className="flash-err">Erreur activites: {activitiesResult.message}</section> : null}
+      {!quotesResult.ok ? <section className="flash-err">{t("admin.quotes.error_quotes")}: {quotesResult.message}</section> : null}
+      {!activitiesResult.ok ? <section className="flash-err">{t("admin.quotes.error_activities")}: {activitiesResult.message}</section> : null}
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
 
       <QuoteListPageRefine
+        language={language}
         actions={(
           <>
-            <span className="status-pill status-ok">Valide</span>
-            <span className="status-pill status-warn">A preparer</span>
-            <span className="status-pill status-off">Integre</span>
+            <QuoteRowValidationState state="valide" language={language} />
+            <QuoteRowIntegrationState state="a_preparer" language={language} />
+            <QuoteRowIntegrationState state="integre" language={language} />
           </>
         )}
       >
         <form method="get" className="quote-list-filters">
           <div className="grid cols-4 sticky-filters">
             <label className="cols-span-2">
-              Recherche (numero, prospect, email, telephone)
-              <input type="text" name="q" defaultValue={query} placeholder="DV-..., nom, email..." />
+              {t("admin.quotes.search_label")}
+              <input type="text" name="q" defaultValue={query} placeholder={t("admin.quotes.search_placeholder")} />
             </label>
             <label>
-              Statut commercial
+              {t("admin.quotes.commercial_status")}
               <select name="status" defaultValue={statusFilter}>
-                <option value="">Tous</option>
-                <option value="created">Brouillon</option>
-                <option value="sent">Envoye</option>
-                <option value="change_requested">Demande modif</option>
-                <option value="approved">Valide</option>
-                <option value="rejected">Refuse</option>
-                <option value="expired">Expire</option>
-                <option value="cancelled">Annule</option>
+                <option value="">{t("common.all")}</option>
+                {quoteStatusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </label>
             <label>
-              Contexte
+              {t("admin.quotes.context")}
               <select name="context_type" defaultValue={contextFilter}>
-                <option value="">Tous</option>
-                <option value="acquisition">Acquisition</option>
-                <option value="active_client">Client actif</option>
+                <option value="">{t("common.all")}</option>
+                <option value="acquisition">{t("admin.quotes.context_acquisition")}</option>
+                <option value="active_client">{t("admin.quotes.context_active_client")}</option>
               </select>
             </label>
             <label>
-              Type prospect
+              {t("admin.quotes.prospect_type")}
               <select name="prospect_type" defaultValue={prospectTypeFilter}>
-                <option value="">Tous</option>
-                <option value="adult">Adulte</option>
-                <option value="child">Enfant</option>
+                <option value="">{t("common.all")}</option>
+                <option value="adult">{t("client.adult")}</option>
+                <option value="child">{t("client.child")}</option>
               </select>
             </label>
             <label>
-              Avec solfege
+              {t("admin.quotes.with_solfege")}
               <select name="has_solfege" defaultValue={hasSolfegeFilter}>
-                <option value="">Tous</option>
-                <option value="yes">Oui</option>
-                <option value="no">Non</option>
+                <option value="">{t("common.all")}</option>
+                <option value="yes">{t("common.yes")}</option>
+                <option value="no">{t("common.no")}</option>
               </select>
             </label>
             <label>
-              Activite specifique
+              {t("admin.quotes.specific_activity")}
               <select name="activity_id" defaultValue={activityFilter}>
-                <option value="">Toutes</option>
+                <option value="">{t("admin.quotes.all_activities")}</option>
                 {activities.map((row) => (
                   <option key={row.id} value={row.id}>{row.name}</option>
                 ))}
               </select>
             </label>
             <label>
-              Prochaine action
+              {t("admin.quotes.next_action_filter")}
               <select name="workflow_filter" defaultValue={workflowFilter}>
-                <option value="">Toutes</option>
-                <option value="preparer_integration">Valides non integres</option>
-                <option value="integrer_dans_centrale">Prets a integrer</option>
-                <option value="erreur_integration">Erreurs integration</option>
+                <option value="">{t("admin.quotes.all_next_actions")}</option>
+                <option value="preparer_integration">{t("admin.quotes.workflow_prepare_integration")}</option>
+                <option value="integrer_dans_centrale">{t("admin.quotes.workflow_ready_to_integrate")}</option>
+                <option value="erreur_integration">{t("admin.quotes.workflow_integration_errors")}</option>
               </select>
             </label>
           </div>
 
           <details className="quote-advanced-filters top-gap-sm">
-            <summary>Filtres avances</summary>
+            <summary>{t("admin.quotes.advanced_filters")}</summary>
             <div className="grid cols-4 top-gap-sm">
               <label>
-                Devise
+                {t("admin.quotes.currency")}
                 <select name="currency" defaultValue={currencyFilter}>
-                  <option value="">Toutes</option>
+                  <option value="">{t("admin.quotes.all_currencies")}</option>
                   {currencyValues.map((value) => (
                     <option key={value} value={value}>{value}</option>
                   ))}
                 </select>
               </label>
               <label>
-                Type devis
+                {t("admin.quotes.quote_type")}
                 <select name="quote_type" defaultValue={quoteTypeFilter}>
-                  <option value="">Tous</option>
+                  <option value="">{t("common.all")}</option>
                   {quoteTypeValues.map((value) => (
                     <option key={value} value={value}>{value}</option>
                   ))}
                 </select>
               </label>
               <label>
-                Annee scolaire
-                <input type="text" name="school_year" defaultValue={schoolYearFilter} placeholder="2026-2027" />
+                {t("admin.quotes.school_year")}
+                <input type="text" name="school_year" defaultValue={schoolYearFilter} placeholder={t("admin.quotes.placeholder_school_year")} />
               </label>
               <label>
-                Langue
-                <input type="text" name="language" defaultValue={languageFilter} placeholder="fr" />
+                {t("common.language")}
+                <input type="text" name="language" defaultValue={languageFilter} placeholder={t("admin.quotes.placeholder_language")} />
               </label>
               <label>
-                Template
-                <input type="text" name="template" defaultValue={templateFilter} placeholder="template code" />
+                {t("admin.quotes.template")}
+                <input type="text" name="template" defaultValue={templateFilter} placeholder={t("admin.quotes.placeholder_template")} />
               </label>
               <label>
-                CGV
-                <input type="text" name="cgv" defaultValue={cgvFilter} placeholder="CGV 2026" />
+                {t("admin.quotes.terms")}
+                <input type="text" name="cgv" defaultValue={cgvFilter} placeholder={t("admin.quotes.placeholder_terms")} />
               </label>
               <label>
-                Total min TTC
+                {t("admin.quotes.min_total_ttc")}
                 <input type="number" name="min_total" min={0} step="0.01" defaultValue={minTotalFilterRaw} />
               </label>
               <label>
-                Total max TTC
+                {t("admin.quotes.max_total_ttc")}
                 <input type="number" name="max_total" min={0} step="0.01" defaultValue={maxTotalFilterRaw} />
               </label>
               <label>
-                Cree du
+                {t("admin.quotes.created_from")}
                 <input type="date" name="created_from" defaultValue={createdFromFilterRaw} />
               </label>
               <label>
-                Cree au
+                {t("admin.quotes.created_to")}
                 <input type="date" name="created_to" defaultValue={createdToFilterRaw} />
               </label>
               <label>
-                Expire du
+                {t("admin.quotes.expires_from")}
                 <input type="date" name="expires_from" defaultValue={expiresFromFilterRaw} />
               </label>
               <label>
-                Expire au
+                {t("admin.quotes.expires_to")}
                 <input type="date" name="expires_to" defaultValue={expiresToFilterRaw} />
               </label>
             </div>
           </details>
 
           <div className="row end cols-span-4 top-gap-sm">
-            <button type="submit">Filtrer</button>
-            <a className="ghost" href="/admin/quotes">Reset</a>
+            <button type="submit">{t("admin.quotes.filter")}</button>
+            <a className="ghost" href="/admin/quotes">{t("common.reset")}</a>
           </div>
         </form>
 
@@ -695,23 +710,23 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
           <table className="data-table quote-list-table">
             <thead>
               <tr>
-                <th>Numero</th>
-                <th>Prospect / client</th>
-                <th>Contexte</th>
-                <th>Total TTC</th>
-                <th>Validation client</th>
-                <th>Integration centrale</th>
-                <th>Prochaine action</th>
-                <th>Creation</th>
-                <th>Expiration</th>
-                <th>Activites</th>
-                <th>Action</th>
+                <th>{t("admin.quotes.number")}</th>
+                <th>{t("admin.quotes.owner")}</th>
+                <th>{t("admin.quotes.context")}</th>
+                <th>{t("admin.quotes.total_ttc")}</th>
+                <th>{t("admin.quotes.client_validation")}</th>
+                <th>{t("admin.quotes.central_integration")}</th>
+                <th>{t("admin.quotes.next_action")}</th>
+                <th>{t("admin.quotes.creation")}</th>
+                <th>{t("admin.quotes.expiration")}</th>
+                <th>{t("admin.quotes.activities")}</th>
+                <th>{t("admin.quotes.action")}</th>
               </tr>
             </thead>
             <tbody>
               {filteredQuotes.length === 0 ? (
                 <tr>
-                  <td colSpan={11}><p className="muted">Aucun devis sur ces filtres.</p></td>
+                  <td colSpan={11}><p className="muted">{t("admin.quotes.no_quotes")}</p></td>
                 </tr>
               ) : (
                 filteredQuotes.map((row) => {
@@ -748,18 +763,18 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                         <br />
                         <small className="muted">{owner?.email ?? "-"}</small>
                         <br />
-                        <small className="muted">{rowProspectType === "-" ? "-" : rowProspectType === "adult" ? "Adulte" : "Enfant"}</small>
+                        <small className="muted">{rowProspectType === "-" ? "-" : rowProspectType === "adult" ? t("client.adult") : t("client.child")}</small>
                       </td>
-                      <td>{labelForContext(row.context_type)}</td>
-                      <td>{formatAmount(row.total_ttc, row.currency)}</td>
+                      <td>{labelForContext(row.context_type, language)}</td>
+                      <td>{formatAmount(row.total_ttc, row.currency, language)}</td>
                       <td>
                         <div className="quote-list-status-cell">
-                          <QuoteRowValidationState state={commercialState} />
+                          <QuoteRowValidationState state={commercialState} language={language} />
                           {changeRequest ? (
                             <div className="quote-list-change-request-note">
-                              <strong>Demande client</strong>
+                              <strong>{t("admin.quotes.change_request")}</strong>
                               {changeRequest.at ? (
-                                <span>Recue le {formatDate(changeRequest.at)}</span>
+                                <span>{t("admin.quotes.received_on", { date: formatDate(changeRequest.at, language) })}</span>
                               ) : null}
                               {changeRequest.message ? (
                                 <span className="quote-list-change-request-message">"{changeRequest.message}"</span>
@@ -768,39 +783,43 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                           ) : null}
                         </div>
                       </td>
-                      <td><QuoteRowIntegrationState state={integrationState} /></td>
+                      <td><QuoteRowIntegrationState state={integrationState} language={language} /></td>
                       <td>
                         <div className="quote-list-status-cell">
-                          <QuoteRowNextAction action={nextAction} />
+                          <QuoteRowNextAction action={nextAction} language={language} />
                           {changeRequest ? (
-                            <span className="quote-list-inline-hint">Ouvrir le devis pour traiter la demande</span>
+                            <span className="quote-list-inline-hint">{t("admin.quotes.open_to_handle_request")}</span>
                           ) : null}
                         </div>
                       </td>
-                      <td>{formatDate(row.created_at)}</td>
-                      <td>{formatDate(row.expires_at)}</td>
+                      <td>{formatDate(row.created_at, language)}</td>
+                      <td>{formatDate(row.expires_at, language)}</td>
                       <td>{getCalendarSessionsCount(row.calendar_snapshot)}</td>
                       <td>
                         <div className="row wrap gap-xs">
-                          <Link className="ghost" href={detailHref}>{row.status === "created" ? "Modifier" : "Ouvrir"}</Link>
+                          <Link className="ghost" href={detailHref}>{row.status === "created" ? t("common.edit") : t("common.open")}</Link>
                           {row.status === "created" ? (
                             <form action={sendQuoteAction}>
                               <input type="hidden" name="quote_id" value={row.id} />
                               <input type="hidden" name="return_to" value={currentListHref} />
                               <input type="hidden" name="recipient_email" value={ownerEmail} />
-                              <button type="submit" className="ghost">Envoyer</button>
+                              <button type="submit" className="ghost">{t("admin.quotes.send")}</button>
                             </form>
                           ) : null}
                           <form action={duplicateQuoteAction}>
                             <input type="hidden" name="quote_id" value={row.id} />
                             <input type="hidden" name="return_to" value={currentListHref} />
-                            <button type="submit" className="ghost">Dupliquer</button>
+                            <button type="submit" className="ghost">{t("common.duplicate")}</button>
                           </form>
                           {publicHref ? (
-                            <a className="ghost" href={publicHref} target="_blank" rel="noreferrer">Page publique</a>
+                            <a className="ghost" href={publicHref} target="_blank" rel="noreferrer">{t("admin.quotes.public_page")}</a>
                           ) : null}
                           {publicAbsoluteHref ? (
-                            <CopyLinkButton value={publicAbsoluteHref} label="Copier lien" />
+                            <CopyLinkButton
+                              value={publicAbsoluteHref}
+                              label={t("common.copy_link")}
+                              copiedLabel={t("common.link_copied")}
+                            />
                           ) : null}
                         </div>
                       </td>

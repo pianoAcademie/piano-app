@@ -1,5 +1,7 @@
 import React from "react";
 
+import { type UiLanguage, uiText } from "../../lib/ui-i18n";
+
 export type QuoteValidationUiState =
   | "brouillon"
   | "incomplet"
@@ -11,16 +13,16 @@ export type QuoteValidationUiState =
   | "refuse"
   | "expire";
 
-const LABELS: Record<QuoteValidationUiState, string> = {
-  brouillon: "Brouillon",
-  incomplet: "Incomplet",
-  pret_a_envoyer: "Pret a envoyer",
-  envoye: "Envoye",
-  consulte: "Consulte",
-  modification_demandee: "Modification demandee",
-  valide: "Valide",
-  refuse: "Refuse",
-  expire: "Expire",
+const LABEL_KEYS: Record<QuoteValidationUiState, string> = {
+  brouillon: "admin.quotes.validation.brouillon",
+  incomplet: "admin.quotes.validation.incomplet",
+  pret_a_envoyer: "admin.quotes.validation.pret_a_envoyer",
+  envoye: "admin.quotes.validation.envoye",
+  consulte: "admin.quotes.validation.consulte",
+  modification_demandee: "admin.quotes.validation.modification_demandee",
+  valide: "admin.quotes.validation.valide",
+  refuse: "admin.quotes.validation.refuse",
+  expire: "admin.quotes.validation.expire",
 };
 
 const CLASSES: Record<QuoteValidationUiState, string> = {
@@ -35,6 +37,12 @@ const CLASSES: Record<QuoteValidationUiState, string> = {
   expire: "status-cancelled",
 };
 
-export default function QuoteRowValidationState({ state }: { state: QuoteValidationUiState }): JSX.Element {
-  return <span className={`status-pill ${CLASSES[state]}`}>{LABELS[state]}</span>;
+export default function QuoteRowValidationState({
+  state,
+  language = "fr",
+}: {
+  state: QuoteValidationUiState;
+  language?: UiLanguage;
+}): JSX.Element {
+  return <span className={`status-pill ${CLASSES[state]}`}>{uiText(language, LABEL_KEYS[state])}</span>;
 }
