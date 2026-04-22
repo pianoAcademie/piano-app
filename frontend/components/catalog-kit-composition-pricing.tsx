@@ -27,17 +27,42 @@ type Props = {
   initialPriceMode: string;
   initialForcedPrice: string | null;
   initialCurrency: string;
+  locale?: string;
+  labels: {
+    compositionTitle: string;
+    compositionSubtitle: string;
+    addLine: string;
+    emptyLine: string;
+    product: string;
+    selectProduct: string;
+    quantity: string;
+    order: string;
+    unitPrice: string;
+    subtotal: string;
+    action: string;
+    delete: string;
+    priceTitle: string;
+    computedPriceAutomatic: string;
+    priceMode: string;
+    useCalculatedPrice: string;
+    forcePrice: string;
+    billedPriceTtc: string;
+    currency: string;
+    computedPrice: string;
+    billedPrice: string;
+    gap: string;
+  };
   maxLines?: number;
 };
 
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF"];
 
-function formatMoney(amount: number, currency: string): string {
+function formatMoney(amount: number, currency: string, locale: string): string {
   if (!Number.isFinite(amount)) {
     return "-";
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(locale, {
       style: "currency",
       currency,
       maximumFractionDigits: 2,
@@ -77,6 +102,8 @@ export default function CatalogKitCompositionPricing({
   initialPriceMode,
   initialForcedPrice,
   initialCurrency,
+  locale = "fr-FR",
+  labels,
   maxLines = 20,
 }: Props): JSX.Element {
   const startingRows: RowState[] = initialItems.map((item, index) => ({
@@ -147,19 +174,19 @@ export default function CatalogKitCompositionPricing({
       <article className="card">
         <div className="row spread">
           <div>
-            <h4>Composition</h4>
-            <p className="muted">Construisez le kit ligne par ligne avec quantites et sous-totaux.</p>
+            <h4>{labels.compositionTitle}</h4>
+            <p className="muted">{labels.compositionSubtitle}</p>
           </div>
           <button type="button" className="ghost" onClick={addRow} disabled={!canAddRow}>
-            Ajouter une ligne
+            {labels.addLine}
           </button>
         </div>
 
         {rows.length === 0 ? (
           <div className="catalog-kit-empty-state">
-            <p>Aucune ligne dans ce kit.</p>
+            <p>{labels.emptyLine}</p>
             <button type="button" className="mode-link" onClick={addRow} disabled={!canAddRow}>
-              Ajouter une ligne
+              {labels.addLine}
             </button>
           </div>
         ) : (
@@ -167,12 +194,12 @@ export default function CatalogKitCompositionPricing({
             <table className="data-table catalog-kit-composition-table">
               <thead>
                 <tr>
-                  <th>Produit</th>
-                  <th>Quantite</th>
-                  <th>Ordre</th>
-                  <th>Prix unitaire</th>
-                  <th>Sous-total</th>
-                  <th>Action</th>
+                  <th>{labels.product}</th>
+                  <th>{labels.quantity}</th>
+                  <th>{labels.order}</th>
+                  <th>{labels.unitPrice}</th>
+                  <th>{labels.subtotal}</th>
+                  <th>{labels.action}</th>
                 </tr>
               </thead>
               <tbody>
@@ -187,7 +214,7 @@ export default function CatalogKitCompositionPricing({
                           value={row.productId}
                           onChange={(event) => updateRow(index, { productId: event.target.value })}
                         >
-                          <option value="">Selectionner un produit</option>
+                          <option value="">{labels.selectProduct}</option>
                           {products.map((product) => (
                             <option key={product.id} value={product.id}>
                               {product.title}
@@ -221,11 +248,11 @@ export default function CatalogKitCompositionPricing({
                           }}
                         />
                       </td>
-                      <td>{formatMoney(unitPrice, currency)}</td>
-                      <td>{formatMoney(lineTotal, currency)}</td>
+                      <td>{formatMoney(unitPrice, currency, locale)}</td>
+                      <td>{formatMoney(lineTotal, currency, locale)}</td>
                       <td>
                         <button type="button" className="ghost" onClick={() => removeRow(index)}>
-                          Supprimer
+                          {labels.delete}
                         </button>
                       </td>
                     </tr>
@@ -240,15 +267,15 @@ export default function CatalogKitCompositionPricing({
       </article>
 
       <article className="card">
-        <h4>Prix</h4>
+        <h4>{labels.priceTitle}</h4>
         <div className="grid cols-2 config-form-grid">
           <article className="span-2 catalog-kit-price-readonly">
-            <span className="muted">Prix calcule (automatique)</span>
-            <strong>{formatMoney(computedPrice, currency)}</strong>
+            <span className="muted">{labels.computedPriceAutomatic}</span>
+            <strong>{formatMoney(computedPrice, currency, locale)}</strong>
           </article>
 
           <fieldset className="span-2 catalog-kit-price-mode-group">
-            <legend>Mode de prix</legend>
+            <legend>{labels.priceMode}</legend>
             <label className="checkline">
               <input
                 type="radio"
@@ -257,7 +284,7 @@ export default function CatalogKitCompositionPricing({
                 checked={priceMode === "calculated"}
                 onChange={() => setPriceMode("calculated")}
               />
-              Utiliser le prix calcule
+              {labels.useCalculatedPrice}
             </label>
             <label className="checkline">
               <input
@@ -267,12 +294,12 @@ export default function CatalogKitCompositionPricing({
                 checked={priceMode === "forced"}
                 onChange={() => setPriceMode("forced")}
               />
-              Forcer un prix
+              {labels.forcePrice}
             </label>
           </fieldset>
 
           <label>
-            Prix TTC facture
+            {labels.billedPriceTtc}
             <input
               type="number"
               name="forced_price"
@@ -286,7 +313,7 @@ export default function CatalogKitCompositionPricing({
           </label>
 
           <label>
-            Devise
+            {labels.currency}
             <select
               name="currency"
               value={currency}
@@ -302,16 +329,16 @@ export default function CatalogKitCompositionPricing({
 
           <article className="span-2 catalog-kit-price-summary">
             <div className="row spread">
-              <span>Prix calcule</span>
-              <strong>{formatMoney(computedPrice, currency)}</strong>
+              <span>{labels.computedPrice}</span>
+              <strong>{formatMoney(computedPrice, currency, locale)}</strong>
             </div>
             <div className="row spread">
-              <span>Prix facture</span>
-              <strong>{formatMoney(effectivePrice, currency)}</strong>
+              <span>{labels.billedPrice}</span>
+              <strong>{formatMoney(effectivePrice, currency, locale)}</strong>
             </div>
             <div className="row spread">
-              <span>Ecart</span>
-              <strong>{formatMoney(priceDelta, currency)}</strong>
+              <span>{labels.gap}</span>
+              <strong>{formatMoney(priceDelta, currency, locale)}</strong>
             </div>
           </article>
 

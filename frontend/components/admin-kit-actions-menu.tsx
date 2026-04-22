@@ -10,6 +10,15 @@ type Props = {
   kitId: string;
   returnTo: string;
   active: boolean;
+  labels: {
+    menuAria: string;
+    edit: string;
+    duplicate: string;
+    archive: string;
+    unarchive: string;
+    delete: string;
+    viewComposition: string;
+  };
   duplicateAction: (formData: FormData) => void | Promise<void>;
   toggleArchiveAction: (formData: FormData) => void | Promise<void>;
   deleteAction: (formData: FormData) => void | Promise<void>;
@@ -29,6 +38,7 @@ export default function AdminKitActionsMenu({
   kitId,
   returnTo,
   active,
+  labels,
   duplicateAction,
   toggleArchiveAction,
   deleteAction,
@@ -104,16 +114,16 @@ export default function AdminKitActionsMenu({
         className="catalog-actions-portal"
         style={{ top: `${position.top}px`, left: `${position.left}px` }}
         role="menu"
-        aria-label="Actions kit"
+        aria-label={labels.menuAria}
       >
         <Link href={editHref} className="catalog-actions-item" role="menuitem" onClick={() => setOpen(false)}>
-          Modifier
+          {labels.edit}
         </Link>
         <form action={duplicateAction} onSubmit={() => setOpen(false)}>
           <input type="hidden" name="kit_id" value={kitId} />
           <input type="hidden" name="return_to" value={returnTo} />
           <button type="submit" className="catalog-actions-item" role="menuitem">
-            Dupliquer
+            {labels.duplicate}
           </button>
         </form>
         <form action={toggleArchiveAction} onSubmit={() => setOpen(false)}>
@@ -121,18 +131,18 @@ export default function AdminKitActionsMenu({
           <input type="hidden" name="archive" value={active ? "true" : "false"} />
           <input type="hidden" name="return_to" value={returnTo} />
           <button type="submit" className="catalog-actions-item" role="menuitem">
-            {active ? "Archiver" : "Desarchiver"}
+            {active ? labels.archive : labels.unarchive}
           </button>
         </form>
         <form action={deleteAction} onSubmit={() => setOpen(false)}>
           <input type="hidden" name="kit_id" value={kitId} />
           <input type="hidden" name="return_to" value={returnTo} />
           <button type="submit" className="catalog-actions-item danger" role="menuitem">
-            Supprimer
+            {labels.delete}
           </button>
         </form>
         <Link href={viewCompositionHref} className="catalog-actions-item" role="menuitem" onClick={() => setOpen(false)}>
-          Voir composition
+          {labels.viewComposition}
         </Link>
       </div>,
       document.body,
@@ -150,6 +160,7 @@ export default function AdminKitActionsMenu({
     kitId,
     returnTo,
     active,
+    labels,
   ]);
 
   return (

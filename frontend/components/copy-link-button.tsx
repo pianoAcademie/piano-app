@@ -5,10 +5,16 @@ import { useState } from "react";
 type CopyLinkButtonProps = {
   value: string;
   label?: string;
+  copiedLabel?: string;
   className?: string;
 };
 
-export default function CopyLinkButton({ value, label = "Copier le lien", className = "ghost small-btn" }: CopyLinkButtonProps): JSX.Element {
+export default function CopyLinkButton({
+  value,
+  label = "Copier le lien",
+  copiedLabel = "Lien copie",
+  className = "ghost small-btn",
+}: CopyLinkButtonProps): JSX.Element {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async (): Promise<void> => {
@@ -24,7 +30,7 @@ export default function CopyLinkButton({ value, label = "Copier le lien", classN
 
   return (
     <button type="button" className={className} onClick={handleCopy}>
-      {copied ? "Lien copie" : label}
+      {copied ? copiedLabel : label}
     </button>
   );
 }

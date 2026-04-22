@@ -5,7 +5,8 @@ import { redirect } from "next/navigation";
 import CopyLinkButton from "../../../../components/copy-link-button";
 import { disableAdminFormulaAction, duplicateAdminFormulaAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
-import type { AdminFormulaOut } from "../../../../lib/types";
+import type { AdminFormulaOut, UserOut } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type FormulaStatusFilter = "all" | "active" | "inactive";
@@ -76,21 +77,21 @@ function buildFormulasHref(params: SearchParams, updates: Record<string, string 
   return query ? `/admin/config/formulas?${query}` : "/admin/config/formulas";
 }
 
-function formulaKindLabel(kind: AdminFormulaOut["kind"]): string {
+function formulaKindLabel(kind: AdminFormulaOut["kind"], language: UiLanguage): string {
   if (kind === "PACK") {
-    return "Carnet";
+    return uiText(language, "admin.formulas.kind_pack");
   }
   if (kind === "FORFAIT") {
-    return "Forfait";
+    return uiText(language, "admin.formulas.kind_forfait");
   }
-  return "Abonnement";
+  return uiText(language, "admin.formulas.kind_subscription");
 }
 
-function formulaFrequencyLabel(kind: AdminFormulaOut["kind"]): string {
+function formulaFrequencyLabel(kind: AdminFormulaOut["kind"], language: UiLanguage): string {
   if (kind === "SUBSCRIPTION") {
-    return "Mensuel";
+    return uiText(language, "admin.formulas.frequency_monthly");
   }
-  return "Paiement unique";
+  return uiText(language, "admin.formulas.frequency_one_time");
 }
 
 function normalizeFormulaOptions(options: string[]): Set<string> {
@@ -108,17 +109,17 @@ function formulaPurchaseLinkEnabled(formula: AdminFormulaOut): boolean {
   return true;
 }
 
-function formulaDiffusionStatus(formula: AdminFormulaOut): { label: string; enabled: boolean } {
+function formulaDiffusionStatus(formula: AdminFormulaOut, language: UiLanguage): { label: string; enabled: boolean } {
   if (!formula.active) {
-    return { label: "Lien inactif (formule desactivee)", enabled: false };
+    return { label: uiText(language, "admin.formulas.link_inactive_formula"), enabled: false };
   }
   if (!formulaPurchaseLinkEnabled(formula)) {
-    return { label: "Achat par lien desactive", enabled: false };
+    return { label: uiText(language, "admin.formulas.link_disabled"), enabled: false };
   }
-  return { label: "Lien actif", enabled: true };
+  return { label: uiText(language, "admin.formulas.link_active"), enabled: true };
 }
 
-function formatMoney(amountRaw: string | null, currency: string | null): string {
+function formatMoney(amountRaw: string | null, currency: string | null, language: UiLanguage): string {
   if (!amountRaw) {
     return "-";
   }
@@ -128,7 +129,7 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
     return `${amountRaw} ${normalizedCurrency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency: normalizedCurrency,
       maximumFractionDigits: 2,
@@ -152,6 +153,13 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const params = searchParams ?? {};
   const okMessage = readParam(params, "ok");
@@ -184,7 +192,7 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
       if (visibilityFilter === "private" && !formula.is_private) {
         return false;
       }
-      const diffusion = formulaDiffusionStatus(formula);
+      const diffusion = formulaDiffusionStatus(formula, language);
       if (diffusionFilter === "enabled" && !diffusion.enabled) {
         return false;
       }
@@ -197,7 +205,7 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
       const haystack = `${formula.name} ${formula.code} ${formula.description ?? ""}`.toLowerCase();
       return haystack.includes(query);
     })
-    .sort((left, right) => left.name.localeCompare(right.name, "fr-FR"));
+    .sort((left, right) => left.name.localeCompare(right.name, localeForUiLanguage(language)));
 
   const currentHref = buildFormulasHref(params, {});
 
@@ -206,17 +214,15 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
       <section className="card">
         <div className="row spread">
           <div>
-            <h1>Configuration des formules</h1>
-            <p className="muted">
-              Gere la diffusion des formules, copie le lien d achat et pilote le parcours client jusqu au paiement.
-            </p>
+            <h1>{t("admin.formulas.title")}</h1>
+            <p className="muted">{t("admin.formulas.subtitle")}</p>
           </div>
           <div className="row">
             <Link className="ghost" href="/admin/config?section=params-account">
-              Retour configuration
+              {t("admin.formulas.back_config")}
             </Link>
             <Link className="mode-link" href={`/admin/config/formulas/new?back=${encodeURIComponent(currentHref)}`}>
-              Ajouter une formule
+              {t("admin.formulas.add_formula")}
             </Link>
           </div>
         </div>
@@ -224,69 +230,69 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
-      {loadError ? <section className="flash-err">Impossible de charger les formules: {loadError}</section> : null}
+      {loadError ? <section className="flash-err">{t("admin.formulas.load_error", { message: loadError })}</section> : null}
 
       <section className="card">
         <form method="get" className="row formulas-admin-filters">
           <label>
-            Recherche
-            <input type="search" name="q" defaultValue={readParam(params, "q")} placeholder="Nom, code ou description..." />
+            {uiText(language, "common.search")}
+            <input type="search" name="q" defaultValue={readParam(params, "q")} placeholder={t("admin.formulas.search_placeholder")} />
           </label>
           <label>
-            Statut
+            {uiText(language, "common.status")}
             <select name="status" defaultValue={statusFilter}>
-              <option value="all">Tous</option>
-              <option value="active">Actives</option>
-              <option value="inactive">Desactivees</option>
+              <option value="all">{uiText(language, "common.all")}</option>
+              <option value="active">{uiText(language, "common.active")}</option>
+              <option value="inactive">{uiText(language, "common.inactive")}</option>
             </select>
           </label>
           <label>
-            Visibilite
+            {uiText(language, "common.visibility")}
             <select name="visibility" defaultValue={visibilityFilter}>
-              <option value="all">Toutes</option>
-              <option value="public">Publiques</option>
-              <option value="private">Privees</option>
+              <option value="all">{uiText(language, "common.all")}</option>
+              <option value="public">{uiText(language, "common.public")}</option>
+              <option value="private">{uiText(language, "common.private")}</option>
             </select>
           </label>
           <label>
-            Diffusion
+            {t("admin.formulas.diffusion")}
             <select name="diffusion" defaultValue={diffusionFilter}>
-              <option value="all">Tous</option>
-              <option value="enabled">Lien actif</option>
-              <option value="disabled">Lien inactif</option>
+              <option value="all">{uiText(language, "common.all")}</option>
+              <option value="enabled">{t("admin.formulas.link_active")}</option>
+              <option value="disabled">{t("admin.formulas.link_disabled")}</option>
             </select>
           </label>
           <button className="ghost small-btn" type="submit">
-            Filtrer
+            {uiText(language, "common.apply")}
           </button>
         </form>
       </section>
 
       <section className="card">
         <div className="row spread">
-          <h3>Formules ({filtered.length})</h3>
-          <small className="muted">Action directe: copier le lien sans ouvrir la fiche</small>
+          <h3>{t("admin.formulas.formulas_count", { count: filtered.length })}</h3>
+          <small className="muted">{t("admin.formulas.direct_action_hint")}</small>
         </div>
         {filtered.length === 0 ? (
-          <p className="muted">Aucune formule ne correspond aux filtres.</p>
+          <p className="muted">{t("admin.formulas.no_formulas")}</p>
         ) : (
           <div className="table-wrap formulas-admin-table-wrap">
             <table className="data-table formulas-admin-table">
               <thead>
                 <tr>
-                  <th>Formule</th>
-                  <th>Type</th>
-                  <th>Statut</th>
-                  <th>Visibilite</th>
-                  <th>Acces / restrictions</th>
-                  <th>Prix / paiement</th>
-                  <th>Diffusion</th>
-                  <th>Actions</th>
+                  <th>{t("admin.formulas.table_formula")}</th>
+                  <th>{uiText(language, "common.type")}</th>
+                  <th>{uiText(language, "common.status")}</th>
+                  <th>{uiText(language, "common.visibility")}</th>
+                  <th>{t("admin.formulas.access_restrictions")}</th>
+                  <th>{t("admin.formulas.price_payment")}</th>
+                  <th>{t("admin.formulas.diffusion")}</th>
+                  <th>{uiText(language, "common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((formula) => {
-                  const linkStatus = formulaDiffusionStatus(formula);
+                  const linkStatus = formulaDiffusionStatus(formula, language);
                   const purchasePath = `/buy/formula/${formula.id}`;
                   const purchaseUrl = `${baseUrl}${purchasePath}`;
                   const editHref = `/admin/config/formulas/${formula.id}?back=${encodeURIComponent(currentHref)}`;
@@ -299,42 +305,44 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
                       </td>
                       <td>
                         <div className="formula-info-col">
-                          <span>{formulaKindLabel(formula.kind)}</span>
-                          <small className="muted">{formulaFrequencyLabel(formula.kind)}</small>
+                          <span>{formulaKindLabel(formula.kind, language)}</span>
+                          <small className="muted">{formulaFrequencyLabel(formula.kind, language)}</small>
                         </div>
                       </td>
                       <td>
                         <span className={`status-pill ${formula.active ? "status-ok" : "status-off"}`}>
-                          {formula.active ? "Active" : "Desactivee"}
+                          {formula.active ? uiText(language, "common.active") : uiText(language, "common.inactive")}
                         </span>
                       </td>
                       <td>
                         <span className={`status-pill ${formula.is_private ? "status-warn" : "status-info"}`}>
-                          {formula.is_private ? "Privee" : "Publique"}
+                          {formula.is_private ? uiText(language, "common.private") : uiText(language, "common.public")}
                         </span>
                       </td>
                       <td>
                         <div className="formula-info-col">
                           <small className="muted">
-                            Activites: {formula.entitlement_course_type_names.length > 0 ? formula.entitlement_course_type_names.join(", ") : "Aucune"}
+                            {t("admin.formulas.activities_label")}: {formula.entitlement_course_type_names.length > 0 ? formula.entitlement_course_type_names.join(", ") : t("admin.formulas.no_activity")}
                           </small>
-                          <small className="muted">Restrictions: {formula.restrictions.length}</small>
+                          <small className="muted">{t("admin.formulas.restrictions_label")}: {formula.restrictions.length}</small>
                         </div>
                       </td>
                       <td>
                         <div className="formula-info-col">
                           <small>
-                            Tarif:{" "}
+                            {t("admin.formulas.price_label")}:{" "}
                             {formatMoney(
                               formula.monthly_price_value ?? formula.monthly_price_excl_vat,
                               formula.currency_code ?? "EUR",
+                              language,
                             )}
                           </small>
                           <small>
-                            Frais dossier:{" "}
+                            {t("admin.formulas.signup_fee_label")}:{" "}
                             {formatMoney(
                               formula.signup_fee_value ?? formula.signup_fee_excl_vat,
                               formula.currency_code ?? "EUR",
+                              language,
                             )}
                           </small>
                           <small className="muted">{formula.payment_methods.length > 0 ? formula.payment_methods.join(", ") : "-"}</small>
@@ -343,15 +351,19 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
                       <td>
                         <div className="formula-diffusion-block">
                           <small>
-                            Statut du lien:{" "}
+                            {t("admin.formulas.link_status")}:{" "}
                             <strong className={linkStatus.enabled ? "text-ok" : "text-danger"}>{linkStatus.label}</strong>
                           </small>
-                          <small>Lien d achat: {purchasePath}</small>
-                          <small>Achat par lien autorise: {linkStatus.enabled ? "Oui" : "Non"}</small>
+                          <small>{t("admin.formulas.purchase_link")}: {purchasePath}</small>
+                          <small>{t("admin.formulas.purchase_link_allowed")}: {linkStatus.enabled ? uiText(language, "common.yes") : uiText(language, "common.no")}</small>
                           <div className="row formula-diffusion-actions">
-                            <CopyLinkButton value={purchaseUrl} />
+                            <CopyLinkButton
+                              value={purchaseUrl}
+                              label={uiText(language, "common.copy_link")}
+                              copiedLabel={uiText(language, "common.link_copied")}
+                            />
                             <Link className="ghost small-btn" href={purchasePath} target="_blank" rel="noreferrer">
-                              Voir la page d achat
+                              {t("admin.formulas.view_purchase_page")}
                             </Link>
                           </div>
                         </div>
@@ -359,20 +371,20 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
                       <td>
                         <div className="formula-actions-cell">
                           <Link className="mode-link" href={editHref}>
-                            Modifier
+                            {uiText(language, "common.edit")}
                           </Link>
                           <form action={duplicateAdminFormulaAction}>
                             <input type="hidden" name="formula_id" value={formula.id} />
                             <input type="hidden" name="return_to" value={currentHref} />
                             <button type="submit" className="ghost small-btn">
-                              Dupliquer
+                              {uiText(language, "common.duplicate")}
                             </button>
                           </form>
                           <form action={disableAdminFormulaAction}>
                             <input type="hidden" name="formula_id" value={formula.id} />
                             <input type="hidden" name="return_to" value={currentHref} />
                             <button type="submit" className="danger small-btn" disabled={!formula.active}>
-                              Desactiver
+                              {t("admin.formulas.disable")}
                             </button>
                           </form>
                         </div>

@@ -9,6 +9,8 @@ import {
   saveTypeformIntakeResolutionAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import type { UserOut } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import styles from "../typeform-intakes.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -143,34 +145,34 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
 }
 
-function formatAmount(value: string, currency: string): string {
+function formatAmount(value: string, currency: string, language: UiLanguage): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) {
     return `${value} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currency || "EUR" }).format(amount);
+    return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: currency || "EUR" }).format(amount);
   } catch {
     return `${amount.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
 }
 
-function statusLabel(value: string): string {
-  if (value === "NEW") return "Nouveau";
-  if (value === "NORMALIZED") return "Normalise";
-  if (value === "MATCHING_REQUIRED") return "Matching requis";
-  if (value === "READY_FOR_DRAFT_QUOTE") return "Pret devis";
-  if (value === "BLOCKED") return "Bloque";
-  if (value === "PROCESSED") return "Traite";
-  if (value === "IGNORED") return "Ignore";
+function statusLabel(value: string, language: UiLanguage): string {
+  if (value === "NEW") return uiText(language, "admin.intakes.status_new");
+  if (value === "NORMALIZED") return uiText(language, "admin.intakes.status_normalized");
+  if (value === "MATCHING_REQUIRED") return uiText(language, "admin.intakes.status_matching_required");
+  if (value === "READY_FOR_DRAFT_QUOTE") return uiText(language, "admin.intakes.status_ready_draft");
+  if (value === "BLOCKED") return uiText(language, "admin.intakes.status_blocked");
+  if (value === "PROCESSED") return uiText(language, "admin.intakes.status_processed");
+  if (value === "IGNORED") return uiText(language, "admin.intakes.status_ignored");
   return value;
 }
 
@@ -180,12 +182,12 @@ function statusClass(value: string): string {
   return "status-off";
 }
 
-function segmentLabel(value: string | null): string {
+function segmentLabel(value: string | null, language: UiLanguage): string {
   const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "eveil") return "Eveil";
-  if (normalized === "child") return "Enfants";
-  if (normalized === "teen") return "Ados";
-  if (normalized === "adult") return "Adultes";
+  if (normalized === "eveil") return uiText(language, "admin.intakes.segment_eveil");
+  if (normalized === "child") return uiText(language, "admin.intakes.segment_child");
+  if (normalized === "teen") return uiText(language, "admin.intakes.segment_teen");
+  if (normalized === "adult") return uiText(language, "admin.intakes.segment_adult");
   return value || "-";
 }
 
@@ -249,16 +251,16 @@ function normalizedListValue(payload: Record<string, unknown>, key: string): str
   return "";
 }
 
-function proposalLabel(index: number): string {
-  return `Proposition ${index + 1}`;
+function proposalLabel(index: number, language: UiLanguage): string {
+  return uiText(language, "admin.intakes.proposal", { index: index + 1 });
 }
 
-function manualProposalLabel(index: number): string {
-  return `Choix manuel ${index + 1}`;
+function manualProposalLabel(index: number, language: UiLanguage): string {
+  return uiText(language, "admin.intakes.manual_choice", { index: index + 1 });
 }
 
-function slotBadgeLabel(option: TypeformSessionMatchOptionOut): string {
-  return option.recurrence_label || "Ponctuel";
+function slotBadgeLabel(option: TypeformSessionMatchOptionOut, language: UiLanguage): string {
+  return option.recurrence_label || uiText(language, "admin.intakes.punctual");
 }
 
 function slotOptionTitle(option: TypeformSessionMatchOptionOut): string {
@@ -292,16 +294,31 @@ function resolutionObject(detail: TypeformIntakeDetailOut): {
 }
 
 function confidencePillClass(label: string): string {
-  if (label === "fort") return "status-ok";
-  if (label === "moyen") return "status-warn";
+  const normalized = label.trim().toLowerCase();
+  if (normalized === "fort" || normalized === "strong") return "status-ok";
+  if (normalized === "moyen" || normalized === "medium") return "status-warn";
   return "status-off";
 }
 
-function clientModeLabel(mode: string): string {
-  if (mode === "existing_client") return "Rattacher a un client existant";
-  if (mode === "existing_family") return "Rattacher a une famille existante";
-  if (mode === "new_parent_child_prospect") return "Creer parent + enfant";
-  return "Creer un nouveau prospect adulte";
+function confidenceLabel(label: string, language: UiLanguage): string {
+  const normalized = label.trim().toLowerCase();
+  if (normalized === "fort" || normalized === "strong") {
+    return uiText(language, "admin.intakes.confidence_strong");
+  }
+  if (normalized === "moyen" || normalized === "medium") {
+    return uiText(language, "admin.intakes.confidence_medium");
+  }
+  if (normalized === "faible" || normalized === "low") {
+    return uiText(language, "admin.intakes.confidence_low");
+  }
+  return label;
+}
+
+function clientModeLabel(mode: string, language: UiLanguage): string {
+  if (mode === "existing_client") return uiText(language, "admin.intakes.mode_existing_client");
+  if (mode === "existing_family") return uiText(language, "admin.intakes.mode_existing_family");
+  if (mode === "new_parent_child_prospect") return uiText(language, "admin.intakes.mode_new_parent_child");
+  return uiText(language, "admin.intakes.mode_new_adult");
 }
 
 export default async function AdminTypeformIntakeDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
@@ -309,6 +326,13 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const intakeId = String(params.intakeId || "").trim();
   if (!intakeId) {
@@ -355,57 +379,50 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   return (
     <section className="admin-page-grid">
       {showResolutionSavedModal ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Arbitrage enregistre">
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.intakes.resolution_saved_title")}>
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={dismissSuccessHref} aria-label="Fermer">
+            <Link className="modal-close-x" href={dismissSuccessHref} aria-label={uiText(language, "common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Arbitrage enregistre</h3>
+            <h3 className="modal-title">{t("admin.intakes.resolution_saved_title")}</h3>
             <section className="flash-ok modal-flash" role="status">
               {ok}
             </section>
-            <p className="muted">
-              Les creneaux retenus ont bien ete sauvegardes pour cet intake.
-            </p>
+            <p className="muted">{t("admin.intakes.resolution_saved_body")}</p>
             <div className="row modal-actions-end top-gap-sm">
-              <Link href={dismissSuccessHref}>Fermer</Link>
+              <Link href={dismissSuccessHref}>{uiText(language, "common.close")}</Link>
             </div>
           </article>
         </section>
       ) : null}
 
       {showErrorModal ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Generation du devis impossible">
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.intakes.quote_generation_impossible_title")}>
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={dismissErrorHref} aria-label="Fermer">
+            <Link className="modal-close-x" href={dismissErrorHref} aria-label={uiText(language, "common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Generation du devis impossible</h3>
+            <h3 className="modal-title">{t("admin.intakes.quote_generation_impossible_title")}</h3>
             <section className="flash-err modal-flash" role="alert">
               {error}
             </section>
-            <p className="muted">
-              Corrigez les donnees normalisees si le questionnaire est incomplet, puis relancez la generation du devis.
-            </p>
+            <p className="muted">{t("admin.intakes.quote_generation_impossible_body")}</p>
             <div className="row modal-actions-end top-gap-sm">
-              <Link className="ghost" href={dismissErrorHref}>Fermer</Link>
-              <Link href={normalizedEditorHref}>Corriger les donnees</Link>
+              <Link className="ghost" href={dismissErrorHref}>{uiText(language, "common.close")}</Link>
+              <Link href={normalizedEditorHref}>{t("admin.intakes.correct_data")}</Link>
             </div>
           </article>
         </section>
       ) : null}
 
       {editor === "normalized" ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Corriger les donnees normalisees">
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.intakes.normalized_editor_title")}>
           <article className="modal-panel modal-panel-wide">
-            <Link className="modal-close-x" href={closeNormalizedEditorHref} aria-label="Fermer">
+            <Link className="modal-close-x" href={closeNormalizedEditorHref} aria-label={uiText(language, "common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Corriger les donnees normalisees</h3>
-            <p className={styles.editorIntro}>
-              Utilisez cette correction manuelle si le questionnaire est incomplet ou si vous devez forcer une valeur
-              avant de generer le devis brouillon.
-            </p>
+            <h3 className="modal-title">{t("admin.intakes.normalized_editor_title")}</h3>
+            <p className={styles.editorIntro}>{t("admin.intakes.normalized_editor_intro")}</p>
             <form action={saveTypeformIntakeNormalizedDataAction} className={styles.editorForm}>
               <input type="hidden" name="intake_id" value={detail.id} />
               <input type="hidden" name="return_to" value={intakeHref} />
@@ -418,126 +435,126 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
 
               <div className={styles.editorGrid}>
                 <section className={styles.editorSection}>
-                  <h4>Parent / adulte</h4>
+                  <h4>{t("admin.intakes.parent_adult")}</h4>
                   <label>
-                    Prenom
+                    {t("admin.intakes.first_name")}
                     <input name="parent_first_name" defaultValue={normalizedScalarValue(normalizedPayload, "parent_first_name")} />
                   </label>
                   <label>
-                    Nom
+                    {t("admin.intakes.last_name")}
                     <input name="parent_last_name" defaultValue={normalizedScalarValue(normalizedPayload, "parent_last_name")} />
                   </label>
                   <label>
-                    Email
+                    {uiText(language, "common.email")}
                     <input
                       name="parent_email"
                       type="email"
                       defaultValue={normalizedScalarValue(normalizedPayload, "parent_email")}
-                      placeholder="parent@example.com"
+                      placeholder={t("admin.intakes.email_placeholder")}
                     />
                   </label>
                   <label>
-                    Telephone
+                    {t("admin.intakes.phone")}
                     <input name="parent_phone" defaultValue={normalizedScalarValue(normalizedPayload, "parent_phone")} />
                   </label>
                 </section>
 
                 <section className={styles.editorSection}>
-                  <h4>Enfant / client</h4>
+                  <h4>{t("admin.intakes.child_client")}</h4>
                   <label>
-                    Type client
+                    {t("admin.intakes.customer_type")}
                     <select name="customer_type" defaultValue={normalizedScalarValue(normalizedPayload, "customer_type") || "child"}>
-                      <option value="child">Enfant</option>
-                      <option value="adult">Adulte</option>
+                      <option value="child">{t("admin.intakes.customer_type_child")}</option>
+                      <option value="adult">{t("admin.intakes.customer_type_adult")}</option>
                     </select>
                   </label>
                   <label>
-                    Prenom enfant
+                    {t("admin.intakes.first_name")}
                     <input name="child_first_name" defaultValue={normalizedScalarValue(normalizedPayload, "child_first_name")} />
                   </label>
                   <label>
-                    Nom enfant
+                    {t("admin.intakes.last_name")}
                     <input name="child_last_name" defaultValue={normalizedScalarValue(normalizedPayload, "child_last_name")} />
                   </label>
                   <label>
-                    Date de naissance
+                    {t("admin.intakes.birth_date")}
                     <input name="child_birth_date" type="date" defaultValue={normalizedScalarValue(normalizedPayload, "child_birth_date")} />
                   </label>
                 </section>
 
                 <section className={styles.editorSection}>
-                  <h4>Demande</h4>
+                  <h4>{t("admin.intakes.request")}</h4>
                   <label>
-                    Lieu demande
+                    {t("admin.intakes.requested_location")}
                     <input name="requested_location" defaultValue={normalizedScalarValue(normalizedPayload, "requested_location")} />
                   </label>
                   <label>
-                    Mode de cours
+                    {t("admin.intakes.course_mode")}
                     <input name="requested_course_mode" defaultValue={normalizedScalarValue(normalizedPayload, "requested_course_mode")} />
                   </label>
                   <label>
-                    Formule
+                    {t("admin.intakes.formula")}
                     <input name="requested_formula_type" defaultValue={normalizedScalarValue(normalizedPayload, "requested_formula_type")} />
                   </label>
                 </section>
 
                 <section className={styles.editorSection}>
-                  <h4>Preferences creneaux</h4>
+                  <h4>{t("admin.intakes.slot_preferences")}</h4>
                   <label>
-                    Jours demandes
+                    {t("admin.intakes.requested_days")}
                     <textarea
                       name="requested_days"
                       defaultValue={normalizedListValue(normalizedPayload, "requested_days")}
                       rows={4}
-                      placeholder="Un jour par ligne"
+                      placeholder={t("admin.intakes.one_day_per_line")}
                     />
                   </label>
                   <label>
-                    Horaires demandes
+                    {t("admin.intakes.requested_times")}
                     <textarea
                       name="requested_times"
                       defaultValue={normalizedListValue(normalizedPayload, "requested_times")}
                       rows={4}
-                      placeholder="Un horaire par ligne"
+                      placeholder={t("admin.intakes.one_time_per_line")}
                     />
                   </label>
                   <label>
-                    Preferences de creneaux
+                    {t("admin.intakes.requested_slot_preferences")}
                     <textarea
                       name="requested_slot_preferences"
                       defaultValue={normalizedListValue(normalizedPayload, "requested_slot_preferences")}
                       rows={5}
-                      placeholder="Une preference par ligne"
+                      placeholder={t("admin.intakes.one_preference_per_line")}
                     />
                   </label>
                 </section>
 
                 <section className={`${styles.editorSection} ${styles.editorSectionWide}`}>
-                  <h4>Produits et notes</h4>
+                  <h4>{t("admin.intakes.products_and_notes")}</h4>
                   <label>
-                    Produits demandes
+                    {t("admin.intakes.requested_products")}
                     <textarea
                       name="requested_products"
                       defaultValue={normalizedListValue(normalizedPayload, "requested_products")}
                       rows={4}
-                      placeholder="Un produit ou une option par ligne"
+                      placeholder={t("admin.intakes.one_product_per_line")}
                     />
                   </label>
                   <label>
-                    Notes
+                    {uiText(language, "common.notes")}
                     <textarea
                       name="notes"
                       defaultValue={normalizedScalarValue(normalizedPayload, "notes")}
                       rows={5}
-                      placeholder="Commentaires internes ou precision admin"
+                      placeholder={t("admin.intakes.internal_comments")}
                     />
                   </label>
                 </section>
               </div>
 
               <div className="row modal-actions-end top-gap-sm">
-                <Link className="ghost" href={closeNormalizedEditorHref}>Annuler</Link>
-                <button type="submit">Enregistrer les corrections</button>
+                <Link className="ghost" href={closeNormalizedEditorHref}>{uiText(language, "common.cancel")}</Link>
+                <button type="submit">{t("admin.intakes.save_corrections")}</button>
               </div>
             </form>
           </article>
@@ -548,18 +565,16 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         <div className="row spread wrap gap-sm">
           <div>
             <div className="row wrap gap-sm">
-              <span className={`status-pill ${statusClass(detail.intake_status)}`}>{statusLabel(detail.intake_status)}</span>
+              <span className={`status-pill ${statusClass(detail.intake_status)}`}>{statusLabel(detail.intake_status, language)}</span>
               <span className="badge">{detail.source_form_label}</span>
             </div>
-            <h2 className="top-gap-sm">Intake Typeform</h2>
-            <p className="muted">
-              Reponse {detail.source_response_id} recue le {formatDate(detail.received_at)}.
-            </p>
+            <h2 className="top-gap-sm">{t("admin.intakes.detail_title")}</h2>
+            <p className="muted">{t("admin.intakes.received_on", { responseId: detail.source_response_id, date: formatDate(detail.received_at, language) })}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href={backHref}>Retour inbox</Link>
+            <Link className="ghost" href={backHref}>{t("admin.intakes.back_inbox")}</Link>
             {detail.related_quote_id ? (
-              <Link className="ghost" href={`/admin/quotes/${encodeURIComponent(detail.related_quote_id)}`}>Ouvrir devis</Link>
+              <Link className="ghost" href={`/admin/quotes/${encodeURIComponent(detail.related_quote_id)}`}>{t("admin.intakes.open_related_quote")}</Link>
             ) : null}
           </div>
         </div>
@@ -569,28 +584,28 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
 
       <section className={`grid cols-2 ${styles.panelGrid}`}>
         <article className="card">
-          <h3>Resume intake</h3>
+          <h3>{t("admin.intakes.summary_title")}</h3>
           <div className={`${styles.kvGrid} top-gap-sm`}>
-            <div><strong>Formulaire</strong><p className="muted">{detail.source_form_id}</p></div>
-            <div><strong>Source code</strong><p className="muted">{detail.form_config?.source_code || "-"}</p></div>
-            <div><strong>Site</strong><p className="muted">{detail.detected_location || "-"}</p></div>
-            <div><strong>Segment</strong><p className="muted">{segmentLabel(detail.detected_segment)}</p></div>
-            <div><strong>Annee scolaire</strong><p className="muted">{detail.detected_school_year || "-"}</p></div>
-            <div><strong>Mode client actuel</strong><p className="muted">{clientModeLabel(resolution.clientMode)}</p></div>
+            <div><strong>{t("admin.intakes.form_identifier")}</strong><p className="muted">{detail.source_form_id}</p></div>
+            <div><strong>{t("admin.intakes.source_code")}</strong><p className="muted">{detail.form_config?.source_code || "-"}</p></div>
+            <div><strong>{uiText(language, "common.site")}</strong><p className="muted">{detail.detected_location || "-"}</p></div>
+            <div><strong>{t("admin.intakes.segment")}</strong><p className="muted">{segmentLabel(detail.detected_segment, language)}</p></div>
+            <div><strong>{t("admin.intakes.school_year")}</strong><p className="muted">{detail.detected_school_year || "-"}</p></div>
+            <div><strong>{t("admin.intakes.current_client_mode")}</strong><p className="muted">{clientModeLabel(resolution.clientMode, language)}</p></div>
           </div>
         </article>
 
         <article className="card">
-          <h3>Warnings et blocages</h3>
+          <h3>{t("admin.intakes.warnings_blockages_title")}</h3>
           <div className="top-gap-sm">
-            <p><strong>Warnings</strong></p>
-            {detail.warnings.length === 0 ? <p className="muted">Aucun warning.</p> : (
+            <p><strong>{uiText(language, "common.warnings")}</strong></p>
+            {detail.warnings.length === 0 ? <p className="muted">{t("admin.intakes.no_warning")}</p> : (
               <ul className={styles.messageList}>
                 {detail.warnings.map((message) => <li key={message}>{message}</li>)}
               </ul>
             )}
-            <p className="top-gap-sm"><strong>Blocages</strong></p>
-            {detail.blockages.length === 0 ? <p className="muted">Aucun blocage.</p> : (
+            <p className="top-gap-sm"><strong>{uiText(language, "common.blockages")}</strong></p>
+            {detail.blockages.length === 0 ? <p className="muted">{t("admin.intakes.no_blockage")}</p> : (
               <ul className={`${styles.messageList} ${styles.messageListBlocked}`}>
                 {detail.blockages.map((message) => <li key={message}>{message}</li>)}
               </ul>
@@ -599,13 +614,13 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         </article>
 
         <article className="card span-2">
-          <h3>Reponse Typeform simplifiee</h3>
+          <h3>{t("admin.intakes.response_simplified")}</h3>
           <div className="table-wrap top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Champ</th>
-                  <th>Valeur</th>
+                  <th>{uiText(language, "common.key")}</th>
+                  <th>{uiText(language, "common.value")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -623,17 +638,17 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         <article className="card">
           <div className="row spread wrap gap-sm">
             <div>
-              <h3>Donnees normalisees</h3>
-              <p className="muted">Bloc editable pour completer ou forcer les valeurs utiles au pipeline.</p>
+              <h3>{t("admin.intakes.normalized_data_title")}</h3>
+              <p className="muted">{t("admin.intakes.normalized_data_subtitle")}</p>
             </div>
-            <Link className="ghost" href={normalizedEditorHref}>Corriger / completer</Link>
+            <Link className="ghost" href={normalizedEditorHref}>{t("admin.intakes.correct_complete")}</Link>
           </div>
           <div className="table-wrap top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Cle</th>
-                  <th>Valeur</th>
+                  <th>{uiText(language, "common.key")}</th>
+                  <th>{uiText(language, "common.value")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -649,18 +664,18 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         </article>
 
         <article className="card">
-          <h3>Matching client</h3>
+          <h3>{t("admin.intakes.matching_client_title")}</h3>
           <div className={`${styles.candidateStack} top-gap-sm`}>
-            {detail.client_candidates.length === 0 ? <p className="muted">Aucune correspondance detectee automatiquement.</p> : null}
+            {detail.client_candidates.length === 0 ? <p className="muted">{t("admin.intakes.no_auto_match")}</p> : null}
             {detail.client_candidates.map((candidate) => (
               <article className={styles.candidateItem} key={`${candidate.kind}-${candidate.client_id || candidate.display_name}-${candidate.adult_client_id || ""}-${candidate.child_client_id || ""}`}>
                 <div className="row spread wrap gap-sm">
                   <strong>{candidate.display_name}</strong>
-                  <span className={`status-pill ${confidencePillClass(candidate.confidence_label)}`}>{candidate.confidence_label} · {candidate.confidence}</span>
+                  <span className={`status-pill ${confidencePillClass(candidate.confidence_label)}`}>{confidenceLabel(candidate.confidence_label, language)} · {candidate.confidence}</span>
                 </div>
                 <p className="muted">{candidate.subtitle || candidate.kind}</p>
                 {candidate.reasons.length > 0 ? (
-                  <p className="muted">Raisons: {candidate.reasons.join(", ")}</p>
+                  <p className="muted">{t("admin.intakes.reasons")}: {candidate.reasons.join(", ")}</p>
                 ) : null}
               </article>
             ))}
@@ -668,37 +683,37 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         </article>
 
         <article className="card span-2">
-          <h3>Panneau de resolution</h3>
+          <h3>{t("admin.intakes.resolution_panel")}</h3>
           <form action={saveTypeformIntakeResolutionAction} className="grid cols-2 config-form-grid top-gap-sm" id="resolution-form">
             <input type="hidden" name="intake_id" value={detail.id} />
             <input type="hidden" name="return_to" value={intakeHref} />
 
             <label>
-              Mode client
+              {t("admin.intakes.client_mode")}
               <select name="client_mode" defaultValue={resolution.clientMode}>
-                <option value="new_adult_prospect">Creer un nouveau prospect adulte</option>
-                <option value="new_parent_child_prospect">Creer parent + enfant</option>
-                <option value="existing_client">Rattacher a un client existant</option>
-                <option value="existing_family">Rattacher a une famille existante</option>
+                <option value="new_adult_prospect">{t("admin.intakes.mode_new_adult")}</option>
+                <option value="new_parent_child_prospect">{t("admin.intakes.mode_new_parent_child")}</option>
+                <option value="existing_client">{t("admin.intakes.mode_existing_client")}</option>
+                <option value="existing_family">{t("admin.intakes.mode_existing_family")}</option>
               </select>
             </label>
 
             <label>
-              Client existant
+              {t("admin.intakes.existing_client")}
               <select name="selected_client_id" defaultValue={resolution.selectedClientId}>
-                <option value="">Aucun</option>
+                <option value="">{uiText(language, "common.no")}</option>
                 {clientCandidates.map((candidate) => (
                   <option key={candidate.client_id || candidate.display_name} value={candidate.client_id || ""}>
-                    {candidate.display_name} · {candidate.confidence_label} · {candidate.confidence}
+                    {candidate.display_name} · {confidenceLabel(candidate.confidence_label, language)} · {candidate.confidence}
                   </option>
                 ))}
               </select>
             </label>
 
             <label>
-              Famille adulte
+              {t("admin.intakes.family_adult")}
               <select name="selected_family_adult_client_id" defaultValue={resolution.selectedFamilyAdultClientId}>
-                <option value="">Aucune</option>
+                <option value="">{uiText(language, "common.no")}</option>
                 {familyCandidates.map((candidate) => (
                   <option key={`adult-${candidate.adult_client_id || candidate.display_name}`} value={candidate.adult_client_id || ""}>
                     {candidate.display_name}
@@ -708,9 +723,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
             </label>
 
             <label>
-              Famille enfant
+              {t("admin.intakes.family_child")}
               <select name="selected_family_child_client_id" defaultValue={resolution.selectedFamilyChildClientId}>
-                <option value="">Aucun</option>
+                <option value="">{uiText(language, "common.no")}</option>
                 {familyCandidates.map((candidate) => (
                   <option key={`child-${candidate.child_client_id || candidate.display_name}`} value={candidate.child_client_id || ""}>
                     {candidate.display_name}
@@ -720,9 +735,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
             </label>
 
             <label>
-              Payeur famille
+              {t("admin.intakes.family_payer")}
               <select name="selected_family_billing_client_id" defaultValue={resolution.selectedFamilyBillingClientId}>
-                <option value="">Automatique</option>
+                <option value="">{t("admin.intakes.automatic")}</option>
                 {familyCandidates.map((candidate) => (
                   <option key={`billing-${candidate.billing_client_id || candidate.display_name}`} value={candidate.billing_client_id || ""}>
                     {candidate.display_name}
@@ -732,14 +747,14 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
             </label>
 
             <label className="span-2">
-              Notes d arbitrage
+              {t("admin.intakes.arbitration_notes")}
               <textarea name="resolution_notes" defaultValue={resolution.notes} rows={3} />
             </label>
 
             <div className="span-2">
-              <h4>Creneaux</h4>
+              <h4>{t("admin.intakes.slots")}</h4>
               <div className={`${styles.candidateStack} top-gap-sm`}>
-                {detail.session_recommendations.length === 0 ? <p className="muted">Aucune recommandation de creneau.</p> : null}
+                {detail.session_recommendations.length === 0 ? <p className="muted">{t("admin.intakes.no_slot_recommendation")}</p> : null}
                 {detail.session_recommendations.map((recommendation) => (
                   <article className={styles.candidateItem} key={recommendation.activity_id}>
                     <div className="row spread wrap gap-sm">
@@ -755,45 +770,42 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                       </span>
                     </div>
                     <label className="top-gap-sm">
-                      Creneau retenu
+                      {t("admin.intakes.selected_slot")}
                       <select name={`selected_session_for_${recommendation.activity_id}`} defaultValue={recommendation.selected_session_id || ""}>
-                        <option value="">Aucune selection</option>
+                        <option value="">{t("admin.intakes.no_selection")}</option>
                         {recommendation.options.length > 0 ? (
-                          <optgroup label="Propositions automatiques">
+                          <optgroup label={t("admin.intakes.auto_proposals")}>
                             {recommendation.options.map((option, index) => (
                               <option key={option.session_id} value={option.session_id}>
-                                {proposalLabel(index)} · {option.selection_label}
+                                {proposalLabel(index, language)} · {option.selection_label}
                               </option>
                             ))}
                           </optgroup>
                         ) : null}
                         {recommendation.manual_options.length > 0 ? (
-                          <optgroup label="Choix manuels administrateur">
+                          <optgroup label={t("admin.intakes.manual_choices")}>
                             {recommendation.manual_options.map((option, index) => (
                               <option key={option.session_id} value={option.session_id}>
-                                {manualProposalLabel(index)} · {option.selection_label}
+                                {manualProposalLabel(index, language)} · {option.selection_label}
                               </option>
                             ))}
                           </optgroup>
                         ) : null}
                       </select>
                     </label>
-                    <p className="muted">
-                      {recommendation.options.length} proposition{recommendation.options.length > 1 ? "s" : ""} automatique{recommendation.options.length > 1 ? "s" : ""} et{" "}
-                      {recommendation.manual_options.length} choix manuel{recommendation.manual_options.length > 1 ? "s" : ""} disponibles.
-                    </p>
+                    <p className="muted">{t("admin.intakes.proposals_available", { autoCount: recommendation.options.length, manualCount: recommendation.manual_options.length })}</p>
                     {recommendation.options.length > 0 ? (
                       <div className="table-wrap top-gap-sm">
                         <table className="data-table">
                           <thead>
                             <tr>
-                              <th>Proposition</th>
-                              <th>Occurrence</th>
-                              <th>Serie</th>
-                              <th>Lieu</th>
-                              <th>Places</th>
-                              <th>Score</th>
-                              <th>Raisons</th>
+                              <th>{t("admin.intakes.proposal_header")}</th>
+                              <th>{t("admin.intakes.occurrence")}</th>
+                              <th>{t("admin.intakes.series")}</th>
+                              <th>{uiText(language, "common.location")}</th>
+                              <th>{t("admin.intakes.seats")}</th>
+                              <th>{uiText(language, "common.score")}</th>
+                              <th>{t("admin.intakes.reasons")}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -804,9 +816,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                               >
                                 <td>
                                   <div className={styles.optionCellStack}>
-                                    <strong>{proposalLabel(index)}</strong>
+                                    <strong>{proposalLabel(index, language)}</strong>
                                     {recommendation.selected_session_id === option.session_id ? (
-                                      <span className="badge">Retenu</span>
+                                      <span className="badge">{t("admin.intakes.retained")}</span>
                                     ) : null}
                                   </div>
                                 </td>
@@ -816,7 +828,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                                     <span className="muted">{slotOptionTitle(option)}</span>
                                   </div>
                                 </td>
-                                <td>{slotBadgeLabel(option)}</td>
+                                <td>{slotBadgeLabel(option, language)}</td>
                                 <td>{option.location_name}</td>
                                 <td>{option.seats_remaining}</td>
                                 <td>{option.score}</td>
@@ -832,14 +844,14 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                         <table className="data-table">
                           <thead>
                             <tr>
-                              <th>Choix manuel</th>
-                              <th>Activite</th>
-                              <th>Occurrence</th>
-                              <th>Serie</th>
-                              <th>Lieu</th>
-                              <th>Places</th>
-                              <th>Score</th>
-                              <th>Raisons</th>
+                              <th>{t("admin.intakes.manual_choice_header")}</th>
+                              <th>{t("admin.formulas.activities_label")}</th>
+                              <th>{t("admin.intakes.occurrence")}</th>
+                              <th>{t("admin.intakes.series")}</th>
+                              <th>{uiText(language, "common.location")}</th>
+                              <th>{t("admin.intakes.seats")}</th>
+                              <th>{uiText(language, "common.score")}</th>
+                              <th>{t("admin.intakes.reasons")}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -850,9 +862,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                               >
                                 <td>
                                   <div className={styles.optionCellStack}>
-                                    <strong>{manualProposalLabel(index)}</strong>
+                                    <strong>{manualProposalLabel(index, language)}</strong>
                                     {recommendation.selected_session_id === option.session_id ? (
-                                      <span className="badge">Retenu</span>
+                                      <span className="badge">{t("admin.intakes.retained")}</span>
                                     ) : null}
                                   </div>
                                 </td>
@@ -863,7 +875,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                                     <span className="muted">{slotOptionTitle(option)}</span>
                                   </div>
                                 </td>
-                                <td>{slotBadgeLabel(option)}</td>
+                                <td>{slotBadgeLabel(option, language)}</td>
                                 <td>{option.location_name}</td>
                                 <td>{option.seats_remaining}</td>
                                 <td>{option.score}</td>
@@ -881,11 +893,11 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
 
           </form>
           <div className="row wrap gap-sm top-gap-sm">
-            <button type="submit" form="resolution-form">Enregistrer arbitrage</button>
+            <button type="submit" form="resolution-form">{t("admin.intakes.save_arbitration")}</button>
             <form action={reanalyzeTypeformIntakeAction} className="inline">
               <input type="hidden" name="intake_id" value={detail.id} />
               <input type="hidden" name="return_to" value={intakeHref} />
-              <button type="submit" className="ghost">Analyser a nouveau les propositions</button>
+              <button type="submit" className="ghost">{t("admin.intakes.reanalyze_proposals")}</button>
             </form>
           </div>
         </article>
@@ -893,45 +905,44 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         <article className="card span-2">
           <div className="row spread wrap gap-sm">
             <div>
-              <h3>Preview du pre-devis</h3>
-              <p className="muted">Le devis brouillon final reutilisera le module devis existant.</p>
+              <h3>{t("admin.intakes.preview_quote_title")}</h3>
+              <p className="muted">{t("admin.intakes.preview_quote_subtitle")}</p>
             </div>
             <form action={generateTypeformDraftQuoteAction}>
               <input type="hidden" name="intake_id" value={detail.id} />
               <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
               <button type="submit" disabled={draftQuoteBlocked}>
                 {detail.related_quote_id
-                  ? "Devis deja cree"
+                  ? t("admin.intakes.quote_already_created")
                   : draftQuoteNeedsArbitrage
-                  ? "Generer devis brouillon avec avertissement"
-                  : "Generer devis brouillon"}
+                  ? t("admin.intakes.generate_quote_with_warning")
+                  : t("admin.intakes.generate_quote")}
               </button>
             </form>
           </div>
           {draftQuoteNeedsArbitrage && !detail.related_quote_id ? (
             <section className="flash-warn top-gap-sm">
-              Le devis peut etre genere meme si des arbitrages restent en attente. Un avertissement sera ajoute et le
-              planning devra etre finalise avant envoi.
+              {t("admin.intakes.quote_generation_warning")}
             </section>
           ) : null}
 
           {detail.preview_quote ? (
             <>
               <div className={`${styles.kvGrid} top-gap-sm`}>
-                <div><strong>Contexte</strong><p className="muted">{detail.preview_quote.context_label}</p></div>
-                <div><strong>Client / prospect</strong><p className="muted">{detail.preview_quote.customer_label}</p></div>
-                <div><strong>Lieu</strong><p className="muted">{detail.preview_quote.location_name || "-"}</p></div>
-                <div><strong>Type devis</strong><p className="muted">{detail.preview_quote.quote_type_name || "-"}</p></div>
-                <div><strong>Catalogue</strong><p className="muted">{detail.preview_quote.pricing_catalog_name || "-"}</p></div>
-                <div><strong>Plan de paiement</strong><p className="muted">{detail.preview_quote.payment_plan_name || "-"}</p></div>
-                <div><strong>Entite legale</strong><p className="muted">{detail.preview_quote.legal_entity_name || "-"}</p></div>
-                <div><strong>Annee scolaire</strong><p className="muted">{detail.preview_quote.school_year_label || "-"}</p></div>
+                <div><strong>{t("admin.intakes.context")}</strong><p className="muted">{detail.preview_quote.context_label}</p></div>
+                <div><strong>{t("admin.intakes.customer_or_prospect")}</strong><p className="muted">{detail.preview_quote.customer_label}</p></div>
+                <div><strong>{uiText(language, "common.location")}</strong><p className="muted">{detail.preview_quote.location_name || "-"}</p></div>
+                <div><strong>{t("admin.intakes.quote_type")}</strong><p className="muted">{detail.preview_quote.quote_type_name || "-"}</p></div>
+                <div><strong>{t("admin.intakes.catalog")}</strong><p className="muted">{detail.preview_quote.pricing_catalog_name || "-"}</p></div>
+                <div><strong>{t("admin.intakes.payment_plan")}</strong><p className="muted">{detail.preview_quote.payment_plan_name || "-"}</p></div>
+                <div><strong>{t("admin.intakes.legal_entity")}</strong><p className="muted">{detail.preview_quote.legal_entity_name || "-"}</p></div>
+                <div><strong>{t("admin.intakes.school_year")}</strong><p className="muted">{detail.preview_quote.school_year_label || "-"}</p></div>
               </div>
 
               <div className="top-gap-sm">
-                <strong>Options</strong>
+                <strong>{t("admin.intakes.options")}</strong>
                 {detail.preview_quote.selected_options.length === 0 ? (
-                  <p className="muted">Aucune option specifique.</p>
+                  <p className="muted">{t("admin.intakes.no_specific_options")}</p>
                 ) : (
                   <div className={`${styles.chipRow} top-gap-sm`}>
                     {detail.preview_quote.selected_options.map((item) => (
@@ -945,11 +956,11 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Ligne</th>
-                      <th>Quantite</th>
-                      <th>PU TTC</th>
-                      <th>TVA</th>
-                      <th>Total TTC</th>
+                      <th>{t("admin.intakes.line")}</th>
+                      <th>{uiText(language, "common.quantity")}</th>
+                      <th>{t("admin.intakes.unit_price_ttc")}</th>
+                      <th>{uiText(language, "common.vat")}</th>
+                      <th>{t("admin.intakes.total_ttc")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -960,9 +971,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                           {line.description ? <div className="muted">{line.description}</div> : null}
                         </td>
                         <td>{line.quantity}</td>
-                        <td>{formatAmount(line.unit_price_ttc, detail.preview_quote?.currency || "EUR")}</td>
+                        <td>{formatAmount(line.unit_price_ttc, detail.preview_quote?.currency || "EUR", language)}</td>
                         <td>{line.vat_rate}%</td>
-                        <td>{formatAmount(line.amount_ttc, detail.preview_quote?.currency || "EUR")}</td>
+                        <td>{formatAmount(line.amount_ttc, detail.preview_quote?.currency || "EUR", language)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -970,13 +981,13 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
               </div>
 
               <div className={`${styles.totalRow} top-gap-sm`}>
-                <div><strong>Total HT</strong><p>{formatAmount(detail.preview_quote.total_ht, detail.preview_quote.currency)}</p></div>
-                <div><strong>Total TVA</strong><p>{formatAmount(detail.preview_quote.total_vat, detail.preview_quote.currency)}</p></div>
-                <div><strong>Total TTC</strong><p>{formatAmount(detail.preview_quote.total_ttc, detail.preview_quote.currency)}</p></div>
+                <div><strong>{t("admin.intakes.total_ht")}</strong><p>{formatAmount(detail.preview_quote.total_ht, detail.preview_quote.currency, language)}</p></div>
+                <div><strong>{t("admin.intakes.total_vat")}</strong><p>{formatAmount(detail.preview_quote.total_vat, detail.preview_quote.currency, language)}</p></div>
+                <div><strong>{t("admin.intakes.total_ttc")}</strong><p>{formatAmount(detail.preview_quote.total_ttc, detail.preview_quote.currency, language)}</p></div>
               </div>
             </>
           ) : (
-            <p className="muted top-gap-sm">Aucun pre-devis exploitable pour le moment.</p>
+            <p className="muted top-gap-sm">{t("admin.intakes.no_preview_quote")}</p>
           )}
         </article>
       </section>

@@ -10,6 +10,8 @@ import {
   seedTypeformDemoAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
+import type { UserOut } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 import styles from "./typeform-intakes.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -83,22 +85,22 @@ function safeStatus(raw: string): string {
   return "";
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
 }
 
-function statusLabel(value: string): string {
-  if (value === "NEW") return "Nouveau";
-  if (value === "NORMALIZED") return "Normalise";
-  if (value === "MATCHING_REQUIRED") return "Matching requis";
-  if (value === "READY_FOR_DRAFT_QUOTE") return "Pret devis";
-  if (value === "BLOCKED") return "Bloque";
-  if (value === "PROCESSED") return "Traite";
-  if (value === "IGNORED") return "Ignore";
+function statusLabel(value: string, language: UiLanguage): string {
+  if (value === "NEW") return uiText(language, "admin.intakes.status_new");
+  if (value === "NORMALIZED") return uiText(language, "admin.intakes.status_normalized");
+  if (value === "MATCHING_REQUIRED") return uiText(language, "admin.intakes.status_matching_required");
+  if (value === "READY_FOR_DRAFT_QUOTE") return uiText(language, "admin.intakes.status_ready_draft");
+  if (value === "BLOCKED") return uiText(language, "admin.intakes.status_blocked");
+  if (value === "PROCESSED") return uiText(language, "admin.intakes.status_processed");
+  if (value === "IGNORED") return uiText(language, "admin.intakes.status_ignored");
   return value;
 }
 
@@ -112,12 +114,12 @@ function statusClass(value: string): string {
   return "status-off";
 }
 
-function segmentLabel(value: string | null): string {
+function segmentLabel(value: string | null, language: UiLanguage): string {
   const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "eveil") return "Eveil";
-  if (normalized === "child") return "Enfants";
-  if (normalized === "teen") return "Ados";
-  if (normalized === "adult") return "Adultes";
+  if (normalized === "eveil") return uiText(language, "admin.intakes.segment_eveil");
+  if (normalized === "child") return uiText(language, "admin.intakes.segment_child");
+  if (normalized === "teen") return uiText(language, "admin.intakes.segment_teen");
+  if (normalized === "adult") return uiText(language, "admin.intakes.segment_adult");
   return value || "-";
 }
 
@@ -167,6 +169,7 @@ function IntakePaginationControls({
   totalPages,
   pageSize,
   pageStart,
+  language,
 }: {
   q: string;
   status: string;
@@ -175,21 +178,27 @@ function IntakePaginationControls({
   totalPages: number;
   pageSize: number;
   pageStart: number;
+  language: UiLanguage;
 }): JSX.Element {
   const previousPageHref = buildIntakesHref({ q, status, page: currentPage - 1, pageSize });
   const nextPageHref = buildIntakesHref({ q, status, page: currentPage + 1, pageSize });
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   return (
     <div className="row spread wrap clients-pagination top-gap-sm">
       <div className="row wrap gap-sm">
         <small className="muted">
-          Affichage {pageStart + 1}-{Math.min(pageStart + pageSize, total)} sur {total} intake(s)
+          {t("admin.intakes.pagination_summary", {
+            start: total === 0 ? 0 : pageStart + 1,
+            end: Math.min(pageStart + pageSize, total),
+            total,
+          })}
         </small>
         <form method="get" className="row wrap gap-sm">
           {q ? <input type="hidden" name="q" value={q} /> : null}
           {status ? <input type="hidden" name="status" value={status} /> : null}
           <label className="row gap-sm">
-            <span className="muted">Par page</span>
+            <span className="muted">{uiText(language, "common.per_page")}</span>
             <select name="page_size" defaultValue={String(pageSize)}>
               {PAGE_SIZE_OPTIONS.map((option) => (
                 <option key={option} value={option}>
@@ -198,26 +207,26 @@ function IntakePaginationControls({
               ))}
             </select>
           </label>
-          <button type="submit" className="ghost">Appliquer</button>
+          <button type="submit" className="ghost">{uiText(language, "common.apply")}</button>
         </form>
       </div>
       <div className="row">
         {currentPage > 1 ? (
           <Link className="mode-link" href={previousPageHref}>
-            ← Precedent
+            ← {uiText(language, "common.previous")}
           </Link>
         ) : (
-          <span className="mode-link disabled-link">← Precedent</span>
+          <span className="mode-link disabled-link">← {uiText(language, "common.previous")}</span>
         )}
         <span className="badge">
-          Page {currentPage}/{totalPages}
+          {uiText(language, "common.page")} {currentPage}/{totalPages}
         </span>
         {currentPage < totalPages ? (
           <Link className="mode-link" href={nextPageHref}>
-            Suivant →
+            {uiText(language, "common.next")} →
           </Link>
         ) : (
-          <span className="mode-link disabled-link">Suivant →</span>
+          <span className="mode-link disabled-link">{uiText(language, "common.next")} →</span>
         )}
       </div>
     </div>
@@ -229,6 +238,13 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const q = readParam(searchParams, "q").trim();
   const status = safeStatus(readParam(searchParams, "status"));
@@ -264,45 +280,45 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Inbox Typeform</h2>
-            <p className="muted">Pipeline Typeform → Intake → Normalisation → Pre-devis → Devis brouillon.</p>
+            <h2>{t("admin.intakes.title")}</h2>
+            <p className="muted">{t("admin.intakes.subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href="/admin/quotes">Devis</Link>
-            <Link className="ghost" href="/admin/prospects">Prospects</Link>
+            <Link className="ghost" href="/admin/quotes">{t("admin.intakes.open_quote")}</Link>
+            <Link className="ghost" href="/admin/prospects">{uiText(language, "admin.nav.prospects")}</Link>
             <form action={seedTypeformDemoAction}>
               <input type="hidden" name="return_to" value="/admin/intakes" />
-              <button type="submit">Charger la demo</button>
+              <button type="submit">{t("admin.intakes.load_demo")}</button>
             </form>
           </div>
         </div>
       </section>
 
-      {!result.ok ? <section className="flash-err">Erreur backend: {result.message}</section> : null}
+      {!result.ok ? <section className="flash-err">{t("admin.intakes.backend_error")}: {result.message}</section> : null}
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
 
       <section className="card">
         <form method="get" className="grid cols-5 sticky-filters">
           <label className="span-2">
-            Recherche
-            <input type="search" name="q" defaultValue={q} placeholder="Prospect, enfant, site, segment..." />
+            {uiText(language, "common.search")}
+            <input type="search" name="q" defaultValue={q} placeholder={t("admin.intakes.search_placeholder")} />
           </label>
           <label>
-            Statut
+            {uiText(language, "common.status")}
             <select name="status" defaultValue={status}>
-              <option value="">Tous</option>
-              <option value="NEW">Nouveau</option>
-              <option value="NORMALIZED">Normalise</option>
-              <option value="MATCHING_REQUIRED">Matching requis</option>
-              <option value="READY_FOR_DRAFT_QUOTE">Pret devis</option>
-              <option value="BLOCKED">Bloque</option>
-              <option value="PROCESSED">Traite</option>
-              <option value="IGNORED">Ignore</option>
+              <option value="">{uiText(language, "common.all")}</option>
+              <option value="NEW">{t("admin.intakes.status_new")}</option>
+              <option value="NORMALIZED">{t("admin.intakes.status_normalized")}</option>
+              <option value="MATCHING_REQUIRED">{t("admin.intakes.status_matching_required")}</option>
+              <option value="READY_FOR_DRAFT_QUOTE">{t("admin.intakes.status_ready_draft")}</option>
+              <option value="BLOCKED">{t("admin.intakes.status_blocked")}</option>
+              <option value="PROCESSED">{t("admin.intakes.status_processed")}</option>
+              <option value="IGNORED">{t("admin.intakes.status_ignored")}</option>
             </select>
           </label>
           <label>
-            Par page
+            {uiText(language, "common.per_page")}
             <select name="page_size" defaultValue={String(pageSize)}>
               {PAGE_SIZE_OPTIONS.map((option) => (
                 <option key={option} value={option}>
@@ -312,23 +328,23 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
             </select>
           </label>
           <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
-            <button type="submit">Filtrer</button>
-            <Link className="ghost" href="/admin/intakes">Reinitialiser</Link>
+            <button type="submit">{uiText(language, "common.apply")}</button>
+            <Link className="ghost" href="/admin/intakes">{uiText(language, "common.reset")}</Link>
           </div>
         </form>
       </section>
 
       <section className="card">
         <div className="row spread wrap gap-sm">
-          <h3>Intakes</h3>
-          <p className="muted">{total} element(s)</p>
+          <h3>{t("admin.intakes.table_title")}</h3>
+          <p className="muted">{t("admin.intakes.records_count", { count: total })}</p>
         </div>
         {rows.length === 0 ? (
           <div className={`${styles.emptyState} top-gap-sm`}>
-            <p className="muted">Aucune intake pour le moment. Chargez la demo pour obtenir les 4 scenarios de reference.</p>
+            <p className="muted">{t("admin.intakes.empty_message")}</p>
             <form action={seedTypeformDemoAction} className="row gap-sm">
               <input type="hidden" name="return_to" value="/admin/intakes" />
-              <button type="submit">Installer les scenarios demo</button>
+              <button type="submit">{t("admin.intakes.install_demo")}</button>
             </form>
           </div>
         ) : (
@@ -341,27 +357,28 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
               totalPages={totalPages}
               pageSize={pageSize}
               pageStart={pageStart}
+              language={language}
             />
             <div className="table-wrap top-gap-sm">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Source form</th>
-                  <th>Prospect</th>
-                  <th>Enfant</th>
-                  <th>Site</th>
-                  <th>Segment</th>
-                  <th>Statut</th>
-                  <th>Warnings</th>
-                  <th>Blocages</th>
-                  <th>Action</th>
+                  <th>{uiText(language, "common.date")}</th>
+                  <th>{t("admin.intakes.source_form")}</th>
+                  <th>{t("admin.intakes.prospect")}</th>
+                  <th>{uiText(language, "client.child")}</th>
+                  <th>{uiText(language, "common.site")}</th>
+                  <th>{t("admin.intakes.segment")}</th>
+                  <th>{uiText(language, "common.status")}</th>
+                  <th>{uiText(language, "common.warnings")}</th>
+                  <th>{uiText(language, "common.blockages")}</th>
+                  <th>{uiText(language, "client.action")}</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id}>
-                    <td>{formatDate(row.received_at)}</td>
+                    <td>{formatDate(row.received_at, language)}</td>
                     <td>
                       <strong>{row.source_form_label}</strong>
                       <div className="muted">{row.source_form_id}</div>
@@ -369,30 +386,30 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
                     <td>{row.prospect_label || "-"}</td>
                     <td>{row.child_label || "-"}</td>
                     <td>{row.detected_location || "-"}</td>
-                    <td>{segmentLabel(row.detected_segment)}</td>
+                    <td>{segmentLabel(row.detected_segment, language)}</td>
                     <td>
-                      <span className={`status-pill ${statusClass(row.intake_status)}`}>{statusLabel(row.intake_status)}</span>
+                      <span className={`status-pill ${statusClass(row.intake_status)}`}>{statusLabel(row.intake_status, language)}</span>
                     </td>
                     <td>{compactList(row.warnings)}</td>
                     <td>{compactList(row.blockages)}</td>
                     <td>
                       <div className="row wrap gap-sm">
-                        <Link className="ghost" href={`/admin/intakes/${encodeURIComponent(row.id)}`}>Ouvrir</Link>
+                        <Link className="ghost" href={`/admin/intakes/${encodeURIComponent(row.id)}`}>{uiText(language, "common.open")}</Link>
                         {row.related_quote_id ? (
-                          <Link className="ghost" href={`/admin/quotes/${encodeURIComponent(row.related_quote_id)}`}>Devis</Link>
+                          <Link className="ghost" href={`/admin/quotes/${encodeURIComponent(row.related_quote_id)}`}>{t("admin.intakes.open_quote")}</Link>
                         ) : null}
                         {!row.related_quote_id && row.intake_status !== "IGNORED" ? (
                           <form action={ignoreTypeformIntakeAction}>
                             <input type="hidden" name="intake_id" value={row.id} />
                             <input type="hidden" name="return_to" value={returnTo} />
-                            <button type="submit" className="ghost">Ignorer</button>
+                            <button type="submit" className="ghost">{t("admin.intakes.ignore")}</button>
                           </form>
                         ) : null}
                         {!row.related_quote_id && row.intake_status === "IGNORED" ? (
                           <form action={restoreTypeformIntakeAction}>
                             <input type="hidden" name="intake_id" value={row.id} />
                             <input type="hidden" name="return_to" value={returnTo} />
-                            <button type="submit" className="ghost">Reprendre</button>
+                            <button type="submit" className="ghost">{t("admin.intakes.resume")}</button>
                           </form>
                         ) : null}
                         {!row.related_quote_id ? (
@@ -401,10 +418,13 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
                             <input type="hidden" name="return_to" value={returnTo} />
                             <ConfirmSubmitButton
                               formId={`delete-intake-${row.id}`}
-                              label="Supprimer"
-                              title="Supprimer cette intake ?"
-                              description="Cette action supprime definitivement la reponse Typeform si aucun devis n'y est rattache."
-                              confirmLabel="Supprimer"
+                              label={uiText(language, "common.delete")}
+                              title={t("admin.intakes.delete_title")}
+                              description={t("admin.intakes.delete_description")}
+                              confirmLabel={t("admin.intakes.delete_confirm")}
+                              cancelLabel={uiText(language, "common.cancel")}
+                              closeAriaLabel={uiText(language, "common.close")}
+                              missingFormError={uiText(language, "common.form_not_found")}
                               className="danger ghost"
                             />
                           </form>
@@ -419,16 +439,17 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
           </>
         )}
         {total > 0 ? (
-          <IntakePaginationControls
-            q={q}
-            status={status}
-            total={total}
-            currentPage={currentPage}
-            totalPages={totalPages}
-            pageSize={pageSize}
-            pageStart={pageStart}
-          />
-        ) : null}
+            <IntakePaginationControls
+              q={q}
+              status={status}
+              total={total}
+              currentPage={currentPage}
+              totalPages={totalPages}
+              pageSize={pageSize}
+              pageStart={pageStart}
+              language={language}
+            />
+          ) : null}
       </section>
     </section>
   );

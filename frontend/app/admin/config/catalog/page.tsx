@@ -16,7 +16,8 @@ import {
 import { backendRequest } from "../../../../lib/backend";
 import AdminKitActionsMenu from "../../../../components/admin-kit-actions-menu";
 import CatalogKitCompositionPricing from "../../../../components/catalog-kit-composition-pricing";
-import type { AdminCatalogCategoryOut, AdminCatalogKitOut, AdminCatalogProductOut } from "../../../../lib/types";
+import type { AdminCatalogCategoryOut, AdminCatalogKitOut, AdminCatalogProductOut, UserOut } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type CatalogTab = "categories" | "kits";
@@ -69,7 +70,7 @@ function normalizeText(value: string | null): string {
   return (value || "").trim().toLocaleLowerCase("fr-FR");
 }
 
-function formatMoney(amountRaw: string | null, currency: string | null): string {
+function formatMoney(amountRaw: string | null, currency: string | null, language: UiLanguage): string {
   if (!amountRaw) {
     return "-";
   }
@@ -79,7 +80,7 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
     return `${amountRaw} ${normalizedCurrency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency: normalizedCurrency,
       maximumFractionDigits: 2,
@@ -89,16 +90,18 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
   }
 }
 
-function statusLabel(active: boolean): string {
-  return active ? "Actif" : "Archive";
+function statusLabel(active: boolean, language: UiLanguage): string {
+  return active ? uiText(language, "common.active") : uiText(language, "common.archived");
 }
 
-function visibilityLabel(isPublic: boolean): string {
-  return isPublic ? "Visible" : "Masque";
+function visibilityLabel(isPublic: boolean, language: UiLanguage): string {
+  return isPublic ? uiText(language, "common.visible") : uiText(language, "common.hidden");
 }
 
-function kitPriceModeLabel(mode: string): string {
-  return mode.trim().toLowerCase() === "forced" ? "Force" : "Automatique";
+function kitPriceModeLabel(mode: string, language: UiLanguage): string {
+  return mode.trim().toLowerCase() === "forced"
+    ? uiText(language, "admin.catalog.price_mode_forced")
+    : uiText(language, "admin.catalog.price_mode_calculated");
 }
 
 export default async function AdminCatalogConfigPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
@@ -106,6 +109,13 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const params = searchParams ?? {};
   const activeTab = parseTab(readParam(params, "tab"));
@@ -165,8 +175,8 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
     linkedProductsByCategory.set(product.category_id, (linkedProductsByCategory.get(product.category_id) ?? 0) + 1);
   }
 
-  const normalizedCategoryQuery = categoryQuery.toLocaleLowerCase("fr-FR");
-  const normalizedKitQuery = kitQuery.toLocaleLowerCase("fr-FR");
+  const normalizedCategoryQuery = categoryQuery.toLocaleLowerCase(localeForUiLanguage(language));
+  const normalizedKitQuery = kitQuery.toLocaleLowerCase(localeForUiLanguage(language));
   const filteredCategories = categories.filter((category) => {
     if (categoryStatus === "active" && !category.active) {
       return false;
@@ -197,10 +207,10 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
   const selectedKitProductIds = new Set(selectedKitItems.map((item) => item.product_id));
   const kitSelectableProducts = products
     .filter((product) => product.active || selectedKitProductIds.has(product.id))
-    .sort((left, right) => left.title.localeCompare(right.title, "fr-FR"));
+    .sort((left, right) => left.title.localeCompare(right.title, localeForUiLanguage(language)));
   const kitSelectableCategories = categories
     .filter((category) => category.active || category.id === selectedKit?.category_id)
-    .sort((left, right) => left.name.localeCompare(right.name, "fr-FR"));
+    .sort((left, right) => left.name.localeCompare(right.name, localeForUiLanguage(language)));
 
   const currentHref = buildCatalogConfigHref(params, {});
   const categoryReturnTo = buildCatalogConfigHref(params, { tab: "categories", category_drawer: undefined, category_id: undefined });
@@ -221,15 +231,15 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
       <section className="card">
         <div className="row spread">
           <div>
-            <h1>Configuration des categories et des kits</h1>
-            <p className="muted">Gerez separement les categories de produits et les kits.</p>
+            <h1>{t("admin.catalog.title")}</h1>
+            <p className="muted">{t("admin.catalog.subtitle")}</p>
           </div>
           <div className="row">
             <Link className="ghost" href={createCategoryHref}>
-              Ajouter une categorie
+              {t("admin.catalog.add_category")}
             </Link>
             <Link className="mode-link" href={createKitHref}>
-              Ajouter un kit
+              {t("admin.catalog.add_kit")}
             </Link>
           </div>
         </div>
@@ -240,7 +250,7 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
 
       {loadErrors.length > 0 ? (
         <section className="card">
-          <h3>Erreurs de chargement</h3>
+          <h3>{t("admin.catalog.load_errors")}</h3>
           <ul className="config-error-list">
             {loadErrors.map((message) => (
               <li key={message} className="flash-err">
@@ -254,10 +264,10 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
       <section className="card">
         <nav className="catalog-admin-tabs">
           <Link className={`catalog-admin-tab ${activeTab === "categories" ? "active" : ""}`} href={categoriesTabHref}>
-            Categories
+            {t("admin.catalog.categories_title")}
           </Link>
           <Link className={`catalog-admin-tab ${activeTab === "kits" ? "active" : ""}`} href={kitsTabHref}>
-            Kits
+            {t("admin.catalog.kits_title")}
           </Link>
         </nav>
       </section>
@@ -265,42 +275,42 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
       {activeTab === "categories" ? (
         <section className="card">
           <div className="row spread">
-            <h3>Categories</h3>
+            <h3>{t("admin.catalog.categories_title")}</h3>
             <form method="get" className="row catalog-admin-filters">
               <input type="hidden" name="tab" value="categories" />
               <label>
-                Recherche
-                <input type="search" name="category_q" defaultValue={categoryQuery} placeholder="Nom, code ou description..." />
+                {uiText(language, "common.search")}
+                <input type="search" name="category_q" defaultValue={categoryQuery} placeholder={t("admin.catalog.search_placeholder")} />
               </label>
               <label>
-                Statut
+                {uiText(language, "common.status")}
                 <select name="category_status" defaultValue={categoryStatus}>
-                  <option value="all">Tous</option>
-                  <option value="active">Actifs</option>
-                  <option value="archived">Archives</option>
+                  <option value="all">{uiText(language, "common.all")}</option>
+                  <option value="active">{uiText(language, "common.active")}</option>
+                  <option value="archived">{uiText(language, "common.archived")}</option>
                 </select>
               </label>
-              <button type="submit">Filtrer</button>
+              <button type="submit">{uiText(language, "common.apply")}</button>
               <Link className="ghost" href={buildCatalogConfigHref(params, { category_q: undefined, category_status: undefined })}>
-                Reinitialiser
+                {uiText(language, "common.reset")}
               </Link>
             </form>
           </div>
 
           {filteredCategories.length === 0 ? (
-            <p className="muted">Aucune categorie correspondant aux filtres.</p>
+            <p className="muted">{t("admin.catalog.no_categories")}</p>
           ) : (
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Nom</th>
-                    <th>Code</th>
-                    <th>Description</th>
-                    <th>Produits lies</th>
-                    <th>Statut</th>
-                    <th>Ordre</th>
-                    <th>Actions</th>
+                    <th>{uiText(language, "common.name")}</th>
+                    <th>{uiText(language, "common.code")}</th>
+                    <th>{uiText(language, "common.description")}</th>
+                    <th>{t("admin.catalog.linked_products")}</th>
+                    <th>{uiText(language, "common.status")}</th>
+                    <th>{uiText(language, "common.order")}</th>
+                    <th>{uiText(language, "common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -316,28 +326,28 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                         <td>{category.code || "-"}</td>
                         <td>{category.description || "-"}</td>
                         <td>{linkedProductsByCategory.get(category.id) ?? 0}</td>
-                        <td>{statusLabel(category.active)}</td>
+                        <td>{statusLabel(category.active, language)}</td>
                         <td>{category.display_order}</td>
                         <td>
                           <details className="catalog-actions-menu">
                             <summary className="ghost catalog-actions-trigger">...</summary>
                             <div className="catalog-actions-menu-panel">
                               <Link className="catalog-actions-item" href={editHref}>
-                                Modifier
+                                {uiText(language, "common.edit")}
                               </Link>
                               <form action={toggleAdminCatalogCategoryArchiveAction}>
                                 <input type="hidden" name="category_id" value={category.id} />
                                 <input type="hidden" name="archive" value={category.active ? "true" : "false"} />
                                 <input type="hidden" name="return_to" value={currentHref} />
                                 <button type="submit" className="catalog-actions-item">
-                                  {category.active ? "Archiver" : "Desarchiver"}
+                                  {category.active ? uiText(language, "common.archive") : uiText(language, "common.unarchive")}
                                 </button>
                               </form>
                               <form action={deleteAdminCatalogCategoryAction}>
                                 <input type="hidden" name="category_id" value={category.id} />
                                 <input type="hidden" name="return_to" value={currentHref} />
                                 <button type="submit" className="catalog-actions-item danger">
-                                  Supprimer
+                                  {uiText(language, "common.delete")}
                                 </button>
                               </form>
                             </div>
@@ -356,44 +366,44 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
       {activeTab === "kits" ? (
         <section className="card">
           <div className="row spread">
-            <h3>Kits</h3>
+            <h3>{t("admin.catalog.kits_title")}</h3>
             <form method="get" className="row catalog-admin-filters">
               <input type="hidden" name="tab" value="kits" />
               <label>
-                Recherche
-                <input type="search" name="kit_q" defaultValue={kitQuery} placeholder="Nom, code ou description..." />
+                {uiText(language, "common.search")}
+                <input type="search" name="kit_q" defaultValue={kitQuery} placeholder={t("admin.catalog.search_placeholder")} />
               </label>
               <label>
-                Statut
+                {uiText(language, "common.status")}
                 <select name="kit_status" defaultValue={kitStatus}>
-                  <option value="all">Tous</option>
-                  <option value="active">Actifs</option>
-                  <option value="archived">Archives</option>
+                  <option value="all">{uiText(language, "common.all")}</option>
+                  <option value="active">{uiText(language, "common.active")}</option>
+                  <option value="archived">{uiText(language, "common.archived")}</option>
                 </select>
               </label>
-              <button type="submit">Filtrer</button>
+              <button type="submit">{uiText(language, "common.apply")}</button>
               <Link className="ghost" href={buildCatalogConfigHref(params, { kit_q: undefined, kit_status: undefined })}>
-                Reinitialiser
+                {uiText(language, "common.reset")}
               </Link>
             </form>
           </div>
 
           {filteredKits.length === 0 ? (
-            <p className="muted">Aucun kit correspondant aux filtres.</p>
+            <p className="muted">{t("admin.catalog.no_kits")}</p>
           ) : (
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Nom</th>
-                    <th>Categorie</th>
-                    <th>Elements</th>
-                    <th>Prix calcule</th>
-                    <th>Prix facture</th>
-                    <th>Mode de prix</th>
-                    <th>Statut</th>
-                    <th>Visibilite</th>
-                    <th>Actions</th>
+                    <th>{uiText(language, "common.name")}</th>
+                    <th>{uiText(language, "common.category")}</th>
+                    <th>{uiText(language, "common.details")}</th>
+                    <th>{t("admin.catalog.computed_price")}</th>
+                    <th>{t("admin.catalog.billed_price")}</th>
+                    <th>{t("admin.catalog.price_mode")}</th>
+                    <th>{uiText(language, "common.status")}</th>
+                    <th>{uiText(language, "common.visibility")}</th>
+                    <th>{uiText(language, "common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -414,11 +424,11 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                         </td>
                         <td>{kit.category_name || "-"}</td>
                         <td>{kit.items.length}</td>
-                        <td>{formatMoney(kit.computed_price_incl_vat, kit.currency || "EUR")}</td>
-                        <td>{formatMoney(kit.price_effective_incl_vat || kit.price_incl_vat, kit.currency || "EUR")}</td>
-                        <td>{kitPriceModeLabel(kit.price_mode)}</td>
-                        <td>{statusLabel(kit.active)}</td>
-                        <td>{visibilityLabel(kit.is_public)}</td>
+                        <td>{formatMoney(kit.computed_price_incl_vat, kit.currency || "EUR", language)}</td>
+                        <td>{formatMoney(kit.price_effective_incl_vat || kit.price_incl_vat, kit.currency || "EUR", language)}</td>
+                        <td>{kitPriceModeLabel(kit.price_mode, language)}</td>
+                        <td>{statusLabel(kit.active, language)}</td>
+                        <td>{visibilityLabel(kit.is_public, language)}</td>
                         <td>
                           <AdminKitActionsMenu
                             editHref={editHref}
@@ -426,6 +436,15 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                             kitId={kit.id}
                             returnTo={currentHref}
                             active={kit.active}
+                            labels={{
+                              menuAria: t("admin.catalog.kit_actions_menu"),
+                              edit: uiText(language, "common.edit"),
+                              duplicate: uiText(language, "common.duplicate"),
+                              archive: uiText(language, "common.archive"),
+                              unarchive: uiText(language, "common.unarchive"),
+                              delete: uiText(language, "common.delete"),
+                              viewComposition: t("admin.catalog.view_composition"),
+                            }}
                             duplicateAction={duplicateAdminCatalogKitAction}
                             toggleArchiveAction={toggleAdminCatalogKitArchiveAction}
                             deleteAction={deleteAdminCatalogKitAction}
@@ -446,11 +465,11 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
           <article className="catalog-admin-drawer">
             <header className="catalog-admin-drawer-header">
               <div>
-                <h3>{selectedCategory ? "Modifier la categorie" : "Ajouter une categorie"}</h3>
-                <p className="muted">Une categorie archivee ne sera plus proposee dans les nouveaux formulaires.</p>
+                <h3>{selectedCategory ? t("admin.catalog.edit_category_title") : t("admin.catalog.add_category_title")}</h3>
+                <p className="muted">{t("admin.catalog.archived_category_hint")}</p>
               </div>
               <Link className="ghost" href={categoryCloseHref}>
-                Fermer
+                {uiText(language, "common.close")}
               </Link>
             </header>
 
@@ -460,26 +479,26 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
 
               <section className="catalog-admin-drawer-body">
                 <label>
-                  Nom
+                  {uiText(language, "common.name")}
                   <input type="text" name="name" required maxLength={120} defaultValue={selectedCategory?.name || ""} />
                 </label>
                 <label>
-                  Code
+                  {uiText(language, "common.code")}
                   <input type="text" name="code" maxLength={64} defaultValue={selectedCategory?.code || ""} />
                 </label>
                 <label>
-                  Description
+                  {uiText(language, "common.description")}
                   <textarea name="description" rows={3} maxLength={2000} defaultValue={selectedCategory?.description || ""} />
                 </label>
                 <label>
-                  Ordre d affichage
+                  {uiText(language, "common.order")}
                   <input type="number" name="display_order" min={0} step={1} defaultValue={selectedCategory?.display_order ?? 0} />
                 </label>
                 <label>
-                  Statut
+                  {uiText(language, "common.status")}
                   <select name="status" defaultValue={selectedCategory?.active === false ? "archived" : "active"}>
-                    <option value="active">Actif</option>
-                    <option value="archived">Archive</option>
+                    <option value="active">{uiText(language, "common.active")}</option>
+                    <option value="archived">{uiText(language, "common.archived")}</option>
                   </select>
                 </label>
                 <label className="checkline">
@@ -490,14 +509,14 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                     value="true"
                     defaultChecked={selectedCategory?.can_be_requested_by_professor ?? true}
                   />
-                  Commandable par les professeurs
+                  {t("admin.catalog.requestable_by_teachers")}
                 </label>
               </section>
 
               <footer className="catalog-admin-drawer-footer">
-                <button type="submit">{selectedCategory ? "Enregistrer" : "Creer la categorie"}</button>
+                <button type="submit">{selectedCategory ? uiText(language, "common.save") : t("admin.catalog.create_category")}</button>
                 <Link className="ghost" href={categoryCloseHref}>
-                  Annuler
+                  {uiText(language, "common.cancel")}
                 </Link>
               </footer>
             </form>
@@ -510,11 +529,11 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
           <article className="catalog-admin-drawer catalog-admin-drawer-kit">
             <header className="catalog-admin-drawer-header">
               <div>
-                <h3>{selectedKit ? "Modifier le kit" : "Ajouter un kit"}</h3>
-                <p className="muted">Un kit archive ne sera plus propose dans les nouveaux formulaires.</p>
+                <h3>{selectedKit ? t("admin.catalog.edit_kit_title") : t("admin.catalog.add_kit_title")}</h3>
+                <p className="muted">{t("admin.catalog.archived_kit_hint")}</p>
               </div>
               <Link className="ghost" href={kitCloseHref}>
-                Fermer
+                {uiText(language, "common.close")}
               </Link>
             </header>
 
@@ -524,18 +543,18 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
 
               <section className="catalog-admin-drawer-body">
                 <article className="card">
-                  <h4>Informations generales</h4>
+                  <h4>{uiText(language, "common.general_information")}</h4>
                   <div className="grid cols-2 config-form-grid">
                     <label>
-                      Nom
+                      {uiText(language, "common.name")}
                       <input type="text" name="title" required maxLength={255} defaultValue={selectedKit?.title || ""} />
                     </label>
                     <label>
-                      Code
+                      {uiText(language, "common.code")}
                       <input type="text" name="code" maxLength={64} defaultValue={selectedKit?.code || ""} />
                     </label>
                     <label>
-                      Categorie
+                      {uiText(language, "common.category")}
                       <select name="category_id" defaultValue={selectedKit?.category_id ?? ""}>
                         <option value="">-</option>
                         {kitSelectableCategories.map((category) => (
@@ -546,28 +565,53 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                       </select>
                     </label>
                     <label>
-                      Statut
+                      {uiText(language, "common.status")}
                       <select name="status" defaultValue={selectedKit?.active === false ? "archived" : "active"}>
-                        <option value="active">Actif</option>
-                        <option value="archived">Archive</option>
+                        <option value="active">{uiText(language, "common.active")}</option>
+                        <option value="archived">{uiText(language, "common.archived")}</option>
                       </select>
                     </label>
                     <label className="span-2">
-                      Description courte
+                      {uiText(language, "common.short_description")}
                       <input type="text" name="short_description" maxLength={500} defaultValue={selectedKit?.short_description || ""} />
                     </label>
                     <label className="span-2">
-                      Description
+                      {uiText(language, "common.description")}
                       <textarea name="long_description" rows={3} maxLength={12000} defaultValue={selectedKit?.long_description || ""} />
                     </label>
                     <label className="span-2">
-                      Visuel (URL)
+                      {uiText(language, "common.image_url")}
                       <input type="url" name="image_url" defaultValue={selectedKit?.image_url || ""} />
                     </label>
                   </div>
                 </article>
 
                 <CatalogKitCompositionPricing
+                  locale={localeForUiLanguage(language)}
+                  labels={{
+                    compositionTitle: t("admin.catalog.composition_title"),
+                    compositionSubtitle: t("admin.catalog.composition_subtitle"),
+                    addLine: t("admin.catalog.add_line"),
+                    emptyLine: t("admin.catalog.empty_line"),
+                    product: uiText(language, "common.product"),
+                    selectProduct: t("admin.catalog.select_product"),
+                    quantity: uiText(language, "common.quantity"),
+                    order: uiText(language, "common.order"),
+                    unitPrice: t("admin.catalog.unit_price"),
+                    subtotal: t("admin.catalog.subtotal"),
+                    action: uiText(language, "common.actions"),
+                    delete: uiText(language, "common.delete"),
+                    priceTitle: t("admin.catalog.price_title"),
+                    computedPriceAutomatic: t("admin.catalog.computed_price_automatic"),
+                    priceMode: t("admin.catalog.price_mode"),
+                    useCalculatedPrice: t("admin.catalog.use_calculated_price"),
+                    forcePrice: t("admin.catalog.force_price"),
+                    billedPriceTtc: t("admin.catalog.billed_price_ttc"),
+                    currency: t("admin.catalog.currency"),
+                    computedPrice: t("admin.catalog.computed_price"),
+                    billedPrice: t("admin.catalog.billed_price"),
+                    gap: t("admin.catalog.price_gap"),
+                  }}
                   products={kitSelectableProducts.map((product) => ({
                     id: product.id,
                     title: product.title,
@@ -584,17 +628,17 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                 />
 
                 <article className="card">
-                  <h4>TVA</h4>
+                  <h4>{uiText(language, "common.vat")}</h4>
                   <div className="grid cols-2 config-form-grid">
                     <label>
-                      TVA (%)
+                      {uiText(language, "common.vat")} (%)
                       <input type="number" name="vat_rate" min={0} max={100} step="0.001" required defaultValue={selectedKit?.vat_rate || "20.000"} />
                     </label>
                   </div>
                 </article>
 
                 <article className="card">
-                  <h4>Usage</h4>
+                  <h4>{uiText(language, "common.usage")}</h4>
                   <div className="grid cols-2 config-form-grid">
                     <label className="checkline">
                       <input type="hidden" name="use_in_manual_billing" value="false" />
@@ -604,7 +648,7 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                         value="true"
                         defaultChecked={selectedKit?.use_in_manual_billing ?? true}
                       />
-                      Utilisable en facturation manuelle
+                      {t("admin.catalog.manual_billing")}
                     </label>
                     <label className="checkline">
                       <input type="hidden" name="use_in_enrollments" value="false" />
@@ -614,12 +658,12 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                         value="true"
                         defaultChecked={selectedKit?.use_in_enrollments ?? true}
                       />
-                      Utilisable en inscriptions
+                      {t("admin.catalog.enrollments")}
                     </label>
                     <label className="checkline">
                       <input type="hidden" name="is_public" value="false" />
                       <input type="checkbox" name="is_public" value="true" defaultChecked={selectedKit?.is_public ?? true} />
-                      Visible dans le catalogue
+                      {t("admin.catalog.visible_catalog")}
                     </label>
                     <label className="checkline">
                       <input type="hidden" name="purchasable_online" value="false" />
@@ -629,16 +673,16 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
                         value="true"
                         defaultChecked={selectedKit?.purchasable_online ?? false}
                       />
-                      Achetable en ligne
+                      {t("admin.catalog.purchasable_online")}
                     </label>
                   </div>
                 </article>
               </section>
 
               <footer className="catalog-admin-drawer-footer">
-                <button type="submit">{selectedKit ? "Enregistrer" : "Creer le kit"}</button>
+                <button type="submit">{selectedKit ? uiText(language, "common.save") : t("admin.catalog.create_kit")}</button>
                 <Link className="ghost" href={kitCloseHref}>
-                  Annuler
+                  {uiText(language, "common.cancel")}
                 </Link>
               </footer>
             </form>
