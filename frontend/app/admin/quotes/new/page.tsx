@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import QuoteWizardForm from "../../../../components/quote-wizard-form";
 import { createQuoteDraftAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import { normalizeUiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type {
   AdminActivityOut,
   AdminCatalogKitOut,
@@ -12,6 +13,7 @@ import type {
   AdminClientOut,
   AdminLegalEntityOut,
   LocationOut,
+  UserOut,
 } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -84,6 +86,12 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const selectedProspectId = readParam(searchParams, "prospect_id");
   const ok = readParam(searchParams, "ok");
@@ -134,34 +142,34 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
   const legalEntities = legalEntitiesResult.ok ? legalEntitiesResult.data : [];
 
   const loadErrors: string[] = [];
-  if (!prospectsResult.ok) loadErrors.push(`Prospects: ${prospectsResult.message}`);
-  if (!clientsResult.ok) loadErrors.push(`Clients: ${clientsResult.message}`);
-  if (!quoteTypesResult.ok) loadErrors.push(`Types de devis: ${quoteTypesResult.message}`);
-  if (!catalogsResult.ok) loadErrors.push(`Catalogues: ${catalogsResult.message}`);
-  if (!paymentPlansResult.ok) loadErrors.push(`Plans de paiement: ${paymentPlansResult.message}`);
-  if (!termsTemplatesResult.ok) loadErrors.push(`Modeles de CGV: ${termsTemplatesResult.message}`);
-  if (!quoteTemplatesResult.ok) loadErrors.push(`Modeles de devis: ${quoteTemplatesResult.message}`);
-  if (!locationsResult.ok) loadErrors.push(`Lieux: ${locationsResult.message}`);
-  if (!activitiesResult.ok) loadErrors.push(`Activites: ${activitiesResult.message}`);
-  if (!productsResult.ok) loadErrors.push(`Produits: ${productsResult.message}`);
-  if (!kitsResult.ok) loadErrors.push(`Kits: ${kitsResult.message}`);
-  if (!solfegeRulesResult.ok) loadErrors.push(`Solfege: ${solfegeRulesResult.message}`);
-  if (!legalEntitiesResult.ok) loadErrors.push(`Entites legales: ${legalEntitiesResult.message}`);
+  if (!prospectsResult.ok) loadErrors.push(`${t("admin.quote_new.load_prospects")}: ${prospectsResult.message}`);
+  if (!clientsResult.ok) loadErrors.push(`${t("admin.quote_new.load_clients")}: ${clientsResult.message}`);
+  if (!quoteTypesResult.ok) loadErrors.push(`${t("admin.quote_new.load_quote_types")}: ${quoteTypesResult.message}`);
+  if (!catalogsResult.ok) loadErrors.push(`${t("admin.quote_new.load_catalogs")}: ${catalogsResult.message}`);
+  if (!paymentPlansResult.ok) loadErrors.push(`${t("admin.quote_new.load_payment_plans")}: ${paymentPlansResult.message}`);
+  if (!termsTemplatesResult.ok) loadErrors.push(`${t("admin.quote_new.load_terms_templates")}: ${termsTemplatesResult.message}`);
+  if (!quoteTemplatesResult.ok) loadErrors.push(`${t("admin.quote_new.load_quote_templates")}: ${quoteTemplatesResult.message}`);
+  if (!locationsResult.ok) loadErrors.push(`${t("admin.quote_new.load_locations")}: ${locationsResult.message}`);
+  if (!activitiesResult.ok) loadErrors.push(`${t("admin.quote_new.load_activities")}: ${activitiesResult.message}`);
+  if (!productsResult.ok) loadErrors.push(`${t("admin.quote_new.load_products")}: ${productsResult.message}`);
+  if (!kitsResult.ok) loadErrors.push(`${t("admin.quote_new.load_kits")}: ${kitsResult.message}`);
+  if (!solfegeRulesResult.ok) loadErrors.push(`${t("admin.quote_new.load_solfege")}: ${solfegeRulesResult.message}`);
+  if (!legalEntitiesResult.ok) loadErrors.push(`${t("admin.quote_new.load_legal_entities")}: ${legalEntitiesResult.message}`);
 
   return (
     <section className="admin-page-grid">
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Nouveau devis</h2>
-            <p className="muted">Creation du devis sans melanger la liste historique ni la gestion des prospects.</p>
+            <h2>{t("admin.quote_new.page_title")}</h2>
+            <p className="muted">{t("admin.quote_new.page_subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
             <Link className="ghost" href="/admin/prospects/new?return_to=/admin/quotes/new">
-              Nouveau prospect
+              {t("admin.quote_new.new_prospect")}
             </Link>
             <Link className="ghost" href="/admin/quotes">
-              Retour liste devis
+              {t("admin.quote_new.back_to_quotes")}
             </Link>
           </div>
         </div>
@@ -171,7 +179,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
       {error ? <section className="flash-err">{error}</section> : null}
       {loadErrors.length > 0 ? (
         <section className="card">
-          <h3>Erreurs de chargement</h3>
+          <h3>{t("admin.quote_new.loading_errors")}</h3>
           <ul className="config-error-list">
             {loadErrors.map((message) => (
               <li key={message} className="flash-err">{message}</li>
@@ -232,6 +240,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
         }))}
         defaultProspectId={selectedProspectId}
         createAction={createQuoteDraftAction}
+        uiLanguage={language}
       />
     </section>
   );

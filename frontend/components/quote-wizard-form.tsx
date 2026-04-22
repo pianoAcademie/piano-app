@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import ConfirmSubmitButton from "./confirm-submit-button";
+import { localeForUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type ProspectOption = {
   id: string;
@@ -113,9 +114,8 @@ type SolfegeSlotOption = {
   label: string;
 };
 
-function normalizeLang(value: string | null | undefined): string {
-  const normalized = String(value || "").trim().toLowerCase();
-  return normalized || "fr";
+function normalizeLang(value: string | null | undefined): UiLanguage {
+  return String(value || "").trim().toLowerCase() === "en" ? "en" : "fr";
 }
 
 type QuoteWizardFormProps = {
@@ -135,6 +135,7 @@ type QuoteWizardFormProps = {
   solfegeRules: SolfegeRule[];
   defaultProspectId: string;
   createAction: (formData: FormData) => Promise<void>;
+  uiLanguage?: UiLanguage;
 };
 
 type LineKind = "activity" | "product" | "kit" | "discount" | "surcharge";
@@ -149,34 +150,25 @@ type WizardLine = {
 };
 
 const WEEKDAY_UNSET = -1;
-const WEEKDAY_LABELS: Array<{ value: number; label: string }> = [
-  { value: 0, label: "Lun" },
-  { value: 1, label: "Mar" },
-  { value: 2, label: "Mer" },
-  { value: 3, label: "Jeu" },
-  { value: 4, label: "Ven" },
-  { value: 5, label: "Sam" },
-  { value: 6, label: "Dim" },
-];
-const PLANNING_WEEKDAY_OPTIONS: Array<{ value: number; label: string }> = [
-  { value: WEEKDAY_UNSET, label: "Selection a faire" },
-  ...WEEKDAY_LABELS,
-];
-const RECURRENCE_OPTIONS: Array<{ value: PlanningBlock["recurrence_frequency"]; label: string }> = [
-  { value: "weekly", label: "Hebdomadaire (1 fois/semaine)" },
-  { value: "biweekly", label: "Toutes les 2 semaines" },
-  { value: "monthly", label: "1 fois par mois" },
-];
+const WEEKDAY_SHORT_LABELS: Record<UiLanguage, string[]> = {
+  fr: ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"],
+  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+};
 
-function toMoney(value: string, currency = "EUR"): string {
+function toMoney(value: string, currency = "EUR", language: UiLanguage = "fr"): string {
   const n = Number(value);
+  const normalizedCurrency = (currency || "EUR").toUpperCase();
   if (!Number.isFinite(n)) {
-    return `0,00 ${(currency || "EUR").toUpperCase()}`;
+    try {
+      return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: normalizedCurrency }).format(0);
+    } catch {
+      return `0.00 ${normalizedCurrency}`;
+    }
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: (currency || "EUR").toUpperCase() }).format(n);
+    return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: normalizedCurrency }).format(n);
   } catch {
-    return `${n.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
+    return `${n.toFixed(2)} ${normalizedCurrency}`;
   }
 }
 
@@ -189,13 +181,13 @@ function lineAmount(line: WizardLine): number {
   return qty * price;
 }
 
-function buildLinePayload(line: WizardLine, index: number): Record<string, unknown> {
+function buildLinePayload(line: WizardLine, index: number, quoteLanguage: UiLanguage): Record<string, unknown> {
   if (line.kind === "discount") {
     return {
       line_category: "product",
       line_type: "discount",
       master_item_type: "discount_rule",
-      title: line.title || "Remise",
+      title: line.title || uiText(quoteLanguage, "admin.quote_new.line_title_discount"),
       quantity: line.quantity || "1",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
       sort_order: index,
@@ -206,7 +198,7 @@ function buildLinePayload(line: WizardLine, index: number): Record<string, unkno
       line_category: "product",
       line_type: "surcharge",
       master_item_type: "surcharge_rule",
-      title: line.title || "Supplement",
+      title: line.title || uiText(quoteLanguage, "admin.quote_new.line_title_surcharge"),
       quantity: line.quantity || "1",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
       sort_order: index,
@@ -218,7 +210,7 @@ function buildLinePayload(line: WizardLine, index: number): Record<string, unkno
       line_type: "item",
       master_item_type: "activity",
       activity_id: line.refId || null,
-      title: line.title || "Activite",
+      title: line.title || uiText(quoteLanguage, "admin.quote_new.line_title_activity"),
       quantity: line.quantity || "1",
       unit_price_ttc: line.unitPrice || "0",
       sort_order: index,
@@ -230,7 +222,7 @@ function buildLinePayload(line: WizardLine, index: number): Record<string, unkno
       line_type: "item",
       master_item_type: "product",
       product_id: line.refId || null,
-      title: line.title || "Produit",
+      title: line.title || uiText(quoteLanguage, "admin.quote_new.line_title_product"),
       quantity: line.quantity || "1",
       unit_price_ttc: line.unitPrice || "0",
       sort_order: index,
@@ -241,7 +233,7 @@ function buildLinePayload(line: WizardLine, index: number): Record<string, unkno
     line_type: "item",
     master_item_type: "kit",
     kit_id: line.refId || null,
-    title: line.title || "Kit",
+    title: line.title || uiText(quoteLanguage, "admin.quote_new.line_title_kit"),
     quantity: line.quantity || "1",
     unit_price_ttc: line.unitPrice || "0",
     sort_order: index,
@@ -324,12 +316,26 @@ function addMinutesToTime(startTime: string, deltaMinutes: number): string {
   return `${outHours}:${outMinutes}`;
 }
 
-function weekdayLabel(weekday: number): string {
+function weekdayLabel(weekday: number, language: UiLanguage): string {
   if (weekday === WEEKDAY_UNSET) {
-    return "Selection a faire";
+    return uiText(language, "admin.quote_new.selection_pending");
   }
-  const row = WEEKDAY_LABELS.find((item) => item.value === weekday);
-  return row?.label ?? String(weekday);
+  return WEEKDAY_SHORT_LABELS[language][weekday] ?? String(weekday);
+}
+
+function planningWeekdayOptions(language: UiLanguage): Array<{ value: number; label: string }> {
+  return [
+    { value: WEEKDAY_UNSET, label: uiText(language, "admin.quote_new.selection_pending") },
+    ...WEEKDAY_SHORT_LABELS[language].map((label, index) => ({ value: index, label })),
+  ];
+}
+
+function recurrenceOptions(language: UiLanguage): Array<{ value: PlanningBlock["recurrence_frequency"]; label: string }> {
+  return [
+    { value: "weekly", label: uiText(language, "admin.quote_new.recurrence_weekly") },
+    { value: "biweekly", label: uiText(language, "admin.quote_new.recurrence_biweekly") },
+    { value: "monthly", label: uiText(language, "admin.quote_new.recurrence_monthly") },
+  ];
 }
 
 function timeSlotParts(slot: Record<string, unknown>): { start: string; end: string } | null {
@@ -341,7 +347,7 @@ function timeSlotParts(slot: Record<string, unknown>): { start: string; end: str
   return { start, end };
 }
 
-function slotOptionsFromRule(rule: SolfegeRule | null | undefined): SolfegeSlotOption[] {
+function slotOptionsFromRule(rule: SolfegeRule | null | undefined, language: UiLanguage): SolfegeSlotOption[] {
   if (!rule) {
     return [];
   }
@@ -369,7 +375,7 @@ function slotOptionsFromRule(rule: SolfegeRule | null | undefined): SolfegeSlotO
         duration_minutes: rule.duration_minutes,
         location_id: rule.location_id,
         modality: rule.modality,
-        label: `${weekdayLabel(weekday)} ${parts.start}-${parts.end}`,
+        label: `${weekdayLabel(weekday, language)} ${parts.start}-${parts.end}`,
       });
     }
     return options;
@@ -393,11 +399,37 @@ function slotOptionsFromRule(rule: SolfegeRule | null | undefined): SolfegeSlotO
         duration_minutes: rule.duration_minutes,
         location_id: rule.location_id,
         modality: rule.modality,
-        label: `${weekdayLabel(weekday)} ${parts.start}-${parts.end}`,
+        label: `${weekdayLabel(weekday, language)} ${parts.start}-${parts.end}`,
       });
     }
   }
   return options;
+}
+
+function paymentMethodLabel(methodCode: string, language: UiLanguage): string {
+  const normalized = String(methodCode || "").trim().toUpperCase();
+  if (normalized === "CARD") return uiText(language, "admin.quote_detail.payment_method_card");
+  if (normalized === "CARD_MONTHLY") return uiText(language, "admin.quote_detail.payment_method_card_monthly");
+  if (normalized === "CHECK") return uiText(language, "admin.quote_detail.payment_method_check");
+  if (normalized === "BANK_TRANSFER") return uiText(language, "admin.quote_detail.payment_method_bank_transfer");
+  if (normalized === "CASH") return uiText(language, "admin.quote_detail.payment_method_cash");
+  if (normalized === "CARD_4X_FEES") return uiText(language, "admin.quote_detail.payment_method_card_4x_fees");
+  if (!normalized) return uiText(language, "admin.quote_new.none");
+  return normalized;
+}
+
+function modalityLabel(value: string | null | undefined, language: UiLanguage): string {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized || normalized === "AUTO") {
+    return "";
+  }
+  if (normalized === "ONLINE") {
+    return uiText(language, "admin.quote_new.modality_online");
+  }
+  if (normalized === "ONSITE") {
+    return uiText(language, "admin.quote_new.modality_onsite");
+  }
+  return normalized;
 }
 
 function solfegeLevelFromActivity(activity: ActivityOption | undefined): string | null {
@@ -445,7 +477,9 @@ export default function QuoteWizardForm({
   solfegeRules,
   defaultProspectId,
   createAction,
+  uiLanguage = "fr",
 }: QuoteWizardFormProps): JSX.Element {
+  const t = (key: string, values?: Record<string, string | number>) => uiText(uiLanguage, key, values);
   const createDraftFormId = "quote-wizard-create-draft-form";
   const defaultTemplate = quoteTemplates.find((item) => item.is_default) ?? quoteTemplates[0] ?? null;
   const defaultLegalEntity =
@@ -459,7 +493,7 @@ export default function QuoteWizardForm({
   const [expiryDaysInput, setExpiryDaysInput] = useState<string>(String(initialQuoteType?.default_expiry_days ?? 10));
   const [schoolYearLabelInput, setSchoolYearLabelInput] = useState<string>(initialQuoteType?.school_year_label ?? "");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultTemplate?.id ?? "");
-  const [language, setLanguage] = useState<string>(normalizeLang(defaultTemplate?.language));
+  const [language, setLanguage] = useState<UiLanguage>(normalizeLang(defaultTemplate?.language));
   const [currency, setCurrency] = useState<string>("EUR");
   const [preRegistrationDepositEnabled, setPreRegistrationDepositEnabled] = useState<"no" | "yes">("no");
   const [preRegistrationDepositAmount, setPreRegistrationDepositAmount] = useState<string>("200.00");
@@ -486,7 +520,7 @@ export default function QuoteWizardForm({
     [solfegeRules, estimatedLevel],
   );
 
-  const solfegeSlotOptions = useMemo<SolfegeSlotOption[]>(() => slotOptionsFromRule(selectedSolfegeRule), [selectedSolfegeRule]);
+  const solfegeSlotOptions = useMemo<SolfegeSlotOption[]>(() => slotOptionsFromRule(selectedSolfegeRule, language), [selectedSolfegeRule, language]);
 
   const selectedSolfegeSlot = useMemo(
     () => solfegeSlotOptions.find((item) => item.key === selectedSolfegeSlotKey) ?? null,
@@ -517,7 +551,7 @@ export default function QuoteWizardForm({
             selectionPending && pendingLevel
               ? slotOptionsFromRule(pendingRule).map((slot) => ({
                   weekday: slot.weekday,
-                  weekday_label: weekdayLabel(slot.weekday),
+                  weekday_label: weekdayLabel(slot.weekday, language),
                   start_time: slot.start_time,
                   end_time: slot.end_time,
                   duration_minutes: slot.duration_minutes,
@@ -533,7 +567,7 @@ export default function QuoteWizardForm({
             location_id: row.location_id || null,
             location_label: locationLabel,
             weekday: row.weekday,
-            weekday_label: weekdayLabel(row.weekday),
+            weekday_label: weekdayLabel(row.weekday, language),
             recurrence_frequency: row.recurrence_frequency,
             start_date: row.start_date,
             end_date: row.end_date,
@@ -546,7 +580,7 @@ export default function QuoteWizardForm({
           };
         }),
       ),
-    [planningBlocks, activities, locations, solfegeRules],
+    [planningBlocks, activities, locations, solfegeRules, language],
   );
 
   const selectedSolfegeSlotJson = useMemo(
@@ -555,8 +589,8 @@ export default function QuoteWizardForm({
   );
 
   const linesJson = useMemo(
-    () => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index))),
-    [lines],
+    () => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index, language))),
+    [lines, language],
   );
 
   function addPlanningBlock(): void {
@@ -629,7 +663,7 @@ export default function QuoteWizardForm({
       const activity = activities.find((item) => item.id === refId);
       updateLine(uid, {
         refId,
-        title: activity?.name ?? "Activite",
+        title: activity?.name ?? uiText(language, "admin.quote_new.line_title_activity"),
         unitPrice: activity?.default_course_rate_ttc ?? "0",
       });
       return;
@@ -638,7 +672,7 @@ export default function QuoteWizardForm({
       const product = products.find((item) => item.id === refId);
       updateLine(uid, {
         refId,
-        title: product?.title ?? "Produit",
+        title: product?.title ?? uiText(language, "admin.quote_new.line_title_product"),
         unitPrice: product?.price_incl_vat ?? "0",
       });
       return;
@@ -646,7 +680,7 @@ export default function QuoteWizardForm({
     const kit = kits.find((item) => item.id === refId);
     updateLine(uid, {
       refId,
-      title: kit?.title ?? "Kit",
+      title: kit?.title ?? uiText(language, "admin.quote_new.line_title_kit"),
       unitPrice: kit?.effective_price_ttc ?? "0",
     });
   }
@@ -664,6 +698,19 @@ export default function QuoteWizardForm({
     return [];
   }
 
+  const planningWeekdayChoices = useMemo(() => planningWeekdayOptions(uiLanguage), [uiLanguage]);
+  const recurrenceChoices = useMemo(() => recurrenceOptions(uiLanguage), [uiLanguage]);
+  const contextLabel = contextType === "acquisition" ? t("admin.quote_new.context_acquisition") : t("admin.quote_new.context_active_client");
+  const quoteLanguageLabel = language === "en" ? t("common.english") : t("common.french");
+
+  function lineKindLabel(kind: LineKind): string {
+    if (kind === "activity") return t("admin.quote_new.line_kind_activity");
+    if (kind === "product") return t("admin.quote_new.line_kind_product");
+    if (kind === "kit") return t("admin.quote_new.line_kind_kit");
+    if (kind === "discount") return t("admin.quote_new.line_kind_discount");
+    return t("admin.quote_new.line_kind_surcharge");
+  }
+
   return (
     <form id={createDraftFormId} action={createAction} className="quote-wizard-layout">
       <input type="hidden" name="return_to" value={returnTo} />
@@ -673,8 +720,8 @@ export default function QuoteWizardForm({
 
       <section className="quote-wizard-main stack">
         <article className="card quote-wizard-card">
-          <h3>1. Contexte</h3>
-          <p className="muted">Acquisition prospect ou client actif.</p>
+          <h3>{t("admin.quote_new.section_context_title")}</h3>
+          <p className="muted">{t("admin.quote_new.section_context_subtitle")}</p>
           <div className="row wrap gap-sm top-gap-sm">
             <label className="row gap-xs">
               <input
@@ -684,7 +731,7 @@ export default function QuoteWizardForm({
                 checked={contextType === "acquisition"}
                 onChange={() => setContextType("acquisition")}
               />
-              Acquisition (prospect)
+              {t("admin.quote_new.context_acquisition")}
             </label>
             <label className="row gap-xs">
               <input
@@ -694,14 +741,14 @@ export default function QuoteWizardForm({
                 checked={contextType === "active_client"}
                 onChange={() => setContextType("active_client")}
               />
-              Client actif
+              {t("admin.quote_new.context_active_client")}
             </label>
           </div>
           {contextType === "acquisition" ? (
             <label className="top-gap-sm">
-              Prospect
+              {t("admin.quote_new.prospect")}
               <select name="prospect_id" value={selectedProspectId} onChange={(event) => setSelectedProspectId(event.target.value)} required>
-                <option value="">Selectionner un prospect</option>
+                <option value="">{t("admin.quote_new.select_prospect")}</option>
                 {prospects.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.label} - {item.email}
@@ -711,9 +758,9 @@ export default function QuoteWizardForm({
             </label>
           ) : (
             <label className="top-gap-sm">
-              Client
+              {t("admin.quote_new.client")}
               <select name="client_id" value={selectedClientId} onChange={(event) => setSelectedClientId(event.target.value)} required>
-                <option value="">Selectionner un client</option>
+                <option value="">{t("admin.quote_new.select_client")}</option>
                 {clients.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.label} - {item.email}
@@ -725,10 +772,10 @@ export default function QuoteWizardForm({
         </article>
 
         <article className="card quote-wizard-card">
-          <h3>2. Parametres devis</h3>
+          <h3>{t("admin.quote_new.section_settings_title")}</h3>
           <div className="grid cols-2 top-gap-sm">
             <label>
-              Type de devis
+              {t("admin.quote_new.quote_type")}
               <select
                 name="quote_type_id"
                 value={selectedQuoteTypeId}
@@ -740,7 +787,7 @@ export default function QuoteWizardForm({
                   setSchoolYearLabelInput(nextQuoteType?.school_year_label ?? "");
                 }}
               >
-                <option value="">Par defaut</option>
+                <option value="">{t("admin.quote_new.default_option")}</option>
                 {quoteTypes.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
@@ -749,16 +796,18 @@ export default function QuoteWizardForm({
               </select>
               {selectedQuoteType ? (
                 <small className="muted">
-                  Defaut type: expiration {selectedQuoteType.default_expiry_days} jours
-                  {selectedQuoteType.school_year_label ? ` · annee scolaire ${selectedQuoteType.school_year_label}` : ""}
-                  {selectedQuoteType.formula_name ? ` · formule ${selectedQuoteType.formula_name}` : ""}
+                  {t("admin.quote_new.quote_type_hint", {
+                    days: selectedQuoteType.default_expiry_days,
+                    school_year: selectedQuoteType.school_year_label || "-",
+                    formula: selectedQuoteType.formula_name || t("admin.quote_new.none"),
+                  })}
                 </small>
               ) : null}
             </label>
             <label>
-              Catalogue tarifaire
+              {t("admin.quote_new.pricing_catalog")}
               <select name="pricing_catalog_id" defaultValue={catalogs[0]?.id ?? ""}>
-                <option value="">Aucun</option>
+                <option value="">{t("admin.quote_new.none")}</option>
                 {catalogs.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
@@ -767,25 +816,25 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
-              Formule liee (depuis le type de devis)
+              {t("admin.quote_new.linked_formula")}
               <input
                 type="text"
-                value={selectedQuoteType?.formula_name ?? "-"}
+                value={selectedQuoteType?.formula_name ?? t("admin.quote_new.none")}
                 readOnly
                 disabled
               />
             </label>
             <label>
-              Modele de devis
+              {t("admin.quote_new.quote_template")}
               <select name="quote_template_uuid" value={selectedTemplateId} onChange={(event) => {
                 const nextId = event.target.value;
                 setSelectedTemplateId(nextId);
                 const template = quoteTemplates.find((item) => item.id === nextId);
                 if (template?.language) {
-                  setLanguage(template.language.toLowerCase());
+                  setLanguage(normalizeLang(template.language));
                 }
               }}>
-              <option value="">Aucun</option>
+                <option value="">{t("admin.quote_new.none")}</option>
                 {languageTemplates.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
@@ -794,20 +843,20 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
-              Plan de paiement
+              {t("admin.quote_new.payment_plan")}
               <select name="payment_plan_id" defaultValue={paymentPlans[0]?.id ?? ""}>
-                <option value="">Aucun</option>
+                <option value="">{t("admin.quote_new.none")}</option>
                 {paymentPlans.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} ({item.payment_method})
+                    {item.name} ({paymentMethodLabel(item.payment_method, uiLanguage)})
                   </option>
                 ))}
               </select>
             </label>
             <label>
-              Entite legale de rattachement
+              {t("admin.quote_new.legal_entity")}
               <select name="legal_entity_id" defaultValue={defaultLegalEntity?.id ?? ""}>
-                <option value="">Aucune</option>
+                <option value="">{t("admin.quote_new.none_feminine")}</option>
                 {legalEntities.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
@@ -816,28 +865,28 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
-              Modele de CGV
+              {t("admin.quote_new.terms_template")}
               <select name="terms_template_id" defaultValue={termsTemplates[0]?.id ?? ""}>
-                <option value="">Aucune</option>
+                <option value="">{t("admin.quote_new.none_feminine")}</option>
                 {termsTemplates.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} ({normalizeLang(item.language).toUpperCase()})
+                    {item.name} ({normalizeLang(item.language) === "en" ? t("common.english") : t("common.french")})
                   </option>
                 ))}
               </select>
             </label>
             <label>
-              Annee scolaire
+              {t("admin.quote_new.school_year")}
               <input
                 type="text"
                 name="school_year_label"
-                placeholder="2026-2027"
+                placeholder={t("admin.quote_new.school_year_placeholder")}
                 value={schoolYearLabelInput}
                 onChange={(event) => setSchoolYearLabelInput(event.target.value)}
               />
             </label>
             <label>
-              Devise
+              {t("admin.quote_new.currency")}
               <select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value)}>
                 <option value="EUR">EUR</option>
                 <option value="USD">USD</option>
@@ -845,7 +894,7 @@ export default function QuoteWizardForm({
               </select>
             </label>
             <label>
-              Langue
+              {t("common.language")}
               <select
                 name="language"
                 value={language}
@@ -863,12 +912,12 @@ export default function QuoteWizardForm({
                   setSelectedTemplateId(fallbackTemplate?.id ?? "");
                 }}
               >
-                <option value="fr">Francais</option>
-                <option value="en">English</option>
+                <option value="fr">{t("common.french")}</option>
+                <option value="en">{t("common.english")}</option>
               </select>
             </label>
             <label>
-              Delai expiration (jours)
+              {t("admin.quote_new.expiry_days")}
               <input
                 type="number"
                 name="expiry_days"
@@ -880,23 +929,23 @@ export default function QuoteWizardForm({
               />
             </label>
             <label>
-              Ajustement financier
+              {t("admin.quote_new.financial_adjustment")}
               <select name="financial_adjustment_type" defaultValue="none">
-                <option value="none">Aucun</option>
-                <option value="credit">Avoir</option>
-                <option value="debt">Dette</option>
+                <option value="none">{t("admin.quote_new.none")}</option>
+                <option value="credit">{t("admin.quote_new.adjustment_credit")}</option>
+                <option value="debt">{t("admin.quote_new.adjustment_debt")}</option>
               </select>
             </label>
             <label>
-              Option Pass Recup
+              {t("admin.quote_new.pass_recup")}
               <select name="pass_recup_mode" defaultValue="auto">
-                <option value="auto">Automatique (selon lignes devis)</option>
-                <option value="enabled">Souscrite</option>
-                <option value="disabled">Non souscrite</option>
+                <option value="auto">{t("admin.quote_new.pass_recup_auto")}</option>
+                <option value="enabled">{t("admin.quote_new.pass_recup_enabled")}</option>
+                <option value="disabled">{t("admin.quote_new.pass_recup_disabled")}</option>
               </select>
             </label>
             <label>
-              Acompte preinscription
+              {t("admin.quote_new.pre_registration_deposit")}
               <select
                 name="pre_registration_deposit_enabled"
                 value={preRegistrationDepositEnabled}
@@ -908,26 +957,26 @@ export default function QuoteWizardForm({
                   }
                 }}
               >
-                <option value="no">Non</option>
-                <option value="yes">Oui</option>
+                <option value="no">{t("common.no")}</option>
+                <option value="yes">{t("common.yes")}</option>
               </select>
             </label>
             <label>
-              Montant ajustement TTC
+              {t("admin.quote_new.adjustment_amount_ttc")}
               <input
                 type="number"
                 name="financial_adjustment_amount_ttc"
                 min={0}
                 step="0.01"
-                placeholder="100.00"
+                placeholder={t("admin.quote_new.adjustment_amount_placeholder")}
               />
             </label>
             <label>
-              Date ajustement
+              {t("admin.quote_new.adjustment_date")}
               <input type="date" name="financial_adjustment_effective_date" />
             </label>
             <label>
-              Montant acompte TTC
+              {t("admin.quote_new.deposit_amount_ttc")}
               <input
                 type="number"
                 name="pre_registration_deposit_amount_ttc"
@@ -935,27 +984,27 @@ export default function QuoteWizardForm({
                 step="0.01"
                 value={preRegistrationDepositAmount}
                 onChange={(event) => setPreRegistrationDepositAmount(event.target.value)}
-                placeholder="200.00"
+                placeholder={t("admin.quote_new.deposit_amount_placeholder")}
                 disabled={preRegistrationDepositEnabled !== "yes"}
               />
-              <small className="muted">Par defaut: 200,00 EUR.</small>
+              <small className="muted">{t("admin.quote_new.deposit_default_hint")}</small>
             </label>
             <label>
-              Libelle ajustement (optionnel)
-              <input type="text" name="financial_adjustment_label" placeholder="Ex: Avoir fidelite septembre" />
+              {t("admin.quote_new.adjustment_label")}
+              <input type="text" name="financial_adjustment_label" placeholder={t("admin.quote_new.adjustment_label_placeholder")} />
             </label>
           </div>
         </article>
 
         <article className="card quote-wizard-card">
-          <h3>3. Planning piano</h3>
+          <h3>{t("admin.quote_new.section_planning_title")}</h3>
           <p className="muted">
-            Ajoutez une ou plusieurs activites. Pour chaque activite, l heure de fin est calculee automatiquement depuis la duree en base.
+            {t("admin.quote_new.section_planning_subtitle")}
           </p>
           <div className="row wrap gap-sm top-gap-sm">
-            <button type="button" className="ghost" onClick={addPlanningBlock}>+ Ajouter une activite planning</button>
+            <button type="button" className="ghost" onClick={addPlanningBlock}>+ {t("admin.quote_new.add_planning_activity")}</button>
           </div>
-          {planningBlocks.length === 0 ? <p className="muted top-gap-sm">Aucun bloc planning configure.</p> : null}
+          {planningBlocks.length === 0 ? <p className="muted top-gap-sm">{t("admin.quote_new.no_planning_block")}</p> : null}
           <div className="list top-gap-sm">
             {planningBlocks.map((block, index) => {
               const activity = activities.find((item) => item.id === block.activity_id);
@@ -965,27 +1014,30 @@ export default function QuoteWizardForm({
                 selectionPending && blockSolfegeLevel
                   ? slotOptionsFromRule(
                       solfegeRules.find((rule) => String(rule.level_code) === String(blockSolfegeLevel)) || null,
+                      language,
                     )
                   : [];
               return (
               <article key={block.uid} className="item">
                 <div className="row spread wrap gap-sm">
-                  <strong>{activity?.name || `Activite #${index + 1}`}</strong>
+                  <strong>{activity?.name || t("admin.quote_new.planning_activity_fallback", { index: index + 1 })}</strong>
                   <span className="badge">
-                    {selectionPending ? 0 : countEstimatedSessions(block.start_date, block.end_date, [block.weekday], block.recurrence_frequency)} cours
+                    {t("admin.quote_new.estimated_lessons_badge", {
+                      count: selectionPending ? 0 : countEstimatedSessions(block.start_date, block.end_date, [block.weekday], block.recurrence_frequency),
+                    })}
                   </span>
                   <button type="button" className="ghost small-btn" onClick={() => removePlanningBlock(block.uid)}>
-                    Supprimer
+                    {t("common.delete")}
                   </button>
                 </div>
                 <div className="grid cols-4 top-gap-sm">
                   <label>
-                    Activite
+                    {t("admin.quote_new.activity")}
                     <select
                       value={block.activity_id}
                       onChange={(event) => syncPlanningActivity(block.uid, event.target.value, block.start_time)}
                     >
-                      <option value="">Selectionner</option>
+                      <option value="">{t("admin.quote_new.select_option")}</option>
                       {activities.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name} ({item.duration_minutes} min)
@@ -994,12 +1046,12 @@ export default function QuoteWizardForm({
                     </select>
                   </label>
                   <label>
-                    Lieu
+                    {t("common.location")}
                     <select
                       value={block.location_id}
                       onChange={(event) => updatePlanningBlock(block.uid, { location_id: event.target.value })}
                     >
-                      <option value="">Aucun</option>
+                      <option value="">{t("admin.quote_new.none")}</option>
                       {locations.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name}
@@ -1008,7 +1060,7 @@ export default function QuoteWizardForm({
                     </select>
                   </label>
                   <label>
-                    Jour
+                    {t("admin.quote_new.day")}
                     <select
                       value={String(block.weekday)}
                       onChange={(event) => {
@@ -1033,7 +1085,7 @@ export default function QuoteWizardForm({
                         });
                       }}
                     >
-                      {PLANNING_WEEKDAY_OPTIONS.map((entry) => (
+                      {planningWeekdayChoices.map((entry) => (
                         <option key={entry.value} value={entry.value}>
                           {entry.label}
                         </option>
@@ -1041,18 +1093,18 @@ export default function QuoteWizardForm({
                     </select>
                   </label>
                   <label>
-                    Modalite
+                    {t("admin.quote_new.modality")}
                     <select
                       value={block.modality}
                       onChange={(event) => updatePlanningBlock(block.uid, { modality: event.target.value })}
                     >
-                      <option value="">Auto</option>
-                      <option value="ONLINE">En ligne</option>
-                      <option value="ONSITE">Presentiel</option>
+                      <option value="">{t("admin.quote_new.auto")}</option>
+                      <option value="ONLINE">{t("admin.quote_new.modality_online")}</option>
+                      <option value="ONSITE">{t("admin.quote_new.modality_onsite")}</option>
                     </select>
                   </label>
                   <label>
-                    Frequence
+                    {t("admin.quote_new.frequency")}
                     <select
                       value={block.recurrence_frequency}
                       onChange={(event) => {
@@ -1062,7 +1114,7 @@ export default function QuoteWizardForm({
                         updatePlanningBlock(block.uid, { recurrence_frequency: next });
                       }}
                     >
-                      {RECURRENCE_OPTIONS.map((entry) => (
+                      {recurrenceChoices.map((entry) => (
                         <option key={`${block.uid}-freq-${entry.value}`} value={entry.value}>
                           {entry.label}
                         </option>
@@ -1070,15 +1122,15 @@ export default function QuoteWizardForm({
                     </select>
                   </label>
                   <label>
-                    Date debut
+                    {t("admin.quote_new.start_date")}
                     <input type="date" value={block.start_date} onChange={(event) => updatePlanningBlock(block.uid, { start_date: event.target.value })} />
                   </label>
                   <label>
-                    Date fin
+                    {t("admin.quote_new.end_date")}
                     <input type="date" value={block.end_date} onChange={(event) => updatePlanningBlock(block.uid, { end_date: event.target.value })} />
                   </label>
                   <label>
-                    Heure debut
+                    {t("admin.quote_new.start_time")}
                     <input
                       type="time"
                       value={block.start_time}
@@ -1095,12 +1147,12 @@ export default function QuoteWizardForm({
                     />
                   </label>
                   <label>
-                    Heure fin (auto)
+                    {t("admin.quote_new.end_time_auto")}
                     <input type="time" value={block.end_time} readOnly />
                   </label>
                   {selectionPending ? (
                     <div className="cols-span-4">
-                      <p className="muted">Selection du jour en attente: le creneau sera confirme ulterieurement.</p>
+                      <p className="muted">{t("admin.quote_new.pending_day_message")}</p>
                       {pendingSlotOptions.length > 0 ? (
                         <ul className="muted top-gap-sm">
                           {pendingSlotOptions.map((slot) => (
@@ -1108,30 +1160,30 @@ export default function QuoteWizardForm({
                           ))}
                         </ul>
                       ) : (
-                        <p className="muted top-gap-sm">Aucun creneau configure pour ce niveau.</p>
+                        <p className="muted top-gap-sm">{t("admin.quote_new.no_slot_for_level")}</p>
                       )}
                     </div>
                   ) : null}
                   <p className="muted cols-span-4">
-                    Solfege, Masterclass et Pass Recup se parametrent desormais par activite et/ou via les parametres du devis.
+                    {t("admin.quote_new.planning_note")}
                   </p>
                 </div>
               </article>
               );
             })}
           </div>
-          <p className="muted top-gap-sm">Apercu rapide: {sessionsCount} seances estimees (hors jours feries/fermetures).</p>
+          <p className="muted top-gap-sm">{t("admin.quote_new.planning_summary", { count: sessionsCount })}</p>
         </article>
 
         <article className="card quote-wizard-card">
-          <h3>4. Solfege (optionnel)</h3>
+          <h3>{t("admin.quote_new.section_solfege_title")}</h3>
           <label className="top-gap-sm">
-            Niveau estime
+            {t("admin.quote_new.estimated_level")}
             <select name="estimated_solfege_level" value={estimatedLevel} onChange={(event) => setEstimatedLevel(event.target.value)}>
-              <option value="">Non applicable</option>
+              <option value="">{t("admin.quote_new.not_applicable")}</option>
               {["1", "2", "3", "4", "5"].map((level) => (
                 <option key={level} value={level}>
-                  Niveau {level}
+                  {t("admin.quote_new.level_option", { level })}
                 </option>
               ))}
             </select>
@@ -1139,16 +1191,16 @@ export default function QuoteWizardForm({
           {selectedSolfegeRule ? (
             <div className="quote-solfege-preview top-gap-sm">
               <p>
-                Duree suggeree: <strong>{selectedSolfegeRule.duration_minutes} min</strong>
+                {t("admin.quote_new.suggested_duration")}: <strong>{selectedSolfegeRule.duration_minutes} min</strong>
               </p>
               <p className="muted">
-                Jours autorises: {selectedSolfegeRule.allowed_weekdays.length > 0 ? selectedSolfegeRule.allowed_weekdays.map((day) => weekdayLabel(day)).join(", ") : "Tous"}
+                {t("admin.quote_new.allowed_days")}: {selectedSolfegeRule.allowed_weekdays.length > 0 ? selectedSolfegeRule.allowed_weekdays.map((day) => weekdayLabel(day, language)).join(", ") : t("admin.quote_new.all_days")}
               </p>
-              <p className="muted">Creneaux configures: {solfegeSlotOptions.length}</p>
+              <p className="muted">{t("admin.quote_new.configured_slots", { count: solfegeSlotOptions.length })}</p>
               <label className="top-gap-sm">
-                Creneau propose
+                {t("admin.quote_new.proposed_slot")}
                 <select value={selectedSolfegeSlotKey} onChange={(event) => setSelectedSolfegeSlotKey(event.target.value)}>
-                  <option value="">Selectionner un creneau</option>
+                  <option value="">{t("admin.quote_new.select_slot")}</option>
                   {solfegeSlotOptions.map((slot) => (
                     <option key={slot.key} value={slot.key}>
                       {slot.label}
@@ -1158,43 +1210,43 @@ export default function QuoteWizardForm({
               </label>
               {selectedSolfegeSlot ? (
                 <p className="muted top-gap-sm">
-                  Selection: <strong>{selectedSolfegeSlot.label}</strong>
-                  {selectedSolfegeSlot.modality ? ` · ${selectedSolfegeSlot.modality}` : ""}
+                  {t("admin.quote_new.selection_label")}: <strong>{selectedSolfegeSlot.label}</strong>
+                  {selectedSolfegeSlot.modality ? ` · ${modalityLabel(selectedSolfegeSlot.modality, uiLanguage)}` : ""}
                 </p>
               ) : null}
             </div>
           ) : (
-            <p className="muted top-gap-sm">Selectionne un niveau pour afficher la regle active.</p>
+            <p className="muted top-gap-sm">{t("admin.quote_new.select_level_hint")}</p>
           )}
         </article>
 
         <article className="card quote-wizard-card">
-          <h3>5. Lignes devis (services / produits / kits / remises / supplements)</h3>
+          <h3>{t("admin.quote_new.section_lines_title")}</h3>
           <div className="row wrap gap-sm top-gap-sm">
-            <button type="button" className="ghost" onClick={() => addLine("activity")}>+ Activite</button>
-            <button type="button" className="ghost" onClick={() => addLine("product")}>+ Produit</button>
-            <button type="button" className="ghost" onClick={() => addLine("kit")}>+ Kit</button>
-            <button type="button" className="ghost" onClick={() => addLine("discount")}>+ Remise</button>
-            <button type="button" className="ghost" onClick={() => addLine("surcharge")}>+ Supplement</button>
+            <button type="button" className="ghost" onClick={() => addLine("activity")}>+ {t("admin.quote_new.add_line_activity")}</button>
+            <button type="button" className="ghost" onClick={() => addLine("product")}>+ {t("admin.quote_new.add_line_product")}</button>
+            <button type="button" className="ghost" onClick={() => addLine("kit")}>+ {t("admin.quote_new.add_line_kit")}</button>
+            <button type="button" className="ghost" onClick={() => addLine("discount")}>+ {t("admin.quote_new.add_line_discount")}</button>
+            <button type="button" className="ghost" onClick={() => addLine("surcharge")}>+ {t("admin.quote_new.add_line_surcharge")}</button>
           </div>
-          {lines.length === 0 ? <p className="muted top-gap-sm">Aucune ligne. Ajoute au moins une ligne tarifaire.</p> : null}
+          {lines.length === 0 ? <p className="muted top-gap-sm">{t("admin.quote_new.no_lines")}</p> : null}
           <div className="quote-lines-list top-gap-sm">
             {lines.map((line) => (
               <article key={line.uid} className="quote-line-card">
                 <div className="row spread wrap gap-sm">
-                  <strong>{line.kind.toUpperCase()}</strong>
+                  <strong>{lineKindLabel(line.kind)}</strong>
                   <button type="button" className="ghost small-btn" onClick={() => removeLine(line.uid)}>
-                    Supprimer
+                    {t("common.delete")}
                   </button>
                 </div>
                 {(line.kind === "activity" || line.kind === "product" || line.kind === "kit") ? (
                   <label className="top-gap-sm">
-                    Element
+                    {t("admin.quote_new.element")}
                     <select
                       value={line.refId}
                       onChange={(event) => applyRefToLine(line.uid, line.kind, event.target.value)}
                     >
-                      <option value="">Selectionner</option>
+                      <option value="">{t("admin.quote_new.select_option")}</option>
                       {selectableOptions(line.kind).map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.label}
@@ -1205,15 +1257,15 @@ export default function QuoteWizardForm({
                 ) : null}
                 <div className="grid cols-3 top-gap-sm">
                   <label className="cols-span-3">
-                    Intitule
+                    {t("admin.quote_new.line_title")}
                     <input type="text" value={line.title} onChange={(event) => updateLine(line.uid, { title: event.target.value })} required />
                   </label>
                   <label>
-                    Quantite
+                    {t("common.quantity")}
                     <input type="number" min={0.01} step="0.01" value={line.quantity} onChange={(event) => updateLine(line.uid, { quantity: event.target.value })} required />
                   </label>
                   <label>
-                    Prix TTC
+                    {t("admin.quote_new.price_ttc")}
                     <input
                       type="number"
                       step="0.01"
@@ -1223,13 +1275,13 @@ export default function QuoteWizardForm({
                     />
                   </label>
                   <div className="quote-line-amount">
-                    <span>Montant</span>
-                    <strong>{toMoney(String(lineAmount(line)), currency)}</strong>
+                    <span>{t("common.amount")}</span>
+                    <strong>{toMoney(String(lineAmount(line)), currency, uiLanguage)}</strong>
                   </div>
                 </div>
                 {isCatalogKind(line.kind) ? (
                   <small className="muted">
-                    Prix pre-rempli depuis le catalogue/la base. Vous pouvez l ajuster si necessaire.
+                    {t("admin.quote_new.catalog_prefill_hint")}
                   </small>
                 ) : null}
               </article>
@@ -1238,31 +1290,31 @@ export default function QuoteWizardForm({
         </article>
 
         <article className="card quote-wizard-card">
-          <h3>6. Finalisation</h3>
-          <p className="muted">Le devis est cree en brouillon. L envoi au prospect se fait ensuite depuis le panneau detail.</p>
+          <h3>{t("admin.quote_new.section_finalize_title")}</h3>
+          <p className="muted">{t("admin.quote_new.section_finalize_subtitle")}</p>
           <div className="row wrap gap-sm top-gap-sm">
             <ConfirmSubmitButton
               formId={createDraftFormId}
-              label="Creer le devis brouillon"
-              title="Confirmer la generation du devis brouillon ?"
-              description="Le devis sera cree en brouillon avec les informations saisies. Vous pourrez ensuite le modifier et regenerer le document."
-              confirmLabel="Creer le brouillon"
+              label={t("admin.quote_new.create_draft")}
+              title={t("admin.quote_new.confirm_title")}
+              description={t("admin.quote_new.confirm_description")}
+              confirmLabel={t("admin.quote_new.confirm_execute")}
             />
-            <a className="ghost" href={returnTo}>Annuler</a>
+            <a className="ghost" href={returnTo}>{t("common.cancel")}</a>
           </div>
         </article>
       </section>
 
       <aside className="quote-wizard-sticky">
         <article className="card quote-summary-card">
-          <h3>Resume sticky</h3>
-          <p className="muted">Contexte: <strong>{contextType === "acquisition" ? "Acquisition" : "Client actif"}</strong></p>
-          <p className="muted">Devise: <strong>{currency}</strong> · Langue: <strong>{language.toUpperCase()}</strong></p>
-          <p className="muted">Lignes: <strong>{lines.length}</strong></p>
-          <p className="muted">Activites planning: <strong>{planningBlocks.length}</strong></p>
-          <p className="muted">Seances estimees: <strong>{sessionsCount}</strong></p>
-          {selectedSolfegeSlot ? <p className="muted">Creneau solfege: <strong>{selectedSolfegeSlot.label}</strong></p> : null}
-          <p className="quote-total">Total estime: {toMoney(String(total), currency)}</p>
+          <h3>{t("admin.quote_new.sticky_title")}</h3>
+          <p className="muted">{t("admin.quote_new.sticky_context")}: <strong>{contextLabel}</strong></p>
+          <p className="muted">{t("admin.quote_new.sticky_currency_language", { currency, language: quoteLanguageLabel })}</p>
+          <p className="muted">{t("admin.quote_new.sticky_lines", { count: lines.length })}</p>
+          <p className="muted">{t("admin.quote_new.sticky_planning_activities", { count: planningBlocks.length })}</p>
+          <p className="muted">{t("admin.quote_new.sticky_estimated_sessions", { count: sessionsCount })}</p>
+          {selectedSolfegeSlot ? <p className="muted">{t("admin.quote_new.sticky_solfege_slot")}: <strong>{selectedSolfegeSlot.label}</strong></p> : null}
+          <p className="quote-total">{t("admin.quote_new.sticky_total")}: {toMoney(String(total), currency, uiLanguage)}</p>
         </article>
       </aside>
     </form>
